@@ -62,7 +62,7 @@ class UI:
             bar = '█' * filled_len + '░' * (bar_len - filled_len)
             
             color = UI.GREEN if UI.fail_tasks == 0 else UI.YELLOW
-            sys.stdout.write(f"\r\033[K{color}{UI.BOLD}进度: [{bar}] {percent}% ({UI.completed_tasks}/{UI.total_tasks}) | 成功: {UI.success_tasks} | 失败: {UI.fail_tasks}{UI.RESET}\n")
+            sys.stdout.write(f"\r\033[K{color}{UI.BOLD}进度: [{bar}] {percent}% ({UI.completed_tasks}/{UI.total_tasks}) | 成功: {UI.success_tasks} | 失败: {UI.fail_tasks}{UI.RESET}")
             sys.stdout.flush()
 
 # ==========================================
