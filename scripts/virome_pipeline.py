@@ -474,7 +474,17 @@ class ViromePipeline:
                 f"--identify_tools {self.args.identify_tools}",
                 f"--threads {self.args.threads}",
                 f"--jobs {self.args.jobs}",
+                f"--blast_mode {self.args.blast_mode}",
+                f"--blast_evalue {self.args.blast_evalue}",
+                f"--blast_top_n {self.args.blast_top_n}",
+                f"--virsorter_group {self.args.virsorter_group}",
             ]
+            for arg in ['virus_protein_db', 'uniprot_db', 'viroids_db', 'virsorter_db',
+                         'viralverify_hmm', 'metabuli_db', 'virus_taxid',
+                         'virhunter_path', 'virhunter_weights', 'virbot_path', 'viralm_path']:
+                val = getattr(self.args, arg, None)
+                if val:
+                    parts.append(f"--{arg} {val}")
             if self.args.force:
                 parts.append("--force")
             run_cmd(' '.join(parts), self.log, f"VirusID: {contig.name}")
@@ -1513,6 +1523,22 @@ def _build_parser(add_help=True):
     g.add_argument('--assembler', default='penguin', choices=['megahit', 'rnaviralspades', 'penguin', 'all'])
     g.add_argument('--contig-length', '-l', type=int, default=200, help='contig 最小长度 bp (默认 200)')
     g.add_argument('--identify_tools', default='all', help='病毒鉴定工具')
+    g = p.add_argument_group('鉴定数据库 (virus_identification16.py)')
+    g.add_argument('--virus_protein_db', help='病毒蛋白 Diamond DB')
+    g.add_argument('--uniprot_db', help='UniProt Diamond DB')
+    g.add_argument('--viroids_db', help='类病毒 BLAST DB')
+    g.add_argument('--virsorter_db', help='VirSorter2 数据库')
+    g.add_argument('--viralverify_hmm', help='ViralVerify HMM 文件')
+    g.add_argument('--metabuli_db', help='Metabuli 数据库')
+    g.add_argument('--virus_taxid', help='病毒 TaxID 列表')
+    g.add_argument('--virhunter_path', help='VirHunter predict_cpu.py 路径')
+    g.add_argument('--virhunter_weights', help='VirHunter weights 目录')
+    g.add_argument('--virbot_path', help='VirBot.py 路径')
+    g.add_argument('--viralm_path', help='viralm_cpu.py 路径')
+    g.add_argument('--virsorter_group', default='dsDNAphage,NCLDV,RNA,ssDNA,lavidaviridae')
+    g.add_argument('--blast_mode', default='filter', help='Blast 模式 (默认 filter)')
+    g.add_argument('--blast_evalue', default='1e-5', help='Blast e-value (默认 1e-5)')
+    g.add_argument('--blast_top_n', default='5', help='Blast top N (默认 5)')
     g.add_argument('--phabox-db', help='PhaBOX2 数据库路径 (host 阶段)')
     g.add_argument('--prob-dir', help='ICTV 宿主概率表目录 (host 阶段, 默认: cross_analysis/)')
     g.add_argument('--ref-genomes', nargs='*', help='ICTV/NCBI 参考基因组 FASTA (可多个, CD-HIT 参考引导预聚类)')
