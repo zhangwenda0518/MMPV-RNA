@@ -354,7 +354,7 @@ class ViromePipeline:
                         # 找索引前缀 (bowtie2: host.1.bt2, hisat2: host.1.ht2, minimap2: host_*.mmi)
                         for prefix in ['host', 'index', 'genome']:
                             test = hdb / sub / prefix
-                            if aligner == 'bowtie2' and (test.parent / (prefix + '.1.bt2')).is_file():
+                            if aligner == 'bowtie2' and ((test.parent / (prefix + '.1.bt2')).is_file() or (test.parent / (prefix + '.1.bt2l')).is_file()):
                                 host_align_db = str(test); break
                             if aligner == 'hisat2' and (test.parent / (prefix + '.1.ht2')).is_file():
                                 host_align_db = str(test); break
