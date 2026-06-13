@@ -259,9 +259,9 @@ def branch_a(ref_fasta, work_dir, checkv_db, threads, jobs):
 # 分支 C: Virseqimprover reads 延伸
 # ══════════════════════════════════════════════════════════════
 
-def branch_c(fail_fa, fastq_dir, work_dir, checkv_db, threads, jobs, vsi_path, salmon_bin, clusters=None):
+def branch_b(fail_fa, fastq_dir, work_dir, checkv_db, threads, jobs, vsi_path, salmon_bin, clusters=None):
     """对 A 失败序列并行 Virseqimprover (cluster 内多样本 reads 聚合)。返回 (pass_fa, fail_fa, pass_count, fail_count)"""
-    d = Path(work_dir) / "branch_c"; d.mkdir(parents=True, exist_ok=True)
+    d = Path(work_dir) / "branch_b"; d.mkdir(parents=True, exist_ok=True)
     log_dir = d / "logs"; log_dir.mkdir(exist_ok=True)
     if not fail_fa or not os.path.isfile(fail_fa):
         print("  分支 C: 无失败序列, 跳过"); return None, None, 0, 0
@@ -342,14 +342,14 @@ def branch_c(fail_fa, fastq_dir, work_dir, checkv_db, threads, jobs, vsi_path, s
     if not vsi_records:
         return None, fail_fa, 0, total
 
-    extended_fa = d / "branchC_extended.fasta"
+    extended_fa = d / "branchB_extended.fasta"
     SeqIO.write(vsi_records, extended_fa, "fasta")
 
     qs = run_checkv(extended_fa, d / "checkv_out", checkv_db, threads)
     pass_ids, fail_ids = parse_checkv(qs)
 
-    pass_fa = d / "branchC_pass.fasta"
-    fail_fa_out = d / "branchC_fail.fasta"
+    pass_fa = d / "branchB_pass.fasta"
+    fail_fa_out = d / "branchB_fail.fasta"
     SeqIO.write([r for r in vsi_records if r.id in pass_ids], pass_fa, "fasta")
     fail_to_write = []
     for rec in fail_records:
@@ -368,10 +368,10 @@ def branch_c(fail_fa, fastq_dir, work_dir, checkv_db, threads, jobs, vsi_path, s
 # 分支 D: BLASTN + CheckV + VSI
 # ══════════════════════════════════════════════════════════════
 
-def branch_d(fail_fa, fastq_dir, work_dir,
+def branch_c(fail_fa, fastq_dir, work_dir,
              checkv_db, blast_db, threads, jobs, vsi_path, salmon_bin, clusters=None):
-    """C 失败 → BLASTN + CheckV + VSI (并行, cluster 内多样本 reads 聚合)"""
-    d = Path(work_dir) / "branch_d"; d.mkdir(parents=True, exist_ok=True)
+    """B 失败 → BLASTN + CheckV + VSI (并行, cluster 内多样本 reads 聚合)"""
+    d = Path(work_dir) / "branch_c"; d.mkdir(parents=True, exist_ok=True)
 
     if not fail_fa or not os.path.isfile(fail_fa):
         print("  分支 D: 无待处理序列"); return None, 0
@@ -424,7 +424,7 @@ def branch_d(fail_fa, fastq_dir, work_dir,
     if not complete:
         return None, 0
 
-    pass_fa = d / "branchD_pass.fasta"
+    pass_fa = d / "branchC_pass.fasta"
     SeqIO.write(complete.values(), pass_fa, "fasta")
     print(f"  分支 D: pass={len(complete)}")
     return str(pass_fa), len(complete)
@@ -516,31 +516,31 @@ def main():
         SeqIO.write(centroids_records, tmp_centroids, "fasta")
         fa_a_pass, fa_a_fail, cnt_a, cnt_a_fail = branch_a(str(tmp_centroids), out, args.checkv_db, args.threads, args.jobs)
 
-    # 3. 分支 C: Virseqimprover
-    print("\n── Step 2: 分支 C (VSI) ──")
-    fa_b_pass = out / "branch_c" / "branchC_pass.fasta"
-    fa_b_fail = out / "branch_c" / "branchC_fail.fasta"
+    # 3. 分支 B: Virseqimprover
+    print("\n── Step 2: 分支 B (VSI) ──")
+    fa_b_pass = out / "branch_b" / "branchB_pass.fasta"
+    fa_b_fail = out / "branch_b" / "branchB_fail.fasta"
     if args.resume and fa_b_pass.is_file() and fa_b_pass.stat().st_size > 0:
-        print("  [RESUME] 分支 C 已有结果, 跳过")
+        print("  [RESUME] 分支 B 已有结果, 跳过")
         cnt_b = sum(1 for _ in SeqIO.parse(fa_b_pass, "fasta"))
         cnt_b_fail = sum(1 for _ in SeqIO.parse(fa_b_fail, "fasta")) if fa_b_fail.is_file() else 0
         fa_b_pass, fa_b_fail = str(fa_b_pass), str(fa_b_fail)
     else:
-        fa_b_pass, fa_b_fail, cnt_b, cnt_b_fail = branch_c(fa_a_fail, args.fastq_dir, out, args.checkv_db, args.threads, args.jobs, args.virseqimprover_path, args.salmon_bin, clusters)
+        fa_b_pass, fa_b_fail, cnt_b, cnt_b_fail = branch_b(fa_a_fail, args.fastq_dir, out, args.checkv_db, args.threads, args.jobs, args.virseqimprover_path, args.salmon_bin, clusters)
 
-    # 4. 分支 D: BLASTN + VSI
-    print("\n── Step 3: 分支 D (BLASTN+VSI) ──")
-    fa_c_pass = out / "branch_d" / "branchD_pass.fasta"
+    # 4. 分支 C: BLASTN + VSI
+    print("\n── Step 3: 分支 C (BLASTN+VSI) ──")
+    fa_c_pass = out / "branch_c" / "branchC_pass.fasta"
     if args.resume and fa_c_pass.is_file() and fa_c_pass.stat().st_size > 0:
-        print("  [RESUME] 分支 D 已有结果, 跳过")
+        print("  [RESUME] 分支 C 已有结果, 跳过")
         cnt_c = sum(1 for _ in SeqIO.parse(fa_c_pass, "fasta"))
         fa_c_pass = str(fa_c_pass)
     elif args.blast_db:
-        fail_for_d = fa_b_fail if (fa_b_fail and Path(fa_b_fail).is_file() and Path(fa_b_fail).stat().st_size > 0) else fa_a_fail
-        fa_c_pass, cnt_c = branch_d(fail_for_d, args.fastq_dir, out, args.checkv_db, args.blast_db, args.threads, args.jobs, args.virseqimprover_path, args.salmon_bin, clusters)
+        fail_for_c = fa_b_fail if (fa_b_fail and Path(fa_b_fail).is_file() and Path(fa_b_fail).stat().st_size > 0) else fa_a_fail
+        fa_c_pass, cnt_c = branch_c(fail_for_c, args.fastq_dir, out, args.checkv_db, args.blast_db, args.threads, args.jobs, args.virseqimprover_path, args.salmon_bin, clusters)
     else:
         fa_c_pass, cnt_c = None, 0
-        print("  [SKIP] 分支 D — 无 BLAST 数据库")
+        print("  [SKIP] 分支 C — 无 BLAST 数据库")
 
     # 5. 合并
     print("\n── Step 4: 合并 ──")
