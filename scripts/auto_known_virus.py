@@ -56,15 +56,42 @@ STAGE_HELP = {
   关键参数: --tool, --coverage, --ratio, --sp_thresh, --genes_cov
 """,
     'variants': """
-  --stage variants — 变异分析
+  --stage variants — 变异分析 (batch_virus_variants.py)
 
-  运行: batch_virus_variants.py
-    提取 reads → 共识序列 → FreeBayes 变异检测 → SnpEff/SnpGenie 注释
+  流程: extract_reads → consensus → call_variants → snpeff → snpgenie
+    提取 reads         --extract_reads     从 FASTQ 重新提取目标病毒 reads
+    共识序列           --consensus          生成 iVar/FreeBayes 共识序列
+    变异检测           --call_variants      检出变异位点 (VCF)
+    SnpEff 注释        --snpeff            变异功能注释 (需 snpEff.jar)
+    SnpGenie 分析      --snpgenie          dN/dS 选择压力 (种群遗传学)
 
   输入: 1_FastViromeExplorer/summary/summary.tsv
-  输出: 2_Virus_variants_Results/{virus}/
+  输出: 2_Virus_variants_Results/
 
-  关键参数: --variant_caller, --snpeff, --snpgenie
+  参数:
+    --reads_dir        FASTQ/FASTA 目录 [必需]
+    --output_dir       输出根目录 [必需]
+    --ref_info         病毒信息库 TSV [必需]
+    --reference        参考基因组 FASTA [必需]
+    --variant_caller   变异检出工具: freebayes/ivar/lofreq (默认: freebayes)
+    --snpeff           启用 SnpEff 注释
+    --snpeff_jar       snpEff.jar 路径 (默认: ~/biosoft/snpEff/snpEff.jar)
+    --snpeff_config    snpEff 配置 (默认: ~/biosoft/snpEff/snpEff.config)
+    --snpeff_mem       内存限制 (默认: 4g)
+    --snpgenie         启用 SnpGenie dN/dS
+    --vc_qual          共识序列最低质量 Phred (默认: 20)
+    --vc_depth         共识序列最低深度 (默认: 5)
+    --vc_freq          变异最低频率阈值 (默认: 0.5)
+    --vc_ambig         低覆盖碱基填充字符 (默认: N)
+    --bam              已有 BAM 目录 (替代 --reads_dir, 跳过提取)
+    --disable_dynamic_vcf  禁用动态VCF过滤
+    --no_extract_reads  跳过 reads 提取
+    --no_consensus      跳过共识序列生成
+    --no_call_variants  跳过变异检测
+    -t, --threads      线程数 (默认 40)
+    -j, --jobs         并行任务数 (默认 4)
+    --resume           断点续传
+    --force            强制重跑
 """,
     'full': """
   --stage full — 单倍型全长组装
