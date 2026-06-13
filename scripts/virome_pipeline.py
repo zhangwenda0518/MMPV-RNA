@@ -211,8 +211,8 @@ class ViromePipeline:
     def __init__(self, args, logger):
         self.args = args
         self.log = logger
-        out = Path(args.output_dir).resolve()
-        raw = Path(args.input_reads).resolve()
+        out = Path(args.output_dir).absolute()
+        raw = Path(args.input_reads).absolute()
         script_dir = Path(__file__).parent.resolve()
 
         # 标准化目录
