@@ -517,6 +517,7 @@ class ViromePipeline:
             f"--virsorter-dir {self.d['ident']}",
             f"--output-dir {self.d['cobra']}",
             f"--assembly-tools {','.join(asm_tools)}",
+            f"--virus-mode {self.args.virus_mode}",
             f"--jobs {max(1, self.args.jobs // 2)}",
             f"--threads {self.args.threads}",
         ]
@@ -1599,6 +1600,8 @@ def _build_parser(add_help=True):
     g.add_argument('--assembler', default='penguin', choices=['megahit', 'rnaviralspades', 'penguin', 'all'])
     g.add_argument('--contig-length', '-l', type=int, default=200, help='contig 最小长度 bp (默认 200)')
     g.add_argument('--identify_tools', default='all', help='病毒鉴定工具')
+    g.add_argument('--virus_mode', default='strict', choices=['raw', 'filter', 'strict'],
+                   help='COBRA 病毒序列来源: raw=原始鉴定, filter=UniProt过滤, strict=严格过滤 (默认: strict)')
     g = p.add_argument_group('鉴定数据库 (virus_identification16.py)')
     g.add_argument('--virus_protein_db', help='病毒蛋白 Diamond DB')
     g.add_argument('--uniprot_db', help='UniProt Diamond DB')

@@ -494,7 +494,9 @@ class CobraPipeline:
         raise FileNotFoundError(f"未找到样本 {sample} 的 {assembler} contig文件")
     
     def find_virus_file(self, sample: str, assembler: str) -> Path:
-        """查找病毒序列文件 (支持嵌套 {tool}_result/ 和扁平目录)"""
+        """查找病毒序列文件 (支持嵌套 {tool}_result/ 和扁平目录)
+        virus_mode: raw=原始鉴定结果, filter=UniProt过滤, strict=严格过滤 (默认)
+        """
         sample_mode = self.get_sample_mode(sample)
 
         if self.args.mode == "all":
@@ -515,6 +517,15 @@ class CobraPipeline:
             name_variants.append(base_sample[:-6])
         elif '_clean' not in base_sample:
             name_variants.append(base_sample + '_clean')
+
+        # 0. filter/strict 模式: 优先用 UniProt 后置过滤结果 (统合所有工具)
+        if self.args.virus_mode in ('filter', 'strict'):
+            filt_dir_name = f'uniprot_filter_output_{self.args.virus_mode}'
+            for name in name_variants:
+                filt_fa = virsorter_dir / name / filt_dir_name / f'{name}_virus.uniprot_filtered.fasta'
+                if filt_fa.is_file() and filt_fa.stat().st_size > 100:
+                    return filt_fa
+            main_logger.info(f"  [{self.args.virus_mode}] 无过滤结果, 回退到原始鉴定")
 
         virus_patterns = [
             f"{n}_virus.all.candidate.fasta" for n in name_variants
@@ -1135,6 +1146,8 @@ def main():
     # 工具选择参数
     parser.add_argument("-a", "--assembly-tools", default="all",
                         help="组装工具列表，逗号分隔或'all'(默认: all)")
+    parser.add_argument("--virus-mode", choices=["raw", "filter", "strict"], default="strict",
+                        help="病毒序列来源: raw=原始鉴定, filter=UniProt过滤, strict=严格过滤 (默认: strict)")
 
     # 并行和性能参数
     parser.add_argument("--jobs", type=int, default=1,
