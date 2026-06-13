@@ -123,6 +123,7 @@ def extract_base_sample(filename):
         r'_megahit\.contig',
         r'_rnaviralspades\.contig',
         r'_penguin\.contig',
+        r'_all_tools_refineC_merge',
         r'\.contig',
         r'\.merged',
     ]:
@@ -390,6 +391,8 @@ class ViromePipeline:
             f"--jobs {self.args.jobs}",
             f"--log_dirs {self.d['asm']}/logs",
         ]
+        if self.args.assembler == 'all':
+            parts.append("--refineC_split --refineC_merge")
         if self.args.force:
             parts.append("--force")
 
