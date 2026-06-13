@@ -20,7 +20,6 @@ from pathlib import Path
 from datetime import datetime
 from collections import defaultdict
 
-import pandas as pd
 from Bio import SeqIO
 
 try:
@@ -28,6 +27,11 @@ try:
     HAS_POLARS = True
 except ImportError:
     HAS_POLARS = False
+
+try:
+    import pandas as pd
+except ImportError:
+    pd = None
 
 
 # ══════════════════════════════════════════════════════════════
@@ -303,8 +307,10 @@ def compute_cluster_stats(clusters, fasta_info, out_dir):
             pl.col("Cluster_ID").str.extract(r"(\d+)").cast(pl.Int64).alias("sort_key")
         ).sort("sort_key").drop("sort_key")
         df.write_csv(os.path.join(out_dir, "cluster_summary.tsv"), separator="\t")
-    else:
+    elif pd is not None:
         pd.DataFrame(basic_stats).to_csv(os.path.join(out_dir, "cluster_summary.tsv"), sep="\t", index=False)
+    else:
+        print("  [WARN] polars 和 pandas 均不可用, 跳过 cluster_summary.tsv")
 
     total_clusters = len(basic_stats)
     total_input = len(fasta_info)
