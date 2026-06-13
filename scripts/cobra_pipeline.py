@@ -795,15 +795,8 @@ class CobraPipeline:
             sample_logger.info("使用管道进行比对并生成排序BAM")
             sorted_bam = output_dir / f"{task_id}.sorted.bam"
 
-            # 检测 FASTA 格式 (bwa-mem2 需要 -f 标志)
-            is_fasta = bool(re.search(
-                r'\.(?:fasta|fa)(?:\.gz)?$', str(read1), re.IGNORECASE))
-            fmt_flag = " -f" if is_fasta else ""
-            if is_fasta:
-                sample_logger.info("检测到 FASTA 格式 reads, 自动添加 -f 标志")
-
             pipe_cmd = (
-                f"bwa-mem2 mem{fmt_flag} -t {self.args.threads} "
+                f"bwa-mem2 mem -t {self.args.threads} "
                 f"{normalized_contigs} {read1} {read2} | "
                 f"samtools sort -@ {self.args.threads} -o {sorted_bam} -"
             )
