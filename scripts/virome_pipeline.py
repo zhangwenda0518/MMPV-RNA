@@ -537,57 +537,45 @@ class ViromePipeline:
         self.log.info("=" * 50)
         self.log.info("[4] CLUSTER 三支路病毒基因组去冗余")
 
-        # 优先使用直接输入, 否则按样本收集: 有 cobra.fa 用 cobra, 否则回退 ident virus.fa
+        # 优先使用直接输入, 否则按样本收集 03_COBRA: 有 cobra.fa 用 cobra, 否则 virus.fa
         if self.args.cluster_input and os.path.isfile(self.args.cluster_input):
             cluster_fa = Path(self.args.cluster_input)
             self.log.info("  CLUSTER 直接输入: %s", cluster_fa)
         else:
-            ident_dir = self.d['ident']
             cobra_dir = self.d['cobra']
-            if not ident_dir.is_dir() and not cobra_dir.is_dir():
-                self.log.error("Identification (%s) 和 COBRA (%s) 均不存在, 跳过 CLUSTER", ident_dir, cobra_dir)
+            if not cobra_dir.is_dir():
+                self.log.error("COBRA 输出 %s 不存在, 跳过 CLUSTER", cobra_dir)
                 return
             cluster_fa = Path(self.d['root']) / "cluster_input.fasta"
 
-            # 1. 找出有 cobra 输出的样本
-            cobra_samples = set()
-            if cobra_dir.is_dir():
-                for cf in cobra_dir.rglob('*.cobra.fa'):
-                    try:
-                        cobra_samples.add(cf.relative_to(cobra_dir).parts[0])
-                    except ValueError:
-                        pass
-
-            n_cobra, n_ident = 0, 0
+            n_cobra, n_virus = 0, 0
             with open(cluster_fa, 'w') as out:
-                # 2. 收集所有 cobra.fa (延伸成功的样本)
-                if cobra_dir.is_dir():
-                    for cf in cobra_dir.rglob('*.cobra.fa'):
-                        with open(cf) as inf:
-                            out.write(inf.read())
-                            n_cobra += 1
-
-                # 3. 对没有 cobra 输出的样本, 回退到 ident virus.fa
-                if ident_dir.is_dir():
-                    for sd in ident_dir.iterdir():
-                        if not sd.is_dir():
-                            continue
-                        if sd.name in cobra_samples:
-                            continue  # 已由 cobra 覆盖
+                for sd in cobra_dir.iterdir():
+                    if not sd.is_dir():
+                        continue
+                    # 检查该样本是否有 cobra 延伸结果
+                    cobra_files = list(sd.rglob('*.cobra.fa'))
+                    if cobra_files:
+                        for cf in cobra_files:
+                            with open(cf) as inf:
+                                out.write(inf.read())
+                                n_cobra += 1
+                    else:
+                        # 无延伸, 回退到原始 virus.fa
                         for vf in sd.rglob('*virus*.fasta'):
                             with open(vf) as inf:
                                 out.write(inf.read())
-                                n_ident += 1
+                                n_virus += 1
                         for vf in sd.rglob('*virus*.fa'):
                             with open(vf) as inf:
                                 out.write(inf.read())
-                                n_ident += 1
+                                n_virus += 1
 
             if cluster_fa.stat().st_size == 0:
                 self.log.warning("未找到任何输入, 跳过 CLUSTER")
                 return
-            if n_ident:
-                self.log.info("  CLUSTER 输入 (自动收集): %d cobra + %d ident (无cobra回退) → %s", n_cobra, n_ident, cluster_fa)
+            if n_virus:
+                self.log.info("  CLUSTER 输入 (自动收集): %d cobra + %d virus → %s", n_cobra, n_virus, cluster_fa)
             else:
                 self.log.info("  CLUSTER 输入 (自动收集): %d cobra → %s", n_cobra, cluster_fa)
 
