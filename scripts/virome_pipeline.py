@@ -418,6 +418,7 @@ class ViromePipeline:
             f"--input {self.reads_dir}",
             f"--output-dir {self.d['asm']}",
             f"--threads {self.args.threads}",
+            f"--length {self.args.contig_length}",
             f"--memory {self.args.memory}",
             f"--jobs {self.args.jobs}",
             f"--log_dirs {self.d['asm']}/logs",
@@ -1195,20 +1196,37 @@ STAGE_HELP = {
     penguin         宏转录组专用组装 (默认)
     megahit         宏基因组组装
     rnaviralspades  RNA病毒组装
-    all             三种工具并行, 各自产出独立 contig 文件
+    all             三种工具并行, ≥2工具自动 refineC split/merge
 
-  调用命令: python assembly_pipeline.py --tool <name> --input <dir>
-             --output-dir <dir> --threads N --memory N --jobs N --log_dirs <dir>
+  子脚本完整参数:
+    --tool / -t           {megahit,rnaviralspades,penguin,all} 组装工具
+    --input / -i          输入文件或目录
+    --length / -l         contig最小长度 (默认 200)
+    --threads / -n        线程数 (默认 8)
+    --memory / -m         内存 GB (默认 64)
+    --jobs / -j           并行任务数 (默认 1)
+    --output-dir / -o     输出目录
+    --log_dirs            日志目录
+    --refineC_split       运行 refineC split
+    --refineC_merge       运行 refineC merge
+    --refineC_threads     refineC 线程
+    --refineC_frag_min_len  refineC split 最小片段长度 (默认 1000)
+    --refineC_min_id      refineC merge 最小序列一致性 (默认 0.97)
+    --refineC_min_cov     refineC merge 最小覆盖度 (默认 0.50)
+    --tmp-dir             临时目录
+    --keep-temp           保留临时文件
+    --force               强制重跑
 
-  参数:
+  编排器透传参数:
     --input_reads    输入目录 (默认读取 00b_HostDepletion/) [必需]
     --output_dir     输出根目录 [必需]
     --assembler      {penguin,megahit,rnaviralspades,all} 默认 penguin
-    --virus_db       病毒鉴定数据库根目录 [必需]
     -t, --threads    线程数 (默认 20)
     -m, --memory     内存 GB (默认 64)
     -j, --jobs       并行数 (默认 2)
     --force          强制重跑
+
+  其余参数请直接调用子脚本: python scripts/assembly_pipeline.py -h
 
   输出: 01_Assembly/{sample}/{sample}_{tool}.contig.fasta
 """,
@@ -1268,25 +1286,36 @@ STAGE_HELP = {
                     vclust deduplicate 去重参考 → cd-hit 聚类 → 拆分 known/novel
     vclust Leiden   novel contig 的 Leiden 聚类 (ANI 95%, QCOV 85%)
 
-  调用命令: python cluster_pipeline.py -i <fasta> -o <dir> -t N
-             --min-length 500 --ani 0.95 --qcov 0.85 --stop-after-vclust
-             [--ref-genomes <fasta> --cdhit-ani 0.95 --cdhit-qcov 0.85]
+  子脚本完整参数:
+    -i / --input-fasta        输入 FASTA [必需]
+    -o / --output-dir         输出目录 [必需]
+    -fq / --fastq-dir         reads 目录 (--stop-after-vclust 时不需要)
+    -t / --threads            线程数 (默认 64)
+    --min-length              最小长度 bp (默认 500)
+    --ani                     vclust ANI (默认 0.95)
+    --qcov                    vclust QCOV (默认 0.85)
+    --skip-vclust             跳过 vclust (复用已有)
+    --vclust-cluster-file     复用已有聚类 TSV
+    --stop-after-vclust       聚类后停止 (编排器使用)
+    --ref-genomes             ICTV/NCBI 参考基因组 FASTA
+    --cdhit-ani               CD-HIT ANI (默认 0.95)
+    --cdhit-qcov              CD-HIT QCOV (默认 0.85)
+    --resume                  断点续传
 
-  参数:
+  编排器透传参数:
     --output_dir     输出根目录 [必需]
     --cluster_input  直接输入已合并 FASTA (跳过 COBRA 收集)
-    --ref-genomes    ICTV/NCBI 参考基因组 FASTA (启用 CD-HIT 预聚类)
+    --ref-genomes    ICTV/NCBI 参考基因组 FASTA
     --min-length     病毒最小长度 bp (默认 500)
-    --ani            vclust ANI 阈值 (默认 0.95)
-    --qcov           vclust QCOV 阈值 (默认 0.85)
+    --ani            vclust ANI (默认 0.95)
+    --qcov           vclust QCOV (默认 0.85)
     -t, --threads    线程数 (默认 20)
-    --force          强制重跑
 
   输出:
-    04_CLUSTER/centroids/final_centroids.fasta   (全部 centroids)
-    04_CLUSTER/centroids/known_association.tsv  (CD-HIT contig→参考映射)
-    04_CLUSTER/3_vclust/vclust_clusters.tsv     (聚类结果)
-    04_CLUSTER/3_vclust/split_fastas/           (per-cluster 拆分)
+    04_CLUSTER/centroids/final_centroids.fasta
+    04_CLUSTER/centroids/known_association.tsv
+    04_CLUSTER/3_vclust/vclust_clusters.tsv
+    04_CLUSTER/3_vclust/split_fastas/
 """,
     'taxonomy': """
   --stage taxonomy — 5 工具分类 + R 共识整合
@@ -1364,36 +1393,42 @@ STAGE_HELP = {
   子脚本: rescue_pipeline.py
     分支 A   CheckV 并行评估 centroids (completeness >90% pass)
     分支 C   Virseqimprover reads 迭代延伸 (cluster 多样本 reads 聚合)
-             Salmon 定量 → BBMap 提取 → SPAdes 组装 → CheckV
     分支 D   BLASTN 参考搜索 + CheckV + VSI 最后拯救
     合并     A+C+D pass → vclust 最终去重 → HQ vOTU
 
-  免拯救 = CD-HIT known (04_CLUSTER/centroids/known_ids.txt)
-         + CheckV pass (07_Checkv/checkv_pass_ids.txt)
+  免拯救 = CD-HIT known + CheckV pass (≥90%)
 
-  调用命令: python rescue_pipeline.py -c <centroids> --clusters-tsv <tsv>
-             --split-dir <dir> -o <dir> -fq <dir> -cv <db> [-db <blastdb>]
-             -t N -j N --virseqimprover-path <py> --salmon-bin <bin> [--resume]
+  子脚本完整参数:
+    -c / --centroids            输入 centroids FASTA [必需]
+    --clusters-tsv              vclust 聚类结果 TSV [必需]
+    --split-dir                 per-cluster 拆分目录 [必需]
+    -o / --output-dir           输出目录 [必需]
+    -fq / --fastq-dir           reads 目录 [必需]
+    -cv / --checkv-db           CheckV 数据库 [必需]
+    -db / --blast-db            BLAST 数据库 (分支 D, 可选)
+    --virseqimprover-path       Virseqimprover.py 路径
+    --salmon-bin                Salmon 路径 (默认 salmon)
+    -t / --threads              线程数 (默认 64)
+    -j / --jobs                 VSI 并行数 (默认 4)
+    --ani                       最终 vclust ANI (默认 0.95)
+    --qcov                      最终 vclust QCOV (默认 0.85)
+    --resume                    断点续传
 
-  参数:
+  编排器透传参数:
     --input_reads       项目根目录 [必需]
     --output_dir        输出根目录 [必需]
     --checkv_db         CheckV 数据库 [必需]
-    --blast-db          BLAST 参考数据库 (分支D, ref.fasta) [可选]
-    --host-filter       目标宿主, 逗号分隔 (默认 Plant, Unknown 跳过)
-    --ref-genomes       ICTV/NCBI 参考基因组 (CD-HIT known 补充)
+    --blast-db          BLAST 数据库 (分支 D, 可选)
+    --host-filter       目标宿主, 逗号分隔 (默认 Plant)
     --min-length        病毒最小长度 bp (默认 500)
-    --ani               vclust ANI 阈值 (默认 0.95)
-    --qcov              vclust QCOV 阈值 (默认 0.85)
-    --virseqimprover-path  Virseqimprover.py 路径
-    --salmon-bin        Salmon 路径 (默认 salmon)
+    --ani               vclust ANI (默认 0.95)
+    --qcov              vclust QCOV (默认 0.85)
     -t, --threads       线程数 (默认 20)
     -j, --jobs          并行数 (默认 2)
-    --force             强制重跑
 
   输出:
-    08_Rescue/{host}/centroids/final_centroids.fasta  (最终 HQ vOTU)
-    08_Rescue/checkv/                                   (按宿主 CheckV 质量报告)
+    08_Rescue/{host}/centroids/final_centroids.fasta
+    08_Rescue/checkv/
 """,
 }
 
@@ -1475,6 +1510,7 @@ def _build_parser(add_help=True):
                    help='rRNA 剔除工具: ribodetector (默认) / silva (Bowtie2+SILVA)')
     g.add_argument('--silva_index', help='SILVA Bowtie2 索引前缀 (--rrna_tool silva 时必需)')
     g.add_argument('--assembler', default='penguin', choices=['megahit', 'rnaviralspades', 'penguin', 'all'])
+    g.add_argument('--contig-length', '-l', type=int, default=200, help='contig 最小长度 bp (默认 200)')
     g.add_argument('--identify_tools', default='all', help='病毒鉴定工具')
     g.add_argument('--phabox-db', help='PhaBOX2 数据库路径 (host 阶段)')
     g.add_argument('--prob-dir', help='ICTV 宿主概率表目录 (host 阶段, 默认: cross_analysis/)')
