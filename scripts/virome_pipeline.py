@@ -569,6 +569,10 @@ class ViromePipeline:
         ]
         if self.args.ref_genomes:
             parts.append(f"--ref-genomes {' '.join(self.args.ref_genomes)}")
+        if self.args.cdhit_ani:
+            parts.append(f"--cdhit-ani {self.args.cdhit_ani}")
+        if self.args.cdhit_qcov:
+            parts.append(f"--cdhit-qcov {self.args.cdhit_qcov}")
 
         ok, _ = run_cmd(' '.join(parts), self.log, "CLUSTER (vclust only)")
         if not ok:
@@ -1577,6 +1581,8 @@ def _build_parser(add_help=True):
     g.add_argument('--min-length', type=int, default=500, help='病毒最小长度 bp (默认 500)')
     g.add_argument('--ani', type=float, default=0.95, help='vclust ANI 阈值 (默认 0.95)')
     g.add_argument('--qcov', type=float, default=0.85, help='vclust qcov 阈值 (默认 0.85)')
+    g.add_argument('--cdhit_ani', type=float, help='CD-HIT ANI 阈值 (默认 0.95, 转录组建议 0.85)')
+    g.add_argument('--cdhit_qcov', type=float, help='CD-HIT qcov 阈值 (默认 0.85, 转录组建议 0.50)')
     g.add_argument('--virseqimprover-path', help='Virseqimprover.py 路径')
     g.add_argument('--salmon-bin', default='salmon', help='Salmon 二进制路径 (默认: salmon)')
 
