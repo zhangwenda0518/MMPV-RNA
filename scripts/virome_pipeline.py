@@ -968,6 +968,20 @@ class ViromePipeline:
                 parts.append(f"--uniprot-db {self.args.uniprot_db}")
             if self.args.metabuli_db:
                 parts.append(f"--metabuli-db {self.args.metabuli_db}")
+            if self.args.genomad_db:
+                parts.append(f"--genomad-db {self.args.genomad_db}")
+            if self.args.cat_db:
+                parts.append(f"--cat-db {self.args.cat_db}")
+            if self.args.cat_tax:
+                parts.append(f"--cat-tax {self.args.cat_tax}")
+            if self.args.mmseqs_db:
+                parts.append(f"--mmseqs-db {self.args.mmseqs_db}")
+            if self.args.vitap_db:
+                parts.append(f"--vitap-db {self.args.vitap_db}")
+            if self.args.acvirus_db:
+                parts.append(f"--acvirus-db {self.args.acvirus_db}")
+            if self.args.vcontact3_db:
+                parts.append(f"--vcontact3-db {self.args.vcontact3_db}")
             if self.args.force:
                 parts.append("-f")
             ok, _ = run_cmd(' '.join(parts), self.log, "virus_classifier2.py")
@@ -1568,6 +1582,15 @@ def _build_parser(add_help=True):
     g.add_argument('--qcov', type=float, default=0.85, help='vclust qcov 阈值 (默认 0.85)')
     g.add_argument('--virseqimprover-path', help='Virseqimprover.py 路径')
     g.add_argument('--salmon-bin', default='salmon', help='Salmon 二进制路径 (默认: salmon)')
+
+    g = p.add_argument_group('分类数据库 (virus_classifier2.py)')
+    g.add_argument('--genomad_db', help='genomad DB 路径')
+    g.add_argument('--cat_db', help='CAT 数据库路径')
+    g.add_argument('--cat_tax', help='CAT taxonomy 路径')
+    g.add_argument('--mmseqs_db', help='mmseqs 数据库路径')
+    g.add_argument('--vitap_db', help='VITAP 数据库路径')
+    g.add_argument('--acvirus_db', help='ACVirus 数据库路径')
+    g.add_argument('--vcontact3_db', help='vConTACT3 数据库路径')
     return p
 
 
