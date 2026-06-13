@@ -1566,8 +1566,10 @@ def main():
         if args.input_reads and Path(args.input_reads).exists():
             pipe.reads_dir = Path(args.input_reads)
         elif stage == 'deplete':
-            # deplete: 自动使用 clean 输出
-            pipe.reads_dir = pipe.d['clean']
+            # deplete: 自动使用 clean 输出 (优先 clumpify, 否则 fasta)
+            cl = pipe.d['clean'] / '3.clumpify'
+            fa = pipe.d['clean'] / '2.fasta'
+            pipe.reads_dir = cl if (cl.exists() and any(cl.iterdir())) else fa
         else:
             pipe.reads_dir = pipe.d['hostdep']
         if not pipe.reads_dir.exists() or not any(pipe.reads_dir.iterdir()):
