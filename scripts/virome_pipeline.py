@@ -1558,10 +1558,12 @@ def main():
 
     stage = args.stage
 
+    readless = stage in ('cluster', 'taxonomy', 'host', 'checkv')
     logger.info("=" * 50)
     logger.info("Virome Pipeline v2.3")
     logger.info("  Stage:    %s", stage)
-    logger.info("  Reads:    %s", args.input_reads)
+    if not readless:
+        logger.info("  Input:    %s", args.input_reads or args.output_dir)
     logger.info("  Output:   %s", args.output_dir)
 
     # 根据 stage 自动设置 skip 标志
