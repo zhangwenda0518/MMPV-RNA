@@ -718,6 +718,7 @@ class CobraPipeline:
         if self.is_task_completed(task_id):
             main_logger.debug(f"跳过已处理的任务: {task_id}")
             return {
+                "task_id": task_id,
                 "sample": sample,
                 "assembler": assembler,
                 "status": "skipped",
@@ -769,11 +770,11 @@ class CobraPipeline:
             if not self.check_fasta_file(normalized_virus):
                 sample_logger.warning(f"virus.fa文件为空或无效，跳过COBRA运行")
 
-                self.save_checkpoint(task_id)
                 sample_logger.info(f"任务完成（跳过COBRA）: {task_id}")
                 main_logger.info(f"完成处理（跳过COBRA）: {task_id} [virus.fa为空或无效]")
 
                 return {
+                    "task_id": task_id,
                     "sample": sample,
                     "assembler": assembler,
                     "status": "success",
@@ -867,13 +868,13 @@ class CobraPipeline:
                 cobra_output, output_dir, base_sample, sample_mode, assembler, sample_logger
             )
 
-            self.save_checkpoint(task_id)
             sample_logger.info(f"任务完成: {task_id}")
-            
+
             cobra_status = "成功生成延伸序列" if cobra_final_file else "未生成有效延伸序列"
             main_logger.info(f"完成处理: {task_id} [{cobra_status}]")
-            
+
             return {
+                "task_id": task_id,
                 "sample": sample,
                 "assembler": assembler,
                 "status": "success",
@@ -886,6 +887,7 @@ class CobraPipeline:
             error_msg = f"处理失败 {task_id}: {str(e)}"
             main_logger.error(error_msg)
             return {
+                "task_id": task_id,
                 "sample": sample,
                 "assembler": assembler,
                 "status": "failed",
@@ -950,6 +952,11 @@ class CobraPipeline:
                     try:
                         result = future.result(timeout=3600)
                         results.append(result)
+
+                        # 主进程保存断点 (避免子进程竞态覆盖)
+                        tid = result.get("task_id")
+                        if tid and result.get("status") in ("success", "skipped"):
+                            self.save_checkpoint(tid)
 
                         # 根据任务状态设置不同的颜色和图标
                         status_info = []
