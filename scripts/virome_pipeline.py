@@ -31,11 +31,13 @@ import subprocess
 import logging
 import re
 import shutil
+import threading
 from pathlib import Path
 from collections import defaultdict
 
 import polars as pl
 from Bio import SeqIO
+from concurrent.futures import ThreadPoolExecutor
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -462,12 +464,14 @@ class ViromePipeline:
             for tool, contig_path in tools.items():
                 all_contigs.append(contig_path)
 
-        self.log.info("  %d 个 contig 文件待鉴定 (内部 --jobs %d 并行)",
-                     len(all_contigs), self.args.jobs)
+        self.log.info("  %d 个 contig 文件待鉴定 (并行 %d 样本, 各 %d 线程)",
+                     len(all_contigs), self.args.jobs, self.args.threads)
 
-        # virus_identification16.py: --input (文件或目录), --output, --db_dir,
-        #   --identify_tools, --threads, --jobs, --force
-        for contig in all_contigs:
+        # 构建命令模板 (每个样本独立调用子脚本, 并行执行)
+        lock = threading.Lock()
+        done = [0]
+
+        def _run_one(contig):
             parts = [
                 f"python {self.sc['identify']}",
                 f"--input {contig}",
@@ -475,7 +479,7 @@ class ViromePipeline:
                 f"--db_dir {self.args.virus_db}",
                 f"--identify_tools {self.args.identify_tools}",
                 f"--threads {self.args.threads}",
-                f"--jobs {self.args.jobs}",
+                f"--jobs 1",
                 f"--blast_mode {self.args.blast_mode}",
                 f"--blast_evalue {self.args.blast_evalue}",
                 f"--blast_top_n {self.args.blast_top_n}",
@@ -489,7 +493,13 @@ class ViromePipeline:
                     parts.append(f"--{arg} {val}")
             if self.args.force:
                 parts.append("--force")
-            run_cmd(' '.join(parts), self.log, f"VirusID: {contig.name}")
+            ok, _ = run_cmd(' '.join(parts), self.log, f"VirusID: {contig.name}")
+            with lock:
+                done[0] += 1
+                self.log.info("  鉴定进度: %d/%d", done[0], len(all_contigs))
+
+        with ThreadPoolExecutor(max_workers=self.args.jobs) as ex:
+            list(ex.map(_run_one, all_contigs))
 
         self.viral_map = scan_viral_files(self.d['ident'])
         self.log.info("  鉴定完成: %d 样本有病毒候选序列", len(self.viral_map))
