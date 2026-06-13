@@ -731,8 +731,8 @@ class ViromePipeline:
             f"--ani {self.args.ani}",
             f"--qcov {self.args.qcov}",
         ]
-        if self.args.virus_db:
-            parts.append(f"-db {self.args.virus_db}")
+        if self.args.blast_db:
+            parts.append(f"-db {self.args.blast_db}")
         vsi_path = self.args.virseqimprover_path or str(self.sc['cluster'].parent / 'Virseqimprover.py')
         parts += [f"--virseqimprover-path {vsi_path}"]
         parts += [f"--salmon-bin {self.args.salmon_bin}"]
@@ -1344,7 +1344,7 @@ STAGE_HELP = {
     --input_reads       项目根目录 [必需]
     --output_dir        输出根目录 [必需]
     --checkv_db         CheckV 数据库 [必需]
-    --virus_db          病毒参考数据库 (分支D BLASTN) [必需]
+    --blast-db          BLAST 参考数据库 (分支D, ref.fasta) [可选]
     --host-filter       目标宿主, 逗号分隔 (默认 Plant, Unknown 跳过)
     --ref-genomes       ICTV/NCBI 参考基因组 (CD-HIT known 补充)
     --min-length        病毒最小长度 bp (默认 500)
@@ -1443,6 +1443,7 @@ def _build_parser(add_help=True):
     g.add_argument('--phabox-db', help='PhaBOX2 数据库路径 (host 阶段)')
     g.add_argument('--prob-dir', help='ICTV 宿主概率表目录 (host 阶段, 默认: cross_analysis/)')
     g.add_argument('--ref-genomes', help='ICTV/NCBI 参考基因组 FASTA (CD-HIT 参考引导预聚类)')
+    g.add_argument('--blast-db', help='BLAST 参考数据库 (rescue 阶段分支 D, ref.fasta)')
 
     g = p.add_argument_group('计算资源')
     g.add_argument('--threads', '-t', type=int, default=20, help='线程 (默认 20)')
