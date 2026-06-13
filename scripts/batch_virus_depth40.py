@@ -624,7 +624,21 @@ class UnifiedVirusPipeline:
             except Exception: pass
                 
         final_df = asm_df.filter(filter_base & (track_a_pass | track_b_pass))
-        final_df.write_csv(str(self.output_dir / "summary" / "all_viruses.summary.tsv"), separator='\t')
+
+        # 精简输出列: 仅保留分析相关, 排除 ref_info 冗余元数据
+        _OUTPUT_COLS = ["Sample", "taxid", "Species_NCBI", "Species_ICTV",
+            "Asm_EM_Reads", "Uniq_Reads", "Multi_Reads", "Unique(%)",
+            "Rep_Accession", "Rep_Length", "Rep_Coverage(%)", "Rep_MeanDepth",
+            "Asm_CPM", "Asm_RPM", "Asm_FPKM", "Asm_TPM", "Asm_Rel_Abund(%)",
+            "Segment_Accessions", "Rep_Reads", "Asm_RPK_Sum", "Asm_Length",
+            "Sample_Total_RPK", "Sample_Total_Mapped", "Sample_Global_Reads",
+            "Avg_Read_Len", "Predicted_Support", "Poisson_Ratio",
+            "Segment", "Molecule_type", "Avg_Read_ANI", "Avg_Pi"]
+        if 'gene_total_cov' in final_df.columns:
+            _OUTPUT_COLS.extend(['gene_total_cov', 'gene_avr_cov'])
+        _avail = [c for c in _OUTPUT_COLS if c in final_df.columns]
+        final_df.select(_avail).write_csv(str(self.output_dir / "summary" / "all_viruses.summary.tsv"), separator='\t')
+
         pre_best_df = final_df.sort(["Sample", "taxid", "Asm_EM_Reads"], descending=[False, False, True]).unique(subset=["Sample", "taxid"], keep="first", maintain_order=True)
         
         if not self.is_pseudo:
@@ -660,10 +674,10 @@ class UnifiedVirusPipeline:
         df_confirmed = merged_df.filter((pl.col("Avg_Read_ANI").is_not_null()) & (pl.col("Avg_Read_ANI") >= sp_thresh) | (pl.col("Avg_Read_ANI").is_null())).with_columns(pl.col("_Final_Species_Target").alias("Adjusted_Species"))
         df_novel = merged_df.filter((pl.col("Avg_Read_ANI").is_not_null()) & (pl.col("Avg_Read_ANI") < sp_thresh)).with_columns(pl.concat_str([pl.lit("s__unclassified_"), pl.col("_Final_Species_Target").str.replace_all(" ", "_")]).alias("Adjusted_Species"))
         
-        base_cols = ["Sample", "taxid", "Adjusted_Species", "Species_NCBI", "Species_ICTV", "Rep_Accession", "Rep_Length", "Rep_Coverage(%)", "Rep_MeanDepth", "Asm_EM_Reads", "Uniq_Reads", "Multi_Reads", "Unique(%)", "Avg_Read_ANI", "Avg_Pi", "Asm_CPM", "Asm_RPM", "Asm_FPKM", "Asm_TPM", "Asm_Rel_Abund(%)", "Predicted_Support", "Poisson_Ratio", "Segment_Accessions", "Rep_Reads"]
+        base_cols = [c for c in _OUTPUT_COLS + ["Adjusted_Species", "Base_Parsed_Species"] if c in df_confirmed.columns]
         if 'gene_total_cov' in merged_df.columns:
-            base_cols.extend(['gene_total_cov', 'gene_avr_cov'])
-        final_cols = [c for c in base_cols if c in df_confirmed.columns]
+            base_cols.extend([c for c in ['gene_total_cov', 'gene_avr_cov'] if c not in base_cols])
+        final_cols = base_cols
         
         if len(df_novel) > 0: df_novel.select(final_cols).write_csv(str(self.output_dir / "summary" / "all_viruses.unclassified.tsv"), separator='\t')
         
