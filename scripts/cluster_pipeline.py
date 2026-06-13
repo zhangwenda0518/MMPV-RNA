@@ -40,9 +40,14 @@ except ImportError:
 
 def run(cmd, desc="", timeout=None, check=True):
     label = desc or " ".join(str(c) for c in cmd)
-    print(f"  [RUN] {label}", flush=True)
+    t0 = datetime.now()
+    print(f"  [{t0.strftime('%H:%M:%S')}] {label}", flush=True)
     try:
-        return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=check)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=check)
+        t1 = datetime.now()
+        elapsed = (t1 - t0).total_seconds()
+        print(f"  [{t1.strftime('%H:%M:%S')}] {label} ✓ ({elapsed:.1f}s)", flush=True)
+        return result
     except subprocess.CalledProcessError as e:
         print(f"  [FAIL] 退出码 {e.returncode}")
         if e.stderr:
@@ -79,13 +84,16 @@ def tag_and_merge_fasta(contig_fa, ref_fa, out_dir):
     d = Path(out_dir); d.mkdir(parents=True, exist_ok=True)
     merged = d / "cdhit_combined.fasta"
 
-    # 0. vclust deduplicate 去重参考基因组 (处理 ICTV/NCBI 重复)
+    # 0. 统计去重前参考数
+    n_ref_before = sum(1 for _ in SeqIO.parse(ref_fa, "fasta")) if ref_fa and os.path.isfile(ref_fa) else 0
+
+    # 1. vclust deduplicate 去重参考基因组 (处理 ICTV/NCBI 重复)
     dedup_ref = d / "ref_dedup.fasta"
     if ref_fa and os.path.isfile(ref_fa):
         run(["vclust", "deduplicate", "-i", ref_fa, "-o", str(dedup_ref)], "vclust dedup 参考")
         ref_fa = str(dedup_ref)
 
-    # 1. 标记 + 合并
+    # 2. 标记 + 合并
     ref_ids = set()
     with open(merged, "w") as out:
         if ref_fa and os.path.isfile(ref_fa):
@@ -97,7 +105,9 @@ def tag_and_merge_fasta(contig_fa, ref_fa, out_dir):
 
     n_ref = len(ref_ids)
     n_our = sum(1 for _ in SeqIO.parse(contig_fa, "fasta"))
-    print(f"  CD-HIT 合并: {n_ref} 条参考 (去重后) + {n_our} 条 contig → {merged}")
+    n_dup = n_ref_before - n_ref
+    dup_info = f" (去除 {n_dup:,} 条重复)" if n_dup > 0 else ""
+    print(f"  CD-HIT 合并: {n_ref_before:,} → 去重 → {n_ref:,} 条参考{dup_info} + {n_our:,} 条 contig → {merged}")
     return str(merged), ref_ids
 
 
@@ -161,8 +171,17 @@ def run_cdhit_reference_clustering(input_fa, ref_fa, out_dir, ani=0.95, qcov=0.8
     known, novel, association = split_cdhit_clusters(all_clusters, ref_ids)
     n_known = len(known)
     n_novel_contigs = sum(len(info["members"]) for info in novel.values())
-    print(f"  已知关联簇: {n_known} (含参考基因组)")
-    print(f"  新颖簇:     {len(novel)} ({n_novel_contigs} 条 contig)")
+    # 统计 known 簇中参考基因组数和被关联的 contig 数
+    n_ref_in_known = 0
+    n_contig_in_known = 0
+    for _, info in known.items():
+        for m in info["members"]:
+            if m.startswith(TAG_REF): n_ref_in_known += 1
+            else: n_contig_in_known += 1
+    n_ref_with_contig = sum(1 for _, info in known.items() if any(m.startswith(TAG_OUR) for m in info["members"]))
+    print(f"  已知关联簇: {n_known:,} (含 {n_ref_in_known:,} 条参考, {n_contig_in_known:,} 条 contig)")
+    print(f"    其中 {n_ref_with_contig:,} 个簇有 contig 关联 (占比 {n_ref_with_contig/max(n_known,1)*100:.1f}%)")
+    print(f"  新颖簇:     {len(novel):,} ({n_novel_contigs:,} 条 contig)")
 
     # 4. 写入 known 簇 (先构建内存索引, 避免 O(n²) 重复解析)
     known_dir = d / "known_clusters"; known_dir.mkdir(exist_ok=True)
@@ -398,13 +417,19 @@ def main():
         else:
             if len(ref_files) == 1:
                 ref_fa = ref_files[0]
+                n = sum(1 for _ in SeqIO.parse(ref_fa, "fasta"))
+                print(f"  {os.path.basename(ref_fa)}: {n:,} 条")
             else:
                 ref_fa = str(out / "ref_merged.fasta")
+                total = 0
                 with open(ref_fa, "w") as mf:
                     for f in ref_files:
+                        n = sum(1 for _ in SeqIO.parse(f, "fasta"))
+                        print(f"  {os.path.basename(f)}: {n:,} 条")
+                        total += n
                         with open(f) as inf:
                             mf.write(inf.read())
-                print(f"  合并 {len(ref_files)} 个参考文件 → {ref_fa}")
+                print(f"  合计: {total:,} 条 → {ref_fa}")
 
             print("\n── Step 2a: CD-HIT 参考引导预聚类 ──")
             novel_fa, known_centroids_fa, n_known_clusters, n_novel, association_map = \
