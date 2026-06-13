@@ -614,20 +614,21 @@ class UnifiedVirusPipeline:
 
         filter_base = (pl.col("Sample_Total_Mapped") > 0) & (pl.col("Uniq_Reads") >= self.args.min_uniq_reads) & (pl.col("Asm_TPM") >= self.args.min_tpm)
         track_a_pass = (pl.col("Rep_Coverage(%)") >= self.args.coverage) & (pl.col("Poisson_Ratio") >= self.args.ratio) & (pl.col("Rep_MeanDepth") >= self.args.meandepth)
-        track_b_pass = pl.lit(False)
+        track_b_pass = pl.lit(True)  # 未启用 --genes_cov 时B轨默认通过
         if self.args.genes_cov and os.path.exists(self.args.genes_cov):
             try:
                 genes_df = pl.read_csv(self.args.genes_cov, separator='\t', ignore_errors=True)
                 if 'seqid' in genes_df.columns and 'gene_total_cov' in genes_df.columns and 'gene_avr_cov' in genes_df.columns:
                     asm_df = asm_df.join(genes_df.select(['seqid', 'gene_total_cov', 'gene_avr_cov']), left_on="Rep_Accession", right_on="seqid", how="left")
                     track_b_pass = (pl.col("gene_total_cov").fill_null(0) >= self.args.min_gene_total_cov) & (pl.col("gene_avr_cov").fill_null(0) >= self.args.min_gene_avr_cov)
-                    # RNA-seq 转录组数据: DNA病毒仅覆盖基因区, 不适用全长基因覆盖率过滤
+                    # RNA-seq 转录组数据: DNA病毒仅覆盖基因区不适用全长过滤
+                    # RNA病毒需同时满足 A轨(全基因组) + B轨(基因区), DNA病毒仅A轨
                     if 'Molecule_type' in asm_df.columns:
                         is_dna = pl.col("Molecule_type").str.contains(r"(?i)^DNA|(?i)dsDNA|(?i)ssDNA")
-                        track_b_pass = track_b_pass & ~is_dna
+                        track_b_pass = track_b_pass | is_dna  # DNA默认通过B轨(不适用)
             except Exception: pass
-                
-        final_df = asm_df.filter(filter_base & (track_a_pass | track_b_pass))
+
+        final_df = asm_df.filter(filter_base & track_a_pass & track_b_pass)
 
         # 精简输出列: 仅保留分析相关, 排除 ref_info 冗余元数据
         _OUTPUT_COLS = ["Sample", "taxid", "Species_NCBI", "Species_ICTV",
