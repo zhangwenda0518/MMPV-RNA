@@ -116,9 +116,10 @@ def extract_base_sample(filename):
     """
     name = os.path.basename(str(filename))
     for pat in [
-        r'\.f(ast)?[aq](\.(gz|bz2))?$',
+        r'[._]f(ast)?[aq](\.(gz|bz2))?$',
         r'[._-][Rr][12](?=[._-]|\.|$)',
         r'(?<=[._-])[12](?=[._-]|\.|$)',
+        r'_S\d+_L\d+',    # Illumina sample/lane tag
         r'_clean',
         r'_megahit\.contig',
         r'_rnaviralspades\.contig',
