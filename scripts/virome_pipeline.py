@@ -537,24 +537,39 @@ class ViromePipeline:
         self.log.info("=" * 50)
         self.log.info("[4] CLUSTER 三支路病毒基因组去冗余")
 
-        # 优先使用直接输入, 否则自动收集 COBRA 结果
+        # 优先使用直接输入, 否则自动收集 02_Identification + 03_COBRA 全部病毒序列
         if self.args.cluster_input and os.path.isfile(self.args.cluster_input):
             cluster_fa = Path(self.args.cluster_input)
             self.log.info("  CLUSTER 直接输入: %s", cluster_fa)
         else:
-            cluster_input = self.d['cobra']
-            if not Path(cluster_input).exists():
-                self.log.error("COBRA 输出 %s 不存在, 跳过 CLUSTER", cluster_input)
+            ident_dir = self.d['ident']
+            cobra_dir = self.d['cobra']
+            if not ident_dir.is_dir() and not cobra_dir.is_dir():
+                self.log.error("Identification (%s) 和 COBRA (%s) 均不存在, 跳过 CLUSTER", ident_dir, cobra_dir)
                 return
             cluster_fa = Path(self.d['root']) / "cluster_input.fasta"
+            n_ident, n_cobra = 0, 0
             with open(cluster_fa, 'w') as out:
-                for f in Path(cluster_input).rglob('*.cobra.fa'):
-                    with open(f) as inf:
-                        out.write(inf.read())
+                # 1. 收集 02_Identification: 每个样本/工具的 virus 序列
+                if ident_dir.is_dir():
+                    for vf in ident_dir.rglob('*virus*.fasta'):
+                        with open(vf) as inf:
+                            out.write(inf.read())
+                            n_ident += 1
+                    for vf in ident_dir.rglob('*virus*.fa'):
+                        with open(vf) as inf:
+                            out.write(inf.read())
+                            n_ident += 1
+                # 2. 收集 03_COBRA: 延伸结果
+                if cobra_dir.is_dir():
+                    for cf in cobra_dir.rglob('*.cobra.fa'):
+                        with open(cf) as inf:
+                            out.write(inf.read())
+                            n_cobra += 1
             if cluster_fa.stat().st_size == 0:
                 self.log.warning("未找到任何输入, 跳过 CLUSTER")
                 return
-            self.log.info("  CLUSTER 输入 (自动收集): %s", cluster_fa)
+            self.log.info("  CLUSTER 输入 (自动收集): %d ident + %d cobra → %s", n_ident, n_cobra, cluster_fa)
 
         self.log.info("  CLUSTER 输入: %s", cluster_fa)
 
