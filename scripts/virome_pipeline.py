@@ -1069,30 +1069,32 @@ class ViromePipeline:
 
         cobra_dir = self.d['cobra']
 
-        # 统计 COBRA 输出
+        # 统计 COBRA 输出 (仅当目录存在)
         sample_count = 0
         cobra_file_count = 0
-        for sample_dir in cobra_dir.iterdir():
-            if not sample_dir.is_dir():
-                continue
-            sample_count += 1
-            for result_dir in sample_dir.iterdir():
-                if result_dir.is_dir() and result_dir.name.startswith('cobra_'):
-                    for cf in result_dir.glob('*.cobra.fa'):
-                        if cf.stat().st_size > 0:
-                            cobra_file_count += 1
+        if cobra_dir.is_dir():
+            for sample_dir in cobra_dir.iterdir():
+                if not sample_dir.is_dir():
+                    continue
+                sample_count += 1
+                for result_dir in sample_dir.iterdir():
+                    if result_dir.is_dir() and result_dir.name.startswith('cobra_'):
+                        for cf in result_dir.glob('*.cobra.fa'):
+                            if cf.stat().st_size > 0:
+                                cobra_file_count += 1
 
         self.log.info("=" * 50)
-        self.log.info("  全流水线完成!")
+        self.log.info("  流水线完成!")
         self.log.info("")
         self.log.info("  输出目录结构:")
-        self.log.info("    数据清洗:     %s", self.d['clean'] if not self.args.skip_clean else '(跳过)')
-        self.log.info("    去宿主:       %s", self.d['hostdep'] if not self.args.skip_depletion else '(跳过)')
-        self.log.info("    组装结果:     %s", self.d['asm'])
-        self.log.info("    病毒鉴定:     %s", self.d['ident'])
-        self.log.info("    COBRA 延伸:   %s (%d 样本, %d 个延伸结果)",
-                     cobra_dir, sample_count, cobra_file_count)
-        self.log.info("    CLUSTER 去冗余:  %s", self.d['cluster'])
+        self.log.info("    数据清洗:     %s", self.d['clean'] if self.d['clean'].is_dir() else '(未运行)')
+        self.log.info("    去宿主:       %s", self.d['hostdep'] if self.d['hostdep'].is_dir() else '(未运行)')
+        self.log.info("    组装结果:     %s", self.d['asm'] if self.d['asm'].is_dir() else '(未运行)')
+        self.log.info("    病毒鉴定:     %s", self.d['ident'] if self.d['ident'].is_dir() else '(未运行)')
+        if cobra_file_count > 0:
+            self.log.info("    COBRA 延伸:   %s (%d 样本, %d 个延伸结果)",
+                         cobra_dir, sample_count, cobra_file_count)
+        self.log.info("    CLUSTER 去冗余:  %s", self.d['cluster'] if self.d['cluster'].is_dir() else '(未运行)')
         self.log.info("    运行日志:     %s", self.d['root'] / 'orchestrator.log')
         self.log.info("=" * 50)
 
