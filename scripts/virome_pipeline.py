@@ -96,7 +96,8 @@ def run_cmd(cmd, logger, step_name):
 # ═══════════════════════════════════════════════════════════════════
 
 SEQ_EXTS = ['.fastq', '.fq', '.fasta', '.fa',
-            '.fastq.gz', '.fq.gz', '.fasta.gz', '.fa.gz']
+            '.fastq.gz', '.fq.gz', '.fasta.gz', '.fa.gz',
+            '_fastq.gz', '_fq.gz', '_fasta.gz', '_fa.gz']
 
 
 def find_seq_files(search_dir):
