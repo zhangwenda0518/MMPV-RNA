@@ -446,9 +446,10 @@ class ViromePipeline:
 
         asm_map = getattr(self, 'asm_map', {})
         if not asm_map:
-            # 独立运行时自动扫描组装输出
+            # 独立运行时: 优先 --input_assembly, 否则默认 01_Assembly/
+            asm_dir = Path(self.args.input_assembly) if self.args.input_assembly else self.d['asm']
             scan_tools = ['megahit', 'rnaviralspades', 'penguin'] if self.args.assembler == 'all' else self.args.assembler.split(",")
-            asm_map = scan_contig_files(self.d['asm'], scan_tools)
+            asm_map = scan_contig_files(asm_dir, scan_tools)
         if not asm_map:
             self.log.error("无 contig 文件, 跳过鉴定。")
             return
@@ -1245,8 +1246,8 @@ STAGE_HELP = {
              --db_dir <dir> --identify_tools all --threads N --jobs N
 
   参数:
-    --input_reads    项目根目录 (自动扫描 01_Assembly/) [必需]
     --output_dir     输出根目录 [必需]
+    --input_assembly 组装结果目录 (默认自动读取 01_Assembly/)
     --virus_db       病毒鉴定数据库根目录 [必需]
     --identify_tools 鉴定工具 (默认 all, 或逗号分隔: genomad,diamond,...)
     -t, --threads    线程数 (默认 20)
@@ -1482,6 +1483,7 @@ def _build_parser(add_help=True):
     g.add_argument('--input_reads', help='原始 FASTQ 目录 (--cluster_input 模式可省略)')
     g.add_argument('--output_dir', required=True, help='项目输出根目录')
     g.add_argument('--cluster_input', help='直接输入已合并的病毒 FASTA (跳过 COBRA 收集)')
+    g.add_argument('--input_assembly', help='组装结果目录 (identification 阶段, 默认 01_Assembly/)')
 
     g = p.add_argument_group('流程控制')
     g.add_argument('--stage', default='all',
