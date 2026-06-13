@@ -448,7 +448,7 @@ class ViromePipeline:
         if not asm_map:
             # 独立运行时: 优先 --input_assembly, 否则默认 01_Assembly/
             asm_dir = Path(self.args.input_assembly) if self.args.input_assembly else self.d['asm']
-            scan_tools = ['megahit', 'rnaviralspades', 'penguin'] if self.args.assembler == 'all' else self.args.assembler.split(",")
+            scan_tools = ['megahit', 'rnaviralspades', 'penguin']
             asm_map = scan_contig_files(asm_dir, scan_tools)
         if not asm_map:
             self.log.error("无 contig 文件, 跳过鉴定。")
