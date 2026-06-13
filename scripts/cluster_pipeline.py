@@ -504,3 +504,7 @@ def main():
     print(f"  耗时:         {elapsed / 60:.1f} min")
     print(f"{'=' * 60}")
 
+
+if __name__ == "__main__":
+    main()
+
