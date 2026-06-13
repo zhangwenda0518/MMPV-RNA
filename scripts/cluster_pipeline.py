@@ -348,8 +348,8 @@ def main():
     p.add_argument("--vclust-cluster-file", default=None)
     p.add_argument("--stop-after-vclust", action="store_true",
                    help="仅运行到 vclust + 统计 + 拆分, 跳过三支路级联拯救 (供外部按宿主过滤后分批拯救)")
-    p.add_argument("--ref-genomes", default=None,
-                   help="ICTV/NCBI 参考基因组 FASTA (启用 CD-HIT 参考引导预聚类)")
+    p.add_argument("--ref-genomes", default=None, nargs='*',
+                   help="ICTV/NCBI 参考基因组 FASTA (可多个, 启用 CD-HIT 参考引导预聚类)")
     p.add_argument("--cdhit-ani", type=float, default=0.95,
                    help="CD-HIT 预聚类 ANI 阈值 (默认 0.95)")
     p.add_argument("--cdhit-qcov", type=float, default=0.85,
@@ -385,23 +385,36 @@ def main():
     n_known_clusters = 0
     association_map = {}
 
-    if args.ref_genomes and os.path.isfile(args.ref_genomes):
-        print("\n── Step 2a: CD-HIT 参考引导预聚类 ──")
-        novel_fa, known_centroids_fa, n_known_clusters, n_novel, association_map = \
-            run_cdhit_reference_clustering(input_fa, args.ref_genomes, out,
-                                           args.cdhit_ani, args.cdhit_qcov,
-                                           args.threads, args.min_length)
-        print(f"  CD-HIT 结果: {n_known_clusters} 已知簇 → CheckV, {n_novel} 新颖 contig → vclust Leiden")
-        # 保存 association 表到 centroids
-        assoc_out = out / "centroids" / "known_association.tsv"
-        assoc_out.parent.mkdir(parents=True, exist_ok=True)
-        src_assoc = Path(out) / "2_cdhit" / "known_association.tsv"
-        if src_assoc.is_file():
-            shutil.copy(src_assoc, assoc_out)
-        # 此后 vclust 仅处理 novel 部分
-        input_fa = novel_fa
-    elif args.ref_genomes:
-        print(f"\n  [WARN] --ref-genomes 指定的文件不存在: {args.ref_genomes}")
+    if args.ref_genomes:
+        # 多文件合并为单个 FASTA (vclust deduplicate 会自动去重)
+        ref_files = [f for f in args.ref_genomes if os.path.isfile(f)]
+        if not ref_files:
+            print(f"\n  [WARN] --ref-genomes 指定的文件均不存在: {args.ref_genomes}")
+        else:
+            if len(ref_files) == 1:
+                ref_fa = ref_files[0]
+            else:
+                ref_fa = str(out / "ref_merged.fasta")
+                with open(ref_fa, "w") as mf:
+                    for f in ref_files:
+                        with open(f) as inf:
+                            mf.write(inf.read())
+                print(f"  合并 {len(ref_files)} 个参考文件 → {ref_fa}")
+
+            print("\n── Step 2a: CD-HIT 参考引导预聚类 ──")
+            novel_fa, known_centroids_fa, n_known_clusters, n_novel, association_map = \
+                run_cdhit_reference_clustering(input_fa, ref_fa, out,
+                                               args.cdhit_ani, args.cdhit_qcov,
+                                               args.threads, args.min_length)
+            print(f"  CD-HIT 结果: {n_known_clusters} 已知簇 → CheckV, {n_novel} 新颖 contig → vclust Leiden")
+            # 保存 association 表到 centroids
+            assoc_out = out / "centroids" / "known_association.tsv"
+            assoc_out.parent.mkdir(parents=True, exist_ok=True)
+            src_assoc = Path(out) / "2_cdhit" / "known_association.tsv"
+            if src_assoc.is_file():
+                shutil.copy(src_assoc, assoc_out)
+            # 此后 vclust 仅处理 novel 部分
+            input_fa = novel_fa
 
     # ── Step 2b: vclust Leiden (novel 部分或全部) ──
     d2 = out / "3_vclust"; log_dir_2 = d2 / "logs"; log_dir_2.mkdir(parents=True, exist_ok=True)

@@ -554,7 +554,7 @@ class ViromePipeline:
             f"--stop-after-vclust",
         ]
         if self.args.ref_genomes:
-            parts.append(f"--ref-genomes {self.args.ref_genomes}")
+            parts.append(f"--ref-genomes {' '.join(self.args.ref_genomes)}")
 
         ok, _ = run_cmd(' '.join(parts), self.log, "CLUSTER (vclust only)")
         if not ok:
@@ -1513,7 +1513,7 @@ def _build_parser(add_help=True):
     g.add_argument('--identify_tools', default='all', help='病毒鉴定工具')
     g.add_argument('--phabox-db', help='PhaBOX2 数据库路径 (host 阶段)')
     g.add_argument('--prob-dir', help='ICTV 宿主概率表目录 (host 阶段, 默认: cross_analysis/)')
-    g.add_argument('--ref-genomes', help='ICTV/NCBI 参考基因组 FASTA (CD-HIT 参考引导预聚类)')
+    g.add_argument('--ref-genomes', nargs='*', help='ICTV/NCBI 参考基因组 FASTA (可多个, CD-HIT 参考引导预聚类)')
     g.add_argument('--blast-db', help='BLAST 参考数据库 (rescue 阶段分支 D, ref.fasta)')
 
     g = p.add_argument_group('计算资源')
