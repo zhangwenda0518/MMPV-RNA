@@ -270,12 +270,12 @@ class ViromePipeline:
         need_virus_db = stage in ('all', 'assembly', 'identification', 'cobra', 'cluster', 'taxonomy', 'host')
         need_checkv_db = stage in ('all', 'checkv', 'rescue')
 
-        # clean 阶段需要 kraken2 + host_align
-        if doing_clean and not (self.args.skip_clean and self.args.skip_depletion):
-            if not self.args.skip_depletion:
-                if not self.args.kraken2_db or not self.args.host_align_db:
-                    self.log.error("致命: clean 阶段需要 --kraken2_db / --host_align_db")
-                    sys.exit(1)
+        # deplete 阶段需要 kraken2 + host_align (或 --host_db 自动检测)
+        need_deplete_db = stage in ('all', 'deplete') or (stage == 'clean' and not self.args.skip_depletion)
+        if need_deplete_db and not self.args.host_db:
+            if not self.args.kraken2_db or not self.args.host_align_db:
+                self.log.error("致命: deplete 阶段需要 --kraken2_db/--host_align_db 或 --host_db")
+                sys.exit(1)
 
         # assembly/identification/cobra/cluster/taxonomy/host 阶段需要 virus_db
         if need_virus_db:
@@ -337,6 +337,42 @@ class ViromePipeline:
             self.log.info("[0b] 跳过 (--skip_depletion)")
             return
 
+        # 自动从 --host_db 推导子数据库路径
+        kraken2_db = self.args.kraken2_db
+        host_align_db = self.args.host_align_db
+        if self.args.host_db:
+            hdb = Path(self.args.host_db)
+            if not kraken2_db:
+                for sub in ['kraken2', 'kraken2_db', 'kraken']:
+                    if (hdb / sub).is_dir():
+                        kraken2_db = str(hdb / sub)
+                        break
+            if not host_align_db:
+                aligner = self.args.aligner
+                for sub in [aligner, f'{aligner}_index', 'align']:
+                    if (hdb / sub).is_dir():
+                        # 找索引前缀 (bowtie2: host.1.bt2, hisat2: host.1.ht2, minimap2: host_*.mmi)
+                        for prefix in ['host', 'index', 'genome']:
+                            test = hdb / sub / prefix
+                            if aligner == 'bowtie2' and (test.parent / (prefix + '.1.bt2')).is_file():
+                                host_align_db = str(test); break
+                            if aligner == 'hisat2' and (test.parent / (prefix + '.1.ht2')).is_file():
+                                host_align_db = str(test); break
+                            if aligner == 'minimap2':
+                                mmi = test.parent / f'{prefix}_{self.args.seq_type}.mmi'
+                                if mmi.is_file():
+                                    host_align_db = str(mmi); break
+                        if host_align_db:
+                            break
+            self.log.info("  host_db: %s → kraken2=%s, align=%s", hdb, kraken2_db or '?', host_align_db or '?')
+
+        if not kraken2_db:
+            self.log.error("致命: 需要 --kraken2_db 或 --host_db")
+            sys.exit(1)
+        if not host_align_db:
+            self.log.error("致命: 需要 --host_align_db 或 --host_db")
+            sys.exit(1)
+
         self.log.info("=" * 50)
         self.log.info("[0b] Kraken2 → Align → Ribodetector")
 
@@ -347,8 +383,8 @@ class ViromePipeline:
             f"python {self.sc['deplete']}",
             f"--tool {self.args.aligner}",
             f"--seq-type {self.args.seq_type}",
-            f"--kraken2_index {self.args.kraken2_db}",
-            f"--step2_index {self.args.host_align_db}",
+            f"--kraken2_index {kraken2_db}",
+            f"--step2_index {host_align_db}",
             f"--input-dir {self.reads_dir}",
             f"--outdir {self.d['hostdep']}",
             f"--jobs {self.args.jobs}",
@@ -1140,8 +1176,9 @@ STAGE_HELP = {
   参数:
     --input_reads    输入目录 (默认读取 00a_CleanData/) [必需]
     --output_dir     输出根目录 [必需]
-    --kraken2_db     Kraken2 宿主库路径 [必需]
-    --host_align_db  宿主比对索引 (Bowtie2/HISAT2) [必需]
+    --host_db        宿主数据库根目录 (自动查找 kraken2/bowtie2/hisat2/minimap2 子目录)
+    --kraken2_db     Kraken2 宿主库 (覆盖 --host_db 自动检测)
+    --host_align_db  宿主比对索引 (覆盖 --host_db 自动检测)
     --aligner        {bowtie2,hisat2,minimap2} 默认 bowtie2
     --seq_type       {dna-short,rna-short,nanopore,pacbio} 默认 rna-short
     --rrna           开启 rRNA 剔除
@@ -1427,8 +1464,9 @@ def _build_parser(add_help=True):
     g.add_argument('--force', action='store_true', help='强制重跑')
 
     g = p.add_argument_group('数据库路径')
-    g.add_argument('--kraken2_db', help='Kraken2 宿主库')
-    g.add_argument('--host_align_db', help='宿主比对索引')
+    g.add_argument('--host_db', help='宿主数据库根目录 (自动查找 kraken2/ bowtie2/ hisat2/ minimap2/)')
+    g.add_argument('--kraken2_db', help='Kraken2 宿主库 (覆盖 --host_db 自动检测)')
+    g.add_argument('--host_align_db', help='宿主比对索引 (覆盖 --host_db 自动检测)')
     g.add_argument('--virus_db', help='病毒鉴定数据库根目录')
     g.add_argument('--checkv_db', help='CheckV 数据库路径')
 
