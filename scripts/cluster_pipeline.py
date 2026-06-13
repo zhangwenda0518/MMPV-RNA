@@ -164,21 +164,21 @@ def run_cdhit_reference_clustering(input_fa, ref_fa, out_dir, ani=0.95, qcov=0.8
     print(f"  已知关联簇: {n_known} (含参考基因组)")
     print(f"  新颖簇:     {len(novel)} ({n_novel_contigs} 条 contig)")
 
-    # 4. 写入 known 簇
+    # 4. 写入 known 簇 (先构建内存索引, 避免 O(n²) 重复解析)
     known_dir = d / "known_clusters"; known_dir.mkdir(exist_ok=True)
     known_centroids = []
+    # 一次性加载 merged FASTA 到 dict
+    merged_index = SeqIO.to_dict(SeqIO.parse(merged_fa, "fasta"))
     for cname, info in known.items():
-        # 收集簇内所有成员 (去前缀)
         records = []
         for member_id in info["members"]:
-            clean_id = strip_tags(member_id)
-            for rec in SeqIO.parse(merged_fa, "fasta"):
-                if rec.id == member_id:
-                    rec.id = clean_id; rec.description = ""
-                    records.append(rec)
-                    if member_id == info["ref"]:
-                        known_centroids.append(rec)
-                    break
+            if member_id in merged_index:
+                rec = merged_index[member_id]
+                clean_id = strip_tags(member_id)
+                rec.id = clean_id; rec.description = ""
+                records.append(rec)
+                if member_id == info["ref"]:
+                    known_centroids.append(rec)
         if records:
             cluster_fa = known_dir / f"{cname}.all.fasta"
             SeqIO.write(records, cluster_fa, "fasta")
@@ -197,15 +197,16 @@ def run_cdhit_reference_clustering(input_fa, ref_fa, out_dir, ani=0.95, qcov=0.8
             af.write(f"{contig_id}\t{ref_acc}\n")
     print(f"  association: {len(association)} 条 → {assoc_tsv}")
 
-    # 5. 写入 novel contig 子集 (去前缀)
+    # 5. 写入 novel contig 子集 (去前缀, 复用 merged_index)
     novel_fa = str(d / "novel_contigs.fasta")
     novel_records = []
     novel_ids = set()
     for _, info in novel.items():
         for member_id in info["members"]:
             novel_ids.add(member_id)
-    for rec in SeqIO.parse(merged_fa, "fasta"):
-        if rec.id in novel_ids:
+    for member_id in novel_ids:
+        if member_id in merged_index:
+            rec = merged_index[member_id]
             rec.id = strip_tags(rec.id); rec.description = ""
             if len(rec.seq) >= min_length:
                 novel_records.append(rec)
