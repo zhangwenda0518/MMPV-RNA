@@ -352,8 +352,6 @@ def main():
     p.add_argument("--qcov", type=float, default=0.85)
     p.add_argument("--skip-vclust", action="store_true")
     p.add_argument("--vclust-cluster-file", default=None)
-    p.add_argument("--stop-after-vclust", action="store_true",
-                   help="仅运行到 vclust + 统计 + 拆分, 跳过三支路级联拯救 (供外部按宿主过滤后分批拯救)")
     p.add_argument("--ref-genomes", default=None, nargs='*',
                    help="ICTV/NCBI 参考基因组 FASTA (可多个, 启用 CD-HIT 参考引导预聚类)")
     p.add_argument("--cdhit-ani", type=float, default=0.95,
@@ -452,65 +450,57 @@ def main():
                     grf.write(f"{fasta_info[rid]['header']}\n{fasta_info[rid]['seq']}\n")
     print(f"  代表序列合集: {global_ref_fa}")
 
-    if args.stop_after_vclust:
-        # 产出 centroids (供 taxonomy/host 阶段读取)
-        # CD-HIT known + vclust novel 合并, 统一走 taxonomy → host → rescue
-        final_dir = out / "centroids"; final_dir.mkdir(parents=True, exist_ok=True)
-        centroids_fa = final_dir / "final_centroids.fasta"
-        known_id_file = final_dir / "known_ids.txt"
+    # 产出 centroids (供 taxonomy/host 阶段读取)
+    # CD-HIT known + vclust novel 合并, 统一走 taxonomy → host → rescue
+    final_dir = out / "centroids"; final_dir.mkdir(parents=True, exist_ok=True)
+    centroids_fa = final_dir / "final_centroids.fasta"
+    known_id_file = final_dir / "known_ids.txt"
 
-        n_known = 0
-        known_ids = set()
+    n_known = 0
+    known_ids = set()
 
-        # 先写入 CD-HIT known centroids (已有完整参考基因组)
-        if known_centroids_fa and os.path.isfile(known_centroids_fa):
-            with open(centroids_fa, "w") as cf:
-                for rec in SeqIO.parse(known_centroids_fa, "fasta"):
-                    cf.write(f">{rec.id}\n{str(rec.seq)}\n")
-                    known_ids.add(rec.id)
-            n_known = len(known_ids)
-            # 记录哪些 centroids 来自 CD-HIT known (供 rescue 阶段识别)
-            with open(known_id_file, "w") as kf:
-                for kid in sorted(known_ids):
-                    kf.write(f"{kid}\n")
+    if known_centroids_fa and os.path.isfile(known_centroids_fa):
+        with open(centroids_fa, "w") as cf:
+            for rec in SeqIO.parse(known_centroids_fa, "fasta"):
+                cf.write(f">{rec.id}\n{str(rec.seq)}\n")
+                known_ids.add(rec.id)
+        n_known = len(known_ids)
+        with open(known_id_file, "w") as kf:
+            for kid in sorted(known_ids):
+                kf.write(f"{kid}\n")
 
-        # 追加 vclust Leiden centroids (novel contig 簇代表)
-        n_novel = 0
-        with open(centroids_fa, "a") as cf:
-            for cname, info in clusters.items():
-                rid = info["ref"]
-                if rid in fasta_info:
-                    cf.write(f"{fasta_info[rid]['header']}\n{fasta_info[rid]['seq']}\n")
-                    n_novel += 1
+    n_novel = 0
+    with open(centroids_fa, "a") as cf:
+        for cname, info in clusters.items():
+            rid = info["ref"]
+            if rid in fasta_info:
+                cf.write(f"{fasta_info[rid]['header']}\n{fasta_info[rid]['seq']}\n")
+                n_novel += 1
 
-        n_total = n_known + n_novel
-        src = f" ({n_known} CD-HIT known + {n_novel} vclust novel)" if n_known else ""
-        print(f"  代表序列合集: {centroids_fa} ({n_total} 条{src})")
+    n_total = n_known + n_novel
+    src = f" ({n_known} CD-HIT known + {n_novel} vclust novel)" if n_known else ""
+    print(f"  代表序列合集: {centroids_fa} ({n_total} 条{src})")
 
-        # 物理拆分: CD-HIT known 子文件也加入 split_fastas (供 rescue 识别)
-        extracts_dir = d2 / "split_fastas"; extracts_dir.mkdir(parents=True, exist_ok=True)
-        if n_known:
-            cdhit_known_dir = Path(out) / "2_cdhit" / "known_clusters"
-            if cdhit_known_dir.is_dir():
-                for all_fa in cdhit_known_dir.glob("cluster_*.all.fasta"):
-                    dest = extracts_dir / f"cdhit_{all_fa.name}"
-                    shutil.copy(all_fa, dest)
-            print(f"  CD-HIT known 拆分: {cdhit_known_dir} → {extracts_dir}")
+    extracts_dir = d2 / "split_fastas"; extracts_dir.mkdir(parents=True, exist_ok=True)
+    if n_known:
+        cdhit_known_dir = Path(out) / "2_cdhit" / "known_clusters"
+        if cdhit_known_dir.is_dir():
+            for all_fa in cdhit_known_dir.glob("cluster_*.all.fasta"):
+                dest = extracts_dir / f"cdhit_{all_fa.name}"
+                shutil.copy(all_fa, dest)
+        print(f"  CD-HIT known 拆分: {cdhit_known_dir} → {extracts_dir}")
 
-        # 物理拆分 vclust novel
-        extract_cluster_files(clusters, fasta_info, d2)
-        print(f"  vclust novel 拆分: {d2}/split_fastas/")
+    extract_cluster_files(clusters, fasta_info, d2)
+    print(f"  vclust novel 拆分: {d2}/split_fastas/")
 
-        elapsed = (datetime.now() - start).total_seconds()
-        print(f"\n{'=' * 60}")
-        print(f"  [STOP] --stop-after-vclust: 已产出 clusters + centroids + 拆分文件, 跳过三支路拯救")
-        if n_known:
-            print(f"  CD-HIT known: {n_known} 条 (免 rescue, 已有完整参考)")
-            print(f"  known IDs:    {known_id_file}")
-        print(f"  vclust novel: {n_novel} 条 (后续进 rescue)")
-        print(f"  clusters:     {ctsv}")
-        print(f"  centroids:    {centroids_fa}")
-        print(f"  耗时:         {elapsed / 60:.1f} min")
-        print(f"{'=' * 60}")
-        return
+    elapsed = (datetime.now() - start).total_seconds()
+    print(f"\n{'=' * 60}")
+    if n_known:
+        print(f"  CD-HIT known: {n_known} 条 (免 rescue, 已有完整参考)")
+        print(f"  known IDs:    {known_id_file}")
+    print(f"  vclust novel: {n_novel} 条 (后续进 rescue)")
+    print(f"  clusters:     {ctsv}")
+    print(f"  centroids:    {centroids_fa}")
+    print(f"  耗时:         {elapsed / 60:.1f} min")
+    print(f"{'=' * 60}")
 

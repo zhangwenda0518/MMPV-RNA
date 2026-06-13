@@ -555,7 +555,6 @@ class ViromePipeline:
             f"--min-length {self.args.min_length}",
             f"--ani {self.args.ani}",
             f"--qcov {self.args.qcov}",
-            f"--stop-after-vclust",
         ]
         if self.args.ref_genomes:
             parts.append(f"--ref-genomes {' '.join(self.args.ref_genomes)}")
