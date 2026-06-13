@@ -1143,8 +1143,10 @@ def main():
                         help="单个任务的线程数(默认: 20)")
     
     # 断点运行参数
-    parser.add_argument("--resume", action="store_true",
-                        help="断点运行: 跳过已成功完成的任务")
+    parser.add_argument("--resume", action="store_true", default=True,
+                        help="断点运行: 跳过已成功完成的任务 (默认开启)")
+    parser.add_argument("--no-resume", action="store_false", dest="resume",
+                        help="禁用断点续传, 强制重跑所有任务")
     
     # COBRA参数
     parser.add_argument("--mink", type=int, default=21,

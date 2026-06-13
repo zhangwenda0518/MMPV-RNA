@@ -520,8 +520,9 @@ class ViromePipeline:
             f"--jobs {max(1, self.args.jobs // 2)}",
             f"--threads {self.args.threads}",
         ]
-        if not self.args.force:
-            parts.append("--resume")
+        if self.args.force:
+            parts.append("--no-resume")
+        # else: --resume 已是 cobra_pipeline.py 默认行为
 
         ok, _ = run_cmd(' '.join(parts), self.log, "COBRA Pipeline")
         if not ok:
