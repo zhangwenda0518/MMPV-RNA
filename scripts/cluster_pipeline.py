@@ -477,7 +477,7 @@ def main():
     print(f"  代表序列合集: {global_ref_fa}")
 
     # 产出 centroids (供 taxonomy/host 阶段读取)
-    # CD-HIT known + vclust novel 合并, 统一走 taxonomy → host → rescue
+    # final_centroids.fasta 只含 vclust novel — CD-HIT known 免 taxonomy/host/rescue
     final_dir = out / "centroids"; final_dir.mkdir(parents=True, exist_ok=True)
     centroids_fa = final_dir / "final_centroids.fasta"
     known_id_file = final_dir / "known_ids.txt"
@@ -486,26 +486,23 @@ def main():
     known_ids = set()
 
     if known_centroids_fa and os.path.isfile(known_centroids_fa):
-        with open(centroids_fa, "w") as cf:
-            for rec in SeqIO.parse(known_centroids_fa, "fasta"):
-                cf.write(f">{rec.id}\n{str(rec.seq)}\n")
-                known_ids.add(rec.id)
+        for rec in SeqIO.parse(known_centroids_fa, "fasta"):
+            known_ids.add(rec.id)
         n_known = len(known_ids)
         with open(known_id_file, "w") as kf:
             for kid in sorted(known_ids):
                 kf.write(f"{kid}\n")
 
     n_novel = 0
-    with open(centroids_fa, "a") as cf:
+    with open(centroids_fa, "w") as cf:
         for cname, info in clusters.items():
             rid = info["ref"]
             if rid in fasta_info:
                 cf.write(f"{fasta_info[rid]['header']}\n{fasta_info[rid]['seq']}\n")
                 n_novel += 1
 
-    n_total = n_known + n_novel
-    src = f" ({n_known} CD-HIT known + {n_novel} vclust novel)" if n_known else ""
-    print(f"  代表序列合集: {centroids_fa} ({n_total} 条{src})")
+    src = f" ({n_known} CD-HIT known 单独保存 + {n_novel} vclust novel)" if n_known else ""
+    print(f"  novel centroids: {centroids_fa} ({n_novel} 条{src})")
 
     extracts_dir = d2 / "split_fastas"; extracts_dir.mkdir(parents=True, exist_ok=True)
     if n_known:
