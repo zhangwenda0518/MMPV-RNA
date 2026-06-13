@@ -43,19 +43,6 @@ def check_file(path, min_size=10):
 
 # ----------------- 数据准备与工具执行 -----------------
 
-def prep_rnavirhost_taxa(tax_tsv, output_dir):
-    rvh_taxa_csv = os.path.join(output_dir, "RVH_taxa.csv")
-    if not tax_tsv or not check_file(tax_tsv): return None
-    df = pd.read_csv(tax_tsv, sep='\t')
-    with open(rvh_taxa_csv, 'w') as f:
-        f.write("y|virus order\n")
-        for _, row in df.iterrows():
-            cid = row['contig_id']
-            order = row['Order'] if pd.notna(row.get('Order')) else 'Unclassified'
-            if order in ['-', 'NA', 'None']: order = 'Unclassified'
-            f.write(f"{cid},{order}\n")
-    return rvh_taxa_csv
-
 def run_tools(args):
     # 1. RNAVirHost
     rvh_csv = os.path.join(args.output_dir, "RVH_result", "result.csv")
@@ -63,10 +50,10 @@ def run_tools(args):
         if not args.force and check_file(rvh_csv, 50):
             print(f"[SKIP] RNAVirHost — exists: {rvh_csv}")
         else:
-            taxa_csv = prep_rnavirhost_taxa(args.tax, args.output_dir)
-            cmd = ["rnavirhost", "predict", "-i", args.input, "-o", os.path.join(args.output_dir, "RVH_result")]
-            if taxa_csv: cmd += ["--taxa", taxa_csv]
-            run_step(cmd, "RNAVirHost Predict")
+            cmd1 = ["rnavirhost", "classify_order", "-i", args.input]
+            run_step(cmd1, "RNAVirHost Classify Order")
+            cmd2 = ["rnavirhost", "predict", "-i", args.input, "-o", os.path.join(args.output_dir, "RVH_result")]
+            run_step(cmd2, "RNAVirHost Predict")
 
     # 2. PhaBOX2 CHERRY
     pb2_tsv = os.path.join(args.output_dir, "phabox2_output", "final_prediction", "cherry_prediction.tsv")
@@ -87,7 +74,7 @@ def run_tools(args):
         elif check_file(args.tax):
             host_dir = os.path.join(args.output_dir, "C9_ICTV_result")
             os.makedirs(host_dir, exist_ok=True)
-            cmd = f"python {SCRIPT_DIR}/C9_classify_contigs.py -i {args.tax} -o {host_dir} --prob_dir {args.prob_dir}"
+            cmd = f"python {SCRIPT_DIR}/C9_classify_contigs.py -i {args.tax} -f {args.input} --output_dir {host_dir} --prob_dir {args.prob_dir} --mode high"
             run_step(cmd, "ICTV Taxonomy Lookup (C9)")
         else:
             print("[WARN] Valid taxonomy TSV required for C9 ICTV lookup.")
