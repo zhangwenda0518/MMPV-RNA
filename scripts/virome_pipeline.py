@@ -1264,6 +1264,7 @@ STAGE_HELP = {
   --stage cluster — 聚类 (CD-HIT 参考引导 + vclust Leiden, 仅聚类不拯救)
 
   子脚本: cluster_pipeline.py --stop-after-vclust
+    自动收集 03_COBRA/**/*.cobra.fa, 或通过 --cluster_input 直接指定
     seqkit          最小长度过滤 (--min-length, 默认 500bp)
     CD-HIT          参考引导预聚类 (可选 --ref-genomes, ANI 95%, QCOV 85%)
                     vclust deduplicate 去重参考 → cd-hit 聚类 → 拆分 known/novel
@@ -1274,11 +1275,9 @@ STAGE_HELP = {
              [--ref-genomes <fasta> --cdhit-ani 0.95 --cdhit-qcov 0.85]
 
   参数:
-    --input_reads    项目根目录 [必需]
     --output_dir     输出根目录 [必需]
     --cluster_input  直接输入已合并 FASTA (跳过 COBRA 收集)
     --ref-genomes    ICTV/NCBI 参考基因组 FASTA (启用 CD-HIT 预聚类)
-    --virus_db       病毒参考数据库 [必需]
     --min-length     病毒最小长度 bp (默认 500)
     --ani            vclust ANI 阈值 (默认 0.95)
     --qcov           vclust QCOV 阈值 (默认 0.85)
@@ -1450,7 +1449,7 @@ def _build_parser(add_help=True):
     g = p.add_argument_group('路径配置')
     g.add_argument('--input_reads', help='原始 FASTQ 目录 (--cluster_input 模式可省略)')
     g.add_argument('--output_dir', required=True, help='项目输出根目录')
-    g.add_argument('--cluster_input', help='直接输入已合并的病毒 FASTA (跳过 COBRA 收集, 需 reads 时仍需 --input_reads)')
+    g.add_argument('--cluster_input', help='直接输入已合并的病毒 FASTA (跳过 COBRA 收集)')
 
     g = p.add_argument_group('流程控制')
     g.add_argument('--stage', default='all',
@@ -1573,8 +1572,8 @@ def main():
         else:
             pipe.reads_dir = pipe.d['hostdep']
         if not pipe.reads_dir.exists() or not any(pipe.reads_dir.iterdir()):
-            if stage == 'cluster' and args.cluster_input:
-                logger.info("  --cluster_input 模式, 无需 reads")
+            if stage in ('cluster', 'taxonomy', 'host', 'checkv'):
+                logger.info("  %s 阶段无需 reads", stage)
             else:
                 logger.error("reads 目录 %s 为空", pipe.reads_dir)
                 sys.exit(1)
