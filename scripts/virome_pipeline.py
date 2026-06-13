@@ -206,7 +206,7 @@ class ViromePipeline:
         self.args = args
         self.log = logger
         out = Path(args.output_dir).absolute()
-        raw = Path(args.input_reads).absolute()
+        raw = Path(args.input_reads).absolute() if args.input_reads else Path(args.output_dir).absolute()
         script_dir = Path(__file__).parent.resolve()
 
         # 标准化目录
