@@ -1212,7 +1212,7 @@ def main():
 
     vc = parser.add_argument_group("共识参数 (--consensus 时生效)")
     vc.add_argument("-q", "--vc_qual", type=int, default=20, help="最低碱基质量 Phred 值 (默认: 20)")
-    vc.add_argument("-d", "--vc_depth", type=int, default=10, help="最低覆盖深度 (默认: 10)")
+    vc.add_argument("-d", "--vc_depth", type=int, default=5, help="最低覆盖深度 (默认: 5)")
     vc.add_argument("-f", "--vc_freq", type=float, default=0.5, help="变异最低频率阈值 (默认: 0.5)")
     vc.add_argument("-a", "--vc_ambig", type=str, default="N", help="低于阈值的碱基用此字符代替 (默认: N)")
 
