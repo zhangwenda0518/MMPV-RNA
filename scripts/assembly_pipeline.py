@@ -1465,6 +1465,28 @@ class AssemblyPipeline:
             stats['total']['mem'] = self._get_max_mem(stats)
             return True, stats
 
+        else:
+            # Run assembly when output doesn't exist
+            input_files = {'read1': sample_info['read1'], 'read2': sample_info['read2']} if sample_info['type'] == 'paired' else {'reads': sample_info['reads']}
+            success = self.run_assembly(args, input_files, sample, tool, stats)
+            if success:
+                output_file = self.temp_dir / self.get_output_filename(tool, sample)
+                if output_file.exists():
+                    import shutil as _shutil
+                    _shutil.copy2(output_file, final_output_path)
+                if args.refineC_split:
+                    self.logger.info(f'Running refineC split on {tool} result')
+                    self.run_refineC_split(args, final_output_path, sample, tool, stats)
+                self.cleanup(args)
+                stats['total']['time'] = stats[tool]['time'] + (time.time() - start_time)
+                stats['total']['mem'] = self._get_max_mem(stats)
+                return True, stats
+            else:
+                self.cleanup(args)
+                stats['total']['time'] = time.time() - start_time
+                stats['total']['mem'] = self._get_max_mem(stats)
+                return False, stats
+
     def process_single_sample_all_tools(self, args: argparse.Namespace, sample_info: Dict[str, Any]) -> Tuple[bool, Dict]:
         """使用所有工具处理单个样本"""
         stats = self._init_stats()
