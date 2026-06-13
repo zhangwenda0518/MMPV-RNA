@@ -138,6 +138,12 @@ def main():
     g.add_argument("--no_extract_reads", action="store_true", help="不提取 reads")
     g.add_argument("--no_consensus", action="store_true", help="不生成共识序列")
     g.add_argument("--no_call_variants", action="store_true", help="不检出变异")
+    g.add_argument("--bam", help="已有 BAM 文件夹 (替代 --reads_dir)")
+    g.add_argument("--disable_dynamic_vcf", action="store_true", help="禁用动态 VCF")
+    g.add_argument("--vc_qual", type=int, default=20, help="共识序列最低质量 (默认20)")
+    g.add_argument("--vc_depth", type=int, default=10, help="共识序列最低深度 (默认10)")
+    g.add_argument("--vc_freq", type=float, default=0.5, help="共识序列最低频率 (默认0.5)")
+    g.add_argument("--vc_ambig", type=float, default=0.25, help="共识序列 IUPAC 模糊阈值 (默认0.25)")
 
     # ── Step 3: 全长组装 ──
     g = p.add_argument_group("Step 3: 全长组装 (batch_virus_full)")
@@ -229,7 +235,6 @@ def main():
             f"--summary {summary_in}",
             f"--info {args.ref_info}",
             f"--reference {args.reference}",
-            f"--fastq {reads}",
             f"--variant_caller {args.variant_caller}",
             f"--output_dir {variants_dir}",
             f"--threads {args.threads}",
@@ -246,6 +251,13 @@ def main():
                       f"--snpeff_config {args.snpeff_config}", f"--snpeff_mem {args.snpeff_mem}"]
         if args.snpgenie:
             parts.append("--snpgenie")
+        if args.bam:
+            parts += ["--bam", args.bam]
+        else:
+            parts += ["--fastq", str(reads)]
+        if args.disable_dynamic_vcf:
+            parts.append("--disable_dynamic_vcf")
+        parts += [f"-q {args.vc_qual}", f"-d {args.vc_depth}", f"-f {args.vc_freq}", f"-a {args.vc_ambig}"]
         if args.resume:
             parts.append("--resume")
         if not run(' '.join(parts), log, "batch_virus_variants"):
