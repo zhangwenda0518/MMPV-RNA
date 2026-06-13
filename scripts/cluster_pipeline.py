@@ -155,7 +155,7 @@ def run_cdhit_reference_clustering(input_fa, ref_fa, out_dir, ani=0.95, qcov=0.8
       2. vclust cd-hit 聚类
       3. 拆分 known / novel
       4. 写入 known 簇和 novel contig 子集
-      返回 (novel_fa, known_centroids_fa, n_known_clusters, n_novel_contigs, association_map)
+      返回 (novel_fa, known_linked_fa, n_linked_centroids, n_novel_contigs, association_map)
     """
     d = Path(out_dir) / "2_cdhit"; d.mkdir(parents=True, exist_ok=True)
 
@@ -185,11 +185,13 @@ def run_cdhit_reference_clustering(input_fa, ref_fa, out_dir, ani=0.95, qcov=0.8
 
     # 4. 写入 known 簇 (先构建内存索引, 避免 O(n²) 重复解析)
     known_dir = d / "known_clusters"; known_dir.mkdir(exist_ok=True)
-    known_centroids = []
+    known_linked_centroids = []   # 有关联 contig 的已知簇 (可进入后续流程)
+    known_pure_centroids = []     # 纯参考簇 (仅记录, 不进 final_centroids)
     # 一次性加载 merged FASTA 到 dict
     merged_index = SeqIO.to_dict(SeqIO.parse(merged_fa, "fasta"))
     for cname, info in known.items():
         records = []
+        has_contig = any(m.startswith(TAG_OUR) for m in info["members"])
         for member_id in info["members"]:
             if member_id in merged_index:
                 rec = merged_index[member_id]
@@ -197,16 +199,24 @@ def run_cdhit_reference_clustering(input_fa, ref_fa, out_dir, ani=0.95, qcov=0.8
                 rec.id = clean_id; rec.description = ""
                 records.append(rec)
                 if member_id == info["ref"]:
-                    known_centroids.append(rec)
+                    if has_contig:
+                        known_linked_centroids.append(rec)
+                    else:
+                        known_pure_centroids.append(rec)
         if records:
             cluster_fa = known_dir / f"{cname}.all.fasta"
             SeqIO.write(records, cluster_fa, "fasta")
 
-    # known centroids
+    # known centroids (全部)
     known_centroids_fa = str(d / "known_centroids.fasta")
-    if known_centroids:
-        SeqIO.write(known_centroids, known_centroids_fa, "fasta")
-        print(f"  known centroids: {len(known_centroids)} 条 → {known_centroids_fa}")
+    all_known = known_linked_centroids + known_pure_centroids
+    if all_known:
+        SeqIO.write(all_known, known_centroids_fa, "fasta")
+    # known_linked centroids (有关联 contig, 可进入后续流程)
+    known_linked_fa = str(d / "known_linked_centroids.fasta")
+    if known_linked_centroids:
+        SeqIO.write(known_linked_centroids, known_linked_fa, "fasta")
+    print(f"  known centroids: {len(all_known)} 条 (含 {len(known_linked_centroids)} 条有关联 contig) → {known_centroids_fa}")
 
     # 写入 association 表
     assoc_tsv = d / "known_association.tsv"
@@ -233,7 +243,8 @@ def run_cdhit_reference_clustering(input_fa, ref_fa, out_dir, ani=0.95, qcov=0.8
     n_written = sum(1 for _ in novel_records)
     print(f"  novel contig: {n_written} 条 (≥{min_length}bp) → {novel_fa}")
 
-    return novel_fa, known_centroids_fa, n_known, n_written, association
+    n_linked = len(known_linked_centroids)
+    return novel_fa, known_linked_fa, n_linked, n_written, association
 
 
 # ══════════════════════════════════════════════════════════════
@@ -436,7 +447,7 @@ def main():
                 run_cdhit_reference_clustering(input_fa, ref_fa, out,
                                                args.cdhit_ani, args.cdhit_qcov,
                                                args.threads, args.min_length)
-            print(f"  CD-HIT 结果: {n_known_clusters} 已知簇 → CheckV, {n_novel} 新颖 contig → vclust Leiden")
+            print(f"  CD-HIT 结果: {n_known_clusters} 个 known 簇有关联 contig, {n_novel} 新颖 contig → vclust Leiden")
             # 保存 association 表到 centroids
             assoc_out = out / "centroids" / "known_association.tsv"
             assoc_out.parent.mkdir(parents=True, exist_ok=True)
@@ -477,50 +488,59 @@ def main():
     print(f"  代表序列合集: {global_ref_fa}")
 
     # 产出 centroids (供 taxonomy/host 阶段读取)
-    # final_centroids.fasta 只含 vclust novel — CD-HIT known 免 taxonomy/host/rescue
+    # final_centroids.fasta = known_linked (有关联 contig 的已知簇) + vclust novel
+    # 纯参考簇 (无 contig 关联) 不进入 — 我们的目的是分析样本
     final_dir = out / "centroids"; final_dir.mkdir(parents=True, exist_ok=True)
     centroids_fa = final_dir / "final_centroids.fasta"
     known_id_file = final_dir / "known_ids.txt"
 
-    n_known = 0
+    n_linked = 0
     known_ids = set()
 
+    # 1. 写入 known_linked centroids (有关联 contig 的已知簇)
     if known_centroids_fa and os.path.isfile(known_centroids_fa):
-        for rec in SeqIO.parse(known_centroids_fa, "fasta"):
-            known_ids.add(rec.id)
-        n_known = len(known_ids)
+        with open(centroids_fa, "w") as cf:
+            for rec in SeqIO.parse(known_centroids_fa, "fasta"):
+                cf.write(f">{rec.id}\n{str(rec.seq)}\n")
+                known_ids.add(rec.id)
+        n_linked = len(known_ids)
         with open(known_id_file, "w") as kf:
             for kid in sorted(known_ids):
                 kf.write(f"{kid}\n")
 
+    # 2. 追加 vclust novel centroids
     n_novel = 0
-    with open(centroids_fa, "w") as cf:
+    mode = "a" if n_linked else "w"
+    with open(centroids_fa, mode) as cf:
         for cname, info in clusters.items():
             rid = info["ref"]
             if rid in fasta_info:
                 cf.write(f"{fasta_info[rid]['header']}\n{fasta_info[rid]['seq']}\n")
                 n_novel += 1
 
-    src = f" ({n_known} CD-HIT known 单独保存 + {n_novel} vclust novel)" if n_known else ""
-    print(f"  novel centroids: {centroids_fa} ({n_novel} 条{src})")
+    n_total = n_linked + n_novel
+    parts = []
+    if n_linked: parts.append(f"{n_linked} known linked")
+    parts.append(f"{n_novel} vclust novel")
+    print(f"  centroids: {centroids_fa} ({n_total} 条: {' + '.join(parts)})")
 
     extracts_dir = d2 / "split_fastas"; extracts_dir.mkdir(parents=True, exist_ok=True)
-    if n_known:
+    if n_linked:
         cdhit_known_dir = Path(out) / "2_cdhit" / "known_clusters"
         if cdhit_known_dir.is_dir():
             for all_fa in cdhit_known_dir.glob("cluster_*.all.fasta"):
                 dest = extracts_dir / f"cdhit_{all_fa.name}"
                 shutil.copy(all_fa, dest)
-        print(f"  CD-HIT known 拆分: {cdhit_known_dir} → {extracts_dir}")
+        print(f"  CD-HIT known linked 拆分: {cdhit_known_dir} → {extracts_dir}")
 
     extract_cluster_files(clusters, fasta_info, d2)
     print(f"  vclust novel 拆分: {d2}/split_fastas/")
 
     elapsed = (datetime.now() - start).total_seconds()
     print(f"\n{'=' * 60}")
-    if n_known:
-        print(f"  CD-HIT known: {n_known} 条 (免 rescue, 已有完整参考)")
-        print(f"  known IDs:    {known_id_file}")
+    if n_linked:
+        print(f"  CD-HIT known linked: {n_linked} 条 (有关联 contig, 可进后续)")
+        print(f"  known IDs:          {known_id_file}")
     print(f"  vclust novel: {n_novel} 条 (后续进 rescue)")
     print(f"  clusters:     {ctsv}")
     print(f"  centroids:    {centroids_fa}")
