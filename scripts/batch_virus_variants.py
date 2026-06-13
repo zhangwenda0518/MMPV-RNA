@@ -1172,43 +1172,56 @@ class PostProcessPipeline:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="病毒宏基因组精细化后处理分析 (本地化提取&日志展平版)")
+    parser = argparse.ArgumentParser(
+        description="病毒宏基因组精细化后处理分析 (本地化提取&日志展平版)",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+示例:
+  # 从 FASTQ 提取 reads + 共识 + 变异
+  python batch_virus_variants.py --summary summary.tsv --info ref_info.tsv \\
+      --reference ref.fasta --fastq reads/ --extract_reads --consensus \\
+      --call_variants --snpeff --snpgenie -t 40 -j 4
+
+  # 从已有 BAM 只做变异分析
+  python batch_virus_variants.py --summary summary.tsv --info ref_info.tsv \\
+      --reference ref.fasta --bam bam/ --call_variants
+        """)
     req = parser.add_argument_group("必须参数")
-    req.add_argument("--summary", required=True, help="上游丰度表")
-    req.add_argument("--info", required=True, help="病毒信息库 (包含 Segment 分类)")
-    req.add_argument("--reference", required=True, help="超级参考基因组 FASTA")
-    
+    req.add_argument("--summary", required=True, help="上游丰度表 TSV (batch_virus_depth40 产出)")
+    req.add_argument("--info", required=True, help="病毒参考信息库 TSV (含 Segment/Taxid/Species 列)")
+    req.add_argument("--reference", required=True, help="参考基因组 FASTA")
+
     src_ex = parser.add_argument_group("数据来源").add_mutually_exclusive_group(required=True)
-    src_ex.add_argument("--fastq", help="FASTQ/FASTA 文件夹 (格式自适应)")
-    src_ex.add_argument("--bam", help="已有 BAM 文件夹")
-    
+    src_ex.add_argument("--fastq", help="FASTQ/FASTA 文件夹 (自动识别格式, 重新提取病毒reads)")
+    src_ex.add_argument("--bam", help="已有 BAM 文件夹 (跳过提取步骤)")
+
     mod = parser.add_argument_group("功能开关")
-    mod.add_argument("--extract_reads", action="store_true")
-    mod.add_argument("--consensus", action="store_true")
-    mod.add_argument("--call_variants", action="store_true")
-    
-    mod.add_argument("--variant_caller", choices=["freebayes", "ivar", "lofreq"], default="lofreq")
-    mod.add_argument("--disable_dynamic_vcf", action="store_true")
-    
+    mod.add_argument("--extract_reads", action="store_true", help="从 FASTQ 重新提取目标病毒的 reads")
+    mod.add_argument("--consensus", action="store_true", help="生成共识序列")
+    mod.add_argument("--call_variants", action="store_true", help="检出变异位点")
+    mod.add_argument("--variant_caller", choices=["freebayes", "ivar", "lofreq"], default="freebayes",
+                     help="变异检出工具 (默认: freebayes)")
+    mod.add_argument("--disable_dynamic_vcf", action="store_true", help="禁用动态VCF质量过滤")
+
     se = parser.add_argument_group("SnpEff 参数")
-    se.add_argument("--snpeff", action="store_true")
-    se.add_argument("--snpeff_jar", default="~/snpEff/snpEff.jar")
-    se.add_argument("--snpeff_config", default="~/snpEff/snpEff.config")
-    se.add_argument("--snpeff_mem", default="4g")
-    se.add_argument("--snpgenie", action="store_true")
-    
-    vc = parser.add_argument_group("共识参数")
-    vc.add_argument("-q", "--vc_qual", type=int, default=20)
-    vc.add_argument("-d", "--vc_depth", type=int, default=0)
-    vc.add_argument("-f", "--vc_freq", type=float, default=0.5)
-    vc.add_argument("-a", "--vc_ambig", type=str, default="N")
-    
+    se.add_argument("--snpeff", action="store_true", help="启用 SnpEff 变异注释")
+    se.add_argument("--snpeff_jar", default="~/biosoft/snpEff/snpEff.jar", help="snpEff.jar 路径")
+    se.add_argument("--snpeff_config", default="~/biosoft/snpEff/snpEff.config", help="snpEff 配置文件")
+    se.add_argument("--snpeff_mem", default="4g", help="SnpEff 内存限制 (默认: 4g)")
+    se.add_argument("--snpgenie", action="store_true", help="启用 SnpGenie dN/dS 选择压力分析")
+
+    vc = parser.add_argument_group("共识参数 (--consensus 时生效)")
+    vc.add_argument("-q", "--vc_qual", type=int, default=20, help="最低碱基质量 Phred 值 (默认: 20)")
+    vc.add_argument("-d", "--vc_depth", type=int, default=10, help="最低覆盖深度 (默认: 10)")
+    vc.add_argument("-f", "--vc_freq", type=float, default=0.5, help="变异最低频率阈值 (默认: 0.5)")
+    vc.add_argument("-a", "--vc_ambig", type=str, default="N", help="低于阈值的碱基用此字符代替 (默认: N)")
+
     ctl = parser.add_argument_group("控制参数")
-    ctl.add_argument("--output_dir", default="./post_analysis")
-    ctl.add_argument("--threads", type=int, default=8)
-    ctl.add_argument("--jobs", type=int, default=4)
-    ctl.add_argument("--resume", action="store_true")
-    
+    ctl.add_argument("--output_dir", default="./post_analysis", help="输出根目录 (默认: ./post_analysis)")
+    ctl.add_argument("--threads", "-t", type=int, default=8, help="单任务线程数 (默认: 8)")
+    ctl.add_argument("--jobs", "-j", type=int, default=4, help="并行任务数 (默认: 4)")
+    ctl.add_argument("--resume", action="store_true", help="断点续传: 跳过已完成步骤")
+
     args = parser.parse_args()
     PostProcessPipeline(args).run()
 

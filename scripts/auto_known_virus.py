@@ -143,7 +143,7 @@ def main():
     g.add_argument("--vc_qual", type=int, default=20, help="共识序列最低质量 (默认20)")
     g.add_argument("--vc_depth", type=int, default=10, help="共识序列最低深度 (默认10)")
     g.add_argument("--vc_freq", type=float, default=0.5, help="共识序列最低频率 (默认0.5)")
-    g.add_argument("--vc_ambig", type=float, default=0.25, help="共识序列 IUPAC 模糊阈值 (默认0.25)")
+    g.add_argument("--vc_ambig", type=str, default="N", help="低于阈值的碱基用此字符代替 (默认: N)")
 
     # ── Step 3: 全长组装 ──
     g = p.add_argument_group("Step 3: 全长组装 (batch_virus_full)")
