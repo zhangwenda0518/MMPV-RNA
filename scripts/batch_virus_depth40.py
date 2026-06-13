@@ -251,7 +251,7 @@ class UnifiedVirusPipeline:
 
     def build_index(self):
         tool = self.args.tool
-        ref_path = Path(self.args.reference).resolve()
+        ref_path = Path(self.args.reference).absolute()
         
         if tool in ['strobealign', 'minimap2']:
             self.index_path = str(ref_path); return
@@ -290,7 +290,8 @@ class UnifiedVirusPipeline:
         if self.is_pseudo:
             new_idx_path = self.output_dir / 'index' / f"{ref_path.name}.{tool}_idx"
             self.index_path = str(new_idx_path)
-            cmd = ['salmon', 'index', '-k', '31', '-i', self.index_path, '-t', str(ref_path), '--threads', str(self.args.threads * self.args.align_threads)] if tool == 'salmon' else ['kallisto', 'index', '-k', '31', '-i', self.index_path, '--threads', str(self.args.threads * self.args.align_threads), str(ref_path)]
+            idx_threads = str(min(self.args.threads, 16))
+            cmd = ['salmon', 'index', '-k', '31', '-i', self.index_path, '-t', str(ref_path), '--threads', idx_threads] if tool == 'salmon' else ['kallisto', 'index', '-k', '31', '-i', self.index_path, '--threads', idx_threads, str(ref_path)]
         else:
             prefix = self.output_dir / 'index' / f"{ref_path.stem}_{tool}"
             self.index_path = str(prefix)
