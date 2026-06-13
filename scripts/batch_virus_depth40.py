@@ -621,6 +621,10 @@ class UnifiedVirusPipeline:
                 if 'seqid' in genes_df.columns and 'gene_total_cov' in genes_df.columns and 'gene_avr_cov' in genes_df.columns:
                     asm_df = asm_df.join(genes_df.select(['seqid', 'gene_total_cov', 'gene_avr_cov']), left_on="Rep_Accession", right_on="seqid", how="left")
                     track_b_pass = (pl.col("gene_total_cov").fill_null(0) >= self.args.min_gene_total_cov) & (pl.col("gene_avr_cov").fill_null(0) >= self.args.min_gene_avr_cov)
+                    # RNA-seq 转录组数据: DNA病毒仅覆盖基因区, 不适用全长基因覆盖率过滤
+                    if 'Molecule_type' in asm_df.columns:
+                        is_dna = pl.col("Molecule_type").str.contains(r"(?i)^DNA|(?i)dsDNA|(?i)ssDNA")
+                        track_b_pass = track_b_pass & ~is_dna
             except Exception: pass
                 
         final_df = asm_df.filter(filter_base & (track_a_pass | track_b_pass))
