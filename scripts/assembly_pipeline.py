@@ -1470,12 +1470,8 @@ class AssemblyPipeline:
             input_files = {'read1': sample_info['read1'], 'read2': sample_info['read2']} if sample_info['type'] == 'paired' else {'reads': sample_info['reads']}
             success = self.run_assembly(args, input_files, sample, tool, stats)
             if success:
-                output_file = self.temp_dir / self.get_output_filename(tool, sample)
-                if output_file.exists():
-                    import shutil as _shutil
-                    _shutil.copy2(output_file, final_output_path)
+                self.copy_results(args, sample, tool, stats)
                 if args.refineC_split:
-                    self.logger.info(f'Running refineC split on {tool} result')
                     self.run_refineC_split(args, final_output_path, sample, tool, stats)
                 self.cleanup(args)
                 stats['total']['time'] = stats[tool]['time'] + (time.time() - start_time)
