@@ -959,11 +959,15 @@ class ViromePipeline:
                 f"python {self.sc['classifier']}",
                 f"-g {centroids}",
                 f"-s {sample}",
-                f"-t genomad,mmseqs,VITAP,ACVirus,vcontact3",
+                f"-t all",
                 f"-o {tax_dir}",
                 f"-p {self.args.threads}",
                 f"--db-dir {self.args.virus_db}",
             ]
+            if self.args.uniprot_db:
+                parts.append(f"--uniprot-db {self.args.uniprot_db}")
+            if self.args.metabuli_db:
+                parts.append(f"--metabuli-db {self.args.metabuli_db}")
             if self.args.force:
                 parts.append("-f")
             ok, _ = run_cmd(' '.join(parts), self.log, "virus_classifier2.py")
@@ -1331,19 +1335,23 @@ STAGE_HELP = {
     04_CLUSTER/3_vclust/split_fastas/
 """,
     'taxonomy': """
-  --stage taxonomy — 5 工具分类 + R 共识整合
+  --stage taxonomy — 9 工具分类 + R 共识整合
 
   子脚本: virus_classifier2.py + virus_classifier_analysis14.R
-    genomad        深度学习病毒分类
+    genomad        深度学习全基因组病毒分类
+    metabuli        k-mer 序列分类 + taxonkit lineage
+    CAT             BAT/CAT 蛋白比对分类
+    diamond_lca     diamond blastx LCA 分类
     mmseqs         蛋白序列比对分类
     VITAP          病毒蛋白分类
     ACVirus        古菌病毒分类
     vcontact3      蛋白簇网络分类
+    PhaGCN3        噬菌体 GCN 分类
     R consensus    多工具投票共识 (vcontact3>vitap>acvirus>mmseqs>genomad)
 
   调用命令: python virus_classifier2.py -g <fasta> -s <sample>
-             -t genomad,mmseqs,VITAP,ACVirus,vcontact3 -o <dir>
-             -p N --db-dir <dir> [-f]
+             -t all -o <dir> -p N --db-dir <dir> [-f]
+             [--uniprot-db <path>] [--metabuli-db <path>]
              Rscript virus_classifier_analysis14.R --combined <tsv> --output <dir>
 
   参数:
@@ -1352,6 +1360,8 @@ STAGE_HELP = {
     --virus_db       病毒分类数据库根目录 [必需]
     -t, --threads    线程数 (默认 20)
     --force          强制重跑
+    --uniprot_db     UniProt Diamond DB (可选, 用于 diamond_lca)
+    --metabuli_db    Metabuli DB (可选, 覆盖默认路径)
 
   输出: 05_Taxonomy/integrated/final_integrated_classification.tsv
 """,
