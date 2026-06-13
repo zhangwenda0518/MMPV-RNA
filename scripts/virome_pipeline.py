@@ -497,9 +497,17 @@ class ViromePipeline:
         #   --mode, --reads-dir, --contigs-dir, --virsorter-dir, --output-dir,
         #   --assembly-tools, --checkv-db, --checkv-mode, --jobs, --threads,
         #   --mink, --maxk, --linkage-mismatch
-        asm_tools = (['megahit', 'rnaviralspades', 'penguin']
-                     if self.args.assembler == 'all'
-                     else [self.args.assembler])
+        # 自动检测哪些工具实际有组装输出
+        all_tools = ['megahit', 'rnaviralspades', 'penguin']
+        asm_tools = []
+        for tool in all_tools:
+            for d in self.d['asm'].iterdir():
+                if d.is_dir() and (d / f"{d.name}_{tool}.contig.fasta").exists():
+                    asm_tools.append(tool)
+                    break
+        if not asm_tools:
+            asm_tools = [self.args.assembler] if self.args.assembler != 'all' else all_tools
+        self.log.info("  Auto-detect 组装工具: %s", ','.join(asm_tools))
 
         parts = [
             f"python {self.sc['cobra']}",
