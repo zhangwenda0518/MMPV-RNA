@@ -1593,7 +1593,7 @@ def main():
     logger.info("  Output:   %s", args.output_dir)
 
     # 根据 stage 自动设置 skip 标志
-    downstream = stage in ('assembly', 'identification', 'cobra', 'cluster', 'taxonomy', 'host', 'checkv', 'rescue')
+    downstream = stage in ('assembly', 'cobra', 'rescue')
     if stage == 'clean':
         args.skip_clean = False
         args.skip_depletion = True   # clean 只做清洗, 不做去宿主
@@ -1606,6 +1606,10 @@ def main():
         args.skip_clean = True
         args.skip_depletion = True
         logger.info("  Flow:     %s", stage)
+    elif stage in ('identification', 'cluster', 'taxonomy', 'host', 'checkv'):
+        args.skip_clean = True
+        args.skip_depletion = True
+        logger.info("  Flow:     %s (无需 reads)", stage)
     else:  # all
         flow = []
         flow.append('SKIP' if args.skip_clean else 'Clean')
