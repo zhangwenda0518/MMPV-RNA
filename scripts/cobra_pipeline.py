@@ -520,11 +520,17 @@ class CobraPipeline:
 
         # 0. filter/strict 模式: 优先用 UniProt 后置过滤结果 (统合所有工具)
         if self.args.virus_mode in ('filter', 'strict'):
-            filt_dir_name = f'uniprot_filter_output_{self.args.virus_mode}'
-            for name in name_variants:
-                filt_fa = virsorter_dir / name / filt_dir_name / f'{name}_virus.uniprot_filtered.fasta'
-                if filt_fa.is_file() and filt_fa.stat().st_size > 100:
-                    return filt_fa
+            # 兼容两种目录名: both模式有后缀, 单模式无后缀
+            filt_dirs = []
+            if self.args.virus_mode == 'filter':
+                filt_dirs = ['uniprot_filter_output_filter', 'uniprot_filter_output']
+            else:  # strict
+                filt_dirs = ['uniprot_filter_output_strict', 'uniprot_filter_output']
+            for filt_dir_name in filt_dirs:
+                for name in name_variants:
+                    filt_fa = virsorter_dir / name / filt_dir_name / f'{name}_virus.uniprot_filtered.fasta'
+                    if filt_fa.is_file() and filt_fa.stat().st_size > 100:
+                        return filt_fa
             main_logger.info(f"  [{self.args.virus_mode}] 无过滤结果, 回退到原始鉴定")
 
         virus_patterns = [
