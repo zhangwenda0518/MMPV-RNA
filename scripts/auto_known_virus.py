@@ -115,6 +115,7 @@ def main():
     g.add_argument("--min_tpm", type=float, default=0.0)
     g.add_argument("--min_uniq_reads", type=int, default=1)
     g.add_argument("--sp_thresh", type=float, default=95.0, help="物种ANI阈值 %%")
+    g.add_argument("--taxid_clusters", help="同义 TaxID 合并映射文件")
     g.add_argument("--genes_cov", help="转录覆盖率文件 (双轨过滤)")
     g.add_argument("--min_gene_total_cov", type=float, default=80.0)
     g.add_argument("--min_gene_avr_cov", type=float, default=5.0)
@@ -122,6 +123,9 @@ def main():
     g.add_argument("--min_aln_len", type=int, default=80)
     g.add_argument("--min_aln_prop", type=float, default=0.85)
     g.add_argument("--min_pid", type=float, default=0.90)
+    g.add_argument("--single_end", action="store_true", help="强制单端模式")
+    g.add_argument("--keep_tmp", action="store_true", help="保留中间 BAM 文件")
+    g.add_argument("--verbose", action="store_true", help="详细底层日志")
 
     # ── Step 2: 变异分析 ──
     g = p.add_argument_group("Step 2: 变异分析 (batch_virus_variants)")
@@ -194,9 +198,17 @@ def main():
                 f"--min_gene_total_cov {args.min_gene_total_cov}",
                 f"--min_gene_avr_cov {args.min_gene_avr_cov}",
             ]
+        if args.taxid_clusters:
+            parts.append(f"--taxid_clusters {args.taxid_clusters}")
         if args.use_coverm:
             parts.append("--use_coverm")
             parts += [f"--min_aln_len {args.min_aln_len}", f"--min_aln_prop {args.min_aln_prop}", f"--min_pid {args.min_pid}"]
+        if args.single_end:
+            parts.append("--single_end")
+        if args.keep_tmp:
+            parts.append("--keep_tmp")
+        if args.verbose:
+            parts.append("--verbose")
         if args.resume:
             parts.append("--resume")
         if not run(' '.join(parts), log, "batch_virus_depth40"):
