@@ -31,13 +31,11 @@ import subprocess
 import logging
 import re
 import shutil
-import threading
 from pathlib import Path
 from collections import defaultdict
 
 import polars as pl
 from Bio import SeqIO
-from concurrent.futures import ThreadPoolExecutor
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -458,48 +456,31 @@ class ViromePipeline:
             self.log.error("无 contig 文件, 跳过鉴定。")
             return
 
-        # 收集所有 contig 文件
-        all_contigs = []
-        for sample_name, tools in asm_map.items():
-            for tool, contig_path in tools.items():
-                all_contigs.append(contig_path)
+        # 直接传目录, 子脚本内部 --jobs 并行处理所有样本
+        self.log.info("  %d 个样本待鉴定", len(asm_map))
 
-        self.log.info("  %d 个 contig 文件待鉴定 (并行 %d 样本, 各 %d 线程)",
-                     len(all_contigs), self.args.jobs, self.args.threads)
-
-        # 构建命令模板 (每个样本独立调用子脚本, 并行执行)
-        lock = threading.Lock()
-        done = [0]
-
-        def _run_one(contig):
-            parts = [
-                f"python {self.sc['identify']}",
-                f"--input {contig}",
-                f"--output {self.d['ident']}",
-                f"--db_dir {self.args.virus_db}",
-                f"--identify_tools {self.args.identify_tools}",
-                f"--threads {self.args.threads}",
-                f"--jobs 1",
-                f"--blast_mode {self.args.blast_mode}",
-                f"--blast_evalue {self.args.blast_evalue}",
-                f"--blast_top_n {self.args.blast_top_n}",
-                f"--virsorter_group {self.args.virsorter_group}",
-            ]
-            for arg in ['virus_protein_db', 'uniprot_db', 'viroids_db', 'virsorter_db',
-                         'viralverify_hmm', 'metabuli_db', 'virus_taxid',
-                         'virhunter_path', 'virhunter_weights', 'virbot_path', 'viralm_path']:
-                val = getattr(self.args, arg, None)
-                if val:
-                    parts.append(f"--{arg} {val}")
-            if self.args.force:
-                parts.append("--force")
-            ok, _ = run_cmd(' '.join(parts), self.log, f"VirusID: {contig.name}")
-            with lock:
-                done[0] += 1
-                self.log.info("  鉴定进度: %d/%d", done[0], len(all_contigs))
-
-        with ThreadPoolExecutor(max_workers=self.args.jobs) as ex:
-            list(ex.map(_run_one, all_contigs))
+        parts = [
+            f"python {self.sc['identify']}",
+            f"--input {asm_dir}",
+            f"--output {self.d['ident']}",
+            f"--db_dir {self.args.virus_db}",
+            f"--identify_tools {self.args.identify_tools}",
+            f"--threads {self.args.threads}",
+            f"--jobs {self.args.jobs}",
+            f"--blast_mode {self.args.blast_mode}",
+            f"--blast_evalue {self.args.blast_evalue}",
+            f"--blast_top_n {self.args.blast_top_n}",
+            f"--virsorter_group {self.args.virsorter_group}",
+        ]
+        for arg in ['virus_protein_db', 'uniprot_db', 'viroids_db', 'virsorter_db',
+                     'viralverify_hmm', 'metabuli_db', 'virus_taxid',
+                     'virhunter_path', 'virhunter_weights', 'virbot_path', 'viralm_path']:
+            val = getattr(self.args, arg, None)
+            if val:
+                parts.append(f"--{arg} {val}")
+        if self.args.force:
+            parts.append("--force")
+        run_cmd(' '.join(parts), self.log, "VirusIdentification")
 
         self.viral_map = scan_viral_files(self.d['ident'])
         self.log.info("  鉴定完成: %d 样本有病毒候选序列", len(self.viral_map))
