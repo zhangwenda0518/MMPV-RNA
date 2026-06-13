@@ -250,7 +250,7 @@ class ViromePipeline:
         self._validate()
 
         # 检测原始样本
-        if self.args.stage not in ('cluster', 'taxonomy', 'host', 'checkv'):
+        if self.args.stage not in ('identification', 'cluster', 'taxonomy', 'host', 'checkv'):
             self.orig_samples = scan_samples_in_dir(self.reads_dir)
             if not self.orig_samples:
                 logger.error("在 %s 中未找到序列文件!", self.reads_dir)
