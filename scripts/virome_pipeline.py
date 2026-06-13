@@ -1134,34 +1134,31 @@ class ViromePipeline:
         self.log.info("=" * 50)
         self.log.info("[Reports] 流水线汇总")
 
-        cobra_dir = self.d['cobra']
-
-        # 统计 COBRA 输出 (仅当目录存在)
-        sample_count = 0
-        cobra_file_count = 0
-        if cobra_dir.is_dir():
-            for sample_dir in cobra_dir.iterdir():
-                if not sample_dir.is_dir():
-                    continue
-                sample_count += 1
-                for result_dir in sample_dir.iterdir():
-                    if result_dir.is_dir() and result_dir.name.startswith('cobra_'):
-                        for cf in result_dir.glob('*.cobra.fa'):
-                            if cf.stat().st_size > 0:
-                                cobra_file_count += 1
-
         self.log.info("=" * 50)
         self.log.info("  流水线完成!")
         self.log.info("")
         self.log.info("  输出目录结构:")
-        self.log.info("    数据清洗:     %s", self.d['clean'] if self.d['clean'].is_dir() else '(未运行)')
-        self.log.info("    去宿主:       %s", self.d['hostdep'] if self.d['hostdep'].is_dir() else '(未运行)')
-        self.log.info("    组装结果:     %s", self.d['asm'] if self.d['asm'].is_dir() else '(未运行)')
-        self.log.info("    病毒鉴定:     %s", self.d['ident'] if self.d['ident'].is_dir() else '(未运行)')
-        if cobra_file_count > 0:
-            self.log.info("    COBRA 延伸:   %s (%d 样本, %d 个延伸结果)",
-                         cobra_dir, sample_count, cobra_file_count)
-        self.log.info("    CLUSTER 去冗余:  %s", self.d['cluster'] if self.d['cluster'].is_dir() else '(未运行)')
+
+        stage_labels = [
+            ('clean',      '数据清洗'),
+            ('hostdep',    '去宿主'),
+            ('asm',        '组装结果'),
+            ('ident',      '病毒鉴定'),
+            ('cobra',      'COBRA 延伸'),
+            ('cluster',    'CLUSTER 去冗余'),
+            ('taxonomy',   'Taxonomy 分类'),
+            ('host_pred',  'Host 宿主预测'),
+            ('checkv_dir', 'CheckV 质量评估'),
+            ('rescue_dir', 'Rescue 拯救'),
+            ('reports',    'Reports 报告'),
+        ]
+        for key, label in stage_labels:
+            d = self.d.get(key)
+            if d and d.is_dir():
+                self.log.info("    %-14s %s", label + ':', d)
+            else:
+                self.log.info("    %-14s (未运行)", label + ':')
+
         self.log.info("    运行日志:     %s", self.d['root'] / 'orchestrator.log')
         self.log.info("=" * 50)
 
