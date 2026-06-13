@@ -554,8 +554,6 @@ class ViromePipeline:
         ]
         if self.args.ref_genomes:
             parts.append(f"--ref-genomes {self.args.ref_genomes}")
-        if self.args.force:
-            parts.append("--force")
 
         ok, _ = run_cmd(' '.join(parts), self.log, "CLUSTER (vclust only)")
         if not ok:
