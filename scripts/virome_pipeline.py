@@ -391,7 +391,9 @@ class ViromePipeline:
             f"--jobs {self.args.jobs}",
             f"--log_dirs {self.d['asm']}/logs",
         ]
-        if self.args.assembler == 'all':
+        # 多工具组装时自动启用 refineC split + merge
+        asm_tools = self.args.assembler.split(",") if self.args.assembler != 'all' else ['megahit', 'rnaviralspades', 'penguin']
+        if len(asm_tools) >= 2:
             parts.append("--refineC_split --refineC_merge")
         if self.args.force:
             parts.append("--force")
@@ -401,8 +403,7 @@ class ViromePipeline:
             self.log.error("组装失败, 终止。")
             sys.exit(1)
 
-        tools = ['megahit', 'rnaviralspades', 'penguin'] if self.args.assembler == 'all' else [self.args.assembler]
-        self.asm_map = scan_contig_files(self.d['asm'], tools)
+        self.asm_map = scan_contig_files(self.d['asm'], asm_tools)
         self.log.info("  组装完成: %d 样本有 contig 输出", len(self.asm_map))
 
     # ── Step 2: 病毒鉴定 ──
@@ -414,8 +415,8 @@ class ViromePipeline:
         asm_map = getattr(self, 'asm_map', {})
         if not asm_map:
             # 独立运行时自动扫描组装输出
-            tools = ['megahit', 'rnaviralspades', 'penguin'] if self.args.assembler == 'all' else [self.args.assembler]
-            asm_map = scan_contig_files(self.d['asm'], tools)
+            scan_tools = ['megahit', 'rnaviralspades', 'penguin'] if self.args.assembler == 'all' else self.args.assembler.split(",")
+            asm_map = scan_contig_files(self.d['asm'], scan_tools)
         if not asm_map:
             self.log.error("无 contig 文件, 跳过鉴定。")
             return
