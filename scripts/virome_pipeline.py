@@ -72,23 +72,16 @@ def find_cmd(name):
 
 
 def run_cmd(cmd, logger, step_name):
-    """执行 shell 命令。stdout 透传 (进度条可见), stderr 捕获备用。"""
+    """执行 shell 命令。stdout/stderr 透传 (进度条可见)。"""
     logger.info("[%s] 执行中...", step_name)
     logger.debug("  CMD: %s", cmd)
     try:
-        proc = subprocess.run(
-            cmd, shell=True, check=True,
-            stdout=None, stderr=subprocess.PIPE,
-            universal_newlines=True
-        )
+        subprocess.run(cmd, shell=True, check=True)
         logger.info("[%s] ✓ 成功", step_name)
         return True, ""
     except subprocess.CalledProcessError as e:
         logger.error("[%s] ✗ 失败 (exit=%d)", step_name, e.returncode)
-        tail = (e.stderr or '')[-3000:]
-        if tail:
-            logger.error("  STDERR:\n%s", tail)
-        return False, (e.stderr or "")
+        return False, f"exit={e.returncode}"
 
 
 # ═══════════════════════════════════════════════════════════════════
