@@ -340,7 +340,6 @@ def main():
     p = argparse.ArgumentParser(description="WVDB 病毒基因组三支路拯救管道 v2.0")
     p.add_argument("--input-fasta", "-i", required=True, help="输入 FASTA (规范命名后)")
     p.add_argument("--output-dir", "-o", required=True)
-    p.add_argument("--fastq-dir", "-fq", default=".", help="原始 reads 目录 (聚类不需要, 保留兼容)")
     p.add_argument("--threads", "-t", type=int, default=64)
     p.add_argument("--min-length", type=int, default=500, help="病毒最小长度 bp (默认: 500)")
     p.add_argument("--ani", type=float, default=0.95)

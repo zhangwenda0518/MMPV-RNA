@@ -1289,7 +1289,6 @@ STAGE_HELP = {
   子脚本完整参数:
     -i / --input-fasta        输入 FASTA [必需]
     -o / --output-dir         输出目录 [必需]
-    -fq / --fastq-dir         reads 目录 (--stop-after-vclust 时不需要)
     -t / --threads            线程数 (默认 64)
     --min-length              最小长度 bp (默认 500)
     --ani                     vclust ANI (默认 0.95)
