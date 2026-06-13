@@ -520,6 +520,8 @@ class ViromePipeline:
             f"--jobs {max(1, self.args.jobs // 2)}",
             f"--threads {self.args.threads}",
         ]
+        if not self.args.force:
+            parts.append("--resume")
 
         ok, _ = run_cmd(' '.join(parts), self.log, "COBRA Pipeline")
         if not ok:
