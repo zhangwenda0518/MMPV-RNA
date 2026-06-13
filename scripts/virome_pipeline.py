@@ -849,7 +849,6 @@ class ViromePipeline:
             cmd = (
                 f"checkv completeness {fasta_path} {out_dir} "
                 f"-d {self.args.checkv_db} -t {min(self.args.threads, 16)} "
-                f"--remove_tmp"
             )
             ok, _ = run_cmd(cmd, self.log, f"CheckV: {fasta_path.name}")
             if not ok:
@@ -1122,7 +1121,7 @@ class ViromePipeline:
                 self.log.debug("    [SKIP] %s 已有结果", host)
             else:
                 cmd = (f"checkv completeness {host_fa} {cv_out} "
-                       f"-d {self.args.checkv_db} -t {min(self.args.threads, 16)} --remove_tmp")
+                       f"-d {self.args.checkv_db} -t {min(self.args.threads, 16)}")
                 run_cmd(cmd, self.log, f"CheckV: {host}")
 
             # 解析结果, 标记 pass (>90%)
@@ -1435,8 +1434,7 @@ STAGE_HELP = {
   功能: 对每个宿主类别的 centroids 运行 checkv completeness
         标记 completeness ≥ 90% 的 centroids 为免拯救 (与 CD-HIT known 合并)
 
-  调用命令: checkv completeness <fasta> <outdir> -d <db> -t N --remove_tmp
-
+  调用命令: checkv completeness <fasta> <outdir> -d <db> -t N 
   参数:
     --input_reads    项目根目录 [必需]
     --output_dir     输出根目录 [必需]
