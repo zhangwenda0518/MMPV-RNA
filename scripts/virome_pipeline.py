@@ -865,20 +865,47 @@ class ViromePipeline:
             return {}, 0
 
         total = df.height
-        checkv_col = None
+        # 检测 CheckV 质量列 (兼容新旧版本)
+        quality_col = None
         for c in ["checkv_quality", "quality"]:
             if c in df.columns:
-                checkv_col = c
+                quality_col = c
                 break
 
-        if checkv_col is None:
-            self.log.warning("  CheckV 输出缺少 quality 列")
-            return {}, total
+        # 新版 CheckV (v1.x) 无 quality 列, 从 completeness 值推导
+        if quality_col is None:
+            comp_col = None
+            for c in ["completeness", "aai_completeness"]:
+                if c in df.columns:
+                    comp_col = c
+                    break
+            if comp_col is None:
+                self.log.warning("  CheckV 输出无可用的 quality/completeness 列")
+                return {}, total
 
-        dist = {}
-        for val in df[checkv_col].to_list():
-            key = val if val and val != "NA" else "Not-determined"
-            dist[key] = dist.get(key, 0) + 1
+            dist = {}
+            for row in df.iter_rows(named=True):
+                raw = row.get(comp_col)
+                try:
+                    comp = float(raw) if raw and raw != "NA" else None
+                except (ValueError, TypeError):
+                    comp = None
+                if comp is None:
+                    key = "Not-determined"
+                elif comp >= 90:
+                    key = "Complete"
+                elif comp >= 50:
+                    key = "High-quality"
+                elif comp >= 10:
+                    key = "Medium-quality"
+                else:
+                    key = "Low-quality"
+                dist[key] = dist.get(key, 0) + 1
+        else:
+            dist = {}
+            for val in df[quality_col].to_list():
+                key = val if val and val != "NA" else "Not-determined"
+                dist[key] = dist.get(key, 0) + 1
 
         return dist, total
 
