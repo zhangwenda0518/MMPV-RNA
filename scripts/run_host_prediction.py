@@ -20,6 +20,8 @@ from datetime import datetime
 from pathlib import Path
 import pandas as pd
 
+SCRIPT_DIR = Path(__file__).resolve().parent
+
 def run_step(cmd, step_name):
     print(f"\n{'='*75}\n[{datetime.now().strftime('%H:%M:%S')}] {step_name}")
     head = ' '.join(cmd) if isinstance(cmd, list) else cmd
@@ -85,7 +87,7 @@ def run_tools(args):
         elif check_file(args.tax):
             host_dir = os.path.join(args.output_dir, "C9_ICTV_result")
             os.makedirs(host_dir, exist_ok=True)
-            cmd = f"python C9_classify_contigs.py -i {args.tax} -o {host_dir} --prob_dir {args.prob_dir}"
+            cmd = f"python {SCRIPT_DIR}/C9_classify_contigs.py -i {args.tax} -o {host_dir} --prob_dir {args.prob_dir}"
             run_step(cmd, "ICTV Taxonomy Lookup (C9)")
         else:
             print("[WARN] Valid taxonomy TSV required for C9 ICTV lookup.")
