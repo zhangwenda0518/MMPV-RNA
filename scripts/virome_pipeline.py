@@ -250,14 +250,16 @@ class ViromePipeline:
         self._validate()
 
         # 检测原始样本
-        self.orig_samples = scan_samples_in_dir(self.reads_dir)
-        if not self.orig_samples:
-            logger.error("在 %s 中未找到序列文件!", self.reads_dir)
-            sys.exit(1)
-
-        pe = sum(1 for v in self.orig_samples.values() if v['r2'])
-        se = len(self.orig_samples) - pe
-        logger.info("检测到 %d 个样本 (PE=%d, SE=%d)", len(self.orig_samples), pe, se)
+        if self.args.stage not in ('cluster', 'taxonomy', 'host', 'checkv'):
+            self.orig_samples = scan_samples_in_dir(self.reads_dir)
+            if not self.orig_samples:
+                logger.error("在 %s 中未找到序列文件!", self.reads_dir)
+                sys.exit(1)
+            pe = sum(1 for v in self.orig_samples.values() if v['r2'])
+            se = len(self.orig_samples) - pe
+            logger.info("检测到 %d 个样本 (PE=%d, SE=%d)", len(self.orig_samples), pe, se)
+        else:
+            self.orig_samples = {}
 
     def _validate(self):
         for name, path in self.sc.items():
