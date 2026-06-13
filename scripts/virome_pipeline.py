@@ -229,8 +229,8 @@ class ViromePipeline:
             'rescue_dir': out / '08_Rescue',
             'reports':    out / '09_Reports',
         }
-        for d in self.d.values():
-            d.mkdir(parents=True, exist_ok=True)
+        # 仅创建根目录, 各阶段按需创建自己的子目录
+        self.d['root'].mkdir(parents=True, exist_ok=True)
 
         # 脚本路径
         self.sc = {
@@ -301,6 +301,7 @@ class ViromePipeline:
 
     # ── Step 0a: 数据清洗 ──
     def run_clean(self):
+        self.d['clean'].mkdir(parents=True, exist_ok=True)
         if self.args.skip_clean:
             self.log.info("[0a] 跳过 (--skip_clean)")
             return
@@ -335,6 +336,7 @@ class ViromePipeline:
 
     # ── Step 0b: 去宿主 ──
     def run_depletion(self):
+        self.d['hostdep'].mkdir(parents=True, exist_ok=True)
         if self.args.skip_depletion:
             self.log.info("[0b] 跳过 (--skip_depletion)")
             return
@@ -374,6 +376,7 @@ class ViromePipeline:
 
     # ── Step 1: 组装 ──
     def run_assembly(self):
+        self.d['asm'].mkdir(parents=True, exist_ok=True)
         self.log.info("=" * 50)
         self.log.info("[1] MEGAHIT / rnaviralSPAdes / Penguin")
 
@@ -401,6 +404,7 @@ class ViromePipeline:
 
     # ── Step 2: 病毒鉴定 ──
     def run_identification(self):
+        self.d['ident'].mkdir(parents=True, exist_ok=True)
         self.log.info("=" * 50)
         self.log.info("[2] Genomad / Blast / VirSorter2 / ViralVerify / VirHunter / Metabuli")
 
@@ -443,6 +447,7 @@ class ViromePipeline:
 
     # ── Step 3: COBRA 延伸 ──
     def run_cobra(self):
+        self.d['cobra'].mkdir(parents=True, exist_ok=True)
         self.log.info("=" * 50)
         self.log.info("[3] COBRA 批量延伸 (BWA-MEM2 + COBRA + CheckV)")
 
@@ -477,6 +482,7 @@ class ViromePipeline:
 
     # ── Step 4: CLUSTER 三支路去冗余 ──
     def run_cluster(self):
+        self.d['cluster'].mkdir(parents=True, exist_ok=True)
         self.log.info("=" * 50)
         self.log.info("[4] CLUSTER 三支路病毒基因组去冗余")
 
@@ -533,6 +539,7 @@ class ViromePipeline:
 
     # ── Rescue: 按宿主过滤 → 三支路级联拯救 ──
     def run_rescue(self):
+        self.d['rescue_dir'].mkdir(parents=True, exist_ok=True)
         self.log.info("=" * 50)
         self.log.info("[Rescue] 宿主过滤 + 三支路级联拯救")
 
@@ -880,6 +887,7 @@ class ViromePipeline:
 
     # ── Step 5: 分类注释 ──
     def run_taxonomy(self):
+        self.d['taxonomy'].mkdir(parents=True, exist_ok=True)
         self.log.info("=" * 50)
         self.log.info("[5] 病毒分类注释 (virus_classifier2.py + R 共识整合)")
 
@@ -936,6 +944,7 @@ class ViromePipeline:
 
     # ── Step 6: 宿主预测 ──
     def run_host(self):
+        self.d['host_pred'].mkdir(parents=True, exist_ok=True)
         self.log.info("=" * 50)
         self.log.info("[6] 宿主预测 (RNAVirHost + PhaBOX2 + ICTV, ICTV > RVH > PB2)")
 
@@ -971,6 +980,7 @@ class ViromePipeline:
 
     # ── CheckV 预评估: 按宿主分类检查 centroids 完整性 ──
     def run_checkv_stage(self):
+        self.d['checkv_dir'].mkdir(parents=True, exist_ok=True)
         self.log.info("=" * 50)
         self.log.info("[CheckV] 按宿主分类预评估 centroids 完整性")
 
