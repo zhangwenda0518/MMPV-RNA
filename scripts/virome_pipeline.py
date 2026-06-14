@@ -1666,12 +1666,20 @@ class ViromePipeline:
             if cv_tsvs:
                 # 按宿主分组统计
                 host_qd = {}  # {host: {quality: count}}
+                host_conf = {}  # {host: {confidence_label: count}}
                 for ct in cv_tsvs:
-                    host_name = ct.parent.name  # 目录名即宿主名
+                    host_name = ct.parent.name
                     if host_name not in host_qd:
                         host_qd[host_name] = dict.fromkeys(QUALITY_ORDER, 0)
+                        host_conf[host_name] = {}
                     try:
                         cv = pl.read_csv(str(ct), separator="\t", null_values=["NA", "N/A", ""])
+                        # aai_confidence
+                        if "aai_confidence" in cv.columns:
+                            for row in cv.iter_rows(named=True):
+                                conf = str(row.get("aai_confidence","")).strip()
+                                if not conf or conf in ("NA","N/A",""): conf = "Not-determined"
+                                host_conf[host_name][conf] = host_conf[host_name].get(conf,0) + 1
                         comp_col = next((c for c in ["aai_completeness", "completeness"] if c in cv.columns), None)
                         if comp_col:
                             for row in cv.iter_rows(named=True):
@@ -1703,6 +1711,18 @@ class ViromePipeline:
                         hq = hqd["Complete"] + hqd["High-quality"]
                         cvf.write(f"{h}\t" + "\t".join(str(hqd[q]) for q in QUALITY_ORDER) + f"\t{t}\t{hq}\n")
                     cvf.write(f"TOTAL\t" + "\t".join(str(global_qd[q]) for q in QUALITY_ORDER) + f"\t{n_total}\t{n_hq}\n")
+
+                # checkv_confidence.tsv
+                if host_conf:
+                    all_confs = set()
+                    for hc in host_conf.values():
+                        all_confs.update(hc.keys())
+                    conf_order = sorted(all_confs)
+                    with open(report_dir / "checkv_confidence.tsv", "w") as cff:
+                        cff.write("Host\t" + "\t".join(conf_order) + "\tTotal\n")
+                        for h in sorted(host_conf.keys()):
+                            hc = host_conf[h]; t = sum(hc.values())
+                            cff.write(f"{h}\t" + "\t".join(str(hc.get(c,0)) for c in conf_order) + f"\t{t}\n")
 
                 _add("07_CheckV", "✓", key_metric=f"{n_hq} HQ / {n_total} total ({n_eval} evaluated)", details=f"{cv_dir}")
                 # 按宿主显示 HQ 数 (Top 5)
@@ -2537,6 +2557,34 @@ def _write_html_report(report_dir, stage_stats):
         if '06_HostPrediction' in s['Stage'] and '=' in s.get('Key_Metric',''): chart_ids.append('host')
         if 'Novel Rank' in s['Stage'] and 'Known=' in s.get('Key_Metric',''): chart_ids.append('tax')
     if cv_tsv.is_file(): chart_ids.append('checkv')
+    if (report_dir / "checkv_confidence.tsv").is_file(): chart_ids.append('checkv_conf')
+
+    # 7. aai_confidence stacked bar
+    cv_conf_tsv = report_dir / "checkv_confidence.tsv"
+    if cv_conf_tsv.is_file():
+        chosts, cqlabels = [], []
+        cqdata = {}
+        with open(cv_conf_tsv) as f:
+            hdr = f.readline().strip().split('\t')
+            cqlabels = hdr[1:-1]  # skip Host, Total
+            cqdata = {q: [] for q in cqlabels}
+            for line in f:
+                p = line.strip().split('\t')
+                chosts.append(p[0][:15])
+                for i, q in enumerate(cqlabels):
+                    cqdata[q].append(int(p[i+1]) if i+1 < len(p) else 0)
+        if chosts:
+            colors2 = ['#66bb6a','#ffa726','#ef5350','#42a5f5','#bdbdbd']
+            datasets2 = ','.join(
+                '{{label:"'+q+'",data:'+_json.dumps(cqdata[q])+',backgroundColor:"'+colors2[i%len(colors2)]+'"}}'
+                for i, q in enumerate(cqlabels))
+            chart_scripts += f"""
+    new Chart(document.getElementById('chart_checkv_conf'), {{
+      type:'bar', data:{{labels:{_json.dumps(chosts)},
+      datasets:[{datasets2}]}},
+      options:{{responsive:true,plugins:{{title:{{display:true,text:'CheckV aai_confidence by Host'}}}},
+        scales:{{x:{{stacked:true}},y:{{stacked:true,beginAtZero:true,title:{{text:'Contig Count'}}}}}}}}}});
+"""
 
     for cid in chart_ids:
         chart_divs += f'<div style="background:#fff;border-radius:10px;padding:20px;box-shadow:0 1px 3px rgba(0,0,0,.08);margin-bottom:16px"><canvas id="chart_{cid}" style="max-height:350px"></canvas></div>\n'
