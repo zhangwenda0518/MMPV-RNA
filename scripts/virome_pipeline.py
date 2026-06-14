@@ -1311,297 +1311,373 @@ STAGE_HELP = {
     'clean': """
   --stage clean — 数据清洗 (Fastp + Seqkit + Clumpify)
 
-  子脚本: clean-data.py
-    Fastp    滑动窗口质控 (--fastp-threads)
-    Seqkit   统计 reads 数和碱基数
-    Clumpify BBMap 光学去重 (--skip-clumpify 跳过)
+  子脚本: clean-data.py  (支持断点续传: .clean_checkpoints)
+    Fastp    : 滑动窗口质控 (Q20, min_len=50, Poly-G 去除)
+    Seqkit   : FASTQ → FASTA 格式转换 (--no-compress 控制压缩)
+    Clumpify : BBMap 光学去重 (--skip-clumpify 跳过)
 
-  调用命令: python clean-data.py --input <dir> --output <dir> --fastp-threads N --jobs N
+  编排器透传参数 (★ 必需 | · 可选):
+    ★ --input_reads        输入 FASTQ 目录
+    ★ --output_dir         输出根目录 (子目录: 00a_CleanData/)
+    · --threads -t         fastp 线程数 (默认 20)
+    · --jobs -j            并行样本数 (默认 2)
+    · --skip_clumpify      跳过 Clumpify 光学去重
+    · --dedup              启用 fastp 自带去重
+    · --clumpify_memory    clumpify Java 堆内存 (默认: 10g)
+    · --no_compress        最终结果不使用 gzip 压缩
+    · --clean_debug        输出 clean-data.py 详细调试日志
+    · --force              强制重跑 (清除断点记录)
 
-  参数:
-    --input_reads    输入 FASTQ 目录 [必需]
-    --output_dir     输出根目录 [必需]
-    --skip_clumpify  跳过 Clumpify 光学去重
-    -t, --threads    线程数 (默认 20)
-    -j, --jobs       并行数 (默认 2)
-    --force          强制重跑
-
-  输出: 00a_CleanData/
+  输出目录:
+    00a_CleanData/
+    ├── 1.fastp_tmp/       (fastp 质控后 FASTQ, 转 FASTA 后自动清理)
+    ├── 2.fasta/            seqkit 转换的 FASTA
+    ├── 3.clumpify/         clumpify 去重 FASTA (最终 reads 指针)
+    └── logs/               每样本日志 + fastp HTML/JSON 报告
 """,
     'deplete': """
-  --stage deplete — 去宿主 + 去 rRNA (Kraken2 + Bowtie2/HISAT2 + rRNA)
+  --stage deplete — 去宿主 + 去rRNA (Kraken2 + 精准比对 + rRNA剔除)
 
-  子脚本: host_depletion.py
-    Kraken2         物种分类标记宿主 reads (--confidence 置信度)
-    Bowtie2/HISAT2  精确比对去宿主 (--tool, --seq-type)
-    rRNA 去除       Ribodetector (默认) 或 SILVA Bowtie2
+  子脚本: host_depletion.py  (支持断点续传: .checkpoints)
+    Kraken2             : 物种分类标记宿主 reads
+    Bowtie2/HISAT2/Minimap2 : 精准比对去宿主
+    rRNA 去除           : Ribodetector (rna-short) / SILVA Bowtie2 (不限)
 
-  调用命令: python host_depletion.py --tool bowtie2 --seq-type rna-short
-             --kraken2_index <dir> --step2_index <dir>
-             --input-dir <dir> --outdir <dir> --jobs N --threads N
-             [--rrna --rrna_tool silva --silva_index <dir>]
+  编排器透传参数 (★ 必需 | · 可选):
+    ★ --output_dir         输出根目录 (子目录: 00b_HostDepletion/)
+    · --host_db            宿主数据库根目录 (自动推导 kraken2/bowtie2 子目录)
+    · --kraken2_db         Kraken2 宿主库 (覆盖 --host_db 自动检测)
+    · --host_align_db      宿主比对索引前缀 (覆盖 --host_db 自动检测)
+    · --aligner            {bowtie2,hisat2,minimap2} (默认 bowtie2)
+    · --seq_type           {dna-short,rna-short,nanopore,pacbio} (默认 rna-short)
+    · --rrna               开启 rRNA 剔除
+    · --rrna_tool          {ribodetector,silva} (默认 ribodetector)
+    · --silva_index        SILVA Bowtie2 索引前缀 (--rrna_tool silva 时必需)
+    · --kraken2_confidence Kraken2 分类置信度阈值 (默认 0.4)
+    · --deplete_steps      消融实验步骤 (默认: kraken2,align,rrna)
+    · --keep_rrna          保留分离的 rRNA reads 到 rrna/ 目录
+    · --rrna_chunk_size    ribodetector chunk_size (默认 256)
+    · --rrna_report        rRNA 统计报告文件名 (默认: ribodetector.report.txt)
+    · --align_config       透传给比对工具的额外参数
+    · --deplete_tmp        临时文件目录
+    · --deplete_debug      输出 host_depletion.py 详细调试日志
+    · -t/--threads         每样本线程数 (默认 20)
+    · -j/--jobs            并行样本数 (默认 2)
+    · --force              强制重跑 (清除断点记录)
 
-  参数:
-    --input_reads    输入目录 (默认读取 00a_CleanData/) [必需]
-    --output_dir     输出根目录 [必需]
-    --host_db        宿主数据库根目录 (自动查找 kraken2/bowtie2/hisat2/minimap2 子目录)
-    --kraken2_db     Kraken2 宿主库 (覆盖 --host_db 自动检测)
-    --host_align_db  宿主比对索引 (覆盖 --host_db 自动检测)
-    --aligner        {bowtie2,hisat2,minimap2} 默认 bowtie2
-    --seq_type       {dna-short,rna-short,nanopore,pacbio} 默认 rna-short
-    --rrna           开启 rRNA 剔除
-    --rrna_tool      {ribodetector,silva} 默认 ribodetector (仅rna-short)
-    --silva_index    SILVA Bowtie2 索引 (--rrna_tool silva 时必需)
-    -t, --threads    线程数 (默认 20)
-    -j, --jobs       并行数 (默认 2)
-    --force          强制重跑
-
-  输出: 00b_HostDepletion/
+  输出目录:
+    00b_HostDepletion/
+    ├── *_clean_1.fa.gz / *_clean_2.fa.gz  (清洁 reads, 可配对的 fasta)
+    ├── rrna/               (--keep_rrna 时保留的 rRNA reads)
+    ├── logs/               (每样本子进程日志)
+    ├── kraken2_report/     (Kraken2 分类报告 per-sample)
+    ├── host_depletion_seqkit_summary.tsv   (各阶段 reads 数量统计)
+    ├── host_depletion_resource_usage.tsv   (每样本资源消耗汇总)
+    └── host_depletion_plot_*.png           (reads 变化可视化图表)
 """,
     'assembly': """
   --stage assembly — 宏转录组组装 (Penguin / MEGAHIT / rnaviralSPAdes)
 
-  子脚本: assembly_pipeline.py
-    penguin         宏转录组专用组装 (默认)
-    megahit         宏基因组组装
-    rnaviralspades  RNA病毒组装
-    all             三种工具并行, ≥2工具自动 refineC split/merge
+  子脚本: assembly_pipeline.py  (支持断点续传: 检测已有 .contig.fasta)
+    penguin         : 宏转录组专用组装 (guided_nuclassemble, 默认)
+    megahit         : 宏基因组组装 (k-list 21..99)
+    rnaviralspades  : RNA 病毒专用 SPAdes
+    all             : 三工具并行; ≥2 工具自动 refineC split + merge
 
-  子脚本完整参数:
-    --tool / -t           {megahit,rnaviralspades,penguin,all} 组装工具
-    --input / -i          输入文件或目录
-    --length / -l         contig最小长度 (默认 200)
-    --threads / -n        线程数 (默认 8)
-    --memory / -m         内存 GB (默认 64)
-    --jobs / -j           并行任务数 (默认 1)
-    --output-dir / -o     输出目录
-    --log_dirs            日志目录
-    --refineC_split       运行 refineC split
-    --refineC_merge       运行 refineC merge
-    --refineC_threads     refineC 线程
-    --refineC_frag_min_len  refineC split 最小片段长度 (默认 1000)
-    --refineC_min_id      refineC merge 最小序列一致性 (默认 0.97)
-    --refineC_min_cov     refineC merge 最小覆盖度 (默认 0.50)
-    --tmp-dir             临时目录
-    --keep-temp           保留临时文件
-    --force               强制重跑
+  编排器透传参数 (★ 必需 | · 可选):
+    ★ --output_dir         输出根目录 (子目录: 01_Assembly/)
+    · --input_reads        输入 reads 目录 (默认读取 00b_HostDepletion/)
+    · --assembler          {penguin,megahit,rnaviralspades,all} (默认 penguin)
+    · --contig-length      最小 contig 长度 bp (默认 200)
+    · -t/--threads         单任务线程数 (默认 20)
+    · -m/--memory          单任务内存 GB (默认 64)
+    · -j/--jobs            并行样本数 (默认 2)
+    · --refinec_threads    refineC 独立线程数 (默认使用 --threads)
+    · --refinec_frag_min_len  refineC split 最小片段长度 bp (默认 1000)
+    · --refinec_min_id     refineC merge 最小序列一致性 (默认 0.95)
+    · --refinec_min_cov    refineC merge 最小覆盖度 (默认 0.50)
+    · --asm_tmp_dir        组装临时文件目录
+    · --asm_keep_temp      保留临时文件及 refineC 中间目录 (调试用)
+    · --force              强制重跑 (覆盖已有 contig)
 
-  编排器透传参数:
-    --input_reads    输入目录 (默认读取 00b_HostDepletion/) [必需]
-    --output_dir     输出根目录 [必需]
-    --assembler      {penguin,megahit,rnaviralspades,all} 默认 penguin
-    -t, --threads    线程数 (默认 20)
-    -m, --memory     内存 GB (默认 64)
-    -j, --jobs       并行数 (默认 2)
-    --force          强制重跑
+  多工具模式 (--assembler all / megahit,rnaviralspades,penguin):
+    ≥2 工具时自动启用 refineC split → merge_all → refineC merge 管道
+    最终产出: {sample}_all_tools_refineC_merge.merged.fasta
 
-  其余参数请直接调用子脚本: python scripts/assembly_pipeline.py -h
-
-  输出: 01_Assembly/{sample}/{sample}_{tool}.contig.fasta
+  输出目录:
+    01_Assembly/{sample}/
+    ├── {sample}_{tool}.contig.fasta          (组装 contig)
+    ├── {sample}.{tool}.log                   (stdout/stderr)
+    ├── {sample}.{tool}.time.mem.log          (资源使用)
+    └── {sample}_all_tools_refineC_merge.merged.fasta  (多工具 merge 产出)
 """,
     'identification': """
-  --stage identification — 6 工具病毒序列鉴定
+  --stage identification — 6 工具并行病毒序列鉴定
 
-  子脚本: virus_identification16.py
-    Genomad         深度学习病毒/质粒/前病毒分类
-    Diamond BLASTX  RefSeq 病毒蛋白 + NR 库比对
-    VirSorter2      隐马尔可夫模型病毒检测
-    ViralVerify     病毒蛋白验证
-    VirHunter       机器学习病毒鉴定
-    Metabuli        基于 k-mer 的分类
+  子脚本: virus_identification16.py  (支持断点续传 + 资源监控)
+    Genomad          : 深度学习病毒/质粒/前病毒分类
+    Diamond BLASTX   : RefSeq 病毒蛋白 + UniProt 蛋白比对
+    VirSorter2       : 隐马尔可夫模型病毒检测 (--virsorter_group)
+    ViralVerify      : 病毒蛋白 HMM 验证
+    VirHunter        : 深度学习病毒鉴定
+    Metabuli         : k-mer 序列分类
+    ─────────────────────────────────────────
+    后置过滤         : UniProt 验证 + NR 库对抗过滤
+    Venn/Upset 图    : 多工具交集可视化
 
-  调用命令: python virus_identification16.py --input <fasta> --output <dir>
-             --db_dir <dir> --identify_tools all --threads N --jobs N
+  编排器透传参数 (★ 必需 | · 可选):
+    ★ --output_dir         输出根目录 (子目录: 02_Identification/)
+    ★ --virus_db           病毒鉴定数据库根目录
+    · --input_assembly     组装结果目录 (默认自动读取 01_Assembly/)
+    · --identify_tools     鉴定工具: all / genomad,diamond,metabuli,... (默认 all)
+    · --blast_mode         {strict,filter,both,no-filter} (默认 filter)
+    · --blast_evalue       BLAST e-value 阈值 (默认 1e-5)
+    · --blast_top_n        BLAST 对抗验证 Top N (默认 5)
+    · --virsorter_group    VirSorter2 分组 (默认 dsDNAphage,NCLDV,RNA,ssDNA,lavidaviridae)
+    · --ident_ext          输入文件扩展名 (默认 .fasta)
+    · -t/--threads         单样本线程数 (默认 20)
+    · -j/--jobs            并行样本数 (默认 2)
+    · --force              强制重跑
 
-  参数:
-    --output_dir     输出根目录 [必需]
-    --input_assembly 组装结果目录 (默认自动读取 01_Assembly/)
-    --virus_db       病毒鉴定数据库根目录 [必需]
-    --identify_tools 鉴定工具 (默认 all, 或逗号分隔: genomad,diamond,...)
-    -t, --threads    线程数 (默认 20)
-    -j, --jobs       并行数 (默认 2)
-    --force          强制重跑
+  鉴定数据库 (全部可选, 自动从 --virus_db 推导):
+    · --virus_protein_db  病毒蛋白 Diamond DB
+    · --uniprot_db        UniProt Diamond DB
+    · --nr_db             NR Diamond DB (对抗过滤)
+    · --viroids_db        类病毒 BLAST DB
+    · --virsorter_db      VirSorter2 数据库
+    · --viralverify_hmm   ViralVerify HMM 文件
+    · --metabuli_db       Metabuli 数据库
+    · --virus_taxid       病毒 TaxID 列表
+    · --virhunter_path    VirHunter predict_cpu.py 路径
+    · --virhunter_weights  VirHunter weights 目录
+    · --virbot_path       VirBot.py 路径
+    · --viralm_path       viralm_cpu.py 路径
 
-  输出: 02_Identification/{sample}/*_virus.all.candidate.fasta
+  后置过滤控制:
+    · --skip_uniprot_filter  跳过 UniProt 后置过滤
+    · --skip_nr_filter       跳过 NR 后置过滤
+    · --skip_id_plots        跳过 Venn/Upset 图表生成
+    · --clean_failed         自动清理失败任务目录
+
+  输出目录:
+    02_Identification/{sample}/
+    ├── *_virus.all.candidate.fasta         (最终候选病毒)
+    ├── uniprot_filter_output_strict/       (UniProt 严格过滤结果)
+    ├── uniprot_filter_output_filter/       (UniProt 宽松过滤结果)
+    ├── *_resource.tsv                      (资源消耗)
+    └── Venn/                               (Venn/Upset 图表)
 """,
     'cobra': """
-  --stage cobra — COBRA 批量延伸 (BWA-MEM2 + Contig Overlap Re-Assembly)
+  --stage cobra — COBRA 批量延伸 (BWA-MEM2 + CoverM + COBRA)
 
-  子脚本: cobra_pipeline.py
-    自动匹配 reads + contig + virus 三元组
-    BWA-MEM2 比对 → CoverM 覆盖度 → COBRA 重叠延伸 → CheckV 评估
+  子脚本: cobra_pipeline.py  (支持 JSON 断点续传: checkpoint_status.json)
+    流程: BWA-MEM2 比对 → Samtools sort → CoverM 覆盖度 → COBRA 重叠延伸
+    自动匹配: reads + contig + virus 三元组
+    病毒来源: 支持 raw/filter/strict 三种模式 (--virus_mode)
 
-  调用命令: python cobra_pipeline.py --mode mix --reads-dir <dir>
-             --contigs-dir <dir> --virsorter-dir <dir> --output-dir <dir>
-             --assembly-tools <tools> --jobs N --threads N
+  编排器透传参数 (★ 必需 | · 可选):
+    ★ --output_dir         输出根目录 (子目录: 03_COBRA/)
+    · --input_reads        输入 reads 目录 (默认读取 00b_HostDepletion/)
+    · --virus_mode         {raw,filter,strict} 病毒序列来源 (默认 strict)
+    · --cobra_mink         COBRA 最小 kmer (默认 21)
+    · --cobra_maxk         COBRA 最大 kmer (默认 141)
+    · --cobra_linkage_mismatch  链接识别不匹配数 (默认 2)
+    · --cobra_verbose      输出 cobra_pipeline.py 详细日志
+    · -t/--threads         单任务线程数 (默认 20)
+    · -j/--jobs            并行任务数 (COBRA 内存密集, jobs 自动减半)
+    · --force              禁用断点续传, 强制重跑所有任务
 
-  参数:
-    --input_reads    项目根目录 (自动读取 00b_HostDepletion/) [必需]
-    --output_dir     输出根目录 [必需]
-    --assembler      {penguin,megahit,rnaviralspades,all} 默认 penguin
-    -t, --threads    线程数 (默认 20)
-    -j, --jobs       并行数 (默认 2)
-    --force          强制重跑
-
-  输出: 03_COBRA/{sample}/cobra_{tool}_result/*.cobra.fa
+  输出目录:
+    03_COBRA/{sample}/
+    └── cobra_{tool}_result/
+        ├── {sample}.{mode}.{tool}.cobra.fa    (COBRA 延伸结果)
+        ├── {sample}.{mode}.{tool}.COBRA/       (COBRA 原始输出)
+        └── {sample}.{mode}.{tool}.log          (任务日志)
 """,
     'cluster': """
-  --stage cluster — 聚类 (CD-HIT 参考引导 + vclust Leiden, 仅聚类不拯救)
+  --stage cluster — 聚类去冗余 (CD-HIT 参考引导 + vclust Leiden)
 
-  子脚本: cluster_pipeline.py --stop-after-vclust
-    自动收集 03_COBRA/**/*.cobra.fa, 或通过 --cluster_input 直接指定
-    seqkit          最小长度过滤 (--min-length, 默认 500bp)
-    CD-HIT          参考引导预聚类 (可选 --ref-genomes, ANI 95%, QCOV 85%)
-                    vclust deduplicate 去重参考 → cd-hit 聚类 → 拆分 known/novel
-    vclust Leiden   novel contig 的 Leiden 聚类 (ANI 95%, QCOV 85%)
+  子脚本: cluster_pipeline.py  (支持 --resume 断点续传)
+    Step 1  seqkit        : 最小长度过滤 (--min-length, 默认 500bp)
+    Step 2a CD-HIT 参考引导 : 合并 contig + ICTV/NCBI 参考 → vclust cd-hit
+                             → 拆分 known/novel → 产出 association 映射
+    Step 2b vclust Leiden  : 仅 novel contig 聚类 (prefilter→align→cluster)
+    Step 3  输出            : centroids + per-cluster 拆分 + 统计
 
-  子脚本完整参数:
-    -i / --input-fasta        输入 FASTA [必需]
-    -o / --output-dir         输出目录 [必需]
-    -t / --threads            线程数 (默认 64)
-    --min-length              最小长度 bp (默认 500)
-    --ani                     vclust ANI (默认 0.95)
-    --qcov                    vclust QCOV (默认 0.85)
-    --skip-vclust             跳过 vclust (复用已有)
-    --vclust-cluster-file     复用已有聚类 TSV
-    --stop-after-vclust       聚类后停止 (编排器使用)
-    --ref-genomes             ICTV/NCBI 参考基因组 FASTA
-    --cdhit-ani               CD-HIT ANI (默认 0.95)
-    --cdhit-qcov              CD-HIT QCOV (默认 0.85)
-    --resume                  断点续传
+  编排器透传参数 (★ 必需 | · 可选):
+    ★ --output_dir         输出根目录 (子目录: 04_CLUSTER/)
+    · --cluster_input      直接输入已合并 FASTA (跳过 COBRA 收集)
+    · --ref-genomes        ICTV/NCBI 参考基因组 FASTA (可多个, CD-HIT 预聚类)
+    · --min-length         病毒最小长度 bp (默认 500)
+    · --ani                vclust Leiden ANI 阈值 (默认 0.95)
+    · --qcov               vclust Leiden QCOV 阈值 (默认 0.85)
+    · --cdhit_ani          CD-HIT ANI 阈值 (默认 0.95, 转录组建议 0.85)
+    · --cdhit_qcov         CD-HIT QCOV 阈值 (默认 0.85, 转录组建议 0.50)
+    · --skip_vclust        跳过 vclust Leiden (仅做 CD-HIT 预聚类)
+    · --vclust_cluster_file  复用已有 vclust 聚类 TSV (跳过聚类计算)
+    · -t/--threads         线程数 (默认 20)
+    · --force              禁用断点续传, 强制重跑
 
-  编排器透传参数:
-    --output_dir     输出根目录 [必需]
-    --cluster_input  直接输入已合并 FASTA (跳过 COBRA 收集)
-    --ref-genomes    ICTV/NCBI 参考基因组 FASTA
-    --min-length     病毒最小长度 bp (默认 500)
-    --ani            vclust ANI (默认 0.95)
-    --qcov           vclust QCOV (默认 0.85)
-    -t, --threads    线程数 (默认 20)
-
-  输出:
-    04_CLUSTER/centroids/final_centroids.fasta
-    04_CLUSTER/centroids/known_association.tsv
-    04_CLUSTER/3_vclust/vclust_clusters.tsv
-    04_CLUSTER/3_vclust/split_fastas/
+  输出目录:
+    04_CLUSTER/
+    ├── 1_seqkit/virus.candidate.fasta          (长度过滤后)
+    ├── 2_cdhit/
+    │   ├── known_centroids.fasta               (已知簇 centroids)
+    │   ├── known_association.tsv               (contig→参考映射)
+    │   ├── novel_contigs.fasta                 (新颖 contig)
+    │   └── known_clusters/                     (per-cluster 已知簇拆分)
+    ├── 3_vclust/
+    │   ├── vclust_clusters.tsv                 (聚类结果)
+    │   ├── cluster_summary.tsv                  (Polars 统计)
+    │   └── split_fastas/                       (per-cluster novel 拆分)
+    └── centroids/
+        ├── final_centroids.fasta               (全部代表序列, 供后续 taxonomy/host)
+        ├── known_association.tsv
+        └── known_ids.txt
 """,
     'taxonomy': """
-  --stage taxonomy — 9 工具分类 + R 共识整合
+  --stage taxonomy — 9 工具病毒分类 + R 共识整合
 
   子脚本: virus_classifier2.py + virus_classifier_analysis14.R
-    genomad        深度学习全基因组病毒分类
-    metabuli        k-mer 序列分类 + taxonkit lineage
-    CAT             BAT/CAT 蛋白比对分类
-    diamond_lca     diamond blastx LCA 分类
-    mmseqs         蛋白序列比对分类
-    VITAP          病毒蛋白分类
-    ACVirus        古菌病毒分类
-    vcontact3      蛋白簇网络分类
-    PhaGCN3        噬菌体 GCN 分类
-    R consensus    多工具投票共识 (vcontact3>vitap>acvirus>mmseqs>genomad)
+    genomad         : 深度学习全基因组病毒分类
+    metabuli        : k-mer 序列分类 + taxonkit lineage
+    CAT             : BAT/CAT 蛋白比对分类
+    diamond_lca     : Diamond BLASTX LCA 分类
+    mmseqs          : 蛋白序列比对分类
+    VITAP           : 病毒蛋白分类
+    ACVirus         : 古菌病毒分类
+    vcontact3       : 蛋白簇网络分类 (基因共享网络)
+    PhaGCN3         : 噬菌体 GCN 分类
+    R consensus     : 多工具投票共识 (vcontact3>vitap>acvirus>mmseqs>genomad)
+                     → 8 级标准 taxonomy (Realm..Species)
 
-  调用命令: python virus_classifier2.py -g <fasta> -s <sample>
-             -t all -o <dir> -p N --db-dir <dir> [-f]
-             [--uniprot-db <path>] [--metabuli-db <path>]
-             Rscript virus_classifier_analysis14.R --combined <tsv> --output <dir>
+  编排器透传参数 (★ 必需 | · 可选):
+    ★ --output_dir         输出根目录 (子目录: 05_Taxonomy/)
+    ★ --virus_db           病毒分类数据库根目录
+    · -t/--threads         线程数 (默认 20)
+    · --tax_jobs           分类并行任务数 (默认 1)
+    · --tax_ext            分类输入扩展名 (默认 .fasta)
+    · --tax_remove_suffix  分类输入去后缀名
+    · --force              强制重跑
 
-  参数:
-    --input_reads    项目根目录 [必需]
-    --output_dir     输出根目录 [必需]
-    --virus_db       病毒分类数据库根目录 [必需]
-    -t, --threads    线程数 (默认 20)
-    --force          强制重跑
-    --uniprot_db     UniProt Diamond DB (可选, 用于 diamond_lca)
-    --metabuli_db    Metabuli DB (可选, 覆盖默认路径)
+  分类数据库 (全部可选):
+    · --genomad_db        genomad 数据库
+    · --metabuli_db       Metabuli 数据库
+    · --cat_db            CAT 数据库
+    · --cat_tax           CAT taxonomy 路径
+    · --uniprot_db        UniProt Diamond DB (diamond_lca)
+    · --mmseqs_db         MMseqs2 数据库
+    · --vitap_db          VITAP 数据库
+    · --acvirus_db        ACVirus 数据库
+    · --vcontact3_db      vConTACT3 数据库
 
-  输出: 05_Taxonomy/integrated/final_integrated_classification.tsv
+  输出目录:
+    05_Taxonomy/
+    ├── WVDB_votus.virus_classed/
+    │   └── WVDB_votus_combined_taxonomy.tsv    (9 工具合并分类)
+    └── integrated/
+        └── final_integrated_classification.tsv  (R 共识最终分类)
 """,
     'host': """
   --stage host — 宿主预测 (决策树: ICTV > RNAVirHost > PhaBOX2)
 
   子脚本: run_host_prediction.py --mode all
-    ICTV (C9)      官方权威分类库查找宿主 (--prob-dir)
-    RNAVirHost     全生态位模型预测 (plant/animal/fungi/bacteria)
-    PhaBOX2        CRISPR+AAI网络噬菌体宿主预测 (--phabox-db)
-    决策树          Class硬规则 (Caudoviricetes→Bacteria)
-                   ICTV==RVH→直接采用, 分歧时PB2决胜, 全分歧→ICT>RVH>PB2
+    ICTV (C9)       : 官方权威分类库查找宿主 (--prob-dir, 级联: Species→Genus→Family)
+    RNAVirHost      : 全生态位模型预测 (plant/animal/fungi/bacteria, 两步法)
+    PhaBOX2 CHERRY  : CRISPR+AAI 网络噬菌体宿主预测 (--phabox-db)
+    决策树          : Class 硬规则 (Caudoviricetes→Bacteria)
+                      ICTV==RVH→直接采用, 分歧时 PB2 决胜, 全分歧→ICT>RVH>PB2
 
-  调用命令: python run_host_prediction.py -i <fasta> --tax <tsv> -o <dir>
-             -t N --mode all [--phabox-db <dir>] [--prob-dir <dir>] [-f]
+  编排器透传参数 (★ 必需 | · 可选):
+    ★ --output_dir         输出根目录 (子目录: 06_HostPrediction/)
+    · --phabox-db          PhaBOX2 数据库路径
+    · --prob-dir           ICTV 宿主概率表目录 (默认: cross_analysis/)
+    · -t/--threads         线程数 (默认 20)
+    · --force              强制重跑
+    · --skip_rnavirhost    跳过 RNAVirHost 宿主预测
+    · --skip_phabox        跳过 PhaBOX2 宿主预测
+    · --skip_ictv          跳过 ICTV 宿主查找
 
-  参数:
-    --input_reads    项目根目录 [必需]
-    --output_dir     输出根目录 [必需]
-    --phabox-db      PhaBOX2 数据库路径
-    --prob-dir       ICTV 宿主概率表目录
-    --virus_db       病毒数据库根目录 [必需]
-    -t, --threads    线程数 (默认 20)
-    --force          强制重跑
-
-  输出:
-    06_HostPrediction/ensemble_host_summary.tsv
-    06_HostPrediction/host_classified_fasta/{host}.classified.fasta
+  输出目录:
+    06_HostPrediction/
+    ├── ensemble_host_summary.tsv                    (决策树最终宿主)
+    ├── host_classified_fasta/{host}.classified.fasta
+    ├── RVH_result/                                 (RNAVirHost 原始结果)
+    ├── phabox2_output/                             (PhaBOX2 原始结果)
+    └── C9_ICTV_result/                             (ICTV 查找结果)
 """,
     'checkv': """
-  --stage checkv — 按宿主分类 CheckV 预评估 (新增)
+  --stage checkv — 按宿主分类 CheckV 完整性预评估
 
-  功能: 对每个宿主类别的 centroids 运行 checkv completeness
-        标记 completeness ≥ 90% 的 centroids 为免拯救 (与 CD-HIT known 合并)
+  功能: 对每个宿主类别的 centroids 分别运行 checkv completeness
+        标记 completeness ≥ 90% 的 centroids 为【免拯救】
+        (与 CD-HIT known 合并, 在三支路拯救前直接输出)
 
-  调用命令: checkv completeness <fasta> <outdir> -d <db> -t N 
-  参数:
-    --input_reads    项目根目录 [必需]
-    --output_dir     输出根目录 [必需]
-    --checkv_db      CheckV 数据库 [必需]
-    -t, --threads    线程数 (默认 20)
-    --force          强制重跑
+  调用命令: checkv completeness <fasta> <outdir> -d <db> -t N
 
-  输出:
-    07_Checkv/{host}/completeness.tsv           (各宿主 CheckV 结果)
-    07_Checkv/checkv_pass_ids.txt              (≥90% pass centroids)
+  编排器透传参数 (★ 必需 | · 可选):
+    ★ --output_dir         输出根目录 (子目录: 07_Checkv/)
+    ★ --checkv_db          CheckV 数据库路径
+    · -t/--threads         线程数 (默认 20, 自动上限 16)
+    · --force              强制重跑
+
+  质量等级推导 (新版 CheckV 无 quality 列时从 completeness 推导):
+    Complete       : completeness ≥ 90%
+    High-quality   : 50% ≤ completeness < 90%
+    Medium-quality : 10% ≤ completeness < 50%
+    Low-quality    : completeness < 10%
+    Not-determined : 无法判断
+
+  输出目录:
+    07_Checkv/
+    ├── {host}/completeness.tsv         (各宿主 CheckV 结果)
+    ├── {host}.fasta                    (各宿主 centroids)
+    └── checkv_pass_ids.txt            (≥90% pass centroids, 供 rescue 阶段)
 """,
     'rescue': """
   --stage rescue — 宿主过滤 + 三支路级联拯救 + CheckV 质量报告
 
-  子脚本: rescue_pipeline.py
-    分支 A   CheckV 并行评估 centroids (completeness >90% pass)
-    分支 C   Virseqimprover reads 迭代延伸 (cluster 多样本 reads 聚合)
-    分支 D   BLASTN 参考搜索 + CheckV + VSI 最后拯救
-    合并     A+C+D pass → vclust 最终去重 → HQ vOTU
+  子脚本: rescue_pipeline.py  (支持 --resume 断点续传)
+    前置步骤 : 按 Final_Host 过滤 centroids (--host-filter)
+               CD-HIT known + CheckV pass(≥90%) → 免拯救, 直接输出
+    分支 A    : CheckV 并行评估 centroids (分块, completeness ≥ 90% pass)
+    分支 C    : Virseqimprover reads 迭代延伸 (cluster 内多样本 reads 聚合)
+                Salmon 定量 → BBMap 提取 → SPAdes 组装 → CheckV 验证
+    分支 D    : BLASTN megablast + CheckV + VSI 最后拯救
+    合并      : A+C+D pass → vclust 最终去重 → HQ vOTU
 
-  免拯救 = CD-HIT known + CheckV pass (≥90%)
+  免拯救 = CD-HIT known (参考关联) + CheckV pass (completeness ≥ 90%)
 
-  子脚本完整参数:
-    -c / --centroids            输入 centroids FASTA [必需]
-    --clusters-tsv              vclust 聚类结果 TSV [必需]
-    --split-dir                 per-cluster 拆分目录 [必需]
-    -o / --output-dir           输出目录 [必需]
-    -fq / --fastq-dir           reads 目录 [必需]
-    -cv / --checkv-db           CheckV 数据库 [必需]
-    -db / --blast-db            BLAST 数据库 (分支 D, 可选)
-    --virseqimprover-path       Virseqimprover.py 路径
-    --salmon-bin                Salmon 路径 (默认 salmon)
-    -t / --threads              线程数 (默认 64)
-    -j / --jobs                 VSI 并行数 (默认 4)
-    --ani                       最终 vclust ANI (默认 0.95)
-    --qcov                      最终 vclust QCOV (默认 0.85)
-    --resume                    断点续传
+  编排器透传参数 (★ 必需 | · 可选):
+    ★ --output_dir             输出根目录 (子目录: 08_Rescue/)
+    ★ --checkv_db              CheckV 数据库路径
+    · --input_reads            输入 reads 目录 (默认读取 00b_HostDepletion/)
+    · --blast-db               BLASTN 参考数据库 (分支 D, ref.fasta)
+    · --host-filter            目标宿主, 逗号分隔 (默认 Plant)
+    · --virseqimprover-path    Virseqimprover.py 路径 (默认同目录)
+    · --salmon-bin             Salmon 二进制路径 (默认: salmon)
+    · --min-length             病毒最小长度 bp (默认 500)
+    · --ani                    最终 vclust ANI (默认 0.95)
+    · --qcov                   最终 vclust QCOV (默认 0.85)
+    · -t/--threads             线程数 (默认 20)
+    · -j/--jobs                并行任务数 (默认 2)
+    · --force                  禁用断点续传
 
-  编排器透传参数:
-    --input_reads       项目根目录 [必需]
-    --output_dir        输出根目录 [必需]
-    --checkv_db         CheckV 数据库 [必需]
-    --blast-db          BLAST 数据库 (分支 D, 可选)
-    --host-filter       目标宿主, 逗号分隔 (默认 Plant)
-    --min-length        病毒最小长度 bp (默认 500)
-    --ani               vclust ANI (默认 0.95)
-    --qcov              vclust QCOV (默认 0.85)
-    -t, --threads       线程数 (默认 20)
-    -j, --jobs          并行数 (默认 2)
-
-  输出:
-    08_Rescue/{host}/centroids/final_centroids.fasta
-    08_Rescue/checkv/
+  输出目录:
+    08_Rescue/
+    ├── known/centroids/final_centroids.fasta     (免拯救 known centroids)
+    ├── {host}/
+    │   ├── input_centroids.fasta                 (目标宿主 centroids)
+    │   ├── branch_a/branchA_pass.fasta           (CheckV pass)
+    │   │           branchA_fail.fasta             (CheckV fail)
+    │   ├── branch_b/branchB_pass.fasta           (VSI pass)
+    │   │           branchB_fail.fasta             (VSI fail)
+    │   ├── branch_c/branchC_pass.fasta           (BLASTN+VSI pass)
+    │   ├── merged/all_HQ.fasta                   (A+C+D 合并)
+    │   └── centroids/final_centroids.fasta       (最终 HQ vOTU ★)
+    └── checkv/
+        ├── {host}/completeness.tsv               (各宿主 CheckV)
+        └── all/completeness.tsv                  (全部 centroids)
 """,
 }
 
