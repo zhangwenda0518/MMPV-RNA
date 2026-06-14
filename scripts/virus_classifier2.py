@@ -646,6 +646,9 @@ class VirusClassifier:
                       postproc_phagcn3(inp, s, out) if is_file_valid(os.path.join(out,"PhaGCN3_results",f"{s}.phagcn3.csv"),10) else None][-1]),
         ]
 
+        # 只运行用户指定的工具
+        tasks = [(t,d,o,f) for t,d,o,f in tasks if t in self.tools]
+
         def _run_one(tool, db_path, tax_out, run_fn):
             if is_file_valid(tax_out,10) and not self.args.force:
                 safe_print(f"  [{tool}] 已有结果, 跳过"); return tool
