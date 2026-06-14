@@ -1272,6 +1272,30 @@ class ViromePipeline:
         self.log.info("  按宿主 CheckV 报告 → %s", checkv_dir)
 
     # ── 汇总 ──
+    @staticmethod
+    def _asm_stats(fasta_path):
+        """返回 (n, total, max_len, n50, n90, c500, r500, c1000, r1000)"""
+        lens = []; seq = ""
+        for line in open(fasta_path):
+            l = line.strip()
+            if l.startswith('>'):
+                if seq: lens.append(len(seq))
+                seq = ""
+            else: seq += l
+        if seq: lens.append(len(seq))
+        if not lens: return (0,0,0,0,0,0,0,0,0)
+        lens.sort(reverse=True); total = sum(lens); cum = 0
+        half = total / 2; n90t = total * 0.9; n50 = n90 = 0
+        for la in lens:
+            cum += la
+            if n50 == 0 and cum >= half: n50 = la
+            if n90 == 0 and cum >= n90t: n90 = la
+        c500 = sum(1 for la in lens if la > 500)
+        c1000 = sum(1 for la in lens if la > 1000)
+        r500 = round(c500/max(len(lens),1)*100, 1)
+        r1000 = round(c1000/max(len(lens),1)*100, 1)
+        return (len(lens), total, lens[0], n50, n90, c500, r500, c1000, r1000)
+
     def run_reports(self):
         self.log.info("=" * 50)
         self.log.info("[9] Virome Report — 流水线总结报告")
@@ -1367,6 +1391,16 @@ class ViromePipeline:
                 for f in d.glob("*.contig.fasta"):
                     n_contig = _count_fasta(f)
                 _add(f"  └ {d.name}", "✓", key_metric=f"{n_contig} contigs")
+            # 生成 assembly_summary.tsv (N50/N90)
+            with open(report_dir / "assembly_summary.tsv", "w") as af:
+                af.write("Sample\tAssembler\tSize(Mb)\tContigs\tMax_Len\tN50\tN90\t>500bp\t>500bp(%)\t>1000bp\t>1000bp(%)\n")
+                for d in sorted(asm.iterdir()):
+                    if not d.is_dir(): continue
+                    for f in d.glob("*.contig.fasta"):
+                        n, total, mx, n50, n90, c500, r500, c1000, r1000 = self._asm_stats(str(f))
+                        if n == 0: continue
+                        at = f.stem.replace(f"{d.name}_", "").replace(".contig", "")
+                        af.write(f"{d.name}\t{at}\t{total/1e6:.1f}\t{n}\t{mx}\t{n50}\t{n90}\t{c500}\t{r500}\t{c1000}\t{r1000}\n")
         else:
             _add("01_Assembly", "○", details="未运行")
 
