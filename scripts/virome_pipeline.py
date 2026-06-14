@@ -1392,6 +1392,7 @@ class ViromePipeline:
                     n_contig = _count_fasta(f)
                 _add(f"  └ {d.name}", "✓", key_metric=f"{n_contig} contigs")
             # 生成 assembly_summary.tsv (N50/N90)
+            asm_data = []
             with open(report_dir / "assembly_summary.tsv", "w") as af:
                 af.write("Sample\tAssembler\tSize(Mb)\tContigs\tMax_Len\tN50\tN90\t>500bp\t>500bp(%)\t>1000bp\t>1000bp(%)\n")
                 for d in sorted(asm.iterdir()):
@@ -1401,6 +1402,11 @@ class ViromePipeline:
                         if n == 0: continue
                         at = f.stem.replace(f"{d.name}_", "").replace(".contig", "")
                         af.write(f"{d.name}\t{at}\t{total/1e6:.1f}\t{n}\t{mx}\t{n50}\t{n90}\t{c500}\t{r500}\t{c1000}\t{r1000}\n")
+                        asm_data.append({'s': d.name, 'n': n, 'total': total, 'n50': n50})
+                if len(asm_data) > 1:
+                    t_n = sum(r['n'] for r in asm_data)
+                    t_bp = sum(r['total'] for r in asm_data)
+                    af.write(f"TOTAL\tall\t{t_bp/1e6:.1f}\t{t_n}\t-\t-\t-\t-\t-\t-\t-\n")
         else:
             _add("01_Assembly", "○", details="未运行")
 
@@ -1417,6 +1423,7 @@ class ViromePipeline:
             # 生成 ident_summary.tsv + filter_summary.tsv
             tools_list = ['genomad','blast','metabuli','virsorter2','viralverify',
                           'virhunter','virbot','viralm','rdrpcatch']
+            ident_data = []
             with open(report_dir / "ident_summary.tsv", "w") as ids:
                 ids.write("Sample\tAll_Candidate\t" + "\t".join(tools_list) + "\n")
                 for d in sorted(ident.iterdir()):
@@ -1427,6 +1434,13 @@ class ViromePipeline:
                         idf = d / f"{d.name}_virus.{tool}.result.id"
                         tcounts[tool] = _count_lines(idf) if idf.is_file() else 0
                     ids.write(f"{d.name}\t{all_ids}\t" + "\t".join(str(tcounts[t]) for t in tools_list) + "\n")
+                    ident_data.append({'Sample': d.name, 'All': all_ids, **tcounts})
+                # TOTAL 行
+                if len(ident_data) > 1:
+                    total_all = sum(r['All'] for r in ident_data)
+                    total_tools = {t: sum(r[t] for r in ident_data) for t in tools_list}
+                    ids.write(f"TOTAL\t{total_all}\t" + "\t".join(str(total_tools[t]) for t in tools_list) + "\n")
+            filter_data = []
             with open(report_dir / "filter_summary.tsv", "w") as fs:
                 fs.write("Sample\tMode\tAll_Candidate\tPassed\tRetained(%)\n")
                 for d in sorted(ident.iterdir()):
@@ -1437,8 +1451,27 @@ class ViromePipeline:
                                    ('comb','uniprot_filter_output')]:
                         ff = d / fd / f"{d.name}_virus.uniprot_filtered.fasta"
                         nf = _count_fasta(ff) if ff.is_file() else 0
-                        if nf > 0 or nf == 0 and fd == 'uniprot_filter_output':
+                        if nf > 0 or (nf == 0 and fd == 'uniprot_filter_output'):
                             fs.write(f"{d.name}\t{fm}\t{all_n}\t{nf}\t{round(nf/max(all_n,1)*100,1)}\n")
+                            filter_data.append({'Sample': d.name, 'Mode': fm, 'All': all_n, 'Passed': nf,
+                                               'Retained': round(nf/max(all_n,1)*100,1)})
+                # TOTAL 行 (按 mode)
+                if len(filter_data) > 0:
+                    modes_seen = set(r['Mode'] for r in filter_data)
+                    for m in sorted(modes_seen):
+                        mr = [r for r in filter_data if r['Mode'] == m]
+                        t_all = sum(r['All'] for r in mr)
+                        t_pass = sum(r['Passed'] for r in mr)
+                        fs.write(f"TOTAL\t{m}\t{t_all}\t{t_pass}\t{round(t_pass/max(t_all,1)*100,1)}\n")
+            # 多样本屏幕显示
+            if len(ident_data) > 1:
+                top_tools = sorted(total_tools.items(), key=lambda x: -x[1])[:3]
+                best = " | ".join(f"{t}={c}" for t,c in top_tools)
+                _add("  └ multi-sample", "✓", key_metric=f"total={total_all}, top={best}")
+                for fm in sorted(modes_seen)[:2]:
+                    mr = [r for r in filter_data if r['Mode'] == fm]
+                    t_p = sum(r['Passed'] for r in mr)
+                    _add(f"  └ {fm}", "✓", key_metric=f"{t_p} passed ({len(mr)} samples)")
         else:
             _add("02_Identification", "○", details="未运行")
 
