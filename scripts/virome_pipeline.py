@@ -1398,7 +1398,24 @@ class ViromePipeline:
             ctsv = cluster / "3_vclust" / "vclust_clusters.tsv"
             if ctsv.is_file():
                 n_clusters = _count_lines(ctsv) - 1
-                _add("  └ vclust", "✓", key_metric=f"{n_clusters:,} 簇", "")
+                # 统计簇大小分布
+                sizes = []
+                with open(ctsv) as cf:
+                    cf.readline()
+                    for line in cf:
+                        members = line.strip().split('\t')[1] if '\t' in line else ""
+                        sizes.append(len(members.split(',')) if members else 0)
+                singletons = sum(1 for sz in sizes if sz <= 1)
+                max_sz = max(sizes) if sizes else 0
+                _add("  └ vclust", "✓", key_metric=f"{n_clusters:,} 簇, {singletons} 单例, 最大簇={max_sz}", "")
+            # CD-HIT known detail
+            known_linked_fa = cluster / "2_cdhit" / "known_linked_centroids.fasta"
+            n_linked = _count_fasta(known_linked_fa) if known_linked_fa.is_file() else 0
+            if n_linked > 0:
+                _add("  └ CD-HIT linked", "✓", key_metric=f"{n_linked} 有关联contig的已知簇", "")
+            n_pure = n_known - n_linked
+            if n_pure > 0:
+                _add("  └ CD-HIT pure", "○", key_metric=f"{n_pure} 纯参考簇 (不进下游)", "")
         else:
             _add("04_CLUSTER", "○", details="未运行")
 
@@ -1422,6 +1439,20 @@ class ViromePipeline:
                         elif fa and fa not in ("NA", "-"): counts["Novel_Genus"] += 1
                         else: counts["Novel_Family"] += 1
                 _add("05_Taxonomy", "✓", key_metric=f"{n} 条分类, ★{counts['Known']} 已知, ★★{counts['Novel_Species']} 新种", details=f"{tax}")
+                _add("  └ Novel Rank", "✓",
+                     key_metric=f"Known={counts['Known']} NewSp={counts['Novel_Species']} NewGe={counts['Novel_Genus']} NewFa={counts['Novel_Family']}", "")
+                # tool agreement from combined_taxonomy
+                combined = tax / f"WVDB_votus.virus_classed" / "WVDB_votus_combined_taxonomy.tsv"
+                if combined.is_file():
+                    try:
+                        tool_counts = {}
+                        with open(combined) as cf:
+                            for row in csv.DictReader(cf, delimiter="\t"):
+                                t = row.get("tool","")
+                                tool_counts[t] = tool_counts.get(t, 0) + 1
+                        top_tools = " ".join(f"{t}={c}" for t, c in sorted(tool_counts.items(), key=lambda x:-x[1])[:5])
+                        _add("  └ Tools", "✓", key_metric=top_tools, "")
+                    except: pass
             except: pass
         elif tax.is_dir():
             _add("05_Taxonomy", "○", key_metric="已运行但无最终结果", details=f"{tax}")
@@ -1437,11 +1468,19 @@ class ViromePipeline:
                 hdf = pl.read_csv(str(host_summary), separator="\t", null_values=["NA", "N/A", ""])
                 if "Final_Host" in hdf.columns:
                     hcounts = hdf.group_by("Final_Host").agg(pl.len()).sort("len", descending=True)
-                    top = ", ".join(f"{r[0]}={r[1]}" for r in hcounts.head(5).iter_rows())
-                    _add("06_HostPrediction", "✓", key_metric=f"{n} 条, {top}", details=f"{host}")
+                    top3 = " | ".join(f"{r[0]}={r[1]}" for r in hcounts.head(3).iter_rows())
+                    n_unknown = sum(1 for r in hcounts.iter_rows() if r[0] == "Unknown")
+                    _add("06_HostPrediction", "✓", key_metric=f"{n} 条, {top3}", details=f"{host}")
+                    # decision tree method stats
+                    if "Decision_Method" in hdf.columns:
+                        dm_counts = hdf.group_by("Decision_Method").agg(pl.len()).sort("len", descending=True)
+                        top_methods = " ".join(f"{r[0]}={r[1]}" for r in dm_counts.head(4).iter_rows())
+                        _add("  └ Decision", "✓", key_metric=top_methods, "")
                 else:
                     _add("06_HostPrediction", "✓", key_metric=f"{n} 条", details=f"{host}")
-            except: pass
+            except Exception as e:
+                _add("06_HostPrediction", "✓", key_metric=f"{n} 条", details=f"{host}")
+
         elif host.is_dir():
             _add("06_HostPrediction", "○", key_metric="已运行但无最终结果", details=f"{host}")
         else:
@@ -1452,6 +1491,7 @@ class ViromePipeline:
         if cv_dir.is_dir():
             cv_tsvs = list(cv_dir.rglob("completeness.tsv"))
             if cv_tsvs:
+                qd = {"Complete":0,"High-quality":0,"Medium-quality":0,"Low-quality":0,"Not-determined":0}
                 n_total = 0
                 for ct in cv_tsvs:
                     try:
@@ -1462,10 +1502,19 @@ class ViromePipeline:
                                 val = row.get(comp_col)
                                 try:
                                     v = float(val) if val and val != "NA" else None
-                                    if v is not None and v >= 90: n_total += 1
-                                except: pass
+                                    if v is None: qd["Not-determined"] += 1
+                                    elif v >= 90: qd["Complete"] += 1
+                                    elif v >= 50: qd["High-quality"] += 1
+                                    elif v >= 10: qd["Medium-quality"] += 1
+                                    else: qd["Low-quality"] += 1
+                                    n_total += 1
+                                except: qd["Not-determined"] += 1; n_total += 1
                     except: pass
-                _add("07_CheckV", "✓", key_metric=f"{n_total} 条 ≥90% 完整度", details=f"{cv_dir}")
+                n_hq = qd["Complete"] + qd["High-quality"]
+                n_eval = n_total - qd["Not-determined"]
+                _add("07_CheckV", "✓", key_metric=f"{n_hq} HQ / {n_total} total (eval={n_eval})", details=f"{cv_dir}")
+                for q in ["Complete","High-quality","Medium-quality","Low-quality","Not-determined"]:
+                    if qd[q] > 0: _add(f"  └ {q}", "✓", key_metric=f"{qd[q]} 条", "")
             else:
                 _add("07_CheckV", "✓", key_metric=f"已运行", details=f"{cv_dir}")
         else:
@@ -1479,7 +1528,19 @@ class ViromePipeline:
             for rf in rescue_finals:
                 if "branch" not in str(rf) and "known" not in str(rf):
                     n_rescued += _count_fasta(rf)
-            _add("08_Rescue", "✓", key_metric=f"{n_rescued:,} 拯救 HQ vOTU", details=f"{rescue}")
+            # 各分支统计
+            branch_info = []
+            for bname, blabel in [("branch_a","CheckV"),("branch_b","VSI"),("branch_c","BLASTN+VSI")]:
+                for bd in rescue.rglob(bname):
+                    if not bd.is_dir(): continue
+                    pass_fa = bd / f"{bname}B" if bname == "branch_b" else bd / f"{bname}_pass.fasta"
+                    pass_fa = bd / f"{'branchA' if bname=='branch_a' else 'branchB' if bname=='branch_b' else 'branchC'}_pass.fasta"
+                    if not pass_fa.is_file():
+                        pass_fa = bd / f"{'branchB' if bname=='branch_b' else 'branchC'}_pass.fasta"
+                    if pass_fa.is_file():
+                        bp = _count_fasta(pass_fa)
+                        if bp > 0: branch_info.append(f"{blabel}={bp}")
+            _add("08_Rescue", "✓", key_metric=f"{n_rescued:,} HQ vOTU ({' | '.join(branch_info) if branch_info else '0 pas'})", details=f"{rescue}")
         else:
             _add("08_Rescue", "○", details="未运行")
 
@@ -1514,6 +1575,9 @@ class ViromePipeline:
         if log_src.is_file():
             shutil_mod.copy(log_src, report_dir / "orchestrator.log")
 
+        # 4. HTML 报告
+        _write_html_report(report_dir, stage_stats)
+
         # ── 屏幕输出 ──
         self.log.info("=" * 50)
         self.log.info("  流水线完成!")
@@ -1527,9 +1591,10 @@ class ViromePipeline:
             self.log.info("  %-22s  %s   %s", s["Stage"], icon, s["Key_Metric"])
         self.log.info("")
         self.log.info("  详细报告: %s", report_dir)
-        self.log.info("    stage_summary.tsv    阶段汇总表")
-        self.log.info("    directory_tree.txt   输出目录树")
-        self.log.info("    orchestrator.log     运行日志")
+        self.log.info("    pipeline_report.html  网页版报告")
+        self.log.info("    stage_summary.tsv     阶段汇总表")
+        self.log.info("    directory_tree.txt    输出目录树")
+        self.log.info("    orchestrator.log      运行日志")
         self.log.info("=" * 50)
 
 
@@ -2065,7 +2130,7 @@ def _build_parser(add_help=True):
     g.add_argument('--virbot_path', help='VirBot.py 路径')
     g.add_argument('--viralm_path', help='viralm_cpu.py 路径')
     g.add_argument('--virsorter_group', default='dsDNAphage,NCLDV,RNA,ssDNA,lavidaviridae')
-    g.add_argument('--blast_mode', default='filter', help='Blast 模式 (默认 filter)')
+    g.add_argument('--blast_mode', default='both', help='Blast 模式 (默认 both: 同时产出 filter+strict)')
     g.add_argument('--blast_evalue', default='1e-5', help='Blast e-value (默认 1e-5)')
     g.add_argument('--blast_top_n', default='5', help='Blast top N (默认 5)')
     g.add_argument('--phabox-db', help='PhaBOX2 数据库路径 (host 阶段)')
@@ -2097,6 +2162,78 @@ def _build_parser(add_help=True):
     g.add_argument('--vcontact3_db', help='vConTACT3 数据库路径')
     return p
 
+
+def _write_html_report(report_dir, stage_stats):
+    """生成自包含 HTML 流水线报告"""
+    from datetime import datetime
+
+    main_stages = [s for s in stage_stats if not s["Stage"].startswith("  ")]
+    sub_stages  = [s for s in stage_stats if s["Stage"].startswith("  ")]
+
+    status_icon = {"✓": "pass", "○": "skip", "✗": "fail"}
+    def _esc(v): return str(v).replace("&","&amp;").replace("<","&lt;").replace(">","&gt;")
+
+    rows_html = ""
+    for i, s in enumerate(main_stages):
+        cls = status_icon.get(s["Status"], "skip")
+        rows_html += f"""
+        <tr class="{cls}">
+          <td style="text-align:center;color:#666;font-size:12px">{i}</td>
+          <td><b>{_esc(s['Stage'])}</b></td>
+          <td style="text-align:center"><span class="badge badge-{cls}">{s['Status']}</span></td>
+          <td>{_esc(s['Key_Metric'])}</td>
+          <td style="font-size:12px;color:#888">{_esc(s['Details'])}</td>
+        </tr>"""
+
+    sub_rows = ""
+    for s in sub_stages:
+        sub_rows += f"""
+        <tr><td></td><td style="padding-left:32px;color:#555">{_esc(s['Stage'].strip())}</td>
+        <td></td><td>{_esc(s['Key_Metric'])}</td><td style="font-size:12px;color:#888">{_esc(s['Details'])}</td></tr>"""
+
+    n_pass = sum(1 for s in main_stages if s["Status"] == "✓")
+    n_total = sum(1 for s in main_stages if s["Status"] != "○")
+    pct = round(n_pass/max(n_total,1)*100)
+
+    html = f"""<!DOCTYPE html>
+<html lang="zh"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>MMPV-RNA Pipeline Report</title>
+<style>
+*{{box-sizing:border-box;margin:0;padding:0}}
+body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f0f2f5;color:#333;line-height:1.6}}
+.container{{max-width:1100px;margin:0 auto;padding:20px}}
+.header{{background:linear-gradient(135deg,#1a237e,#283593);color:#fff;padding:32px;border-radius:12px;margin-bottom:24px}}
+.header h1{{font-size:24px;margin-bottom:8px}}.header p{{opacity:.85;font-size:14px}}
+.cards{{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:16px;margin-bottom:24px}}
+.card{{background:#fff;border-radius:10px;padding:20px;box-shadow:0 1px 3px rgba(0,0,0,.08)}}
+.card .value{{font-size:28px;font-weight:700;color:#1a237e}}
+.card .label{{font-size:13px;color:#888;margin-top:4px}}
+.table-wrap{{background:#fff;border-radius:10px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.08);margin-bottom:24px}}
+table{{width:100%;border-collapse:collapse}}
+th{{background:#f5f5f5;text-align:left;padding:12px 16px;font-size:13px;color:#666;border-bottom:2px solid #e0e0e0}}
+td{{padding:10px 16px;font-size:14px;border-bottom:1px solid #f0f0f0}}
+tr.pass td:first-child{{border-left:3px solid #4caf50}}tr.fail td:first-child{{border-left:3px solid #f44336}}tr.skip td:first-child{{border-left:3px solid #ccc}}
+.badge{{display:inline-block;padding:2px 10px;border-radius:12px;font-size:12px;font-weight:600}}
+.badge-pass{{background:#e8f5e9;color:#2e7d32}}.badge-fail{{background:#fce4ec;color:#c62828}}.badge-skip{{background:#eee;color:#888}}
+.bar{{height:8px;border-radius:4px;background:#e0e0e0;margin-bottom:24px}}
+.bar-fill{{height:100%;border-radius:4px;background:linear-gradient(90deg,#4caf50,#66bb6a);transition:width .5s}}
+.footer{{text-align:center;color:#aaa;font-size:12px;padding:20px}}
+</style></head><body>
+<div class="container">
+<div class="header"><h1>MMPV-RNA v2.3 &mdash; Pipeline Report</h1>
+<p>Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} &nbsp;|&nbsp; {n_pass}/{n_total} stages passed ({pct}%)</p></div>
+<div class="cards">
+<div class="card"><div class="value">{n_pass}/{n_total}</div><div class="label">Stages Passed</div></div>
+<div class="card"><div class="value">{len(stage_stats)}</div><div class="label">Total Metrics</div></div>
+<div class="card"><div class="value">{pct}%</div><div class="label">Success Rate</div></div>
+</div>
+<div class="bar"><div class="bar-fill" style="width:{pct}%"></div></div>
+<div class="table-wrap"><table><thead><tr><th style="width:40px">#</th><th>Stage</th><th style="width:60px">Status</th><th>Key Metrics</th><th style="width:200px">Details</th></tr></thead><tbody>{rows_html}{sub_rows}</tbody></table></div>
+<div class="footer">MMPV-RNA v2.3 Automated Pipeline Report &mdash; Generated by virome_pipeline.py</div>
+</div></body></html>"""
+
+    with open(report_dir / "pipeline_report.html", "w", encoding="utf-8") as hf:
+        hf.write(html)
 
 def parse_args():
     for i, a in enumerate(sys.argv[1:], 1):
