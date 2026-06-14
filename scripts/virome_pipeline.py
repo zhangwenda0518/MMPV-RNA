@@ -250,7 +250,8 @@ class ViromePipeline:
         self._validate()
 
         # 检测原始样本
-        if self.args.stage not in ('identification', 'cluster', 'taxonomy', 'host', 'checkv', 'report'):
+        no_reads_stages = {'identification', 'cluster', 'taxonomy', 'host', 'checkv', 'report'}
+        if not set(self.args.stage).issubset(no_reads_stages):
             self.orig_samples = scan_samples_in_dir(self.reads_dir)
             if not self.orig_samples:
                 logger.error("在 %s 中未找到序列文件!", self.reads_dir)
@@ -267,13 +268,14 @@ class ViromePipeline:
                 self.log.error("致命: 找不到 %s", path)
                 sys.exit(1)
 
-        stage = self.args.stage
-        doing_clean = stage in ('all', 'clean')
-        need_virus_db = stage in ('all', 'identification', 'taxonomy', 'host')
-        need_checkv_db = stage in ('all', 'checkv', 'rescue')
+        stages = set(self.args.stage)
+        _all = 'all' in stages
+        doing_clean = _all or 'clean' in stages
+        need_virus_db = _all or bool(stages & {'identification', 'taxonomy', 'host'})
+        need_checkv_db = _all or bool(stages & {'checkv', 'rescue'})
 
         # deplete 阶段需要 kraken2 + host_align (或 --host_db 自动检测)
-        need_deplete_db = stage in ('all', 'deplete') or (stage == 'clean' and not self.args.skip_depletion)
+        need_deplete_db = _all or 'deplete' in stages or ('clean' in stages and not self.args.skip_depletion)
         if need_deplete_db and not self.args.host_db:
             if not self.args.kraken2_db or not self.args.host_align_db:
                 self.log.error("致命: deplete 阶段需要 --kraken2_db/--host_align_db 或 --host_db")
@@ -295,7 +297,7 @@ class ViromePipeline:
             if shutil.which(exe) is None:
                 self.log.error("致命: 找不到 %s", exe)
                 sys.exit(1)
-        self.log.info("环境验证通过 (stage=%s)", stage)
+        self.log.info("环境验证通过 (stage=%s)", ','.join(sorted(stages)))
 
     # ── Step 0a: 数据清洗 ──
     def run_clean(self):
@@ -2030,9 +2032,9 @@ def _build_parser(add_help=True):
     g.add_argument('--input_assembly', help='组装结果目录 (identification 阶段, 默认 01_Assembly/)')
 
     g = p.add_argument_group('流程控制')
-    g.add_argument('--stage', default='all',
+    g.add_argument('--stage', default=['all'], nargs='+',
                    choices=['all', 'clean', 'deplete', 'assembly', 'identification', 'cobra', 'cluster', 'taxonomy', 'host', 'checkv', 'rescue', 'report'],
-                   help='运行阶段')
+                   help='运行阶段 (可多个, 如: --stage clean deplete)')
     g.add_argument('--host-filter', default='Plant',
                    help='目标宿主 (逗号分隔, rescue 阶段使用, 默认: Plant. Unknown 默认跳过并输出到 unknown_votus.fasta)')
     g.add_argument('--skip_clean', action='store_true', help='跳过数据清洗')
@@ -2259,42 +2261,31 @@ def main():
     args = parse_args()
     logger = setup_logger(args.output_dir, level=args.log_level)
 
-    stage = args.stage
+    stages = set(args.stage)  # 支持多阶段: --stage clean deplete
 
-    stage_labels = {
-        'clean': 'Reads', 'deplete': 'Reads', 'assembly': 'Reads', 'cobra': 'Reads', 'rescue': 'Reads',
-        'identification': 'Assembly', 'cluster': 'Contigs', 'taxonomy': 'Centroids',
-        'host': 'Taxonomy', 'checkv': 'Host',
-    }
     logger.info("=" * 50)
     logger.info("Virome Pipeline v2.3")
-    logger.info("  Stage:    %s", stage)
-    label = stage_labels.get(stage, 'Input')
-    logger.info("  %s: %s", label, args.input_reads or args.output_dir)
+    logger.info("  Stage:    %s", ','.join(sorted(stages)))
     logger.info("  Output:   %s", args.output_dir)
 
-    # 根据 stage 自动设置 skip 标志
-    downstream = stage in ('assembly', 'cobra', 'rescue')
-    if stage == 'clean':
+    # 根据 stages 自动设置 skip 标志
+    needs_reads = bool(stages & {'clean','deplete','assembly','cobra','rescue'})
+    if stages == {'clean'}:
         args.skip_clean = False
-        args.skip_depletion = True   # clean 只做清洗, 不做去宿主
+        args.skip_depletion = True
         logger.info("  Flow:     Clean only (清洗)")
-    elif stage == 'deplete':
+    elif stages == {'deplete'}:
         args.skip_clean = True
-        args.skip_depletion = False  # deplete 只做去宿主
+        args.skip_depletion = False
         logger.info("  Flow:     Deplete only (去宿主)")
-    elif downstream:
+    elif not needs_reads:
         args.skip_clean = True
         args.skip_depletion = True
-        logger.info("  Flow:     %s", stage)
-    elif stage == 'report':
-        args.skip_clean = True
-        args.skip_depletion = True
-        logger.info("  Flow:     report (生成总结报告)")
-    elif stage in ('identification', 'cluster', 'taxonomy', 'host', 'checkv'):
-        args.skip_clean = True
-        args.skip_depletion = True
-        logger.info("  Flow:     %s (无需 reads)", stage)
+        logger.info("  Flow:     %s (无需 reads)", ','.join(sorted(stages)))
+    elif 'all' not in stages:
+        args.skip_clean = 'clean' not in stages
+        args.skip_depletion = 'deplete' not in stages
+        logger.info("  Flow:     %s", ','.join(sorted(stages)))
     else:  # all
         flow = []
         flow.append('SKIP' if args.skip_clean else 'Clean')
@@ -2339,11 +2330,12 @@ def main():
 
     pipe = ViromePipeline(args, logger)
 
-    if downstream or stage == 'deplete':
+    needs_reads = bool(stages & {'clean','deplete','assembly','cobra','rescue'})
+    if needs_reads:
         # 优先使用 --input_reads 指定的目录
         if args.input_reads and Path(args.input_reads).exists():
             pipe.reads_dir = Path(args.input_reads)
-        elif stage == 'deplete':
+        elif 'deplete' in stages:
             # deplete: 自动使用 clean 输出 (优先 clumpify, 否则 fasta)
             cl = pipe.d['clean'] / '3.clumpify'
             fa = pipe.d['clean'] / '2.fasta'
@@ -2351,8 +2343,8 @@ def main():
         else:
             pipe.reads_dir = pipe.d['hostdep']
         if not pipe.reads_dir.exists() or not any(pipe.reads_dir.iterdir()):
-            if stage in ('cluster', 'taxonomy', 'host', 'checkv'):
-                logger.info("  %s 阶段无需 reads", stage)
+            if stages <= {'cluster', 'taxonomy', 'host', 'checkv', 'report'}:
+                logger.info("  无需 reads, 跳过")
             else:
                 logger.error("reads 目录 %s 为空", pipe.reads_dir)
                 sys.exit(1)
@@ -2366,30 +2358,18 @@ def main():
                      len(pipe.orig_samples) - pe)
 
     # ═══ 执行 ═══
-    # --stop-on-error: 遇错即停; 默认: 容错继续 (仅警告)
-    stages_to_run = []
-    if stage in ('all', 'clean'):
-        stages_to_run.append(('clean', pipe.run_clean))
-    if stage in ('all', 'deplete'):
-        stages_to_run.append(('deplete', pipe.run_depletion))
-    if stage in ('all', 'assembly'):
-        stages_to_run.append(('assembly', pipe.run_assembly))
-    if stage in ('all', 'identification'):
-        stages_to_run.append(('identification', pipe.run_identification))
-    if stage in ('all', 'cobra'):
-        stages_to_run.append(('cobra', pipe.run_cobra))
-    if stage in ('all', 'cluster'):
-        stages_to_run.append(('cluster', pipe.run_cluster))
-    if stage in ('all', 'taxonomy'):
-        stages_to_run.append(('taxonomy', pipe.run_taxonomy))
-    if stage in ('all', 'host'):
-        stages_to_run.append(('host', pipe.run_host))
-    if stage in ('all', 'checkv'):
-        stages_to_run.append(('checkv', pipe.run_checkv_stage))
-    if stage in ('all', 'rescue'):
-        stages_to_run.append(('rescue', pipe.run_rescue))
-    if stage in ('all', 'report'):
-        stages_to_run.append(('report', pipe.run_reports))
+    _all = 'all' in stages
+    stage_map = {
+        'clean': pipe.run_clean, 'deplete': pipe.run_depletion,
+        'assembly': pipe.run_assembly, 'identification': pipe.run_identification,
+        'cobra': pipe.run_cobra, 'cluster': pipe.run_cluster,
+        'taxonomy': pipe.run_taxonomy, 'host': pipe.run_host,
+        'checkv': pipe.run_checkv_stage, 'rescue': pipe.run_rescue, 'report': pipe.run_reports,
+    }
+    # 按流水线顺序排列
+    stage_order = ['clean','deplete','assembly','identification','cobra','cluster',
+                   'taxonomy','host','checkv','rescue','report']
+    stages_to_run = [(s, stage_map[s]) for s in stage_order if _all or s in stages]
 
     # 准备阶段日志目录
     stage_log_dir = Path(args.output_dir) / "09_Virome_Report" / "logs"
