@@ -18,6 +18,28 @@ except ImportError:
     print("⚠️ 未检测到 tqdm，建议运行 `conda install tqdm`。")
     def tqdm(iterable, **kwargs): return iterable
 
+# ── 列名兼容映射 (新旧格式) ──
+COL_ALIASES = {
+    'Virus':       ['Rep_Accession', 'Virus', 'Accession'],
+    'taxonomy':    ['Adjusted_Species', 'Species_NCBI', 'Species_ICTV', 'taxonomy'],
+    'MeanDepth':   ['Rep_MeanDepth', 'MeanDepth'],
+    'FPKM':        ['Asm_FPKM', 'FPKM'],
+    'RPM':         ['Asm_RPM', 'RPM'],
+    'TPM':         ['Asm_TPM', 'TPM'],
+    'Coverage(%)': ['Rep_Coverage(%)', 'Coverage(%)'],
+    'Length':      ['Rep_Length', 'Length'],
+    'MappedReads': ['Asm_EM_Reads', 'MappedReads'],
+}
+
+def _normalize_df(df):
+    """统一列名到标准格式"""
+    for target, candidates in COL_ALIASES.items():
+        for cand in candidates:
+            if cand in df.columns:
+                df = df.rename(columns={cand: target})
+                break
+    return df
+
 def smooth(y, box_pts):
     if len(y) < box_pts: return y
     box = np.ones(box_pts) / box_pts
@@ -251,6 +273,7 @@ def main():
     print("="*60)
 
     summary_df = pd.read_csv(args.summary, sep=',' if args.summary.endswith('.csv') else '\t')
+    summary_df = _normalize_df(summary_df)
     samples_to_process =[args.sample] if args.sample else summary_df['Sample'].unique().tolist()
     
     genes_dict = {}

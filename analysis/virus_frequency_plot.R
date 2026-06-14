@@ -32,19 +32,45 @@ cat(sprintf("✅ 正在读取核心汇总数据: %s\n", opt$input))
 
 data <- if(grepl("\\.csv$", opt$input)) read.csv(opt$input, check.names=F) else read.delim(opt$input, check.names=F)
 
-# 智能生成展示名称 (融合 Taxonomy 和 Accession)
-if ("taxonomy" %in% colnames(data)) {
+# ── 列名兼容映射 (新旧格式) ──
+col_aliases <- list(
+  Virus       = c("Rep_Accession", "Virus", "Accession"),
+  taxonomy    = c("Adjusted_Species", "Species_NCBI", "Species_ICTV", "taxonomy"),
+  MeanDepth   = c("Rep_MeanDepth", "MeanDepth"),
+  FPKM        = c("Asm_FPKM", "FPKM"),
+  RPM         = c("Asm_RPM", "RPM"),
+  TPM         = c("Asm_TPM", "TPM"),
+  Coverage    = c("Rep_Coverage(%)", "Coverage(%)"),
+  Length      = c("Rep_Length", "Length"),
+  MappedReads = c("Asm_EM_Reads", "MappedReads"),
+  Uniq_Reads  = c("Uniq_Reads", "Uniq_Reads"),
+  Multi_Reads = c("Multi_Reads", "Multi_Reads")
+)
+for (target in names(col_aliases)) {
+  for (cand in col_aliases[[target]]) {
+    if (cand %in% colnames(data)) {
+      colnames(data)[colnames(data) == cand] <- target
+      break
+    }
+  }
+}
+
+# 智能生成展示名称
+if ("taxonomy" %in% colnames(data) && "Virus" %in% colnames(data)) {
   data$Display_Name <- ifelse(
-    data$taxonomy != "Unannotated" & data$taxonomy != "-",
+    !is.na(data$taxonomy) & data$taxonomy != "Unannotated" & data$taxonomy != "-",
     paste0(data$taxonomy, "\n(", data$Virus, ")"),
     data$Virus
   )
-} else {
+} else if ("Virus" %in% colnames(data)) {
   data$Display_Name <- data$Virus
+} else if ("Sample" %in% colnames(data)) {
+  data$Display_Name <- data$Sample
+} else {
+  data$Display_Name <- seq_len(nrow(data))
 }
 
-# 文本自动换行处理 (防止 Taxonomy 过长)
-data$Display_Name <- sapply(data$Display_Name, function(x) paste(strwrap(x, width = 40), collapse = "\n"))
+data$Display_Name <- sapply(data$Display_Name, function(x) paste(strwrap(as.character(x), width = 40), collapse = "\n"))
 
 required_columns <- list("MeanDepth" = c("Display_Name", "MeanDepth"), "FPKM" = c("Display_Name", "FPKM"), "RPM" = c("Display_Name", "RPM"), "TPM" = c("Display_Name", "TPM"))
 modes <- if(opt$modes == "all") names(required_columns) else strsplit(trimws(opt$modes), ",")[[1]]
