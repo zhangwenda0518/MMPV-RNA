@@ -1721,17 +1721,20 @@ class ViromePipeline:
             if sankey_script.is_file():
                 try:
                     import importlib.util
-                    if importlib.util.find_spec("plotly"):
+                    if not importlib.util.find_spec("plotly"):
+                        self.log.info("  安装 plotly...")
                         import subprocess as sp
-                        sp.run([sys.executable, str(sankey_script),
-                                "-i", str(final_tax),
-                                "-o", str(report_dir / "classification_sankey.png"),
-                                "--format", "png", "--min-flow", "1", "--min-genus-flow", "10",
-                                "--palette", "set3", "--height", "1200",
-                                "--node-pad", "30", "--label-truncate", "25",
-                                "--font-size", "9", "--title-font-size", "16"],
-                               capture_output=True, timeout=120)
-                        self.log.info("  Sankey 图 → %s", report_dir / "classification_sankey.png")
+                        sp.run([sys.executable, "-m", "pip", "install", "plotly", "-q"], check=False)
+                    import subprocess as sp
+                    sp.run([sys.executable, str(sankey_script),
+                            "-i", str(final_tax),
+                            "-o", str(report_dir / "classification_sankey.png"),
+                            "--format", "png", "--min-flow", "1", "--min-genus-flow", "10",
+                            "--palette", "set3", "--height", "1200",
+                            "--node-pad", "30", "--label-truncate", "25",
+                            "--font-size", "9", "--title-font-size", "16"],
+                           capture_output=True, timeout=120)
+                    self.log.info("  Sankey 图 → %s", report_dir / "classification_sankey.png")
                 except: pass
 
         # ── 写入报告 ──
