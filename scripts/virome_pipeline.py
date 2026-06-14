@@ -307,8 +307,8 @@ class ViromePipeline:
         self.log.info("=" * 50)
         self.log.info("[0a] Fastp → Seqkit → Clumpify")
 
-        # clean-data.py: --input, --output, --fastp-threads, --jobs,
-        #                 --skip-clumpify, --force, --dedup, --clumpify-memory
+        # clean-data.py 完整参数: --input, --output, --fastp-threads, --jobs,
+        #   --skip-clumpify, --force, --dedup, --clumpify-memory, --no-compress, --debug
         parts = [
             f"python {self.sc['clean']}",
             f"--input {self.reads_dir}",
@@ -320,6 +320,14 @@ class ViromePipeline:
             parts.append("--skip-clumpify")
         if self.args.force:
             parts.append("--force")
+        if self.args.dedup:
+            parts.append("--dedup")
+        if self.args.clumpify_memory:
+            parts.append(f"--clumpify-memory {self.args.clumpify_memory}")
+        if self.args.no_compress:
+            parts.append("--no-compress")
+        if self.args.clean_debug:
+            parts.append("--debug")
 
         ok, _ = run_cmd(' '.join(parts), self.log, "Clean")
         if not ok:
@@ -378,9 +386,12 @@ class ViromePipeline:
         self.log.info("=" * 50)
         self.log.info("[0b] Kraken2 → Align → Ribodetector")
 
-        # host_depletion.py: --tool, --seq-type, --kraken2_index, --step2_index,
-        #   --input-dir, --outdir, --jobs, --threads, --logs_dir, --rrna,
-        #   --filter, --confidence
+        # host_depletion.py 完整参数:
+        #   --tool, --seq-type, --kraken2_index, --step2_index,
+        #   --input-dir, --outdir, --jobs, --threads, --logs_dir,
+        #   --rrna, --rrna_tool, --silva_index, --filter, --confidence,
+        #   --tmp, --force, --keep_rrna, --chunk_size, --rrna_report,
+        #   --steps, --config, --debug
         parts = [
             f"python {self.sc['deplete']}",
             f"--tool {self.args.aligner}",
@@ -399,6 +410,20 @@ class ViromePipeline:
             parts.append(f"--rrna_tool {self.args.rrna_tool}")
             if self.args.silva_index:
                 parts.append(f"--silva_index {self.args.silva_index}")
+        if self.args.force:
+            parts.append("--force")
+        if self.args.deplete_tmp:
+            parts.append(f"--tmp {self.args.deplete_tmp}")
+        parts.append(f"--confidence {self.args.kraken2_confidence}")
+        if self.args.keep_rrna:
+            parts.append("--keep_rrna")
+        parts.append(f"--chunk_size {self.args.rrna_chunk_size}")
+        parts.append(f"--rrna_report {self.args.rrna_report}")
+        parts.append(f"--steps {self.args.deplete_steps}")
+        if self.args.align_config:
+            parts.append(f"--config {self.args.align_config}")
+        if self.args.deplete_debug:
+            parts.append("--debug")
 
         ok, _ = run_cmd(' '.join(parts), self.log, "Host Depletion")
         if not ok:
@@ -414,6 +439,11 @@ class ViromePipeline:
         self.log.info("=" * 50)
         self.log.info("[1] MEGAHIT / rnaviralSPAdes / Penguin")
 
+        # assembly_pipeline.py 完整参数:
+        #   --tool, --input, --length, --threads, --memory, --jobs,
+        #   --output-dir, --log_dirs, --refineC_split, --refineC_merge,
+        #   --refineC_threads, --refineC_frag_min_len, --refineC_min_id, --refineC_min_cov,
+        #   --tmp-dir, --keep-temp, --force
         parts = [
             f"python {self.sc['assembly']}",
             f"--tool {self.args.assembler}",
@@ -431,6 +461,15 @@ class ViromePipeline:
             parts.append("--refineC_split --refineC_merge")
         if self.args.force:
             parts.append("--force")
+        if self.args.refinec_threads is not None:
+            parts.append(f"--refineC_threads {self.args.refinec_threads}")
+        parts.append(f"--refineC_frag_min_len {self.args.refinec_frag_min_len}")
+        parts.append(f"--refineC_min_id {self.args.refinec_min_id}")
+        parts.append(f"--refineC_min_cov {self.args.refinec_min_cov}")
+        if self.args.asm_tmp_dir:
+            parts.append(f"--tmp-dir {self.args.asm_tmp_dir}")
+        if self.args.asm_keep_temp:
+            parts.append("--keep-temp")
 
         ok, _ = run_cmd(' '.join(parts), self.log, "Assembly")
         if not ok:
@@ -459,6 +498,14 @@ class ViromePipeline:
         # 直接传目录, 子脚本内部 --jobs 并行处理所有样本
         self.log.info("  %d 个样本待鉴定", len(asm_map))
 
+        # virus_identification16.py 完整参数:
+        #   --input, --output, --db_dir, --identify_tools, --threads, --jobs,
+        #   --blast_mode, --blast_evalue, --blast_top_n, --virsorter_group,
+        #   --virus_protein_db, --uniprot_db, --viroids_db, --virsorter_db,
+        #   --viralverify_hmm, --metabuli_db, --virus_taxid,
+        #   --virhunter_path, --virhunter_weights, --virbot_path, --viralm_path,
+        #   --nr_db, --skip_uniprot_filter, --skip_nr_filter,
+        #   --skip_plots, --clean_failed, --extension, --force
         parts = [
             f"python {self.sc['identify']}",
             f"--input {asm_dir}",
@@ -471,15 +518,25 @@ class ViromePipeline:
             f"--blast_evalue {self.args.blast_evalue}",
             f"--blast_top_n {self.args.blast_top_n}",
             f"--virsorter_group {self.args.virsorter_group}",
+            f"--extension {self.args.ident_ext}",
         ]
         for arg in ['virus_protein_db', 'uniprot_db', 'viroids_db', 'virsorter_db',
                      'viralverify_hmm', 'metabuli_db', 'virus_taxid',
-                     'virhunter_path', 'virhunter_weights', 'virbot_path', 'viralm_path']:
+                     'virhunter_path', 'virhunter_weights', 'virbot_path', 'viralm_path',
+                     'nr_db']:
             val = getattr(self.args, arg, None)
             if val:
                 parts.append(f"--{arg} {val}")
         if self.args.force:
             parts.append("--force")
+        if self.args.skip_uniprot_filter:
+            parts.append("--skip_uniprot_filter")
+        if self.args.skip_nr_filter:
+            parts.append("--skip_nr_filter")
+        if self.args.skip_id_plots:
+            parts.append("--skip_plots")
+        if self.args.clean_failed:
+            parts.append("--clean_failed")
         run_cmd(' '.join(parts), self.log, "VirusIdentification")
 
         self.viral_map = scan_viral_files(self.d['ident'])
@@ -491,20 +548,18 @@ class ViromePipeline:
         self.log.info("=" * 50)
         self.log.info("[3] COBRA 批量延伸 (BWA-MEM2 + COBRA + CheckV)")
 
-        # cobra_pipeline.py 自动从 reads 目录发现样本，
-        # 从 contigs 目录查找组装结果，从 virsorter 目录查找病毒序列。
-        # CLI:
+        # cobra_pipeline.py 完整参数:
         #   --mode, --reads-dir, --contigs-dir, --virsorter-dir, --output-dir,
-        #   --assembly-tools, --checkv-db, --checkv-mode, --jobs, --threads,
-        #   --mink, --maxk, --linkage-mismatch
+        #   --assembly-tools, --virus-mode, --jobs, --threads,
+        #   --mink, --maxk, --linkage-mismatch,
+        #   --resume/--no-resume, --verbose
         # 自动检测哪些工具实际有组装输出
         all_tools = ['megahit', 'rnaviralspades', 'penguin']
         asm_tools = []
-        for tool in all_tools:
-            for d in self.d['asm'].iterdir():
-                if d.is_dir() and (d / f"{d.name}_{tool}.contig.fasta").exists():
-                    asm_tools.append(tool)
-                    break
+        for d in self.d['asm'].iterdir():
+            if d.is_dir() and (d / f"{d.name}_{tool}.contig.fasta").exists():
+                asm_tools.append(tool)
+                break
         if not asm_tools:
             asm_tools = [self.args.assembler] if self.args.assembler != 'all' else all_tools
         self.log.info("  Auto-detect 组装工具: %s", ','.join(asm_tools))
@@ -520,10 +575,14 @@ class ViromePipeline:
             f"--virus-mode {self.args.virus_mode}",
             f"--jobs {max(1, self.args.jobs // 2)}",
             f"--threads {self.args.threads}",
+            f"--mink {self.args.cobra_mink}",
+            f"--maxk {self.args.cobra_maxk}",
+            f"--linkage-mismatch {self.args.cobra_linkage_mismatch}",
         ]
         if self.args.force:
             parts.append("--no-resume")
-        # else: --resume 已是 cobra_pipeline.py 默认行为
+        if self.args.cobra_verbose:
+            parts.append("--verbose")
 
         ok, _ = run_cmd(' '.join(parts), self.log, "COBRA Pipeline")
         if not ok:
@@ -582,6 +641,10 @@ class ViromePipeline:
 
         self.log.info("  CLUSTER 输入: %s", cluster_fa)
 
+        # cluster_pipeline.py 完整参数:
+        #   -i, -o, -t, --min-length, --ani, --qcov,
+        #   --ref-genomes, --cdhit-ani, --cdhit-qcov,
+        #   --skip-vclust, --vclust-cluster-file, --resume
         parts = [
             f"python {self.sc['cluster']}",
             f"-i {cluster_fa}",
@@ -597,6 +660,12 @@ class ViromePipeline:
             parts.append(f"--cdhit-ani {self.args.cdhit_ani}")
         if self.args.cdhit_qcov:
             parts.append(f"--cdhit-qcov {self.args.cdhit_qcov}")
+        if self.args.skip_vclust:
+            parts.append("--skip-vclust")
+        if self.args.vclust_cluster_file:
+            parts.append(f"--vclust-cluster-file {self.args.vclust_cluster_file}")
+        if not self.args.force:
+            parts.append("--resume")
 
         ok, _ = run_cmd(' '.join(parts), self.log, "CLUSTER (vclust only)")
         if not ok:
@@ -1005,7 +1074,11 @@ class ViromePipeline:
         int_dir = tax_dir / "integrated"
         final_tsv = int_dir / "final_integrated_classification.tsv"
 
-        # Step 1: virus_classifier2.py
+        # virus_classifier2.py 完整参数:
+        #   -g, -s, -t, -o, -p, -f, --db-dir,
+        #   --genomad-db, --metabuli-db, --cat-db, --cat-tax, --uniprot-db,
+        #   --mmseqs-db, --vitap-db, --acvirus-db, --vcontact3-db,
+        #   -j, -e, --remove-suffix
         if not self.args.force and combined_tsv.is_file() and combined_tsv.stat().st_size > 100:
             self.log.info("  [SKIP] virus_classifier2 — 已有结果")
         else:
@@ -1016,7 +1089,9 @@ class ViromePipeline:
                 f"-t all",
                 f"-o {tax_dir}",
                 f"-p {self.args.threads}",
+                f"-j {self.args.tax_jobs}",
                 f"--db-dir {self.args.virus_db}",
+                f"-e {self.args.tax_ext}",
             ]
             if self.args.uniprot_db:
                 parts.append(f"--uniprot-db {self.args.uniprot_db}")
@@ -1036,6 +1111,8 @@ class ViromePipeline:
                 parts.append(f"--acvirus-db {self.args.acvirus_db}")
             if self.args.vcontact3_db:
                 parts.append(f"--vcontact3-db {self.args.vcontact3_db}")
+            if self.args.tax_remove_suffix:
+                parts.append(f"--remove-suffix {self.args.tax_remove_suffix}")
             if self.args.force:
                 parts.append("-f")
             ok, _ = run_cmd(' '.join(parts), self.log, "virus_classifier2.py")
@@ -1077,6 +1154,9 @@ class ViromePipeline:
             self.log.error("分类结果 %s 不存在, 请先运行 --stage taxonomy", tax_tsv)
             return
 
+        # run_host_prediction.py 完整参数:
+        #   -i, --tax, -o, -t, --phabox-db, --prob-dir,
+        #   --mode, -f, --skip-rnavirhost, --skip-phabox, --skip-ictv
         parts = [
             f"python {self.sc['host_pred']}",
             f"-i {centroids}",
@@ -1091,6 +1171,12 @@ class ViromePipeline:
             parts.append(f"--prob-dir {self.args.prob_dir}")
         if self.args.force:
             parts.append("-f")
+        if self.args.skip_rnavirhost:
+            parts.append("--skip-rnavirhost")
+        if self.args.skip_phabox:
+            parts.append("--skip-phabox")
+        if self.args.skip_ictv:
+            parts.append("--skip-ictv")
 
         ok, _ = run_cmd(' '.join(parts), self.log, "Host Prediction")
         if ok:
@@ -1582,6 +1668,59 @@ def _build_parser(add_help=True):
     g.add_argument('--skip_depletion', action='store_true', help='跳过去宿主')
     g.add_argument('--skip_clumpify', action='store_true', help='跳过 Clumpify')
     g.add_argument('--force', action='store_true', help='强制重跑')
+
+    g = p.add_argument_group('Clean 阶段 (clean-data.py)')
+    g.add_argument('--dedup', action='store_true', help='启用 fastp 自带去重')
+    g.add_argument('--clumpify_memory', default='10g', help='clumpify Java 堆内存 (默认: 10g)')
+    g.add_argument('--no_compress', action='store_true', help='最终结果不使用 gzip 压缩')
+    g.add_argument('--clean_debug', action='store_true', help='clean-data.py 详细调试日志')
+
+    g = p.add_argument_group('Deplete 阶段 (host_depletion.py)')
+    g.add_argument('--deplete_tmp', help='去宿主临时文件目录')
+    g.add_argument('--kraken2_confidence', type=float, default=0.4, help='Kraken2 分类置信度阈值 (默认: 0.4)')
+    g.add_argument('--keep_rrna', action='store_true', help='保留分离出的 rRNA 序列到 rrna/ 目录')
+    g.add_argument('--rrna_chunk_size', type=int, default=256, help='ribodetector_cpu chunk_size (默认: 256)')
+    g.add_argument('--rrna_report', default='ribodetector.report.txt', help='rRNA 统计报告文件名')
+    g.add_argument('--deplete_steps', default='kraken2,align,rrna',
+                   help='去宿主消融实验步骤 (默认: kraken2,align,rrna)')
+    g.add_argument('--align_config', default='', help='透传给比对工具的额外参数')
+    g.add_argument('--deplete_debug', action='store_true', help='host_depletion.py 详细调试日志')
+
+    g = p.add_argument_group('Assembly 阶段 (assembly_pipeline.py)')
+    g.add_argument('--refinec_threads', type=int, help='refineC 独立线程数 (默认: 使用 --threads)')
+    g.add_argument('--refinec_frag_min_len', type=int, default=1000, help='refineC split 最小片段长度 bp (默认: 1000)')
+    g.add_argument('--refinec_min_id', type=float, default=0.95, help='refineC merge 最小序列一致性 (默认: 0.95)')
+    g.add_argument('--refinec_min_cov', type=float, default=0.50, help='refineC merge 最小覆盖度 (默认: 0.50)')
+    g.add_argument('--asm_tmp_dir', help='组装临时文件目录')
+    g.add_argument('--asm_keep_temp', action='store_true', help='保留组装临时文件及 refineC 中间目录')
+
+    g = p.add_argument_group('Identification 阶段 (virus_identification16.py)')
+    g.add_argument('--nr_db', help='Diamond NR 数据库路径')
+    g.add_argument('--skip_uniprot_filter', action='store_true', help='跳过 UniProt 后置过滤')
+    g.add_argument('--skip_nr_filter', action='store_true', help='跳过 NR 后置过滤')
+    g.add_argument('--skip_id_plots', action='store_true', help='跳过鉴定阶段图表生成')
+    g.add_argument('--clean_failed', action='store_true', help='自动清理鉴定失败的任务目录')
+    g.add_argument('--ident_ext', default='.fasta', help='输入目录时搜索的后缀 (默认: .fasta)')
+
+    g = p.add_argument_group('COBRA 阶段 (cobra_pipeline.py)')
+    g.add_argument('--cobra_mink', type=int, default=21, help='COBRA 最小 kmer (默认: 21)')
+    g.add_argument('--cobra_maxk', type=int, default=141, help='COBRA 最大 kmer (默认: 141)')
+    g.add_argument('--cobra_linkage_mismatch', type=int, default=2, help='COBRA 链接识别不匹配数 (默认: 2)')
+    g.add_argument('--cobra_verbose', action='store_true', help='cobra_pipeline.py 详细日志')
+
+    g = p.add_argument_group('CLUSTER 阶段 (cluster_pipeline.py)')
+    g.add_argument('--skip_vclust', action='store_true', help='跳过 vclust 聚类步骤')
+    g.add_argument('--vclust_cluster_file', help='复用已有 vclust 聚类 TSV 文件')
+
+    g = p.add_argument_group('Taxonomy 阶段 (virus_classifier2.py)')
+    g.add_argument('--tax_jobs', type=int, default=1, help='分类并行任务数 (默认: 1)')
+    g.add_argument('--tax_ext', default='.fasta', help='分类输入文件扩展名 (默认: .fasta)')
+    g.add_argument('--tax_remove_suffix', help='分类输入文件去后缀名')
+
+    g = p.add_argument_group('Host 阶段 (run_host_prediction.py)')
+    g.add_argument('--skip_rnavirhost', action='store_true', help='跳过 RNAVirHost 宿主预测')
+    g.add_argument('--skip_phabox', action='store_true', help='跳过 PhaBOX2 宿主预测')
+    g.add_argument('--skip_ictv', action='store_true', help='跳过 ICTV 宿主查找')
 
     g = p.add_argument_group('数据库路径')
     g.add_argument('--host_db', help='宿主数据库根目录 (自动查找 kraken2/ bowtie2/ hisat2/ minimap2/)')
