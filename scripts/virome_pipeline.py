@@ -1306,19 +1306,36 @@ class ViromePipeline:
         if clean.is_dir():
             ns = _count_dir(clean / "3.clumpify") or _count_dir(clean / "2.fasta") or _count_dir(clean)
             _add("00a_CleanData", "✓", key_metric=f"{ns} 样本", details=f"{clean}")
-            # fastp stats
+            # fastp summary → data_summary.tsv (所有样本)
+            import json
             fp = clean / "logs"
             if fp.is_dir():
-                jsons = list(fp.glob("*.json"))
-                if jsons:
-                    try:
-                        import json
-                        with open(jsons[0]) as jf:
-                            js = json.load(jf)
-                        n_before = js.get("summary", {}).get("before_filtering", {}).get("total_reads", 0)
-                        n_after = js.get("summary", {}).get("after_filtering", {}).get("total_reads", 0)
-                        _add("  └ fastp", "✓", details=f"reads: {n_before:,}→{n_after:,}")
-                    except: pass
+                jf_list = list(fp.glob("*_fastp_report.json"))
+                if jf_list:
+                    n_total_before, n_total_after = 0, 0
+                    with open(report_dir / "data_summary.tsv", "w") as ds:
+                        hdr = "Sample\tRaw_Reads\tClean_Reads\tRetained(%)\tRaw_Q20(%)\tClean_Q20(%)\tRaw_Q30(%)\tClean_Q30(%)\tLowQ_Reads\tTooShort_Reads\tDup_Rate(%)"
+                        ds.write(hdr + "\n")
+                        for jf in sorted(jf_list):
+                            try:
+                                js = json.load(open(jf))
+                                sn = jf.name.replace("_fastp_report.json", "")
+                                bef = js.get("summary", {}).get("before_filtering", {})
+                                aft = js.get("summary", {}).get("after_filtering", {})
+                                fil = js.get("filtering_result", {})
+                                dup = js.get("duplication", {})
+                                nb = bef.get("total_reads", 0)
+                                na = aft.get("total_reads", 0)
+                                n_total_before += nb; n_total_after += na
+                                ds.write(f"{sn}\t{nb}\t{na}\t{round(na/max(nb,1)*100,1)}\t"
+                                         f"{round(bef.get('q20_rate',0)*100,1)}\t{round(aft.get('q20_rate',0)*100,1)}\t"
+                                         f"{round(bef.get('q30_rate',0)*100,1)}\t{round(aft.get('q30_rate',0)*100,1)}\t"
+                                         f"{fil.get('low_quality_reads',0)}\t{fil.get('too_short_reads',0)}\t"
+                                         f"{round(dup.get('rate',0)*100,3)}\n")
+                            except: pass
+                        ds.write(f"TOTAL\t{n_total_before}\t{n_total_after}\t{round(n_total_after/max(n_total_before,1)*100,1)}\n")
+                    _add("  └ data_summary", "✓", key_metric=f"reads: {n_total_before:,}→{n_total_after:,}",
+                         details=f"{report_dir}/data_summary.tsv")
         else:
             _add("00a_CleanData", "○", details="未运行")
 
