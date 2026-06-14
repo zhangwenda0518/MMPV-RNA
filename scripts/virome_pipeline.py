@@ -1089,7 +1089,7 @@ class ViromePipeline:
                 f"python {self.sc['classifier']}",
                 f"-g {centroids}",
                 f"-s {sample}",
-                f"-t all",
+                f"-t {self.args.tax_tools}",
                 f"-o {tax_dir}",
                 f"-p {self.args.threads}",
                 f"-j {self.args.tax_jobs}",
@@ -1987,6 +1987,7 @@ STAGE_HELP = {
     ★ --output_dir         输出根目录 (子目录: 05_Taxonomy/)
     ★ --virus_db           病毒分类数据库根目录
     · -t/--threads         线程数 (默认 20)
+    · --tax_tools          分类工具, 逗号分隔 (默认: all)
     · --tax_jobs           分类并行任务数 (默认 1)
     · --tax_ext            分类输入扩展名 (默认 .fasta)
     · --tax_remove_suffix  分类输入去后缀名
@@ -2226,6 +2227,7 @@ def _build_parser(add_help=True):
     g.add_argument('--vclust_cluster_file', help='复用已有 vclust 聚类 TSV 文件')
 
     g = p.add_argument_group('Taxonomy 阶段 (virus_classifier2.py)')
+    g.add_argument('--tax_tools', default='all', help='分类工具: genomad,metabuli,diamond_lca,VITAP,mmseqs,ACVirus,vcontact3,PhaGCN3,all (默认: all)')
     g.add_argument('--tax_jobs', type=int, default=1, help='分类并行任务数 (默认: 1)')
     g.add_argument('--tax_ext', default='.fasta', help='分类输入文件扩展名 (默认: .fasta)')
     g.add_argument('--tax_remove_suffix', help='分类输入文件去后缀名')
