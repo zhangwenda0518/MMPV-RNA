@@ -766,10 +766,9 @@ class AssemblyPipeline:
             '--threads', str(args.threads),
             str(output_file),
             str(self.temp_dir / "penguin_tmp"),
-        ]
+        ])
         if args.length > 0:
             cmd.extend(['--min-contig-len', str(args.length)])
-        ])
         
         return cmd
     
