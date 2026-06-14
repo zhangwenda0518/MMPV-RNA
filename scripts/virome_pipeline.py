@@ -2190,7 +2190,7 @@ STAGE_HELP = {
     │   ├── branch_b/branchB_pass.fasta           (VSI pass)
     │   │           branchB_fail.fasta             (VSI fail)
     │   ├── branch_c/branchC_pass.fasta           (BLASTN+VSI pass)
-    │   ├── merged/all_HQ.fasta                   (A+C+D 合并)
+    │   ├── merged/all_HQ.fasta                   (A+B+C 合并)
     │   └── centroids/final_centroids.fasta       (最终 HQ vOTU ★)
     └── checkv/
         ├── {host}/completeness.tsv               (各宿主 CheckV)

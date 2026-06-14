@@ -7,9 +7,9 @@ rescue_pipeline.py -- 病毒基因组三支路级联拯救 v3.0
 不重新聚类, 不重新过滤。聚类由 cluster_pipeline.py 完成, rescue 只做拯救。
 
 流程:
-  分支 A: CheckV 并行评估 → completeness>90% 输出; 失败 → 分支 C
-  分支 C: Virseqimprover reads 延伸 (cluster 内多样本聚合) → CheckV; 失败 → 分支 D
-  分支 D: BLASTN 参考 + VSI
+  分支 A: CheckV 并行评估 → completeness>90% 输出; 失败 → 分支 B
+  分支 B: Virseqimprover reads 延伸 (cluster 内多样本聚合) → CheckV; 失败 → 分支 C
+  分支 C: BLASTN 参考 + VSI
 
 依赖: checkv, blastn, Virseqimprover.py
 """
@@ -256,7 +256,7 @@ def branch_a(ref_fasta, work_dir, checkv_db, threads, jobs):
 
 
 # ══════════════════════════════════════════════════════════════
-# 分支 C: Virseqimprover reads 延伸
+# 分支 B: Virseqimprover reads 延伸
 # ══════════════════════════════════════════════════════════════
 
 def branch_b(fail_fa, fastq_dir, work_dir, checkv_db, threads, jobs, vsi_path, salmon_bin, clusters=None):
@@ -264,11 +264,11 @@ def branch_b(fail_fa, fastq_dir, work_dir, checkv_db, threads, jobs, vsi_path, s
     d = Path(work_dir) / "branch_b"; d.mkdir(parents=True, exist_ok=True)
     log_dir = d / "logs"; log_dir.mkdir(exist_ok=True)
     if not fail_fa or not os.path.isfile(fail_fa):
-        print("  分支 C: 无失败序列, 跳过"); return None, None, 0, 0
+        print("  分支 B: 无失败序列, 跳过"); return None, None, 0, 0
     fail_records = list(SeqIO.parse(fail_fa, "fasta"))
     total = len(fail_records)
     if not fail_records:
-        print("  分支 C: 无失败序列, 跳过"); return None, None, 0, 0
+        print("  分支 B: 无失败序列, 跳过"); return None, None, 0, 0
 
     scaffold_dir = d / "scaffolds"; scaffold_dir.mkdir(exist_ok=True)
     merged_reads_dir = d / "merged_reads"; merged_reads_dir.mkdir(exist_ok=True)
@@ -321,17 +321,17 @@ def branch_b(fail_fa, fastq_dir, work_dir, checkv_db, threads, jobs, vsi_path, s
     if jobs > 1 and total > 1:
         with ThreadPoolExecutor(max_workers=jobs) as ex:
             futures = {ex.submit(_do, rec): rec.id for rec in fail_records}
-            for f in tqdm(as_completed(futures), total=total, desc="  分支 C", unit="task"):
+            for f in tqdm(as_completed(futures), total=total, desc="  分支 B", unit="task"):
                 sid, fa, msg = f.result()
                 if fa:
                     results[sid] = fa
     else:
-        for rec in tqdm(fail_records, desc="  分支 C", unit="task"):
+        for rec in tqdm(fail_records, desc="  分支 B", unit="task"):
             sid, fa, msg = _do(rec)
             if fa:
                 results[sid] = fa
 
-    print(f"  分支 C 完成: ok={stats['ok']} fail={stats['fail']} skip={stats['skip']}")
+    print(f"  分支 B 完成: ok={stats['ok']} fail={stats['fail']} skip={stats['skip']}")
 
     vsi_records = []
     for sid, fa in results.items():
@@ -358,14 +358,14 @@ def branch_b(fail_fa, fastq_dir, work_dir, checkv_db, threads, jobs, vsi_path, s
             fail_to_write.append(vsi_match[0] if vsi_match else rec)
     SeqIO.write(fail_to_write, fail_fa_out, "fasta")
 
-    print(f"  分支 C: pass={len(pass_ids):,}  fail={len(fail_ids):,}")
+    print(f"  分支 B: pass={len(pass_ids):,}  fail={len(fail_ids):,}")
     return str(pass_fa) if Path(pass_fa).is_file() else None, \
            str(fail_fa_out) if Path(fail_fa_out).is_file() else None, \
            len(pass_ids), len(fail_ids)
 
 
 # ══════════════════════════════════════════════════════════════
-# 分支 D: BLASTN + CheckV + VSI
+# 分支 C: BLASTN + CheckV + VSI
 # ══════════════════════════════════════════════════════════════
 
 def branch_c(fail_fa, fastq_dir, work_dir,
@@ -374,10 +374,10 @@ def branch_c(fail_fa, fastq_dir, work_dir,
     d = Path(work_dir) / "branch_c"; d.mkdir(parents=True, exist_ok=True)
 
     if not fail_fa or not os.path.isfile(fail_fa):
-        print("  分支 D: 无待处理序列"); return None, 0
+        print("  分支 C: 无待处理序列"); return None, 0
     fail_records = list(SeqIO.parse(fail_fa, "fasta"))
     if not fail_records:
-        print("  分支 D: 无待处理序列"); return None, 0
+        print("  分支 C: 无待处理序列"); return None, 0
 
     merged_reads_dir = d / "merged_reads"; merged_reads_dir.mkdir(exist_ok=True)
     threads_per = threads
@@ -412,13 +412,13 @@ def branch_c(fail_fa, fastq_dir, work_dir,
                     if srec.id in pids2:
                         with lock:
                             complete[srec.id] = srec
-                            print(f"  [D-vsi] {ref[:50]} → {srec.id[:50]} (from {nsamp} samples)", flush=True)
+                            print(f"  [C-vsi] {ref[:50]} → {srec.id[:50]} (from {nsamp} samples)", flush=True)
 
     if jobs > 1 and len(fail_records) > 1:
         with ThreadPoolExecutor(max_workers=min(jobs, len(fail_records))) as ex:
-            list(tqdm(ex.map(_do, fail_records), total=len(fail_records), desc="  分支 D", unit="task"))
+            list(tqdm(ex.map(_do, fail_records), total=len(fail_records), desc="  分支 C", unit="task"))
     else:
-        for rec in tqdm(fail_records, desc="  分支 D", unit="task"):
+        for rec in tqdm(fail_records, desc="  分支 C", unit="task"):
             _do(rec)
 
     if not complete:
@@ -426,7 +426,7 @@ def branch_c(fail_fa, fastq_dir, work_dir,
 
     pass_fa = d / "branchC_pass.fasta"
     SeqIO.write(complete.values(), pass_fa, "fasta")
-    print(f"  分支 D: pass={len(complete)}")
+    print(f"  分支 C: pass={len(complete)}")
     return str(pass_fa), len(complete)
 
 
@@ -581,8 +581,8 @@ def main():
     elapsed = (datetime.now() - start).total_seconds()
     print(f"\n{'=' * 60}")
     print(f"  分支 A (CheckV):      {cnt_a:,}")
-    print(f"  分支 C (VSI):         {cnt_b:,}")
-    print(f"  分支 D (BLASTN+VSI):  {cnt_c:,}")
+    print(f"  分支 B (VSI):         {cnt_b:,}")
+    print(f"  分支 C (BLASTN+VSI):  {cnt_c:,}")
     print(f"  最终无冗余:           {n_final:,}")
     print(f"  最终输出:             {centroids_final}")
     print(f"  耗时:                 {elapsed / 60:.1f} min")
