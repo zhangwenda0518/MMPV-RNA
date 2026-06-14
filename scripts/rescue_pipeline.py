@@ -136,55 +136,74 @@ def run_vsi(ref_fa, r1, r2, out_dir, threads, vsi_path, salmon_bin, checkv_db=No
 # ══════════════════════════════════════════════════════════════
 
 def _find_reads(fastq_dir, sample):
-    """自动匹配 reads: 尝试多种后缀和扩展名"""
-    for suffix in ['', '_clean', '_kneaddata_paired']:
-        for ext in ['.fastq.gz', '.fq.gz', '.fa.gz', '.fasta.gz']:
+    """自动匹配 reads: _1/_2 或 .R1./.R2. 格式 + 多种扩展名 + 单端回退"""
+    # PE: _1 / _2
+    for suffix in ['', '_clean']:
+        for ext in ['.fastq.gz', '.fq.gz', '.fa.gz', '.fasta.gz', '.fastq', '.fq', '.fa', '.fasta']:
             r1 = os.path.join(fastq_dir, f"{sample}{suffix}_1{ext}")
             r2 = os.path.join(fastq_dir, f"{sample}{suffix}_2{ext}")
             if os.path.isfile(r1) and os.path.isfile(r2):
                 return r1, r2
+    # PE: .R1. / .R2.
+    for suffix in ['', '_clean']:
+        for ext in ['.fastq.gz', '.fq.gz', '.fa.gz', '.fasta.gz']:
+            r1 = os.path.join(fastq_dir, f"{sample}{suffix}.R1{ext}")
+            r2 = os.path.join(fastq_dir, f"{sample}{suffix}.R2{ext}")
+            if os.path.isfile(r1) and os.path.isfile(r2):
+                return r1, r2
+    # SE fallback
+    for suffix in ['', '_clean']:
+        for ext in ['.fastq.gz', '.fq.gz', '.fa.gz', '.fasta.gz', '.fastq', '.fq', '.fa', '.fasta']:
+            r1 = os.path.join(fastq_dir, f"{sample}{suffix}{ext}")
+            if os.path.isfile(r1):
+                return r1, None  # SE: R2=None
     return None, None
 
 
-def _find_reads_single_end(fastq_dir, sample):
-    """单端 reads 匹配"""
-    for suffix in ['', '_clean', '_kneaddata_paired']:
-        for ext in ['.fastq.gz', '.fq.gz', '.fa.gz', '.fasta.gz']:
-            r1 = os.path.join(fastq_dir, f"{sample}{suffix}{ext}")
-            if os.path.isfile(r1):
-                return r1
-    return None
-
-
 def _gather_cluster_reads(fastq_dir, samples, work_dir, prefix="multi"):
-    """收集 cluster 内所有样本的 reads, 合并为 R1/R2。返回 (r1_merged, r2_merged, sample_count)"""
+    """收集 cluster 内所有样本的 reads, 合并为 R1/R2。返回 (r1_merged, r2_merged, sample_count)。
+    支持 PE/SE 混合: SE 样本仅合并 R1, PE 样本合并 R1+R2。"""
     r1_files, r2_files = [], []
-    paired_count = 0
+    paired_count, single_count, not_found = 0, 0, []
     for sample in sorted(samples):
         r1, r2 = _find_reads(fastq_dir, sample)
         if r1 and r2:
             r1_files.append(r1)
             r2_files.append(r2)
             paired_count += 1
+        elif r1 and not r2:
+            r1_files.append(r1)
+            single_count += 1
+        else:
+            not_found.append(sample)
+
+    if not_found:
+        print(f"    [WARN] reads 未找到: {', '.join(not_found[:8])}{'...' if len(not_found)>8 else ''} "
+              f"(在 {fastq_dir} 中, {len(not_found)}/{len(samples)} 样本)")
 
     if not r1_files:
         return None, None, 0
-    if paired_count == 1:
-        return r1_files[0], r2_files[0], 1
+
+    n_total = paired_count + single_count
+    if n_total == 1:
+        # 单样本: 不合并, 直接返回
+        return r1_files[0], r2_files[0] if r2_files else None, n_total
 
     work_dir = Path(work_dir); work_dir.mkdir(parents=True, exist_ok=True)
     r1_cat = str(work_dir / f"{prefix}_merged_R1.fastq.gz")
-    r2_cat = str(work_dir / f"{prefix}_merged_R2.fastq.gz")
+    r2_cat = str(work_dir / f"{prefix}_merged_R2.fastq.gz") if r2_files else None
     with open(r1_cat, "wb") as out:
         for f in r1_files:
             with open(f, "rb") as inf:
                 shutil.copyfileobj(inf, out)
-    with open(r2_cat, "wb") as out:
-        for f in r2_files:
-            with open(f, "rb") as inf:
-                shutil.copyfileobj(inf, out)
-    print(f"    合并 {paired_count} 样本 reads → {r1_cat}")
-    return r1_cat, r2_cat, paired_count
+    if r2_files and r2_cat:
+        with open(r2_cat, "wb") as out:
+            for f in r2_files:
+                with open(f, "rb") as inf:
+                    shutil.copyfileobj(inf, out)
+    se_info = f" + {single_count} SE" if single_count else ""
+    print(f"    合并 {paired_count} PE{se_info} 样本 reads → {r1_cat}")
+    return r1_cat, r2_cat, n_total
 
 
 def _contig_cluster_samples(contig_id, clusters, fasta_info=None, max_samples=10):
