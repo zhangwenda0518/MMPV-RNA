@@ -1387,6 +1387,13 @@ class ViromePipeline:
                         else: total_bp += len(line.strip())
             _add("01_Assembly", "✓", key_metric=f"{ns} 样本, {total_contigs:,} contigs, {total_bp/1e6:.1f} Mb",
                  details=f"{asm}")
+            # 调用 analysis/assembly_stats.py
+            asm_script = Path(__file__).resolve().parent.parent / "analysis" / "assembly_stats.py"
+            if asm_script.is_file():
+                try:
+                    subprocess.run([sys.executable, str(asm_script), "-a", str(asm), "-o", str(report_dir / "assembly_summary.tsv")],
+                                   capture_output=True, timeout=60)
+                except: pass
             # per-sample detail
             for d in sorted(asm.iterdir()):
                 if not d.is_dir(): continue
@@ -1475,6 +1482,13 @@ class ViromePipeline:
                     mr = [r for r in filter_data if r['Mode'] == fm]
                     t_p = sum(r['Passed'] for r in mr)
                     _add(f"  └ {fm}", "✓", key_metric=f"{t_p} passed ({len(mr)} samples)")
+            # 调用 analysis/ident_stats.py
+            ident_script = Path(__file__).resolve().parent.parent / "analysis" / "ident_stats.py"
+            if ident_script.is_file():
+                try:
+                    subprocess.run([sys.executable, str(ident_script), "-i", str(ident), "-o", str(report_dir)],
+                                   capture_output=True, timeout=120)
+                except: pass
         else:
             _add("02_Identification", "○", details="未运行")
 
@@ -1521,6 +1535,13 @@ class ViromePipeline:
                     cs.write(f"{sn}\t{tq}\t{ec}\t{ep}\t{ef}\t{oe}\t{er}\t{or_}\t{sn_ext}\t{sn_gain}\n")
             _add("03_COBRA", "✓", key_metric=f"{ns} 样本, {n_ext} 延伸, {n_queries} query, {n_orphan} orphan",
                  details=f"{report_dir}/cobra_summary.tsv")
+            # 调用 analysis/cobra_stats.py
+            cobra_script = Path(__file__).resolve().parent.parent / "analysis" / "cobra_stats.py"
+            if cobra_script.is_file():
+                try:
+                    subprocess.run([sys.executable, str(cobra_script), "-c", str(cobra), "-o", str(report_dir)],
+                                   capture_output=True, timeout=120)
+                except: pass
         else:
             _add("03_COBRA", "○", details="未运行")
 
@@ -1785,6 +1806,33 @@ class ViromePipeline:
                             "--font-size", "9", "--title-font-size", "16"],
                            capture_output=True, timeout=120)
                     self.log.info("  Sankey 图 → %s", report_dir / "classification_sankey.png")
+
+                    # Plant-only Sankey: 用宿主表过滤
+                    host_summary = host / "ensemble_host_summary.tsv"
+                    if host_summary.is_file():
+                        try:
+                            hdf = pl.read_csv(str(host_summary), separator="\t", null_values=["NA","N/A",""])
+                            plant_ids = set(hdf.filter(pl.col("Final_Host")=="Plant")["contig_id"].to_list())
+                            if plant_ids:
+                                plant_tax = report_dir / "plant_final_taxonomy.tsv"
+                                with open(final_tax) as tf, open(plant_tax, "w") as pf:
+                                    hdr = tf.readline()
+                                    pf.write(hdr)
+                                    for line in tf:
+                                        cid = line.split('\t')[0]
+                                        if cid in plant_ids:
+                                            pf.write(line)
+                                sp.run([sys.executable, str(sankey_script),
+                                        "-i", str(plant_tax),
+                                        "-o", str(report_dir / "classification_sankey_plant.png"),
+                                        "--format", "png", "--min-flow", "1", "--min-genus-flow", "5",
+                                        "--palette", "set3", "--height", "1200",
+                                        "--node-pad", "30", "--label-truncate", "25",
+                                        "--font-size", "9", "--title-font-size", "16",
+                                        "--title", "Plant Virus Taxonomy Sankey"],
+                                       capture_output=True, timeout=120)
+                                self.log.info("  Plant Sankey 图 → %s", report_dir / "classification_sankey_plant.png")
+                        except: pass
                 except: pass
 
         # ── 写入报告 ──
@@ -2411,231 +2459,556 @@ def _build_parser(add_help=True):
 
 
 def _write_html_report(report_dir, stage_stats):
-    """生成自包含 HTML 流水线报告 (含 Chart.js 图表)"""
+    """生成期刊级 HTML 流水线报告 — 按模块步骤展示"""
     from datetime import datetime
-    import re, json as _json
+    import re, json as _json, base64 as _b64
 
     main_stages = [s for s in stage_stats if not s["Stage"].startswith("  ")]
     sub_stages  = [s for s in stage_stats if s["Stage"].startswith("  ")]
 
-    status_icon = {"✓": "pass", "○": "skip", "✗": "fail"}
+    S = {"✓": "pass", "○": "skip", "✗": "fail"}
     def _esc(v): return str(v).replace("&","&amp;").replace("<","&lt;").replace(">","&gt;")
-
-    # ── 从 stage_stats 提取图表数据 ──
-    chart_scripts = ""
-    n_pass = sum(1 for s in main_stages if s["Status"] == "✓")
-    n_total = sum(1 for s in main_stages if s["Status"] != "○")
-    pct = round(n_pass/max(n_total,1)*100)
-
-    # Helper: 从 Key_Metric 或 Details 提取 "key=value" 对
     def _extract_kv(text, pattern):
         result = {}
         for m in re.finditer(pattern, text):
             result[m.group(1)] = int(m.group(2))
         return result
-
-    # 1. 鉴定工具图 — 读 ident_summary.tsv
-    id_tsv = report_dir / "ident_summary.tsv"
-    if id_tsv.is_file():
-        with open(id_tsv) as f:
+    def _read_tsv(path):
+        """读取 TSV → list[dict]"""
+        if not path.is_file(): return []
+        rows = []
+        with open(path) as f:
             hdr = f.readline().strip().split('\t')
-            line = f.readline()  # first sample
-            if line:
-                parts = line.strip().split('\t')
-                tools = hdr[2:]  # skip Sample, All_Candidate
-                vals = {}
-                for i, t in enumerate(tools):
-                    try: vals[t] = int(parts[i+2])
-                    except: pass
-                if vals:
-                    chart_scripts += f"""
-    new Chart(document.getElementById('chart_ident'), {{
-      type:'bar', data:{{labels:{_json.dumps(list(vals.keys()))},
-      datasets:[{{label:'Virus contigs',data:{_json.dumps(list(vals.values()))},
-      backgroundColor:'#42a5f5'}}]}},
-      options:{{plugins:{{title:{{display:true,text:'Per-Tool Identification'}}}}}}}});
-"""
-
-    # 2. 组装 N50 图 — 读 assembly_summary.tsv
-    asm_tsv = report_dir / "assembly_summary.tsv"
-    if asm_tsv.is_file():
-        samples, n50s, contigs = [], [], []
-        with open(asm_tsv) as f:
-            f.readline()
             for line in f:
-                p = line.strip().split('\t')
-                if p[0] == 'TOTAL': continue
-                samples.append(p[0][:15]); n50s.append(int(p[5])); contigs.append(int(p[3]))
-        if samples:
+                if not line.strip(): continue
+                rows.append(dict(zip(hdr, line.strip().split('\t'))))
+        return rows
+
+    n_pass = sum(1 for s in main_stages if s["Status"] == "✓")
+    n_total = sum(1 for s in main_stages if s["Status"] != "○")
+    pct = round(n_pass/max(n_total,1)*100)
+
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # Phase 1: 提取所有图表数据
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    chart_scripts = ""
+    stage_has_chart = {}  # {stage_key: bool}
+
+    # S00a — 数据质量 (data_summary.tsv)
+    dq_rows = _read_tsv(report_dir / "data_summary.tsv")
+    if dq_rows:
+        dq_samples = [r.get("Sample","")[:14] for r in dq_rows if r.get("Sample","")!="TOTAL"]
+        dq_raw = [int(r.get("Raw_Reads",0)) for r in dq_rows if r.get("Sample","")!="TOTAL"]
+        dq_clean = [int(r.get("Clean_Reads",0)) for r in dq_rows if r.get("Sample","")!="TOTAL"]
+        dq_q20b = [float(r.get("Raw_Q20(%)",0)) for r in dq_rows if r.get("Sample","")!="TOTAL"]
+        dq_q20a = [float(r.get("Clean_Q20(%)",0)) for r in dq_rows if r.get("Sample","")!="TOTAL"]
+        dq_dup = [float(r.get("Dup_Rate(%)",0)) for r in dq_rows if r.get("Sample","")!="TOTAL"]
+        if dq_samples:
+            stage_has_chart['s00a'] = True
             chart_scripts += f"""
-    new Chart(document.getElementById('chart_asm'), {{
-      type:'bar', data:{{labels:{_json.dumps(samples)},
-      datasets:[{{label:'N50 (bp)',data:{_json.dumps(n50s)},backgroundColor:'#66bb6a',yAxisID:'y'}},
-                {{label:'Contigs',data:{_json.dumps(contigs)},backgroundColor:'#ffa726',yAxisID:'y1'}}]}},
-      options:{{plugins:{{title:{{display:true,text:'Assembly N50 & Contigs'}}}},
-        scales:{{y:{{beginAtZero:true,position:'left'}},y1:{{beginAtZero:true,position:'right',grid:{{drawOnChartArea:false}}}}}}}}}});
+new Chart(document.getElementById('chart_s00a'), {{
+  type:'bar', data:{{labels:{_json.dumps(dq_samples)},
+  datasets:[{{label:'Raw Reads (M)',data:{_json.dumps([round(v/1e6,1) for v in dq_raw])},backgroundColor:'#90a4ae',yAxisID:'y'}},
+            {{label:'Clean Reads (M)',data:{_json.dumps([round(v/1e6,1) for v in dq_clean])},backgroundColor:'#42a5f5',yAxisID:'y'}},
+            {{label:'Q20 Raw (%)',data:{_json.dumps([round(v,1) for v in dq_q20b])},backgroundColor:'#ffa726',yAxisID:'y1'}},
+            {{label:'Q20 Clean (%)',data:{_json.dumps([round(v,1) for v in dq_q20a])},backgroundColor:'#66bb6a',yAxisID:'y1'}}]}},
+  options:{{responsive:true,plugins:{{title:{{display:true,text:'Read Quality & Filtering'}}}},
+    scales:{{y:{{beginAtZero:true,position:'left',title:{{text:'Reads (M)'}}}},
+             y1:{{beginAtZero:true,position:'right',max:100,grid:{{drawOnChartArea:false}},title:{{text:'Q20 (%)'}}}}}}}}}});
+"""
+    # duplication rate overlay
+    if dq_samples and any(v > 0 for v in dq_dup):
+        chart_scripts += f"""
+new Chart(document.getElementById('chart_s00a_dup'), {{
+  type:'bar', data:{{labels:{_json.dumps(dq_samples)},
+  datasets:[{{label:'Duplication Rate (%)',data:{_json.dumps([round(v,2) for v in dq_dup])},
+            backgroundColor:{_json.dumps(['#ef5350' if v>30 else '#ffa726' if v>15 else '#66bb6a' for v in dq_dup])}}}]}},
+  options:{{responsive:true,plugins:{{title:{{display:true,text:'Duplication Rate per Sample'}}}},
+    scales:{{y:{{beginAtZero:true,title:{{text:'Dup Rate (%)'}}}}}}}}}});
+"""
+    # S01 — 组装
+    asm_rows = _read_tsv(report_dir / "assembly_summary.tsv")
+    if asm_rows:
+        asm_samples = [r["Sample"][:12] for r in asm_rows if r.get("Sample","")!="TOTAL"]
+        asm_n50 = [int(r.get("N50",0)) for r in asm_rows if r.get("Sample","")!="TOTAL"]
+        asm_contigs = [int(r.get("Contigs",0)) for r in asm_rows if r.get("Sample","")!="TOTAL"]
+        asm_size = [float(r.get("Size(Mb)",r.get("Size(Kb)",0))) for r in asm_rows if r.get("Sample","")!="TOTAL"]
+        if asm_samples:
+            stage_has_chart['s01'] = True
+            chart_scripts += f"""
+new Chart(document.getElementById('chart_s01'), {{
+  type:'bar', data:{{labels:{_json.dumps(asm_samples)},
+  datasets:[{{label:'N50 (kb)',data:{_json.dumps([round(v/1000,1) for v in asm_n50])},backgroundColor:'#66bb6a',yAxisID:'y'}},
+            {{label:'Contigs',data:{_json.dumps(asm_contigs)},backgroundColor:'#42a5f5',yAxisID:'y1'}}]}},
+  options:{{responsive:true,plugins:{{title:{{display:true,text:'Assembly N50 & Contig Count'}}}},
+    scales:{{y:{{beginAtZero:true,position:'left',title:{{text:'N50 (kb)'}}}},
+             y1:{{beginAtZero:true,position:'right',grid:{{drawOnChartArea:false}},title:{{text:'Contigs'}}}}}}}}}});
 """
 
-    # 3. 过滤图 — 读 filter_summary.tsv
-    fil_tsv = report_dir / "filter_summary.tsv"
-    if fil_tsv.is_file():
-        flabels, fvals = [], []
-        with open(fil_tsv) as f:
-            f.readline()
-            for line in f:
-                p = line.strip().split('\t')
-                if p[0] == 'TOTAL': continue
-                flabels.append(f"{p[0][:10]}-{p[1]}"); fvals.append(int(p[3]))
+    # S02 — 鉴定 (ident_summary + filter_summary)
+    id_rows = _read_tsv(report_dir / "ident_summary.tsv")
+    if id_rows:
+        id_row0 = id_rows[0]
+        id_tools = [k for k in id_row0 if k not in ("Sample","All_Candidate")]
+        id_vals = {}
+        for t in id_tools:
+            try: id_vals[t] = int(id_row0[t])
+            except: pass
+        if id_vals:
+            stage_has_chart['s02a'] = True
+            chart_scripts += f"""
+new Chart(document.getElementById('chart_s02a'), {{
+  type:'bar', data:{{labels:{_json.dumps(list(id_vals.keys()))},
+  datasets:[{{label:'Virus contigs',data:{_json.dumps(list(id_vals.values()))},
+  backgroundColor:'#5c6bc0'}}]}},
+  options:{{responsive:true,indexAxis:'y',plugins:{{title:{{display:true,text:'Per-Tool Identification'}}}}}}}});
+"""
+    fil_rows = _read_tsv(report_dir / "filter_summary.tsv")
+    if fil_rows:
+        flabels = [f"{r['Sample'][:10]}-{r['Mode']}" for r in fil_rows if r.get("Sample","")!="TOTAL"]
+        fvals = [int(r.get("Passed",0)) for r in fil_rows if r.get("Sample","")!="TOTAL"]
+        f_total = [int(r.get("All_Candidate",0)) for r in fil_rows if r.get("Sample","")!="TOTAL"]
         if flabels:
+            stage_has_chart['s02b'] = True
             chart_scripts += f"""
-    new Chart(document.getElementById('chart_filter'), {{
-      type:'bar', data:{{labels:{_json.dumps(flabels)},
-      datasets:[{{label:'Passed UniProt filter',data:{_json.dumps(fvals)},
-      backgroundColor:{_json.dumps(['#ef5350','#42a5f5','#66bb6a'][:len(flabels)])}}}]}},
-      options:{{plugins:{{title:{{display:true,text:'UniProt Filter Passed'}}}}}}}});
+new Chart(document.getElementById('chart_s02b'), {{
+  type:'bar', data:{{labels:{_json.dumps(flabels)},
+  datasets:[{{label:'All candidate',data:{_json.dumps(f_total)},backgroundColor:'#bdbdbd'}},
+            {{label:'Passed filter',data:{_json.dumps(fvals)},backgroundColor:'#66bb6a'}}]}},
+  options:{{responsive:true,plugins:{{title:{{display:true,text:'UniProt Filter: Before vs After'}}}},
+    scales:{{y:{{beginAtZero:true}}}}}}}});
 """
 
-    # 4. Host 分布 — 从 stage_stats
+    # S03 — COBRA
+    cobra_rows = _read_tsv(report_dir / "cobra_summary.tsv")
+    if cobra_rows:
+        csamples = [r.get("Sample","")[:12] for r in cobra_rows]
+        try: er_key = next(k for k in cobra_rows[0] if 'Extension_Rate' in k or 'extension_rate' in k)
+        except: er_key = None
+        try: or_key = next(k for k in cobra_rows[0] if 'Orphan_Rate' in k or 'orphan_rate' in k)
+        except: or_key = None
+        try: ec_key = next(k for k in cobra_rows[0] if 'Extended_Contigs' in k)
+        except: ec_key = None
+        if er_key and csamples:
+            stage_has_chart['s03'] = True
+            cobra_ext = [float(r.get(er_key,0)) for r in cobra_rows]
+            cobra_orph = [float(r.get(or_key,0)) for r in cobra_rows] if or_key else []
+            ds_c = f'{{label:"Extension Rate (%)",data:{_json.dumps(cobra_ext)},backgroundColor:"#66bb6a",yAxisID:"y"}}'
+            if cobra_orph:
+                ds_c += f',{{label:"Orphan Rate (%)",data:{_json.dumps(cobra_orph)},backgroundColor:"#ef5350",yAxisID:"y1"}}'
+            chart_scripts += f"""
+new Chart(document.getElementById('chart_s03'), {{
+  type:'bar', data:{{labels:{_json.dumps(csamples)},
+  datasets:[{ds_c}]}},
+  options:{{responsive:true,plugins:{{title:{{display:true,text:'COBRA Extension & Orphan Rate'}}}},
+    scales:{{y:{{beginAtZero:true,position:'left',title:{{text:'Rate (%)'}}}},
+             y1:{{beginAtZero:true,position:'right',grid:{{drawOnChartArea:false}},title:{{text:'Orphan (%)'}}}}}}}}}});
+"""
+
+    # S05 — Taxonomy novelty
+    tax_novelty_kv = {}
+    for s in stage_stats:
+        if 'Novel Rank' in s['Stage'] and 'Known=' in s.get('Key_Metric',''):
+            tax_novelty_kv = _extract_kv(s['Key_Metric'], r'(Known|NewSp|NewGe|NewFa)=(\d+)')
+    if tax_novelty_kv:
+        stage_has_chart['s05a'] = True
+        chart_scripts += f"""
+new Chart(document.getElementById('chart_s05a'), {{
+  type:'doughnut', data:{{labels:{_json.dumps(list(tax_novelty_kv.keys()))},
+  datasets:[{{data:{_json.dumps(list(tax_novelty_kv.values()))},
+  backgroundColor:['#2e7d32','#1565c0','#ef6c00','#c62828']}}]}},
+  options:{{responsive:true,plugins:{{title:{{display:true,text:'Taxonomy Novelty'}},
+    legend:{{position:'bottom'}}}}}}}});
+"""
+
+    # S06 — Host distribution
+    host_kv = {}
     for s in stage_stats:
         if '06_HostPrediction' in s['Stage'] and '=' in s.get('Key_Metric',''):
             host_kv = _extract_kv(s['Key_Metric'], r'(\w+)=(\d+)')
-            if host_kv:
-                chart_scripts += f"""
-    new Chart(document.getElementById('chart_host'), {{
-      type:'doughnut', data:{{labels:{_json.dumps(list(host_kv.keys()))},
-      datasets:[{{data:{_json.dumps(list(host_kv.values()))},
-      backgroundColor:['#42a5f5','#66bb6a','#ffa726','#ef5350','#ab47bc','#26c6da','#7e57c2','#78909c']}}]}},
-      options:{{plugins:{{title:{{display:true,text:'Host Prediction Distribution'}}}}}}}});
+    if host_kv:
+        stage_has_chart['s06a'] = True
+        chart_scripts += f"""
+new Chart(document.getElementById('chart_s06a'), {{
+  type:'doughnut', data:{{labels:{_json.dumps(list(host_kv.keys()))},
+  datasets:[{{data:{_json.dumps(list(host_kv.values()))},
+  backgroundColor:['#42a5f5','#66bb6a','#ffa726','#ef5350','#ab47bc','#26c6da','#7e57c2','#78909c']}}]}},
+  options:{{responsive:true,plugins:{{title:{{display:true,text:'Host Prediction Distribution'}},
+    legend:{{position:'bottom'}}}}}}}});
 """
 
-    # 5. Taxonomy novelty — 从 stage_stats
-    for s in stage_stats:
-        if 'Novel Rank' in s['Stage'] and 'Known=' in s.get('Key_Metric',''):
-            tax_kv = _extract_kv(s['Key_Metric'], r'(Known|NewSp|NewGe|NewFa)=(\d+)')
-            if tax_kv:
-                chart_scripts += f"""
-    new Chart(document.getElementById('chart_tax'), {{
-      type:'doughnut', data:{{labels:{_json.dumps(list(tax_kv.keys()))},
-      datasets:[{{data:{_json.dumps(list(tax_kv.values()))},
-      backgroundColor:['#66bb6a','#42a5f5','#ffa726','#ef5350']}}]}},
-      options:{{plugins:{{title:{{display:true,text:'Taxonomy Classification'}}}}}}}});
-"""
-
-    # 6. CheckV per-host stacked bar chart (从 checkv_summary.tsv)
-    cv_tsv = report_dir / "checkv_summary.tsv"
-    if cv_tsv.is_file():
-        hosts, qlabels = [], ["Complete","High-quality","Medium-quality","Low-quality","Not-determined"]
-        qdata = {q: [] for q in qlabels}
-        with open(cv_tsv) as f:
-            hdr = f.readline().strip().split('\t')
-            for line in f:
-                p = line.strip().split('\t')
-                if p[0] == 'TOTAL': continue
-                hosts.append(p[0][:15])
-                for i, q in enumerate(qlabels):
-                    qdata[q].append(int(p[i+1]) if i+1 < len(p) else 0)
-        if hosts:
-            colors = ['#66bb6a','#42a5f5','#ffa726','#ef5350','#bdbdbd']
-            datasets = ','.join(
-                '{{label:"'+q+'",data:'+_json.dumps(qdata[q])+',backgroundColor:"'+colors[i]+'"}}'
-                for i, q in enumerate(qlabels))
+    # S07 — CheckV quality
+    cv_rows = _read_tsv(report_dir / "checkv_summary.tsv")
+    if cv_rows:
+        qlabels = ["Complete","High-quality","Medium-quality","Low-quality","Not-determined"]
+        cv_hosts = [r["Host"][:14] for r in cv_rows if r.get("Host","")!="TOTAL"]
+        cv_qdata = {q: [] for q in qlabels}
+        for r in cv_rows:
+            if r.get("Host","") == "TOTAL": continue
+            for q in qlabels:
+                cv_qdata[q].append(int(r.get(q,0)))
+        if cv_hosts:
+            stage_has_chart['s07a'] = True
+            colors = ['#2e7d32','#1565c0','#ef6c00','#c62828','#9e9e9e']
+            datasets = ','.join(f'{{label:"{q}",data:{_json.dumps(cv_qdata[q])},backgroundColor:"{colors[i]}"}}' for i,q in enumerate(qlabels))
             chart_scripts += f"""
-    new Chart(document.getElementById('chart_checkv'), {{
-      type:'bar', data:{{labels:{_json.dumps(hosts)},
-      datasets:[{datasets}]}},
-      options:{{responsive:true,plugins:{{title:{{display:true,text:'CheckV Quality by Host'}}}},
-        scales:{{x:{{stacked:true}},y:{{stacked:true,beginAtZero:true,title:{{text:'Contig Count'}}}}}}}}}});
+new Chart(document.getElementById('chart_s07a'), {{
+  type:'bar', data:{{labels:{_json.dumps(cv_hosts)},
+  datasets:[{datasets}]}},
+  options:{{responsive:true,plugins:{{title:{{display:true,text:'CheckV Quality by Host'}}}},
+    scales:{{x:{{stacked:true}},y:{{stacked:true,beginAtZero:true,title:{{text:'Contig Count'}}}}}}}}}});
 """
-
-    # 图表 HTML 区域 (仅在有数据时)
-    chart_divs = ""
-    chart_ids = []
-    if id_tsv.is_file(): chart_ids.append('ident')
-    if asm_tsv.is_file(): chart_ids.append('asm')
-    if fil_tsv.is_file(): chart_ids.append('filter')
-    for s in stage_stats:
-        if '06_HostPrediction' in s['Stage'] and '=' in s.get('Key_Metric',''): chart_ids.append('host')
-        if 'Novel Rank' in s['Stage'] and 'Known=' in s.get('Key_Metric',''): chart_ids.append('tax')
-    if cv_tsv.is_file(): chart_ids.append('checkv')
-    if (report_dir / "checkv_confidence.tsv").is_file(): chart_ids.append('checkv_conf')
-
-    # 7. aai_confidence stacked bar
-    cv_conf_tsv = report_dir / "checkv_confidence.tsv"
-    if cv_conf_tsv.is_file():
-        chosts, cqlabels = [], []
-        cqdata = {}
-        with open(cv_conf_tsv) as f:
-            hdr = f.readline().strip().split('\t')
-            cqlabels = hdr[1:-1]  # skip Host, Total
-            cqdata = {q: [] for q in cqlabels}
-            for line in f:
-                p = line.strip().split('\t')
-                chosts.append(p[0][:15])
-                for i, q in enumerate(cqlabels):
-                    cqdata[q].append(int(p[i+1]) if i+1 < len(p) else 0)
-        if chosts:
-            colors2 = ['#66bb6a','#ffa726','#ef5350','#42a5f5','#bdbdbd']
-            datasets2 = ','.join(
-                '{{label:"'+q+'",data:'+_json.dumps(cqdata[q])+',backgroundColor:"'+colors2[i%len(colors2)]+'"}}'
-                for i, q in enumerate(cqlabels))
+    # S07b — CheckV confidence
+    cv_conf_rows = _read_tsv(report_dir / "checkv_confidence.tsv")
+    if cv_conf_rows:
+        cql = [k for k in cv_conf_rows[0] if k not in ("Host","Total")]
+        cf_hosts = [r["Host"][:14] for r in cv_conf_rows]
+        cf_data = {q: [] for q in cql}
+        for r in cv_conf_rows:
+            for q in cql: cf_data[q].append(int(r.get(q,0)))
+        if cf_hosts and cql:
+            stage_has_chart['s07b'] = True
+            colors2 = ['#2e7d32','#ef6c00','#c62828','#1565c0','#9e9e9e']
+            datasets2 = ','.join(f'{{label:"{q}",data:{_json.dumps(cf_data[q])},backgroundColor:"{colors2[i%5]}"}}' for i,q in enumerate(cql))
             chart_scripts += f"""
-    new Chart(document.getElementById('chart_checkv_conf'), {{
-      type:'bar', data:{{labels:{_json.dumps(chosts)},
-      datasets:[{datasets2}]}},
-      options:{{responsive:true,plugins:{{title:{{display:true,text:'CheckV aai_confidence by Host'}}}},
-        scales:{{x:{{stacked:true}},y:{{stacked:true,beginAtZero:true,title:{{text:'Contig Count'}}}}}}}}}});
+new Chart(document.getElementById('chart_s07b'), {{
+  type:'bar', data:{{labels:{_json.dumps(cf_hosts)},
+  datasets:[{datasets2}]}},
+  options:{{responsive:true,plugins:{{title:{{display:true,text:'CheckV aai_confidence by Host'}}}},
+    scales:{{x:{{stacked:true}},y:{{stacked:true,beginAtZero:true,title:{{text:'Contig Count'}}}}}}}}}});
 """
 
-    for cid in chart_ids:
-        chart_divs += f'<div style="background:#fff;border-radius:10px;padding:20px;box-shadow:0 1px 3px rgba(0,0,0,.08);margin-bottom:16px"><canvas id="chart_{cid}" style="max-height:350px"></canvas></div>\n'
+    # S08 — Rescue branch breakdown
+    rescue_kv = {}
+    for s in stage_stats:
+        if '08_Rescue' in s['Stage']:
+            rescue_kv = _extract_kv(s['Key_Metric'], r'(CheckV|VSI|BLASTN)=(\d+)')
+    if rescue_kv:
+        stage_has_chart['s08'] = True
+        chart_scripts += f"""
+new Chart(document.getElementById('chart_s08'), {{
+  type:'pie', data:{{labels:{_json.dumps(list(rescue_kv.keys()))},
+  datasets:[{{data:{_json.dumps(list(rescue_kv.values()))},
+  backgroundColor:['#66bb6a','#42a5f5','#ffa726']}}]}},
+  options:{{responsive:true,plugins:{{title:{{display:true,text:'Rescue Branch Contributions'}},
+    legend:{{position:'bottom'}}}}}}}});
+"""
 
-    rows_html = ""
+    # ── Sankey 图 base64 ──
+    sankey_imgs = ""
+    for sname, stitle in [("classification_sankey.png","Taxonomy Classification Sankey"),
+                          ("classification_sankey_plant.png","Plant Virus Taxonomy Sankey")]:
+        spath = report_dir / sname
+        if spath.is_file():
+            with open(spath, "rb") as sf:
+                b64 = _b64.b64encode(sf.read()).decode()
+            sankey_imgs += f'<div class="sankey-card"><h3>{stitle}</h3><img src="data:image/png;base64,{b64}" alt="{stitle}"></div>\n'
+
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # Phase 2: 构建每个 stage 的 HTML section
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    # KPI 卡片数据 (从 stage_stats 提取)
+    kpis = {}
+    for s in stage_stats:
+        if s['Stage'] == '00a_CleanData':
+            for m in re.finditer(r'reads:\s*([\d,]+)→([\d,]+)', s.get('Key_Metric','')):
+                kpis['raw_reads'] = m.group(1)
+                kpis['clean_reads'] = m.group(2)
+        if s['Stage'] == '01_Assembly':
+            for m in re.finditer(r'([\d,]+)\s*contigs', s.get('Key_Metric','')):
+                kpis['total_contigs'] = m.group(1)
+            for m in re.finditer(r'([\d.]+)\s*Mb', s.get('Key_Metric','')):
+                kpis['total_mb'] = m.group(1)
+        if s['Stage'] == '02_Identification':
+            for m in re.finditer(r'([\d,]+)\s*病毒序列', s.get('Key_Metric','')):
+                kpis['virus_seqs'] = m.group(1)
+        if 'Novel Rank' in s['Stage']: kpis['novelty'] = s.get('Key_Metric','')
+        if '06_HostPrediction' in s['Stage'] and s['Stage'].startswith('06'):
+            for m in re.finditer(r'([\d,]+)\s*条', s.get('Key_Metric','')):
+                kpis['host_total'] = m.group(1)
+        if '07_CheckV' in s['Stage'] and s['Stage'].startswith('07'):
+            for m in re.finditer(r'(\d+)\s*HQ', s.get('Key_Metric','')):
+                kpis['hq_votus'] = m.group(1)
+        if '08_Rescue' in s['Stage'] and s['Stage'].startswith('08'):
+            for m in re.finditer(r'([\d,]+)\s*HQ vOTU', s.get('Key_Metric','')):
+                kpis['rescued'] = m.group(1)
+
+    # stage 定义: (key, 短标题, 长标题, 图标文字, 颜色)
+    stage_defs = [
+        ("s00a","CleanData","00a Data Preprocessing","QC","#607d8b"),
+        ("s00b","HostDep","00b Host Depletion","DEP","#546e7a"),
+        ("s01","Assembly","01 Assembly","ASM","#1565c0"),
+        ("s02","Ident","02 Identification","ID","#5c6bc0"),
+        ("s03","COBRA","03 COBRA Extension","COBRA","#00897b"),
+        ("s04","Cluster","04 Clustering","CLU","#ef6c00"),
+        ("s05","Taxonomy","05 Taxonomy Classification","TAX","#6a1b9a"),
+        ("s06","Host","06 Host Prediction","HOST","#c62828"),
+        ("s07","CheckV","07 CheckV Quality","CV","#2e7d32"),
+        ("s08","Rescue","08 Rescue","RESCUE","#37474f"),
+    ]
+
+    # 主 stage 状态映射 (用 stage 编号前缀匹配)
+    stage_status = {}
+    stage_metric = {}
+    _skey_to_num = {'s00a':'00a','s00b':'00b','s01':'01','s02':'02','s03':'03',
+                    's04':'04','s05':'05','s06':'06','s07':'07','s08':'08'}
+    for s in stage_stats:
+        sn = s['Stage']
+        for sk, _, _, _, _ in stage_defs:
+            snum = _skey_to_num[sk]
+            # e.g. "00a_CleanData" starts with "00a", "01_Assembly" starts with "01"
+            if sn.startswith(snum) or (snum+'_') in sn or sn == snum:
+                stage_status[sk] = S.get(s['Status'],'skip')
+                stage_metric[sk] = s.get('Key_Metric','')
+                break
+
+    # 构建每个 stage 的 section HTML
+    sections_html = ""
+    for sk, short, full, icon, color in stage_defs:
+        st = stage_status.get(sk, 'skip')
+        metric = stage_metric.get(sk, '')
+
+        # 状态样式
+        if st == 'pass':
+            badge_cls, badge_txt = 's-pass','✓ PASS'
+            border_cls = 'stage-pass'
+        elif st == 'fail':
+            badge_cls, badge_txt = 's-fail','✗ FAIL'
+            border_cls = 'stage-fail'
+        else:
+            badge_cls, badge_txt = 's-skip','○ SKIP'
+            border_cls = 'stage-skip'
+
+        # 图表: 根据 stage key 放入对应的 chart canvas
+        chart_html = ""
+        chart_map = {
+            's00a': [('chart_s00a','Read Quality & Filtering'),('chart_s00a_dup','Duplication Rate')],
+            's01':  [('chart_s01','Assembly N50 & Contigs')],
+            's02':  [('chart_s02a','Per-Tool Identification'),('chart_s02b','UniProt Filter')],
+            's03':  [('chart_s03','COBRA Rates')],
+            's05':  [('chart_s05a','Taxonomy Novelty')],
+            's06':  [('chart_s06a','Host Distribution')],
+            's07':  [('chart_s07a','CheckV Quality'),('chart_s07b','CheckV Confidence')],
+            's08':  [('chart_s08','Rescue Branches')],
+        }
+        if sk in chart_map:
+            chs = chart_map[sk]
+            active = []
+            for cid, _ in chs:
+                if sk == 's00a':
+                    if cid == 'chart_s00a' and stage_has_chart.get('s00a'): active.append(cid)
+                    if cid == 'chart_s00a_dup' and dq_rows and any(float(r.get('Dup_Rate(%)',0))>0 for r in dq_rows if r.get('Sample','')!='TOTAL'): active.append(cid)
+                    if cid == 'chart_s00a_dup': stage_has_chart.setdefault('s00a_dup', bool(active.count('chart_s00a_dup')))
+                elif sk == 's02':
+                    if cid == 'chart_s02a' and stage_has_chart.get('s02a'): active.append(cid)
+                    if cid == 'chart_s02b' and stage_has_chart.get('s02b'): active.append(cid)
+                elif sk == 's07':
+                    if cid == 'chart_s07a' and stage_has_chart.get('s07a'): active.append(cid)
+                    if cid == 'chart_s07b' and stage_has_chart.get('s07b'): active.append(cid)
+                else:
+                    if stage_has_chart.get(sk): active.append(cid)
+            if active:
+                cols = '1fr' if len(active) == 1 else '1fr 1fr'
+                chart_html = f'<div class="stage-charts" style="grid-template-columns:{cols}">'
+                for cid in active:
+                    chart_html += f'<div class="chart-box"><canvas id="{cid}" style="max-height:320px"></canvas></div>'
+                chart_html += '</div>'
+
+        # Sankey 图嵌入 stage 05
+        if sk == 's05' and sankey_imgs:
+            chart_html += f'<div class="sankey-section">{sankey_imgs}</div>'
+            sankey_imgs = ""  # 只放一次
+
+        sections_html += f'''
+<section class="stage {border_cls}" id="stage-{short}">
+  <div class="stage-header">
+    <div class="stage-icon" style="background:{color}">{icon}</div>
+    <div class="stage-title">
+      <h2>{full}</h2>
+      <span class="stage-metric">{_esc(metric)}</span>
+    </div>
+    <span class="stage-badge {badge_cls}">{badge_txt}</span>
+  </div>
+  {chart_html}
+</section>'''
+
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # Phase 3: 阶段总览表 (紧凑版)
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    table_rows = ""
     for i, s in enumerate(main_stages):
-        cls = status_icon.get(s["Status"], "skip")
-        rows_html += f"""<tr class="{cls}"><td style="text-align:center;color:#666;font-size:12px">{i}</td>
-          <td><b>{_esc(s['Stage'])}</b></td><td style="text-align:center"><span class="badge badge-{cls}">{s['Status']}</span></td>
-          <td>{_esc(s['Key_Metric'])}</td><td style="font-size:12px;color:#888">{_esc(s['Details'])}</td></tr>"""
-    sub_rows = ""
+        cls = S.get(s["Status"], "skip")
+        badge_label = {"pass":"PASS","skip":"SKIP","fail":"FAIL"}.get(cls,"SKIP")
+        table_rows += f'<tr class="tr-{cls}"><td class="td-num">{i}</td><td><b>{_esc(s["Stage"])}</b></td><td><span class="tb-badge tb-{cls}">{badge_label}</span></td><td class="td-metric">{_esc(s.get("Key_Metric",""))}</td></tr>'
     for s in sub_stages:
-        sub_rows += f"""<tr><td></td><td style="padding-left:32px;color:#555">{_esc(s['Stage'].strip())}</td>
-        <td></td><td>{_esc(s['Key_Metric'])}</td><td style="font-size:12px;color:#888">{_esc(s['Details'])}</td></tr>"""
+        table_rows += f'<tr><td></td><td class="td-sub">{_esc(s["Stage"].strip())}</td><td></td><td class="td-metric">{_esc(s.get("Key_Metric",""))}</td></tr>'
 
-    html = f"""<!DOCTYPE html>
-<html lang="zh"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>MMPV-RNA Pipeline Report</title>
+    # 顶部导航点
+    nav_dots = ""
+    for sk, short, full, icon, color in stage_defs:
+        st = stage_status.get(sk, 'skip')
+        dot_cls = 'dot-pass' if st=='pass' else ('dot-fail' if st=='fail' else 'dot-skip')
+        nav_dots += f'<a href="#stage-{short}" class="nav-dot {dot_cls}" title="{full}\n{stage_metric.get(sk,"")}"><span class="dot-inner" style="background:{color}">{icon}</span></a>'
+
+    gen_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # Phase 4: 完整 HTML
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    # KPI cards
+    kpi_items = [
+        ("Samples", f"{kpis.get('raw_reads','—')} raw → {kpis.get('clean_reads','—')} clean", "🧬"),
+        ("Assembly", f"{kpis.get('total_contigs','—')} contigs, {kpis.get('total_mb','—')} Mb", "🔧"),
+        ("Viruses", f"{kpis.get('virus_seqs','—')} identified", "🦠"),
+        ("HQ vOTUs", f"{kpis.get('hq_votus',kpis.get('rescued','—'))}", "⭐"),
+        ("Hosts", f"{kpis.get('host_total','—')} classified", "🌐"),
+    ]
+    kpi_cards = ""
+    for title, value, icon in kpi_items:
+        kpi_cards += f'<div class="kpi-card"><div class="kpi-icon">{icon}</div><div class="kpi-value">{value}</div><div class="kpi-label">{title}</div></div>'
+
+    html = f'''<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>MMPV-RNA v2.3 — Pipeline Report</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 <style>
+:root{{
+  --bg:#f4f6f9;--card-bg:#fff;--text:#263238;--muted:#78909c;
+  --navy:#0d1b3e;--indigo:#1a237e;--blue:#1565c0;--green:#2e7d32;
+  --red:#c62828;--amber:#ef6c00;--border:#e0e0e0;
+  --shadow:0 2px 8px rgba(0,0,0,.06);--shadow-lg:0 4px 16px rgba(0,0,0,.1);
+  --radius:10px;--radius-sm:6px;
+}}
 *{{box-sizing:border-box;margin:0;padding:0}}
-body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f0f2f5;color:#333;line-height:1.6}}
-.container{{max-width:1100px;margin:0 auto;padding:20px}}
-.header{{background:linear-gradient(135deg,#1a237e,#283593);color:#fff;padding:32px;border-radius:12px;margin-bottom:24px}}
-.header h1{{font-size:24px;margin-bottom:8px}}.header p{{opacity:.85;font-size:14px}}
-.cards{{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:16px;margin-bottom:24px}}
-.card{{background:#fff;border-radius:10px;padding:20px;box-shadow:0 1px 3px rgba(0,0,0,.08)}}
-.card .value{{font-size:28px;font-weight:700;color:#1a237e}}.card .label{{font-size:13px;color:#888;margin-top:4px}}
-.charts{{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:24px}}
-@media(max-width:768px){{.charts{{grid-template-columns:1fr}}}}.chart-full{{grid-column:1/-1}}
-.table-wrap{{background:#fff;border-radius:10px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.08);margin-bottom:24px}}
-table{{width:100%;border-collapse:collapse}}th{{background:#f5f5f5;text-align:left;padding:12px 16px;font-size:13px;color:#666;border-bottom:2px solid #e0e0e0}}
-td{{padding:10px 16px;font-size:14px;border-bottom:1px solid #f0f0f0}}
-tr.pass td:first-child{{border-left:3px solid #4caf50}}tr.fail td:first-child{{border-left:3px solid #f44336}}tr.skip td:first-child{{border-left:3px solid #ccc}}
-.badge{{display:inline-block;padding:2px 10px;border-radius:12px;font-size:12px;font-weight:600}}
-.badge-pass{{background:#e8f5e9;color:#2e7d32}}.badge-fail{{background:#fce4ec;color:#c62828}}.badge-skip{{background:#eee;color:#888}}
-.footer{{text-align:center;color:#aaa;font-size:12px;padding:20px}}
-</style></head><body><div class="container">
-<div class="header"><h1>MMPV-RNA v2.3 &mdash; Pipeline Report</h1>
-<p>Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} &nbsp;|&nbsp; {n_pass}/{n_total} stages passed ({pct}%)</p></div>
-<div class="cards">
-<div class="card"><div class="value">{n_pass}/{n_total}</div><div class="label">Stages Passed</div></div>
-<div class="card"><div class="value">{len(stage_stats)}</div><div class="label">Total Metrics</div></div>
-<div class="card"><div class="value">{pct}%</div><div class="label">Success Rate</div></div>
+body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans SC',sans-serif;background:var(--bg);color:var(--text);line-height:1.6}}
+.container{{max-width:1200px;margin:0 auto;padding:0 20px 40px}}
+
+/* ── Hero Header ── */
+.hero{{background:linear-gradient(135deg,var(--navy) 0%,var(--indigo) 60%,#283593 100%);color:#fff;padding:40px 32px 32px;border-radius:0 0 16px 16px;margin-bottom:28px;position:relative;overflow:hidden}}
+.hero::after{{content:'';position:absolute;top:-50%;right:-20%;width:500px;height:500px;background:rgba(255,255,255,.03);border-radius:50%}}
+.hero h1{{font-size:26px;font-weight:700;margin-bottom:6px;position:relative;z-index:1}}
+.hero .subtitle{{font-size:13px;opacity:.8;position:relative;z-index:1}}
+.hero .gen-time{{font-size:12px;opacity:.65;margin-top:6px;position:relative;z-index:1}}
+
+/* ── KPI Dashboard ── */
+.kpi-row{{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin-bottom:28px}}
+.kpi-card{{background:var(--card-bg);border-radius:var(--radius);padding:18px 20px;box-shadow:var(--shadow);text-align:center;transition:transform .15s}}
+.kpi-card:hover{{transform:translateY(-2px);box-shadow:var(--shadow-lg)}}
+.kpi-icon{{font-size:24px;margin-bottom:6px}}
+.kpi-value{{font-size:13px;font-weight:600;color:var(--text);line-height:1.4}}
+.kpi-label{{font-size:11px;color:var(--muted);margin-top:4px;text-transform:uppercase;letter-spacing:.5px}}
+
+/* ── Navigation ── */
+.nav-bar{{background:var(--card-bg);border-radius:var(--radius);box-shadow:var(--shadow);padding:10px 16px;margin-bottom:28px;
+  display:flex;align-items:center;gap:6px;overflow-x:auto;position:sticky;top:8px;z-index:100}}
+.nav-dot{{display:flex;align-items:center;justify-content:center;width:36px;height:36px;border-radius:50%;
+  text-decoration:none;transition:all .2s;flex-shrink:0;position:relative;border:2px solid transparent}}
+.nav-dot:hover{{transform:scale(1.15);z-index:2}}
+.nav-dot::after{{content:attr(title);position:absolute;bottom:110%;left:50%;transform:translateX(-50%);
+  white-space:pre;background:#333;color:#fff;padding:4px 8px;border-radius:4px;font-size:10px;
+  opacity:0;pointer-events:none;transition:opacity .2s;text-align:center;line-height:1.3}}
+.nav-dot:hover::after{{opacity:1}}
+.dot-inner{{width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+  font-size:9px;font-weight:700;color:#fff}}
+.dot-pass{{border-color:#66bb6a}}.dot-fail{{border-color:#ef5350}}.dot-skip{{border-color:#bdbdbd}}
+
+/* ── Stage Section ── */
+.stage{{background:var(--card-bg);border-radius:var(--radius);box-shadow:var(--shadow);margin-bottom:20px;overflow:hidden}}
+.stage-pass{{border-left:4px solid var(--green)}}.stage-fail{{border-left:4px solid var(--red)}}.stage-skip{{border-left:4px solid #bdbdbd}}
+.stage-header{{display:flex;align-items:center;gap:16px;padding:18px 22px;border-bottom:1px solid var(--border);background:#fafbfc}}
+.stage-icon{{width:44px;height:44px;border-radius:var(--radius-sm);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;color:#fff;flex-shrink:0}}
+.stage-title{{flex:1;min-width:0}}
+.stage-title h2{{font-size:16px;font-weight:700;color:var(--text);margin-bottom:2px}}
+.stage-metric{{font-size:12px;color:var(--muted);display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}}
+.stage-badge{{font-size:11px;font-weight:700;padding:4px 12px;border-radius:12px;flex-shrink:0}}
+.s-pass{{background:#e8f5e9;color:var(--green)}}.s-fail{{background:#fce4ec;color:var(--red)}}.s-skip{{background:#f5f5f5;color:#9e9e9e}}
+
+/* ── Charts ── */
+.stage-charts{{display:grid;gap:16px;padding:18px 22px}}.chart-box{{background:#fafbfc;border-radius:var(--radius-sm);padding:12px;border:1px solid var(--border)}}
+.sankey-section{{padding:18px 22px;display:grid;grid-template-columns:1fr 1fr;gap:16px}}
+@media(max-width:768px){{.sankey-section{{grid-template-columns:1fr}}}}
+.sankey-card{{background:#fafbfc;border-radius:var(--radius-sm);padding:14px;border:1px solid var(--border)}}
+.sankey-card h3{{font-size:13px;color:var(--indigo);margin-bottom:10px;text-align:center}}
+.sankey-card img{{width:100%;height:auto;border-radius:4px}}
+
+/* ── Summary Table ── */
+.table-wrap{{background:var(--card-bg);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden;margin-bottom:20px}}
+.table-wrap h3{{font-size:15px;padding:16px 22px;border-bottom:1px solid var(--border);color:var(--text)}}
+table{{width:100%;border-collapse:collapse;font-size:13px}}
+th{{background:#fafbfc;text-align:left;padding:10px 16px;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:2px solid var(--border)}}
+td{{padding:9px 16px;border-bottom:1px solid #f0f0f0}}
+.tr-pass td:first-child{{border-left:3px solid var(--green)}}.tr-fail td:first-child{{border-left:3px solid var(--red)}}.tr-skip td:first-child{{border-left:3px solid #ccc}}
+.td-num{{text-align:center;color:var(--muted);font-size:11px;width:36px}}
+.td-sub{{padding-left:40px!important;color:#78909c;font-size:12px}}
+.td-metric{{font-size:12px;color:#607d8b}}
+.tb-badge{{display:inline-block;padding:1px 8px;border-radius:10px;font-size:10px;font-weight:700}}
+.tb-pass{{background:#e8f5e9;color:var(--green)}}.tb-fail{{background:#fce4ec;color:var(--red)}}.tb-skip{{background:#f5f5f5;color:#9e9e9e}}
+
+/* ── Footer ── */
+.footer{{text-align:center;padding:24px;color:var(--muted);font-size:11px;line-height:1.8}}
+.footer a{{color:var(--blue);text-decoration:none}}
+
+/* Mobile */
+@media(max-width:768px){{
+  .hero{{padding:24px 20px 20px}}.hero h1{{font-size:20px}}
+  .kpi-row{{grid-template-columns:repeat(2,1fr)}}
+  .stage-header{{flex-wrap:wrap;gap:10px}}
+  .stage-charts{{grid-template-columns:1fr!important}}
+  .nav-bar{{gap:2px;padding:6px 8px}}
+  .nav-dot{{width:28px;height:28px}}.dot-inner{{width:22px;height:22px;font-size:7px}}
+}}
+
+/* Print */
+@media print{{
+  body{{background:#fff;font-size:11px}}
+  .hero{{background:#1a237e!important;-webkit-print-color-adjust:exact}}
+  .stage,.table-wrap,.kpi-card{{box-shadow:none;border:1px solid #ddd;break-inside:avoid}}
+  .nav-bar{{display:none}}
+  .kpi-row{{grid-template-columns:repeat(5,1fr)}}
+  .stage-charts{{grid-template-columns:1fr!important}}
+}}
+</style>
+</head>
+<body>
+<div class="container">
+
+<!-- Hero -->
+<div class="hero">
+  <h1>MMPV-RNA v2.3 — Pipeline Report</h1>
+  <div class="subtitle">Metatranscriptomic Virus Discovery — End-to-End Analysis</div>
+  <div class="gen-time">Generated: {gen_time} &nbsp;|&nbsp; {n_pass}/{n_total} stages completed ({pct}%)</div>
 </div>
-<div class="charts">{chart_divs}</div>
-<div class="table-wrap"><table><thead><tr><th style="width:40px">#</th><th>Stage</th><th style="width:60px">Status</th><th>Key Metrics</th><th style="width:200px">Details</th></tr></thead><tbody>{rows_html}{sub_rows}</tbody></table></div>
-<div class="footer">MMPV-RNA v2.3 &mdash; Generated by virome_pipeline.py</div>
+
+<!-- KPI Dashboard -->
+<div class="kpi-row">{kpi_cards}</div>
+
+<!-- Stage Navigation -->
+<div class="nav-bar">{nav_dots}</div>
+
+<!-- Stage Sections -->
+{sections_html}
+
+<!-- Summary Table -->
+<div class="table-wrap">
+  <h3>Pipeline Stage Summary</h3>
+  <table><thead><tr><th style="width:36px">#</th><th>Stage</th><th style="width:70px">Status</th><th>Key Metrics</th></tr></thead>
+  <tbody>{table_rows}</tbody></table>
+</div>
+
+<!-- Footer -->
+<div class="footer">
+  <strong>MMPV-RNA v2.3</strong> — Metatranscriptomic Virus Discovery Pipeline<br>
+  Generated by <code>virome_pipeline.py</code> &nbsp;|&nbsp; {gen_time}
+</div>
+
 </div>
 <script>{chart_scripts}</script>
-</body></html>"""
+</body></html>'''
 
     with open(report_dir / "pipeline_report.html", "w", encoding="utf-8") as hf:
         hf.write(html)
