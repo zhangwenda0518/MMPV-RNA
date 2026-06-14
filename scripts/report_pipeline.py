@@ -750,15 +750,18 @@ new Chart(document.getElementById('chart_s08'), {{
   options:{{responsive:true,plugins:{{title:{{display:true,text:'Rescue Branch Contributions'}},legend:{{position:'bottom'}}}}}}}});
 """
 
-    # Sankey 交互式嵌入 (iframe 引用同级 HTML)
+    # Sankey 交互式嵌入 (base64 data URI 实现单文件自包含)
+    import base64 as _b64
     sankey_imgs = ""
     for sname, stitle in [("classification_sankey.html","Taxonomy Classification Sankey"),
                           ("classification_sankey_plant.html","Plant Virus Taxonomy Sankey")]:
         spath = report_dir / sname
         if spath.is_file():
+            with open(spath, "rb") as sf:
+                b64 = _b64.b64encode(sf.read()).decode()
             sankey_imgs += f'''<div class="sankey-card">
 <h3>{stitle} <span style="font-weight:400;font-size:10px;color:var(--muted)">(interactive — hover/zoom/pan)</span></h3>
-<iframe src="{sname}" style="width:100%;height:950px;border:none;border-radius:4px" loading="lazy"></iframe>
+<iframe src="data:text/html;base64,{b64}" style="width:100%;height:950px;border:none;border-radius:4px" loading="lazy"></iframe>
 </div>\n'''
 
     # ── KPI ──
