@@ -188,17 +188,16 @@ def _gather_cluster_reads(fastq_dir, samples, work_dir, prefix="multi"):
 
 
 def _contig_cluster_samples(contig_id, clusters, fasta_info=None, max_samples=10):
-    """返回 contig 所在 cluster 的样本 ID 集合 (去重, 按 contig 长度取 top-N)"""
+    """返回 contig 所在 cluster 的样本 ID 集合 (去重, 按 contig 长度取 top-N)。
+    若 contig 不在任何 cluster 中, 返回 None (参考序列, 无需 rescue)。"""
     for cname, info in clusters.items():
         if contig_id in info["members"]:
-            # 按长度排序取 top-N (0=不限制)
             if max_samples > 0 and fasta_info and len(info["members"]) > max_samples:
                 ranked = sorted(info["members"],
                                 key=lambda m: fasta_info.get(m, {}).get("length", 0),
                                 reverse=True)
             else:
                 ranked = list(info["members"])
-            # 去重取样本名
             seen = set(); samples = []
             for m in ranked:
                 s = m.split('_')[0]
@@ -206,7 +205,11 @@ def _contig_cluster_samples(contig_id, clusters, fasta_info=None, max_samples=10
                     seen.add(s); samples.append(s)
                 if max_samples > 0 and len(samples) >= max_samples: break
             return sorted(samples)
-    return [contig_id.split('_')[0]]
+    # 不在任何 cluster → 可能是参考序列, 返回 None
+    parts = contig_id.split('_')
+    if len(parts) < 2 or parts[0].startswith('NC_') or parts[0].startswith('ref|'):
+        return None
+    return [parts[0]]
 
 
 # ══════════════════════════════════════════════════════════════
@@ -301,6 +304,9 @@ def branch_b(fail_fa, fastq_dir, work_dir, checkv_db, threads, jobs, vsi_path, s
             return sid, str(vsi_fa), "VSI 完成 (resume)"
 
         sample_ids = _contig_cluster_samples(sid, clusters, fasta_info, max_vsi_samples) if clusters else [sample]
+        if sample_ids is None:
+            with lock: stats["skip"] += 1
+            return sid, None, "参考序列(不在cluster中)"
         r1, r2, nsamp = _gather_cluster_reads(fastq_dir, sample_ids, merged_reads_dir, prefix=sid[:80])
         if not r1:
             with lock: stats["skip"] += 1
@@ -413,6 +419,7 @@ def branch_c(fail_fa, fastq_dir, work_dir,
             return
 
         sample_ids = _contig_cluster_samples(ref, clusters, fasta_info, max_vsi_samples) if clusters else [ref.split('_')[0]]
+        if sample_ids is None: continue
         r1, r2, nsamp = _gather_cluster_reads(fastq_dir, sample_ids, merged_reads_dir, prefix=ref[:60])
         if r1:
             vsi_fa, ok = run_vsi(tmp, r1, r2, sub_dir / "vsi", threads_per, vsi_path, salmon_bin, checkv_db)
