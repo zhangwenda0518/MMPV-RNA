@@ -1556,41 +1556,74 @@ class ViromePipeline:
         else:
             _add("04_CLUSTER", "○", details="未运行")
 
-        # ── 05_Taxonomy ──
+        # ── 05_Taxonomy + taxonomy_summary.tsv ──
         tax = self.d['taxonomy']
-        final_tax = tax / "integrated" / "final_integrated_classification.tsv"
+        int_dir = tax / "integrated"
+        final_tax = int_dir / "final_integrated_classification.tsv"
         if final_tax.is_file():
+            import csv
             n = _count_lines(final_tax) - 1
-            # count by rank
-            try:
-                counts = {"Known": 0, "Novel_Species": 0, "Novel_Genus": 0, "Novel_Family": 0}
-                import csv
-                with open(final_tax) as tf:
-                    for row in csv.DictReader(tf, delimiter="\t"):
-                        cl = row.get("Class", row.get("class", ""))
-                        sp = row.get("Species", row.get("species", ""))
-                        ge = row.get("Genus", row.get("genus", ""))
-                        fa = row.get("Family", row.get("family", ""))
-                        if sp and sp not in ("NA", "-"): counts["Known"] += 1
-                        elif ge and ge not in ("NA", "-"): counts["Novel_Species"] += 1
-                        elif fa and fa not in ("NA", "-"): counts["Novel_Genus"] += 1
-                        else: counts["Novel_Family"] += 1
-                _add("05_Taxonomy", "✓", key_metric=f"{n} 条分类, ★{counts['Known']} 已知, ★★{counts['Novel_Species']} 新种", details=f"{tax}")
-                _add("  └ Novel Rank", "✓",
-                     key_metric=f"Known={counts['Known']} NewSp={counts['Novel_Species']} NewGe={counts['Novel_Genus']} NewFa={counts['Novel_Family']}")
-                # tool agreement from combined_taxonomy
-                combined = tax / f"WVDB_votus.virus_classed" / "WVDB_votus_combined_taxonomy.tsv"
-                if combined.is_file():
-                    try:
-                        tool_counts = {}
-                        with open(combined) as cf:
-                            for row in csv.DictReader(cf, delimiter="\t"):
-                                t = row.get("tool","")
-                                tool_counts[t] = tool_counts.get(t, 0) + 1
-                        top_tools = " ".join(f"{t}={c}" for t, c in sorted(tool_counts.items(), key=lambda x:-x[1])[:5])
-                        _add("  └ Tools", "✓", key_metric=top_tools)
-                    except: pass
-            except: pass
+            # 1. Novelty 分级
+            counts = {"Known": 0, "Novel_Species": 0, "Novel_Genus": 0, "Novel_Family": 0}
+            rank_fill = {"Realm":0,"Kingdom":0,"Phylum":0,"Class":0,"Order":0,"Family":0,"Genus":0,"Species":0}
+            with open(final_tax) as tf:
+                for row in csv.DictReader(tf, delimiter="\t"):
+                    sp = row.get("Species", row.get("species", ""))
+                    ge = row.get("Genus", row.get("genus", ""))
+                    fa = row.get("Family", row.get("family", ""))
+                    if sp and sp not in ("NA", "-"): counts["Known"] += 1
+                    elif ge and ge not in ("NA", "-"): counts["Novel_Species"] += 1
+                    elif fa and fa not in ("NA", "-"): counts["Novel_Genus"] += 1
+                    else: counts["Novel_Family"] += 1
+                    for rk in ["Realm","Kingdom","Phylum","Class","Order","Family","Genus","Species"]:
+                        v = row.get(rk, row.get(rk.lower(), ""))
+                        if v and v not in ("NA", "-"): rank_fill[rk] += 1
+            _add("05_Taxonomy", "✓", key_metric=f"{n} 条, ★{counts['Known']} 已知, ★★{counts['Novel_Species']} 新种", details=f"{tax}")
+            _add("  └ Novel Rank", "✓",
+                 key_metric=f"Known={counts['Known']} NewSp={counts['Novel_Species']} NewGe={counts['Novel_Genus']} NewFa={counts['Novel_Family']}")
+            # 2. 各 rank 填充率
+            rk_info = " ".join(f"{r}={rank_fill[r]}" for r in ["Realm","Phylum","Class","Order","Family","Genus","Species"] if rank_fill.get(r,0) > 0)
+            if rk_info: _add("  └ Rank Fill", "✓", key_metric=rk_info[:120])
+
+            # 3. R consensus stats
+            con_sum = int_dir / "consistency_summary.tsv"
+            if con_sum.is_file():
+                try:
+                    cs = pl.read_csv(str(con_sum), separator="\t", null_values=["NA",""])
+                    if "consistency_status" in cs.columns:
+                        n_con = cs.filter(pl.col("consistency_status")=="consistent").height
+                        n_inc = cs.filter(pl.col("consistency_status")=="inconsistent").height
+                        n_tot = cs.height
+                        _add("  └ Consensus", "✓", key_metric=f"consistent={n_con} inconsistent={n_inc} total={n_tot}")
+                except: pass
+
+            # 4. Tool agreement rate
+            ag_tsv = int_dir / "agreement_stats.tsv"
+            if ag_tsv.is_file():
+                try:
+                    ag = pl.read_csv(str(ag_tsv), separator="\t", null_values=["NA",""])
+                    if "agreement_rate" in ag.columns:
+                        avg_ag = ag["agreement_rate"].mean()
+                        _add("  └ Agreement", "✓", key_metric=f"avg pairwise agreement={avg_ag:.1f}%")
+                    elif "Agreement_Rate" in ag.columns:
+                        avg_ag = ag["Agreement_Rate"].mean()
+                        _add("  └ Agreement", "✓", key_metric=f"avg pairwise agreement={avg_ag:.1f}%")
+                except: pass
+
+            # 5. Resource usage per tool
+            res_tsv = tax / "WVDB_votus.virus_classed" / "WVDB_votus_resource_usage.tsv"
+            if res_tsv.is_file():
+                try:
+                    ru = pl.read_csv(str(res_tsv), separator="\t", null_values=["NA",""])
+                    if "tool" in ru.columns and "wall_sec" in ru.columns:
+                        total_sec = 0
+                        for row in ru.iter_rows(named=True):
+                            try: total_sec += float(row.get("wall_sec", 0))
+                            except: pass
+                        total_min = round(total_sec / 60, 1)
+                        n_tools_ran = ru.height
+                        _add("  └ Resources", "✓", key_metric=f"{n_tools_ran} tools, {total_min} min total")
+                except: pass
         elif tax.is_dir():
             _add("05_Taxonomy", "○", key_metric="已运行但无最终结果", details=f"{tax}")
         else:
