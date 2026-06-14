@@ -2158,10 +2158,10 @@ STAGE_HELP = {
     前置步骤 : 按 Final_Host 过滤 centroids (--host-filter)
                CD-HIT known + CheckV pass(≥90%) → 免拯救, 直接输出
     分支 A    : CheckV 并行评估 centroids (分块, completeness ≥ 90% pass)
-    分支 C    : Virseqimprover reads 迭代延伸 (cluster 内多样本 reads 聚合)
+    分支 B    : Virseqimprover reads 迭代延伸 (cluster 内多样本 reads 聚合)
                 Salmon 定量 → BBMap 提取 → SPAdes 组装 → CheckV 验证
-    分支 D    : BLASTN megablast + CheckV + VSI 最后拯救
-    合并      : A+C+D pass → vclust 最终去重 → HQ vOTU
+    分支 C    : BLASTN megablast + CheckV + VSI 最后拯救
+    合并      : A+B+C pass → vclust 最终去重 → HQ vOTU
 
   免拯救 = CD-HIT known (参考关联) + CheckV pass (completeness ≥ 90%)
 
