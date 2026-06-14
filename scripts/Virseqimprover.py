@@ -19,6 +19,7 @@ threads = 16
 salmonBin = "salmon"
 checkv_db = ""
 run_counter = 1
+checkv_triggered = False
 
 
 def printHelp():
@@ -467,6 +468,7 @@ def createBedForTruncatedScaffold(truncatedLen):
 
 
 def growScaffoldWithAssembly():
+    global checkv_triggered
     print("growScaffoldWithAssembly:")
     print('Start time: {0}'.format(datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')))
 
@@ -510,6 +512,18 @@ def growScaffoldWithAssembly():
                 extendContig = True
             else:
                 extendContig = False
+
+            # 每5轮在 growing scaffold 上运行 CheckV，防止过度延伸
+            if checkv_db != "" and iteration % 5 == 0:
+                grow_fasta = outputDir + "/scaffold-truncated/tmp/spades-res/scaffold.fasta"
+                if not os.path.exists(grow_fasta):
+                    grow_fasta = outputDir + "/scaffold-truncated/scaffold.fasta"
+                if os.path.exists(grow_fasta):
+                    is_complete, exp_len = runCheckV(grow_fasta)
+                    if is_complete:
+                        checkv_triggered = True
+                        extendContig = False
+                        break
         else:
             extendContig = False
 
@@ -942,14 +956,15 @@ def runCheckV(fasta_file):
         subprocess.check_output(cmd, shell=True, stderr=subprocess.STDOUT)
     except subprocess.CalledProcessError as e:
         print(f"[WARNING] CheckV execution failed. Skipping completeness check. Error: {e.output.decode()}")
-        return False
+        return False, 0
 
     tsv_file = os.path.join(checkv_outdir, "completeness.tsv")
     if not os.path.exists(tsv_file):
         print("[WARNING] CheckV completeness.tsv not found.")
-        return False
+        return False, 0
 
     is_complete = False
+    expected_length = 0
     with open(tsv_file, 'r') as f:
         lines = f.readlines()
         if len(lines) > 1:
@@ -964,30 +979,70 @@ def runCheckV(fasta_file):
             except ValueError:
                 idx_id, idx_len, idx_exp_len, idx_comp = 0, 1, 3, 4
 
+            # 提取预期长度
+            if len(data) > idx_exp_len:
+                exp_str = data[idx_exp_len]
+                if exp_str != "NA" and exp_str != "Not-determined":
+                    try:
+                        expected_length = float(exp_str)
+                    except ValueError:
+                        expected_length = 0
+
+            # 提取当前长度
+            contig_length = 0
+            if len(data) > idx_len:
+                try:
+                    contig_length = int(data[idx_len])
+                except ValueError:
+                    contig_length = 0
+
+            # 提取完整度
+            comp_val = 0
             if len(data) > idx_comp:
                 comp_str = data[idx_comp]
                 if comp_str != "NA" and comp_str != "Not-determined":
-                    comp_val = float(comp_str)
-                    if comp_val >= 90.0:
-                        is_complete = True
-                        msg = (
-                            "\n" + "="*70 + "\n"
-                            + "[SUCCESS] Assembly Complete! CheckV Completeness >= 90%\n"
-                            + f"  - Contig ID:       {data[idx_id]}\n"
-                            + f"  - Contig Length:   {data[idx_len]} bp\n"
-                            + f"  - Expected Length: {data[idx_exp_len]} bp\n"
-                            + f"  - Completeness:    {comp_val}%\n"
-                            + "="*70 + "\n"
-                        )
-                        print(msg)
+                    try:
+                        comp_val = float(comp_str)
+                    except ValueError:
+                        comp_val = 0
 
-                        bwOutLog = open(os.path.join(outputDir, "output-log.txt"), 'a')
-                        bwOutLog.write(f"\nAssembly stopped: CheckV completeness reached {comp_val}%.\n")
-                        bwOutLog.write(f"Contig Length: {data[idx_len]} bp, Expected Length: {data[idx_exp_len]} bp.\n")
-                        bwOutLog.close()
+            # 停摆条件1: 完整度 >= 90%
+            if comp_val >= 90.0:
+                is_complete = True
+                msg = (
+                    "\n" + "="*70 + "\n"
+                    + "[SUCCESS] Assembly Complete! CheckV Completeness >= 90%\n"
+                    + f"  - Contig ID:       {data[idx_id]}\n"
+                    + f"  - Contig Length:   {contig_length} bp\n"
+                    + f"  - Expected Length: {expected_length:.0f} bp\n"
+                    + f"  - Completeness:    {comp_val}%\n"
+                    + "="*70 + "\n"
+                )
+                print(msg)
+                bwOutLog = open(os.path.join(outputDir, "output-log.txt"), 'a')
+                bwOutLog.write(f"\nAssembly stopped: CheckV completeness reached {comp_val}%.\n")
+                bwOutLog.write(f"Contig Length: {contig_length} bp, Expected Length: {expected_length:.0f} bp.\n")
+                bwOutLog.close()
+
+            # 停摆条件2: 长度 >= 2x 预期长度 (硬性上限，防止极端过度延伸)
+            elif expected_length > 0 and contig_length >= expected_length * 2:
+                is_complete = True
+                msg = (
+                    "\n" + "="*70 + "\n"
+                    + "[WARNING] Assembly Stopped! Contig length exceeded 2x expected length\n"
+                    + f"  - Contig ID:       {data[idx_id]}\n"
+                    + f"  - Contig Length:   {contig_length} bp\n"
+                    + f"  - Expected Length: {expected_length:.0f} bp\n"
+                    + f"  - Completeness:    {comp_val}%\n"
+                    + "="*70 + "\n"
+                )
+                print(msg)
+                bwOutLog = open(os.path.join(outputDir, "output-log.txt"), 'a')
+                bwOutLog.write(f"\nAssembly stopped: Contig length ({contig_length} bp) >= 2x expected length ({expected_length:.0f} bp).\n")
+                bwOutLog.close()
 
     print('End time: {0}'.format(datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')))
-    return is_complete
+    return is_complete, expected_length
 
 
 def checkCoverage():
@@ -1032,7 +1087,7 @@ def checkCoverage():
             # 触发 CheckV 完整度检测
             if checkv_db != "":
                 bwOutLog.close()
-                is_complete = runCheckV(backup_path)
+                is_complete, _ = runCheckV(backup_path)
                 bwOutLog = open(outputDir + "/output-log.txt",'a')
 
         bwOutLog.close()
@@ -1086,6 +1141,14 @@ def extendOneScaffold():
                     getTruncatedScaffoldAndExtend(newLength)
                 else:
                     getTruncatedScaffoldAndExtend(currentLength)
+
+                # 检查 growScaffoldWithAssembly 内部 CheckV 是否触发停止
+                if checkv_triggered:
+                    checkv_triggered = False
+                    extendContig = False
+                    print("\n[INFO] Stopping extension process because CheckV triggered in growing scaffold.\n")
+                    break
+
                 iteration += 1
         else:
             extendContig = False
