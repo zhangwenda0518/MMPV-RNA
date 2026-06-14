@@ -187,13 +187,24 @@ def _gather_cluster_reads(fastq_dir, samples, work_dir, prefix="multi"):
     return r1_cat, r2_cat, paired_count
 
 
-def _contig_cluster_samples(contig_id, clusters):
-    """返回 contig 所在 cluster 的全部样本 ID 集合"""
+def _contig_cluster_samples(contig_id, clusters, fasta_info=None, max_samples=10):
+    """返回 contig 所在 cluster 的样本 ID 集合 (去重, 按 contig 长度取 top-N)"""
     for cname, info in clusters.items():
         if contig_id in info["members"]:
-            samples = set()
-            for member in info["members"]:
-                samples.add(member.split('_')[0])
+            # 按长度排序取 top-N (0=不限制)
+            if max_samples > 0 and fasta_info and len(info["members"]) > max_samples:
+                ranked = sorted(info["members"],
+                                key=lambda m: fasta_info.get(m, {}).get("length", 0),
+                                reverse=True)
+            else:
+                ranked = list(info["members"])
+            # 去重取样本名
+            seen = set(); samples = []
+            for m in ranked:
+                s = m.split('_')[0]
+                if s not in seen:
+                    seen.add(s); samples.append(s)
+                if max_samples > 0 and len(samples) >= max_samples: break
             return sorted(samples)
     return [contig_id.split('_')[0]]
 
@@ -259,7 +270,7 @@ def branch_a(ref_fasta, work_dir, checkv_db, threads, jobs):
 # 分支 B: Virseqimprover reads 延伸
 # ══════════════════════════════════════════════════════════════
 
-def branch_b(fail_fa, fastq_dir, work_dir, checkv_db, threads, jobs, vsi_path, salmon_bin, clusters=None):
+def branch_b(fail_fa, fastq_dir, work_dir, checkv_db, threads, jobs, vsi_path, salmon_bin, clusters=None, fasta_info=None, max_vsi_samples=10):
     """对 A 失败序列并行 Virseqimprover (cluster 内多样本 reads 聚合)。返回 (pass_fa, fail_fa, pass_count, fail_count)"""
     d = Path(work_dir) / "branch_b"; d.mkdir(parents=True, exist_ok=True)
     log_dir = d / "logs"; log_dir.mkdir(exist_ok=True)
@@ -289,7 +300,7 @@ def branch_b(fail_fa, fastq_dir, work_dir, checkv_db, threads, jobs, vsi_path, s
             with lock: stats["ok"] += 1
             return sid, str(vsi_fa), "VSI 完成 (resume)"
 
-        sample_ids = _contig_cluster_samples(sid, clusters) if clusters else [sample]
+        sample_ids = _contig_cluster_samples(sid, clusters, fasta_info, max_vsi_samples) if clusters else [sample]
         r1, r2, nsamp = _gather_cluster_reads(fastq_dir, sample_ids, merged_reads_dir, prefix=sid[:80])
         if not r1:
             with lock: stats["skip"] += 1
@@ -369,7 +380,7 @@ def branch_b(fail_fa, fastq_dir, work_dir, checkv_db, threads, jobs, vsi_path, s
 # ══════════════════════════════════════════════════════════════
 
 def branch_c(fail_fa, fastq_dir, work_dir,
-             checkv_db, blast_db, threads, jobs, vsi_path, salmon_bin, clusters=None):
+             checkv_db, blast_db, threads, jobs, vsi_path, salmon_bin, clusters=None, fasta_info=None, max_vsi_samples=10):
     """B 失败 → BLASTN + CheckV + VSI (并行, cluster 内多样本 reads 聚合)"""
     d = Path(work_dir) / "branch_c"; d.mkdir(parents=True, exist_ok=True)
 
@@ -401,7 +412,7 @@ def branch_c(fail_fa, fastq_dir, work_dir,
                 print(f"  [D-cv] {ref[:50]} HQ", flush=True)
             return
 
-        sample_ids = _contig_cluster_samples(ref, clusters) if clusters else [ref.split('_')[0]]
+        sample_ids = _contig_cluster_samples(ref, clusters, fasta_info, max_vsi_samples) if clusters else [ref.split('_')[0]]
         r1, r2, nsamp = _gather_cluster_reads(fastq_dir, sample_ids, merged_reads_dir, prefix=ref[:60])
         if r1:
             vsi_fa, ok = run_vsi(tmp, r1, r2, sub_dir / "vsi", threads_per, vsi_path, salmon_bin, checkv_db)
@@ -470,6 +481,7 @@ def main():
     p.add_argument("--blast-db", "-db", default=None)
     p.add_argument("--virseqimprover-path", default=None)
     p.add_argument("--salmon-bin", default="salmon")
+    p.add_argument("--max-vsi-samples", type=int, default=10, help="VSI 最大合并样本数 (0=不限制, 默认10)")
     p.add_argument("--threads", "-t", type=int, default=64)
     p.add_argument("--jobs", "-j", type=int, default=4, help="Virseqimprover 并行数")
     p.add_argument("--ani", type=float, default=0.95, help="最终 vclust ANI")
@@ -526,7 +538,7 @@ def main():
         cnt_b_fail = sum(1 for _ in SeqIO.parse(fa_b_fail, "fasta")) if fa_b_fail.is_file() else 0
         fa_b_pass, fa_b_fail = str(fa_b_pass), str(fa_b_fail)
     else:
-        fa_b_pass, fa_b_fail, cnt_b, cnt_b_fail = branch_b(fa_a_fail, args.fastq_dir, out, args.checkv_db, args.threads, args.jobs, args.virseqimprover_path, args.salmon_bin, clusters)
+        fa_b_pass, fa_b_fail, cnt_b, cnt_b_fail = branch_b(fa_a_fail, args.fastq_dir, out, args.checkv_db, args.threads, args.jobs, args.virseqimprover_path, args.salmon_bin, clusters, fasta_info, args.max_vsi_samples)
 
     # 4. 分支 C: BLASTN + VSI
     print("\n── Step 3: 分支 C (BLASTN+VSI) ──")
@@ -537,7 +549,7 @@ def main():
         fa_c_pass = str(fa_c_pass)
     elif args.blast_db:
         fail_for_c = fa_b_fail if (fa_b_fail and Path(fa_b_fail).is_file() and Path(fa_b_fail).stat().st_size > 0) else fa_a_fail
-        fa_c_pass, cnt_c = branch_c(fail_for_c, args.fastq_dir, out, args.checkv_db, args.blast_db, args.threads, args.jobs, args.virseqimprover_path, args.salmon_bin, clusters)
+        fa_c_pass, cnt_c = branch_c(fail_for_c, args.fastq_dir, out, args.checkv_db, args.blast_db, args.threads, args.jobs, args.virseqimprover_path, args.salmon_bin, clusters, fasta_info, args.max_vsi_samples)
     else:
         fa_c_pass, cnt_c = None, 0
         print("  [SKIP] 分支 C — 无 BLAST 数据库")
