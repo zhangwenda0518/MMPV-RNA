@@ -1328,6 +1328,17 @@ class ViromePipeline:
         def _add(stage, status, key_metric="", details=""):
             stage_stats.append({"Stage": stage, "Status": status, "Key_Metric": key_metric, "Details": details})
 
+        def _read_tsv(path):
+            """读取 TSV → list[dict] (本地辅助)"""
+            rows = []
+            if not path.is_file(): return rows
+            with open(path) as f:
+                hdr = f.readline().strip().split('\t')
+                for line in f:
+                    if not line.strip(): continue
+                    rows.append(dict(zip(hdr, line.strip().split('\t'))))
+            return rows
+
         # ── 00a_CleanData ──
         clean = self.d['clean']
         if clean.is_dir():
@@ -1366,10 +1377,38 @@ class ViromePipeline:
         else:
             _add("00a_CleanData", "○", details="未运行")
 
-        # ── 00b_HostDepletion ──
+        # ── 00b_HostDepletion + hostdep_summary.tsv ──
         hostdep = self.d['hostdep']
         if hostdep.is_dir():
             ns = _count_dir(hostdep)
+            # 汇总 host_depletion_seqkit_summary.tsv + ribodetector.report.txt
+            hd_rows = {}
+            # seqkit summary: 读取各阶段 reads 数
+            sq_tsv = hostdep / "host_depletion_seqkit_summary.tsv"
+            if sq_tsv.is_file():
+                for r in _read_tsv(sq_tsv):
+                    sn = r.get("Sample",""); stage = r.get("Stage","")
+                    nseq = int(r.get("num_seqs",0))
+                    if sn not in hd_rows: hd_rows[sn] = {"Sample":sn,"Raw":0,"After_Kraken2":0,"After_Host":0}
+                    if "Raw" in stage or "1_" in stage: hd_rows[sn]["Raw"] = max(hd_rows[sn]["Raw"], nseq)
+                    elif "Kraken" in stage or "2_" in stage: hd_rows[sn]["After_Kraken2"] = max(hd_rows[sn]["After_Kraken2"], nseq)
+                    elif "Host" in stage or "3_" in stage: hd_rows[sn]["After_Host"] = max(hd_rows[sn]["After_Host"], nseq)
+            # ribodetector rRNA 统计
+            rr_tsv = hostdep / self.args.rrna_report if hasattr(self, 'args') else hostdep / "ribodetector.report.txt"
+            if rr_tsv.is_file():
+                for r in _read_tsv(rr_tsv):
+                    sn = r.get("Sample","")
+                    if sn not in hd_rows: hd_rows[sn] = {"Sample":sn,"Raw":0,"After_Kraken2":0,"After_Host":0}
+                    hd_rows[sn]["rRNA"] = int(r.get("rRNA",0))
+                    hd_rows[sn]["non_rRNA"] = int(r.get("non_rRNA",0))
+                    hd_rows[sn]["Total_rRNA"] = int(r.get("Total_sequences",0))
+            if hd_rows:
+                with open(report_dir / "hostdep_summary.tsv", "w") as hf:
+                    cols = ["Sample","Raw","After_Kraken2","After_Host","Total_rRNA","non_rRNA","rRNA"]
+                    hf.write("\t".join(cols)+"\n")
+                    for sn in sorted(hd_rows):
+                        r = hd_rows[sn]
+                        hf.write("\t".join(str(r.get(c,0)) for c in cols)+"\n")
             _add("00b_HostDepletion", "✓", key_metric=f"{ns} 样本", details=f"{hostdep}")
         else:
             _add("00b_HostDepletion", "○", details="未运行")
@@ -2526,23 +2565,53 @@ new Chart(document.getElementById('chart_s00a_dup'), {{
   options:{{responsive:true,plugins:{{title:{{display:true,text:'Duplication Rate per Sample'}}}},
     scales:{{y:{{beginAtZero:true,title:{{text:'Dup Rate (%)'}}}}}}}}}});
 """
-    # S01 — 组装
+    # S00b — 宿主去除 (hostdep_summary.tsv)
+    hd_rows = _read_tsv(report_dir / "hostdep_summary.tsv")
+    if hd_rows:
+        hd_samples = [r.get("Sample","")[:12] for r in hd_rows]
+        hd_raw = [int(r.get("Raw",0)) for r in hd_rows]
+        hd_retained = []
+        for r in hd_rows:
+            nr = int(r.get("non_rRNA",0))
+            ah = int(r.get("After_Host",0))
+            ak = int(r.get("After_Kraken2",0))
+            hd_retained.append(nr if nr > 0 else (ah if ah > 0 else ak))
+        hd_removed = [max(0, hd_raw[i] - hd_retained[i]) for i in range(len(hd_samples))]
+        if hd_samples and any(v > 0 for v in hd_raw):
+            stage_has_chart['s00b'] = True
+            chart_scripts += f"""
+new Chart(document.getElementById('chart_s00b'), {{
+  type:'bar', data:{{labels:{_json.dumps(hd_samples)},
+  datasets:[{{label:'Retained (non-host)',data:{_json.dumps(hd_retained)},backgroundColor:'#66bb6a'}},
+            {{label:'Removed (host+rRNA)',data:{_json.dumps(hd_removed)},backgroundColor:'#ef5350'}}]}},
+  options:{{responsive:true,indexAxis:'y',plugins:{{title:{{display:true,text:'Host Depletion: Reads Retained vs Removed'}}}},
+    scales:{{x:{{stacked:true,beginAtZero:true,title:{{text:'Reads'}}}},
+             y:{{stacked:true}}}}}}}}}});
+"""
+    # S01 — 组装 (拆分为 N50 + Contigs 两个图)
     asm_rows = _read_tsv(report_dir / "assembly_summary.tsv")
     if asm_rows:
         asm_samples = [r["Sample"][:12] for r in asm_rows if r.get("Sample","")!="TOTAL"]
         asm_n50 = [int(r.get("N50",0)) for r in asm_rows if r.get("Sample","")!="TOTAL"]
         asm_contigs = [int(r.get("Contigs",0)) for r in asm_rows if r.get("Sample","")!="TOTAL"]
-        asm_size = [float(r.get("Size(Mb)",r.get("Size(Kb)",0))) for r in asm_rows if r.get("Sample","")!="TOTAL"]
         if asm_samples:
-            stage_has_chart['s01'] = True
+            stage_has_chart['s01a'] = True
             chart_scripts += f"""
-new Chart(document.getElementById('chart_s01'), {{
+new Chart(document.getElementById('chart_s01a'), {{
   type:'bar', data:{{labels:{_json.dumps(asm_samples)},
-  datasets:[{{label:'N50 (kb)',data:{_json.dumps([round(v/1000,1) for v in asm_n50])},backgroundColor:'#66bb6a',yAxisID:'y'}},
-            {{label:'Contigs',data:{_json.dumps(asm_contigs)},backgroundColor:'#42a5f5',yAxisID:'y1'}}]}},
-  options:{{responsive:true,plugins:{{title:{{display:true,text:'Assembly N50 & Contig Count'}}}},
-    scales:{{y:{{beginAtZero:true,position:'left',title:{{text:'N50 (kb)'}}}},
-             y1:{{beginAtZero:true,position:'right',grid:{{drawOnChartArea:false}},title:{{text:'Contigs'}}}}}}}}}});
+  datasets:[{{label:'N50 (kb)',data:{_json.dumps([round(v/1000,1) for v in asm_n50])},
+  backgroundColor:{_json.dumps(['#1565c0' if v>5000 else '#42a5f5' if v>1000 else '#90caf9' for v in asm_n50])}}}]}},
+  options:{{responsive:true,plugins:{{title:{{display:true,text:'Assembly N50 (kb)'}}}},
+    scales:{{y:{{beginAtZero:true,title:{{text:'N50 (kb)'}}}}}}}}}});
+"""
+            stage_has_chart['s01b'] = True
+            chart_scripts += f"""
+new Chart(document.getElementById('chart_s01b'), {{
+  type:'bar', data:{{labels:{_json.dumps(asm_samples)},
+  datasets:[{{label:'Contigs',data:{_json.dumps(asm_contigs)},
+  backgroundColor:{_json.dumps(['#66bb6a' if v>5000 else '#a5d6a7' if v>1000 else '#c8e6c9' for v in asm_contigs])}}}]}},
+  options:{{responsive:true,plugins:{{title:{{display:true,text:'Assembly Contig Count'}}}},
+    scales:{{y:{{beginAtZero:true,title:{{text:'Contigs'}}}}}}}}}});
 """
 
     # S02 — 鉴定 (ident_summary + filter_summary)
@@ -2784,7 +2853,8 @@ new Chart(document.getElementById('chart_s08'), {{
         chart_html = ""
         chart_map = {
             's00a': [('chart_s00a','Read Quality & Filtering'),('chart_s00a_dup','Duplication Rate')],
-            's01':  [('chart_s01','Assembly N50 & Contigs')],
+            's00b': [('chart_s00b','Host Depletion')],
+            's01':  [('chart_s01a','N50 (kb)'),('chart_s01b','Contig Count')],
             's02':  [('chart_s02a','Per-Tool Identification'),('chart_s02b','UniProt Filter')],
             's03':  [('chart_s03','COBRA Rates')],
             's05':  [('chart_s05a','Taxonomy Novelty')],
@@ -2799,7 +2869,11 @@ new Chart(document.getElementById('chart_s08'), {{
                 if sk == 's00a':
                     if cid == 'chart_s00a' and stage_has_chart.get('s00a'): active.append(cid)
                     if cid == 'chart_s00a_dup' and dq_rows and any(float(r.get('Dup_Rate(%)',0))>0 for r in dq_rows if r.get('Sample','')!='TOTAL'): active.append(cid)
-                    if cid == 'chart_s00a_dup': stage_has_chart.setdefault('s00a_dup', bool(active.count('chart_s00a_dup')))
+                elif sk == 's00b':
+                    if stage_has_chart.get('s00b'): active.append(cid)
+                elif sk == 's01':
+                    if cid == 'chart_s01a' and stage_has_chart.get('s01a'): active.append(cid)
+                    if cid == 'chart_s01b' and stage_has_chart.get('s01b'): active.append(cid)
                 elif sk == 's02':
                     if cid == 'chart_s02a' and stage_has_chart.get('s02a'): active.append(cid)
                     if cid == 'chart_s02b' and stage_has_chart.get('s02b'): active.append(cid)
@@ -2995,9 +3069,15 @@ td{{padding:9px 16px;border-bottom:1px solid #f0f0f0}}
 
 <!-- Summary Table -->
 <div class="table-wrap">
-  <h3>Pipeline Stage Summary</h3>
-  <table><thead><tr><th style="width:36px">#</th><th>Stage</th><th style="width:70px">Status</th><th>Key Metrics</th></tr></thead>
+  <div style="display:flex;justify-content:space-between;align-items:center;padding-right:16px">
+    <h3>Pipeline Stage Summary</h3>
+    <button onclick="exportTable()" style="background:var(--indigo);color:#fff;border:none;padding:6px 16px;border-radius:6px;cursor:pointer;font-size:12px">Export CSV</button>
+  </div>
+  <div id="table-scroll" style="max-height:520px;overflow-y:auto">
+  <table id="summary-table"><thead><tr><th style="width:36px">#</th><th>Stage</th><th style="width:70px">Status</th><th>Key Metrics</th></tr></thead>
   <tbody>{table_rows}</tbody></table>
+  </div>
+  <div id="table-pager" style="display:flex;justify-content:center;align-items:center;gap:8px;padding:12px;border-top:1px solid var(--border);font-size:12px;color:var(--muted)"></div>
 </div>
 
 <!-- Footer -->
@@ -3007,7 +3087,47 @@ td{{padding:9px 16px;border-bottom:1px solid #f0f0f0}}
 </div>
 
 </div>
-<script>{chart_scripts}</script>
+<script>
+{chart_scripts}
+// ── Table pagination ──
+(function(){{
+  const tbody=document.querySelector('#summary-table tbody');
+  if(!tbody)return;
+  const rows=Array.from(tbody.querySelectorAll('tr'));
+  const perPage=10;
+  const totalPages=Math.ceil(rows.length/perPage);
+  if(totalPages<=1)return;
+  const pager=document.getElementById('table-pager');
+  if(!pager)return;
+  let page=0;
+  function show(p){{
+    page=Math.max(0,Math.min(p,totalPages-1));
+    rows.forEach((r,i)=>{{r.style.display=(i>=page*perPage&&i<(page+1)*perPage)?'':'none'}});
+    pager.innerHTML='<button onclick="window._tblPage('+(page-1)+')" '+(page===0?'disabled':'')+' style="border:1px solid #ccc;background:#fff;padding:4px 12px;border-radius:4px;cursor:pointer">← Prev</button>'+
+      '<span>Page <b>'+(page+1)+'</b> of '+totalPages+'</span>'+
+      '<button onclick="window._tblPage('+(page+1)+')" '+(page===totalPages-1?'disabled':'')+' style="border:1px solid #ccc;background:#fff;padding:4px 12px;border-radius:4px;cursor:pointer">Next →</button>';
+  }}
+  window._tblPage=function(p){{show(p)}};
+  show(0);
+}})();
+
+// ── Export CSV ──
+function exportTable(){{
+  const tbl=document.getElementById('summary-table');
+  if(!tbl)return;
+  let csv='';
+  tbl.querySelectorAll('tr').forEach(tr=>{{
+    let row=[];
+    tr.querySelectorAll('th,td').forEach(cell=>row.push('"'+cell.innerText.replace(/"/g,'""')+'"'));
+    csv+=row.join(',')+'\\n';
+  }});
+  const blob=new Blob([csv],{{type:'text/csv'}});
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  a.download='pipeline_summary.csv';
+  a.click();
+}}
+</script>
 </body></html>'''
 
     with open(report_dir / "pipeline_report.html", "w", encoding="utf-8") as hf:
