@@ -2807,8 +2807,6 @@ def main():
     if failed_stages:
         logger.warning("以下阶段失败: %s", ', '.join(failed_stages))
 
-    pipe.run_reports()
-
 
 if __name__ == '__main__':
     main()
