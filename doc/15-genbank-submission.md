@@ -270,7 +270,95 @@ suvtk virus-info -t taxonomy.tsv
 
 ---
 
-## 七、常见问题 / FAQ
+## 七、本次实际数据提交方案 / Actual Submission Plan
+
+### 7.1 管道产出概览 / Pipeline Output Summary
+
+| 类别 | 数量 | 来源 |
+|------|------|------|
+| 总 centroids | 2,062 | `04_CLUSTER/centroids/final_centroids.fasta` |
+| ★ known (Species≠NA) | 783 | taxonomy |
+| ★★ novel_species (Genus≠NA) | 84 | taxonomy |
+| ★★ novel_genus (Family≠NA) | 41 | taxonomy |
+| ★★★ truly_novel (all NA) | 43 | taxonomy |
+| Plant-related viruses | ~60 | Virgaviridae, Bromoviridae, Partitiviridae, etc. |
+| CD-HIT known linked | 3 | `04_CLUSTER/2_cdhit/known_linked_centroids.fasta` |
+| CheckV pass (≥90%) | 6 | `07_Checkv/checkv_pass_ids.txt` |
+| 已知病毒检测 | — | `known_viruses/1_FastViromeExplorer/summary/best.summary.tsv` |
+| 已知病毒变异 | — | `known_viruses/2_Virus_variants_Results/` |
+
+### 7.2 实际运行命令 / Actual Commands
+
+```bash
+# 设定变量
+OUT=/home/zhangwenda/data-test2/out
+SUVTK_DB=~/database/virus-db/suvtk_db
+
+# ═══ 新病毒提交 (novel) — 使用全部 centroids ═══
+python scripts/suvtk_submission.py novel \
+    --fasta $OUT/04_CLUSTER/centroids/final_centroids.fasta \
+    --taxonomy $OUT/05_Taxonomy/integrated/final_integrated_classification.tsv \
+    --host $OUT/06_HostPrediction/ensemble_host_summary.tsv \
+    --suvtk-db $SUVTK_DB \
+    --output ./genbank_submission/novel/ \
+    -t 40
+
+# 如果只需要植物相关病毒子集 (推荐用于植物病毒组):
+# 先从 taxonomy 提取植物病毒科的 contig ID, 然后子集化 FASTA
+python -c "
+import polars as pl
+# 已知植物病毒科
+plant_families = ['Partitiviridae','Chrysoviridae','Totiviridae','Megatotiviridae',
+    'Orthototiviridae','Endornaviridae','Amalgaviridae','Botourmiaviridae',
+    'Bromoviridae','Virgaviridae','Tombusviridae','Sobemoviridae',
+    'Potyviridae','Closteroviridae','Luteoviridae','Nanoviridae',
+    'Geminiviridae','Tymoviridae','Secoviridae','Alphaflexiviridae',
+    'Betaflexiviridae','Gammaflexiviridae','Mitoviridae','Narnaviridae',
+    'Ourmiavirus','Fimoviridae','Phenuiviridae','Tospoviridae',
+    'Rhabdoviridae','Ophioviridae','Aspiviridae','Benyviridae',
+    'Furovirus','Pecluvirus','Pomovirus','Tobravirus','Hordeivirus',
+    'Mayoviridae','Kitaviridae','Tepovirus','Carlavirus','Foveavirus',
+    'Capillovirus','Trichovirus','Vitivirus','Ampelovirus']
+tax = pl.read_csv('$OUT/05_Taxonomy/integrated/final_integrated_classification.tsv', separator='\t')
+plant_ids = tax.filter(pl.col('Family').is_in(plant_families))
+print(f'Plant virus contigs: {plant_ids.height}')
+plant_ids.select('contig_id').write_csv('plant_virus_ids.txt', include_header=False)
+"
+
+# 然后用 seqkit 提取子集
+# seqkit grep -f plant_virus_ids.txt $OUT/04_CLUSTER/centroids/final_centroids.fasta > plant_novel.fasta
+# python scripts/suvtk_submission.py novel --fasta plant_novel.fasta ...
+
+# ═══ 已知病毒提交 (known) — 需要先运行 full 阶段 ═══
+# (当前全长组装未完成, 需先执行):
+# python scripts/auto_known_virus.py --stage full \
+#     --reads_dir $OUT/00b_HostDepletion/ \
+#     --output_dir $OUT/known_viruses/ \
+#     --ref_info /db/ref_info.tsv --reference /db/ref.fasta \
+#     -t 40 -j 4
+
+# 完成后运行:
+# python scripts/suvtk_submission.py known \
+#     --fasta $OUT/known_viruses/3_Virus_assemblies_final/ \
+#     --summary $OUT/known_viruses/1_FastViromeExplorer/summary/best.summary.tsv \
+#     --suvtk-db $SUVTK_DB \
+#     --output ./genbank_submission/known/ \
+#     -t 40
+```
+
+### 7.3 植物病毒科参考 / Plant Virus Families Reference
+
+| Category | Families |
+|----------|----------|
+| +ssRNA | Virgaviridae, Bromoviridae, Tombusviridae, Potyviridae, Closteroviridae, Luteoviridae, Tymoviridae, Secoviridae, Alphaflexiviridae, Betaflexiviridae, Gammaflexiviridae, Benyviridae, Sobemoviridae, Mayoviridae, Kitaviridae |
+| -ssRNA | Rhabdoviridae, Phenuiviridae, Tospoviridae, Fimoviridae, Ophioviridae, Aspiviridae |
+| dsRNA | Partitiviridae, Chrysoviridae, Totiviridae, Endornaviridae, Amalgaviridae, Megatotiviridae, Orthototiviridae |
+| ssDNA | Geminiviridae, Nanoviridae |
+| Unclassified | Botourmiaviridae, Mitoviridae, Narnaviridae (fungal/plant-associated) |
+
+---
+
+## 八、常见问题 / FAQ
 
 **Q: taxonomy.tsv 中大量序列标记为 "Viruses;unclassified" 怎么办？**
 A: 这些序列可能是真正新颖的病毒 (novel family+)。在 source.src 中将 Organism 设置为 "Viruses;unclassified RNA virus" 或类似的临时分类。
