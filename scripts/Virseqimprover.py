@@ -594,7 +594,7 @@ def checkCircularity():
     results = str_val.split("\t")
     scaffoldLength = int(results[1].strip())
 
-    check_len = max(int(avgReadLen), 300)
+    check_len = max(int(avgReadLen), 500)
     if check_len > scaffoldLength // 3:
         check_len = scaffoldLength // 3
 
