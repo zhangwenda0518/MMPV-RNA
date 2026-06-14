@@ -37,6 +37,8 @@ from collections import defaultdict
 import polars as pl
 from Bio import SeqIO
 
+SCRIPT_DIR = Path(__file__).resolve().parent
+
 
 # ═══════════════════════════════════════════════════════════════════
 # 1. 日志与工具函数
