@@ -77,17 +77,21 @@ def run_checkv(fasta, out_dir, db, threads=4):
 
 
 def parse_checkv(qs_path, threshold=90.0):
-    """解析 completeness.tsv (aai_completeness 列); 返回 (pass_ids, fail_ids)"""
+    """解析 completeness.tsv (aai_completeness 列); 返回 (pass_ids, fail_ids, skip_ids)
+    skip_ids: aai_completeness=NA 的 contig (无法评估, 非病毒/无参考, 不进分支B)"""
     if not Path(qs_path).is_file():
-        return set(), set()
+        return set(), set(), set()
     df = pd.read_csv(qs_path, sep='\t')
     comp_col = 'aai_completeness' if 'aai_completeness' in df.columns else 'completeness'
     pass_ids = set()
     fail_ids = set()
+    skip_ids = set()
     for _, row in df.iterrows():
         cid = str(row.get('contig_id', ''))
         val = row.get(comp_col, 0)
-        if pd.notna(val) and float(val) >= threshold:
+        if pd.isna(val) or str(val).strip() in ('NA', 'Not-determined', ''):
+            skip_ids.add(cid)
+        elif float(val) >= threshold:
             pass_ids.add(cid)
         else:
             fail_ids.add(cid)
@@ -252,23 +256,27 @@ def branch_a(ref_fasta, work_dir, checkv_db, threads, jobs):
     lock = threading.Lock()
     pass_records = []
     fail_records = []
+    skip_records = []  # aai_completeness=NA, 不进B/C
 
     def _do(chunk):
-        lp, lf = [], []
+        lp, lf, ls = [], [], []
         tmp_dir = d / f"chunk_{hash(str(chunk[0].id))}"
         tmp_dir.mkdir(exist_ok=True)
         chunk_fa = tmp_dir / "chunk.fasta"
         SeqIO.write(chunk, chunk_fa, "fasta")
         qs = run_checkv(chunk_fa, tmp_dir / "checkv_out", checkv_db, t_per)
-        pids, fids = parse_checkv(qs)
+        pids, fids, sids = parse_checkv(qs)
         for r in chunk:
             if r.id in pids:
                 lp.append(r)
+            elif r.id in sids:
+                ls.append(r)
             else:
                 lf.append(r)
         with lock:
             pass_records.extend(lp)
             fail_records.extend(lf)
+            skip_records.extend(ls)
 
     if jobs > 1 and total > 1:
         with ThreadPoolExecutor(max_workers=min(jobs, len(chunks))) as ex:
@@ -280,9 +288,9 @@ def branch_a(ref_fasta, work_dir, checkv_db, threads, jobs):
     pass_fa = d / "branchA_pass.fasta"
     fail_fa = d / "branchA_fail.fasta"
     SeqIO.write(pass_records, pass_fa, "fasta")
-    SeqIO.write(fail_records, fail_fa, "fasta")
-    n_pass, n_fail = len(pass_records), len(fail_records)
-    print(f"  分支 A: pass={n_pass}  fail={n_fail}")
+    SeqIO.write(fail_records, fail_fa, "fasta")  # fail ≠ skip
+    n_pass, n_fail, n_skip = len(pass_records), len(fail_records), len(skip_records)
+    print(f"  分支 A: pass={n_pass}  fail={n_fail}  skip(NA)={n_skip}")
     return str(pass_fa) if n_pass > 0 else None, \
            str(fail_fa) if n_fail > 0 else None, \
            n_pass, n_fail
@@ -394,7 +402,7 @@ def branch_b(fail_fa, fastq_dir, work_dir, checkv_db, threads, jobs, vsi_path, s
     SeqIO.write(vsi_records, extended_fa, "fasta")
 
     qs = run_checkv(extended_fa, d / "checkv_out", checkv_db, threads)
-    pass_ids, fail_ids = parse_checkv(qs)
+    pass_ids, fail_ids, _ = parse_checkv(qs)
 
     pass_fa = d / "branchB_pass.fasta"
     fail_fa_out = d / "branchB_fail.fasta"
@@ -446,7 +454,7 @@ def branch_c(fail_fa, fastq_dir, work_dir,
         run_blastn(tmp, blast_db, sub_dir / "blastn.tsv", threads)
 
         qs = run_checkv(tmp, sub_dir / "cv", checkv_db, threads)
-        pids, _ = parse_checkv(qs)
+        pids, _, _ = parse_checkv(qs)
         if ref in pids:
             with lock:
                 complete[ref] = rec
