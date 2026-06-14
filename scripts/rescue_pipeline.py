@@ -438,18 +438,18 @@ def branch_c(fail_fa, fastq_dir, work_dir,
             return
 
         sample_ids = _contig_cluster_samples(ref, clusters, fasta_info, max_vsi_samples) if clusters else [ref.split('_')[0]]
-        if sample_ids is None: continue
+        if sample_ids is None: return
         r1, r2, nsamp = _gather_cluster_reads(fastq_dir, sample_ids, merged_reads_dir, prefix=ref[:60])
-        if r1:
-            vsi_fa, ok = run_vsi(tmp, r1, r2, sub_dir / "vsi", threads_per, vsi_path, salmon_bin, checkv_db)
-            if ok and vsi_fa:
-                qs2 = run_checkv(vsi_fa, sub_dir / "vsi_cv", checkv_db, threads_per)
-                pids2, _ = parse_checkv(qs2)
-                for srec in SeqIO.parse(vsi_fa, "fasta"):
-                    if srec.id in pids2:
-                        with lock:
-                            complete[srec.id] = srec
-                            print(f"  [C-vsi] {ref[:50]} → {srec.id[:50]} (from {nsamp} samples)", flush=True)
+        if not r1: return
+        vsi_fa, ok = run_vsi(tmp, r1, r2, sub_dir / "vsi", threads_per, vsi_path, salmon_bin, checkv_db)
+        if ok and vsi_fa:
+            qs2 = run_checkv(vsi_fa, sub_dir / "vsi_cv", checkv_db, threads_per)
+            pids2, _ = parse_checkv(qs2)
+            for srec in SeqIO.parse(vsi_fa, "fasta"):
+                if srec.id in pids2:
+                    with lock:
+                        complete[srec.id] = srec
+                        print(f"  [C-vsi] {ref[:50]} → {srec.id[:50]} (from {nsamp} samples)", flush=True)
 
     if jobs > 1 and len(fail_records) > 1:
         with ThreadPoolExecutor(max_workers=min(jobs, len(fail_records))) as ex:
