@@ -1711,7 +1711,7 @@ class ViromePipeline:
         if log_src.is_file():
             shutil_mod.copy(log_src, report_dir / "orchestrator.log")
 
-        # 4. HTML 报告
+        # 4. HTML 报告 (含图表)
         _write_html_report(report_dir, stage_stats)
 
         # ── 屏幕输出 ──
@@ -2300,8 +2300,9 @@ def _build_parser(add_help=True):
 
 
 def _write_html_report(report_dir, stage_stats):
-    """生成自包含 HTML 流水线报告"""
+    """生成自包含 HTML 流水线报告 (含 Chart.js 图表)"""
     from datetime import datetime
+    import re, json as _json
 
     main_stages = [s for s in stage_stats if not s["Stage"].startswith("  ")]
     sub_stages  = [s for s in stage_stats if s["Stage"].startswith("  ")]
@@ -2309,53 +2310,172 @@ def _write_html_report(report_dir, stage_stats):
     status_icon = {"✓": "pass", "○": "skip", "✗": "fail"}
     def _esc(v): return str(v).replace("&","&amp;").replace("<","&lt;").replace(">","&gt;")
 
-    rows_html = ""
-    for i, s in enumerate(main_stages):
-        cls = status_icon.get(s["Status"], "skip")
-        rows_html += f"""
-        <tr class="{cls}">
-          <td style="text-align:center;color:#666;font-size:12px">{i}</td>
-          <td><b>{_esc(s['Stage'])}</b></td>
-          <td style="text-align:center"><span class="badge badge-{cls}">{s['Status']}</span></td>
-          <td>{_esc(s['Key_Metric'])}</td>
-          <td style="font-size:12px;color:#888">{_esc(s['Details'])}</td>
-        </tr>"""
-
-    sub_rows = ""
-    for s in sub_stages:
-        sub_rows += f"""
-        <tr><td></td><td style="padding-left:32px;color:#555">{_esc(s['Stage'].strip())}</td>
-        <td></td><td>{_esc(s['Key_Metric'])}</td><td style="font-size:12px;color:#888">{_esc(s['Details'])}</td></tr>"""
-
+    # ── 从 stage_stats 提取图表数据 ──
+    chart_scripts = ""
     n_pass = sum(1 for s in main_stages if s["Status"] == "✓")
     n_total = sum(1 for s in main_stages if s["Status"] != "○")
     pct = round(n_pass/max(n_total,1)*100)
 
+    # Helper: 从 Key_Metric 或 Details 提取 "key=value" 对
+    def _extract_kv(text, pattern):
+        result = {}
+        for m in re.finditer(pattern, text):
+            result[m.group(1)] = int(m.group(2))
+        return result
+
+    # 1. 鉴定工具图 — 读 ident_summary.tsv
+    id_tsv = report_dir / "ident_summary.tsv"
+    if id_tsv.is_file():
+        with open(id_tsv) as f:
+            hdr = f.readline().strip().split('\t')
+            line = f.readline()  # first sample
+            if line:
+                parts = line.strip().split('\t')
+                tools = hdr[2:]  # skip Sample, All_Candidate
+                vals = {}
+                for i, t in enumerate(tools):
+                    try: vals[t] = int(parts[i+2])
+                    except: pass
+                if vals:
+                    chart_scripts += f"""
+    new Chart(document.getElementById('chart_ident'), {{
+      type:'bar', data:{{labels:{_json.dumps(list(vals.keys()))},
+      datasets:[{{label:'Virus contigs',data:{_json.dumps(list(vals.values()))},
+      backgroundColor:'#42a5f5'}}]}},
+      options:{{plugins:{{title:{{display:true,text:'Per-Tool Identification'}}}}}}}});
+"""
+
+    # 2. 组装 N50 图 — 读 assembly_summary.tsv
+    asm_tsv = report_dir / "assembly_summary.tsv"
+    if asm_tsv.is_file():
+        samples, n50s, contigs = [], [], []
+        with open(asm_tsv) as f:
+            f.readline()
+            for line in f:
+                p = line.strip().split('\t')
+                if p[0] == 'TOTAL': continue
+                samples.append(p[0][:15]); n50s.append(int(p[5])); contigs.append(int(p[3]))
+        if samples:
+            chart_scripts += f"""
+    new Chart(document.getElementById('chart_asm'), {{
+      type:'bar', data:{{labels:{_json.dumps(samples)},
+      datasets:[{{label:'N50 (bp)',data:{_json.dumps(n50s)},backgroundColor:'#66bb6a',yAxisID:'y'}},
+                {{label:'Contigs',data:{_json.dumps(contigs)},backgroundColor:'#ffa726',yAxisID:'y1'}}]}},
+      options:{{plugins:{{title:{{display:true,text:'Assembly N50 & Contigs'}}}},
+        scales:{{y:{{beginAtZero:true,position:'left'}},y1:{{beginAtZero:true,position:'right',grid:{{drawOnChartArea:false}}}}}}}}}});
+"""
+
+    # 3. 过滤图 — 读 filter_summary.tsv
+    fil_tsv = report_dir / "filter_summary.tsv"
+    if fil_tsv.is_file():
+        flabels, fvals = [], []
+        with open(fil_tsv) as f:
+            f.readline()
+            for line in f:
+                p = line.strip().split('\t')
+                if p[0] == 'TOTAL': continue
+                flabels.append(f"{p[0][:10]}-{p[1]}"); fvals.append(int(p[3]))
+        if flabels:
+            chart_scripts += f"""
+    new Chart(document.getElementById('chart_filter'), {{
+      type:'bar', data:{{labels:{_json.dumps(flabels)},
+      datasets:[{{label:'Passed UniProt filter',data:{_json.dumps(fvals)},
+      backgroundColor:{_json.dumps(['#ef5350','#42a5f5','#66bb6a'][:len(flabels)])}}}]}},
+      options:{{plugins:{{title:{{display:true,text:'UniProt Filter Passed'}}}}}}}});
+"""
+
+    # 4. Host 分布 — 从 stage_stats
+    for s in stage_stats:
+        if '06_HostPrediction' in s['Stage'] and '=' in s.get('Key_Metric',''):
+            host_kv = _extract_kv(s['Key_Metric'], r'(\w+)=(\d+)')
+            if host_kv:
+                chart_scripts += f"""
+    new Chart(document.getElementById('chart_host'), {{
+      type:'doughnut', data:{{labels:{_json.dumps(list(host_kv.keys()))},
+      datasets:[{{data:{_json.dumps(list(host_kv.values()))},
+      backgroundColor:['#42a5f5','#66bb6a','#ffa726','#ef5350','#ab47bc','#26c6da','#7e57c2','#78909c']}}]}},
+      options:{{plugins:{{title:{{display:true,text:'Host Prediction Distribution'}}}}}}}});
+"""
+
+    # 5. Taxonomy novelty — 从 stage_stats
+    for s in stage_stats:
+        if 'Novel Rank' in s['Stage'] and 'Known=' in s.get('Key_Metric',''):
+            tax_kv = _extract_kv(s['Key_Metric'], r'(Known|NewSp|NewGe|NewFa)=(\d+)')
+            if tax_kv:
+                chart_scripts += f"""
+    new Chart(document.getElementById('chart_tax'), {{
+      type:'doughnut', data:{{labels:{_json.dumps(list(tax_kv.keys()))},
+      datasets:[{{data:{_json.dumps(list(tax_kv.values()))},
+      backgroundColor:['#66bb6a','#42a5f5','#ffa726','#ef5350']}}]}},
+      options:{{plugins:{{title:{{display:true,text:'Taxonomy Classification'}}}}}}}});
+"""
+
+    # 6. CheckV quality
+    checkv_kv = {}
+    for s in sub_stages:
+        if s['Stage'].strip().startswith('└') and s.get('Key_Metric','').endswith('条'):
+            try:
+                q = s['Stage'].strip().replace('└ ','')
+                v = int(s['Key_Metric'].replace(' 条',''))
+                checkv_kv[q] = v
+            except: pass
+    if checkv_kv and len(checkv_kv) > 1:
+        chart_scripts += f"""
+    new Chart(document.getElementById('chart_checkv'), {{
+      type:'bar', data:{{labels:{_json.dumps(list(checkv_kv.keys()))},
+      datasets:[{{label:'Sequences',data:{_json.dumps(list(checkv_kv.values()))},
+      backgroundColor:['#66bb6a','#42a5f5','#ffa726','#ef5350','#bdbdbd']}}]}},
+      options:{{plugins:{{title:{{display:true,text:'CheckV Quality Distribution'}}}}}}}});
+"""
+
+    # 图表 HTML 区域 (仅在有数据时)
+    chart_divs = ""
+    chart_ids = []
+    if id_tsv.is_file(): chart_ids.append('ident')
+    if asm_tsv.is_file(): chart_ids.append('asm')
+    if fil_tsv.is_file(): chart_ids.append('filter')
+    for s in stage_stats:
+        if '06_HostPrediction' in s['Stage'] and '=' in s.get('Key_Metric',''): chart_ids.append('host')
+        if 'Novel Rank' in s['Stage'] and 'Known=' in s.get('Key_Metric',''): chart_ids.append('tax')
+    if checkv_kv and len(checkv_kv) > 1: chart_ids.append('checkv')
+
+    for cid in chart_ids:
+        chart_divs += f'<div style="background:#fff;border-radius:10px;padding:20px;box-shadow:0 1px 3px rgba(0,0,0,.08);margin-bottom:16px"><canvas id="chart_{cid}" style="max-height:350px"></canvas></div>\n'
+
+    rows_html = ""
+    for i, s in enumerate(main_stages):
+        cls = status_icon.get(s["Status"], "skip")
+        rows_html += f"""<tr class="{cls}"><td style="text-align:center;color:#666;font-size:12px">{i}</td>
+          <td><b>{_esc(s['Stage'])}</b></td><td style="text-align:center"><span class="badge badge-{cls}">{s['Status']}</span></td>
+          <td>{_esc(s['Key_Metric'])}</td><td style="font-size:12px;color:#888">{_esc(s['Details'])}</td></tr>"""
+    sub_rows = ""
+    for s in sub_stages:
+        sub_rows += f"""<tr><td></td><td style="padding-left:32px;color:#555">{_esc(s['Stage'].strip())}</td>
+        <td></td><td>{_esc(s['Key_Metric'])}</td><td style="font-size:12px;color:#888">{_esc(s['Details'])}</td></tr>"""
+
     html = f"""<!DOCTYPE html>
 <html lang="zh"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>MMPV-RNA Pipeline Report</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 <style>
 *{{box-sizing:border-box;margin:0;padding:0}}
 body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f0f2f5;color:#333;line-height:1.6}}
 .container{{max-width:1100px;margin:0 auto;padding:20px}}
 .header{{background:linear-gradient(135deg,#1a237e,#283593);color:#fff;padding:32px;border-radius:12px;margin-bottom:24px}}
 .header h1{{font-size:24px;margin-bottom:8px}}.header p{{opacity:.85;font-size:14px}}
-.cards{{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:16px;margin-bottom:24px}}
+.cards{{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:16px;margin-bottom:24px}}
 .card{{background:#fff;border-radius:10px;padding:20px;box-shadow:0 1px 3px rgba(0,0,0,.08)}}
-.card .value{{font-size:28px;font-weight:700;color:#1a237e}}
-.card .label{{font-size:13px;color:#888;margin-top:4px}}
+.card .value{{font-size:28px;font-weight:700;color:#1a237e}}.card .label{{font-size:13px;color:#888;margin-top:4px}}
+.charts{{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:24px}}
+@media(max-width:768px){{.charts{{grid-template-columns:1fr}}}}.chart-full{{grid-column:1/-1}}
 .table-wrap{{background:#fff;border-radius:10px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.08);margin-bottom:24px}}
-table{{width:100%;border-collapse:collapse}}
-th{{background:#f5f5f5;text-align:left;padding:12px 16px;font-size:13px;color:#666;border-bottom:2px solid #e0e0e0}}
+table{{width:100%;border-collapse:collapse}}th{{background:#f5f5f5;text-align:left;padding:12px 16px;font-size:13px;color:#666;border-bottom:2px solid #e0e0e0}}
 td{{padding:10px 16px;font-size:14px;border-bottom:1px solid #f0f0f0}}
 tr.pass td:first-child{{border-left:3px solid #4caf50}}tr.fail td:first-child{{border-left:3px solid #f44336}}tr.skip td:first-child{{border-left:3px solid #ccc}}
 .badge{{display:inline-block;padding:2px 10px;border-radius:12px;font-size:12px;font-weight:600}}
 .badge-pass{{background:#e8f5e9;color:#2e7d32}}.badge-fail{{background:#fce4ec;color:#c62828}}.badge-skip{{background:#eee;color:#888}}
-.bar{{height:8px;border-radius:4px;background:#e0e0e0;margin-bottom:24px}}
-.bar-fill{{height:100%;border-radius:4px;background:linear-gradient(90deg,#4caf50,#66bb6a);transition:width .5s}}
 .footer{{text-align:center;color:#aaa;font-size:12px;padding:20px}}
-</style></head><body>
-<div class="container">
+</style></head><body><div class="container">
 <div class="header"><h1>MMPV-RNA v2.3 &mdash; Pipeline Report</h1>
 <p>Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} &nbsp;|&nbsp; {n_pass}/{n_total} stages passed ({pct}%)</p></div>
 <div class="cards">
@@ -2363,10 +2483,12 @@ tr.pass td:first-child{{border-left:3px solid #4caf50}}tr.fail td:first-child{{b
 <div class="card"><div class="value">{len(stage_stats)}</div><div class="label">Total Metrics</div></div>
 <div class="card"><div class="value">{pct}%</div><div class="label">Success Rate</div></div>
 </div>
-<div class="bar"><div class="bar-fill" style="width:{pct}%"></div></div>
+<div class="charts">{chart_divs}</div>
 <div class="table-wrap"><table><thead><tr><th style="width:40px">#</th><th>Stage</th><th style="width:60px">Status</th><th>Key Metrics</th><th style="width:200px">Details</th></tr></thead><tbody>{rows_html}{sub_rows}</tbody></table></div>
-<div class="footer">MMPV-RNA v2.3 Automated Pipeline Report &mdash; Generated by virome_pipeline.py</div>
-</div></body></html>"""
+<div class="footer">MMPV-RNA v2.3 &mdash; Generated by virome_pipeline.py</div>
+</div>
+<script>{chart_scripts}</script>
+</body></html>"""
 
     with open(report_dir / "pipeline_report.html", "w", encoding="utf-8") as hf:
         hf.write(html)
