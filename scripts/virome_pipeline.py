@@ -2501,22 +2501,30 @@ def _write_html_report(report_dir, stage_stats):
       options:{{plugins:{{title:{{display:true,text:'Taxonomy Classification'}}}}}}}});
 """
 
-    # 6. CheckV quality
-    checkv_kv = {}
-    for s in sub_stages:
-        if s['Stage'].strip().startswith('└') and s.get('Key_Metric','').endswith('条'):
-            try:
-                q = s['Stage'].strip().replace('└ ','')
-                v = int(s['Key_Metric'].replace(' 条',''))
-                checkv_kv[q] = v
-            except: pass
-    if checkv_kv and len(checkv_kv) > 1:
-        chart_scripts += f"""
+    # 6. CheckV per-host stacked bar chart (从 checkv_summary.tsv)
+    cv_tsv = report_dir / "checkv_summary.tsv"
+    if cv_tsv.is_file():
+        hosts, qlabels = [], ["Complete","High-quality","Medium-quality","Low-quality","Not-determined"]
+        qdata = {q: [] for q in qlabels}
+        with open(cv_tsv) as f:
+            hdr = f.readline().strip().split('\t')
+            for line in f:
+                p = line.strip().split('\t')
+                if p[0] == 'TOTAL': continue
+                hosts.append(p[0][:15])
+                for i, q in enumerate(qlabels):
+                    qdata[q].append(int(p[i+1]) if i+1 < len(p) else 0)
+        if hosts:
+            colors = ['#66bb6a','#42a5f5','#ffa726','#ef5350','#bdbdbd']
+            datasets = ','.join(
+                '{{label:"'+q+'",data:'+_json.dumps(qdata[q])+',backgroundColor:"'+colors[i]+'"}}'
+                for i, q in enumerate(qlabels))
+            chart_scripts += f"""
     new Chart(document.getElementById('chart_checkv'), {{
-      type:'bar', data:{{labels:{_json.dumps(list(checkv_kv.keys()))},
-      datasets:[{{label:'Sequences',data:{_json.dumps(list(checkv_kv.values()))},
-      backgroundColor:['#66bb6a','#42a5f5','#ffa726','#ef5350','#bdbdbd']}}]}},
-      options:{{plugins:{{title:{{display:true,text:'CheckV Quality Distribution'}}}}}}}});
+      type:'bar', data:{{labels:{_json.dumps(hosts)},
+      datasets:[{datasets}]}},
+      options:{{responsive:true,plugins:{{title:{{display:true,text:'CheckV Quality by Host'}}}},
+        scales:{{x:{{stacked:true}},y:{{stacked:true,beginAtZero:true,title:{{text:'Contig Count'}}}}}}}}}});
 """
 
     # 图表 HTML 区域 (仅在有数据时)
@@ -2528,7 +2536,7 @@ def _write_html_report(report_dir, stage_stats):
     for s in stage_stats:
         if '06_HostPrediction' in s['Stage'] and '=' in s.get('Key_Metric',''): chart_ids.append('host')
         if 'Novel Rank' in s['Stage'] and 'Known=' in s.get('Key_Metric',''): chart_ids.append('tax')
-    if checkv_kv and len(checkv_kv) > 1: chart_ids.append('checkv')
+    if cv_tsv.is_file(): chart_ids.append('checkv')
 
     for cid in chart_ids:
         chart_divs += f'<div style="background:#fff;border-radius:10px;padding:20px;box-shadow:0 1px 3px rgba(0,0,0,.08);margin-bottom:16px"><canvas id="chart_{cid}" style="max-height:350px"></canvas></div>\n'
