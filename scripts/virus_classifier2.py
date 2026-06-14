@@ -589,78 +589,82 @@ class VirusClassifier:
         return result
 
     def run_vc_analysis(self):
-        tools_ran = []
         t0 = time.time()
         out = str(self.output_dir)
         inp = self.genomes; s = self.sample
         uniprot = self.db_paths.get("uniprot","")
+        tools_ran = []  # 线程安全: 用 list + lock 或事后统计
 
-        def _skip(tool, db_path, tax_out, run_fn):
-            if is_file_valid(tax_out,10) and not self.args.force:
-                safe_print(f"  [{tool}] 已有结果, 跳过"); tools_ran.append(tool); return
-            if db_path and not os.path.exists(db_path):
-                safe_print(f"  [{tool}] DB 跳过: {db_path}"); return
-            self.run_classify(tool, run_fn); tools_ran.append(tool)
-
-        # virootaxonomy
-        _skip("genomad", self.db_paths.get("genomad", os.path.expanduser("~/database/virus-db/genomad_db")),
-              os.path.join(out, f"{s}_genomad_taxonomy.tsv"),
-              lambda: classify_genomad(inp, s, out, self.db_paths.get("genomad", os.path.expanduser("~/database/virus-db/genomad_db")), self.threads))
-        _skip("metabuli", self.db_paths.get("metabuli", os.path.expanduser("~/database/virus-db/RVDB-v31/RVDB_viroids.metabuli_db")),
-              os.path.join(out, f"{s}_metabuli_taxonomy.tsv"),
-              lambda: classify_metabuli(inp, s, out, self.db_paths.get("metabuli", os.path.expanduser("~/database/virus-db/RVDB-v31/RVDB_viroids.metabuli_db")), self.threads))
-        _skip("diamond_lca", uniprot,
-              os.path.join(out, f"{s}_diamond_lca_taxonomy.tsv"),
-              lambda: classify_diamond_lca(inp, s, out, uniprot, self.threads))
         cat_db = self.db_paths.get("cat", os.path.expanduser("~/database/virus-db/RVDB-30/CAT-db/db"))
         cat_tax = self.db_paths.get("cat_tax", os.path.expanduser("~/database/virus-db/RVDB-30/CAT-db/tax"))
-        _skip("CAT", cat_db,
-              os.path.join(out, f"{s}_CAT_taxonomy.tsv"),
-              lambda: classify_cat(inp, s, out, cat_db, cat_tax, self.threads))
-
-        # ncbi-lca + ictv-network
-        def _run_ski(tool, db, tax_out, pre_fn, post_fn):
-            if is_file_valid(tax_out,10) and not self.args.force:
-                safe_print(f"  [{tool}] 已有结果, 跳过"); tools_ran.append(tool); return
-            if db and not os.path.exists(db):
-                safe_print(f"  [{tool}] DB 跳过: {db}"); return
-            def _r():
-                pre_fn()
-                post_fn(inp, s, out)
-            self.run_classify(tool, _r); tools_ran.append(tool)
-
         vdb = self.db_paths.get("VITAP", os.path.expanduser("~/database/virus-db/vitap-db/VMR-MSL40_DB"))
-        _run_ski("VITAP", vdb, os.path.join(out, f"{s}_VITAP_taxonomy.tsv"),
-                 lambda: (Path(out,"VITAP_results").mkdir(exist_ok=True),
-                          os.system(f"VITAP assignment -i {inp} -d {vdb} -p {self.threads} -o {Path(out,'VITAP_results')}/{s}.vitap > /dev/null 2>&1")),
-                 postproc_vitap)
-
         mdb = self.db_paths.get("mmseqs", os.path.expanduser("~/database/virus-db/RVDB-30/RVDB.mmseqs"))
         if not os.path.exists(mdb):
             for alt in ["RVDB-30/RVDB.mmseqs", "RVDB-v31/RVDB.mmseqs_db"]:
                 p = os.path.join(os.path.expanduser("~/database/virus-db"), alt)
                 if os.path.exists(p): mdb = p; break
-        _run_ski("mmseqs", mdb, os.path.join(out, f"{s}_mmseqs_taxonomy.tsv"),
-                 lambda: (Path(out,"mmseqs_results").mkdir(exist_ok=True),
-                          (Path(out,"mmseqs_results")/"tmp").mkdir(exist_ok=True),
-                          os.system(f"mmseqs easy-taxonomy {inp} {mdb} {Path(out,'mmseqs_results')}/{s} {Path(out,'mmseqs_results')}/tmp --blacklist '' --tax-lineage 1 --threads {self.threads} --split-memory-limit 80G > /dev/null 2>&1")),
-                 postproc_mmseqs)
-
         adb = self.db_paths.get("ACVirus", os.path.expanduser("~/database/virus-db/acvirus_db"))
-        _run_ski("ACVirus", adb, os.path.join(out, f"{s}_ACVirus_taxonomy.tsv"),
-                 lambda: (Path(out,"ACVirus_results").mkdir(exist_ok=True),
-                          os.system(f"ACVirus classify --contig {inp} --data_path {adb} --out {Path(out,'ACVirus_results')}/{s}.acvirus > /dev/null 2>&1")),
-                 postproc_acvirus)
-
         cdb = self.db_paths.get("vcontact3", os.path.expanduser("~/database/virus-db/vConTACT3_db"))
-        _run_ski("vcontact3", cdb, os.path.join(out, f"{s}_vcontact3_taxonomy.tsv"),
-                 lambda: os.system(f"vcontact3 run --nucleotide {inp} --output {Path(out,'vcontact3_results')} --db-version 232 --db-path {cdb} --threads {self.threads} --pyrodigal-gv --db-domain eukaryotes --export-all --keep-fna --keep-temp --exports cytoscape graphml profiles completeness centroids > /dev/null 2>&1"),
-                 postproc_vcontact3)
 
-        _run_ski("PhaGCN3", None, os.path.join(out, f"{s}_PhaGCN3_taxonomy.tsv"),
-                 lambda: None,
-                 lambda i,s2,o: (Path(o,"PhaGCN3_results").mkdir(exist_ok=True),
-                                 postproc_phagcn3(i,s2,o) if is_file_valid(os.path.join(o,"PhaGCN3_results",f"{s2}.phagcn3.csv"),10) else None))
+        # 所有工具的任务定义 (tool_name, db_path, tax_out, run_fn)
+        tasks = [
+            ("genomad", self.db_paths.get("genomad", os.path.expanduser("~/database/virus-db/genomad_db")),
+             os.path.join(out, f"{s}_genomad_taxonomy.tsv"),
+             lambda: classify_genomad(inp, s, out, self.db_paths.get("genomad", os.path.expanduser("~/database/virus-db/genomad_db")), self.threads)),
+            ("metabuli", self.db_paths.get("metabuli", os.path.expanduser("~/database/virus-db/RVDB-v31/RVDB_viroids.metabuli_db")),
+             os.path.join(out, f"{s}_metabuli_taxonomy.tsv"),
+             lambda: classify_metabuli(inp, s, out, self.db_paths.get("metabuli", os.path.expanduser("~/database/virus-db/RVDB-v31/RVDB_viroids.metabuli_db")), self.threads)),
+            ("diamond_lca", uniprot,
+             os.path.join(out, f"{s}_diamond_lca_taxonomy.tsv"),
+             lambda: classify_diamond_lca(inp, s, out, uniprot, self.threads)),
+            ("CAT", cat_db,
+             os.path.join(out, f"{s}_CAT_taxonomy.tsv"),
+             lambda: classify_cat(inp, s, out, cat_db, cat_tax, self.threads)),
+            ("VITAP", vdb,
+             os.path.join(out, f"{s}_VITAP_taxonomy.tsv"),
+             lambda: [(Path(out,"VITAP_results").mkdir(exist_ok=True),
+                       os.system(f"VITAP assignment -i {inp} -d {vdb} -p {self.threads} -o {Path(out,'VITAP_results')}/{s}.vitap > /dev/null 2>&1")),
+                      postproc_vitap(inp, s, out)][-1]),
+            ("mmseqs", mdb,
+             os.path.join(out, f"{s}_mmseqs_taxonomy.tsv"),
+             lambda: [(Path(out,"mmseqs_results").mkdir(exist_ok=True),
+                       (Path(out,"mmseqs_results")/"tmp").mkdir(exist_ok=True),
+                       os.system(f"mmseqs easy-taxonomy {inp} {mdb} {Path(out,'mmseqs_results')}/{s} {Path(out,'mmseqs_results')}/tmp --blacklist '' --tax-lineage 1 --threads {self.threads} --split-memory-limit 80G > /dev/null 2>&1")),
+                      postproc_mmseqs(inp, s, out)][-1]),
+            ("ACVirus", adb,
+             os.path.join(out, f"{s}_ACVirus_taxonomy.tsv"),
+             lambda: [(Path(out,"ACVirus_results").mkdir(exist_ok=True),
+                       os.system(f"ACVirus classify --contig {inp} --data_path {adb} --out {Path(out,'ACVirus_results')}/{s}.acvirus > /dev/null 2>&1")),
+                      postproc_acvirus(inp, s, out)][-1]),
+            ("vcontact3", cdb,
+             os.path.join(out, f"{s}_vcontact3_taxonomy.tsv"),
+             lambda: [os.system(f"vcontact3 run --nucleotide {inp} --output {Path(out,'vcontact3_results')} --db-version 232 --db-path {cdb} --threads {self.threads} --pyrodigal-gv --db-domain eukaryotes --export-all --keep-fna --keep-temp --exports cytoscape graphml profiles completeness centroids > /dev/null 2>&1"),
+                      postproc_vcontact3(inp, s, out)][-1]),
+            ("PhaGCN3", None,
+             os.path.join(out, f"{s}_PhaGCN3_taxonomy.tsv"),
+             lambda: [Path(out,"PhaGCN3_results").mkdir(exist_ok=True),
+                      postproc_phagcn3(inp, s, out) if is_file_valid(os.path.join(out,"PhaGCN3_results",f"{s}.phagcn3.csv"),10) else None][-1]),
+        ]
+
+        def _run_one(tool, db_path, tax_out, run_fn):
+            if is_file_valid(tax_out,10) and not self.args.force:
+                safe_print(f"  [{tool}] 已有结果, 跳过"); return tool
+            if db_path and not os.path.exists(db_path):
+                safe_print(f"  [{tool}] DB 跳过: {db_path}"); return None
+            self.run_classify(tool, run_fn); return tool
+
+        njobs = getattr(self.args, 'jobs', 1) or 1
+        if njobs > 1:
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+            with ThreadPoolExecutor(max_workers=njobs) as ex:
+                futures = {ex.submit(_run_one, t, d, o, f): t for t, d, o, f in tasks}
+                for fu in as_completed(futures):
+                    if res := fu.result():
+                        tools_ran.append(res)
+        else:
+            for t, d, o, f in tasks:
+                if res := _run_one(t, d, o, f):
+                    tools_ran.append(res)
 
         if len(tools_ran)>=1:
             merged = merge_taxonomy_results(s, out, tools_ran)
