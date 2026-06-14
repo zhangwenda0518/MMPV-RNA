@@ -558,10 +558,11 @@ class ViromePipeline:
         # 自动检测哪些工具实际有组装输出
         all_tools = ['megahit', 'rnaviralspades', 'penguin']
         asm_tools = []
-        for d in self.d['asm'].iterdir():
-            if d.is_dir() and (d / f"{d.name}_{tool}.contig.fasta").exists():
-                asm_tools.append(tool)
-                break
+        for tool in all_tools:
+            for d in self.d['asm'].iterdir():
+                if d.is_dir() and (d / f"{d.name}_{tool}.contig.fasta").exists():
+                    asm_tools.append(tool)
+                    break
         if not asm_tools:
             asm_tools = [self.args.assembler] if self.args.assembler != 'all' else all_tools
         self.log.info("  Auto-detect 组装工具: %s", ','.join(asm_tools))
