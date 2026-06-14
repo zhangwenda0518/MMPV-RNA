@@ -965,6 +965,7 @@ def runCheckV(fasta_file):
 
     is_complete = False
     expected_length = 0
+    is_evaluable = True  # Default: evaluable unless NA
     with open(tsv_file, 'r') as f:
         lines = f.readlines()
         if len(lines) > 1:
@@ -1000,11 +1001,28 @@ def runCheckV(fasta_file):
             comp_val = 0
             if len(data) > idx_comp:
                 comp_str = data[idx_comp]
-                if comp_str != "NA" and comp_str != "Not-determined":
+                if comp_str == "NA" or comp_str == "Not-determined":
+                    is_evaluable = False  # 非病毒或无法评估
+                else:
                     try:
                         comp_val = float(comp_str)
                     except ValueError:
                         comp_val = 0
+
+            # 停摆条件0: 无法评估 (aai_completeness=NA, 非病毒或无参考)
+            if not is_evaluable:
+                msg = (
+                    "\n" + "="*70 + "\n"
+                    + "[SKIP] Not evaluable — aai_completeness is NA (likely non-viral or no reference)\n"
+                    + f"  - Contig ID:   {data[idx_id]}\n"
+                    + f"  - Contig Len:  {contig_length} bp\n"
+                    + "="*70 + "\n"
+                )
+                print(msg)
+                bwOutLog = open(os.path.join(outputDir, "output-log.txt"), 'a')
+                bwOutLog.write(f"\nExtension stopped: aai_completeness=NA (not evaluable).\n")
+                bwOutLog.close()
+                is_complete = True  # 触发停止
 
             # 停摆条件1: 完整度 >= 90%
             if comp_val >= 90.0:
