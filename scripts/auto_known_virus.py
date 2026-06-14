@@ -46,63 +46,116 @@ def run(cmd, log, name):
 
 STAGE_HELP = {
     'detect': """
-  --stage detect — 已知病毒快速检测
+  --stage detect — 已知病毒快速检测 (伪比对/传统比对 + Poisson打假 + 双轨过滤)
 
-  运行: batch_virus_depth40.py
-    伪比对 (Salmon/Kallisto) 或传统比对 (Bowtie2/BWA/...) → Poisson Ratio 去假阳性
+  子脚本: batch_virus_depth40.py  (支持 Parquet 批次断点续传)
+    双引擎       : Salmon/Kallisto 极速伪比对, Bowtie2/BWA/StrobeAlign 传统比对
+    Poisson打假  : Poisson_Ratio 建模, 精准剔除局部堆叠假阳性
+    双轨过滤     : A轨(全基因组≥coverage+泊松≥ratio) + B轨(基因转录覆盖)
+                   RNA病毒→A+B双轨, DNA病毒→仅A轨
+    输出指标     : EM_Reads, CPM, FPKM, TPM, Avg_Read_ANI, Poisson_Ratio, Pi
 
-  输出: 1_FastViromeExplorer/summary/summary.tsv
+  编排器透传参数 (★ 必需 | · 可选):
+    ★ --reads_dir         清洁 reads 目录 (preprocess/去宿主后)
+    ★ --output_dir        输出根目录 (子目录: 1_FastViromeExplorer/)
+    ★ --ref_info          病毒参考信息 TSV (Accession/Taxid/Species/Segment 列)
+    ★ --reference         参考基因组 FASTA (建索引自动复用)
+    · --tool              {salmon,kallisto,bowtie2,bwa,bwa-mem2,hisat2,minimap2,strobealign}
+                           (默认 bowtie2)
+    · --batch_size        批次刷盘保护数量 (默认 20)
+    · --coverage          全长覆盖度下限 %% (默认 10.0)
+    · --ratio             泊松覆盖度比值下限 (默认 0.3)
+    · --meandepth         最小平均深度 (默认 0.0)
+    · --min_tpm           最小 TPM 值 (默认 0.0)
+    · --min_uniq_reads    最少独特比对 reads 数 (默认 1)
+    · --sp_thresh         物种 ANI 阈值 %% (仅传统比对, 默认 95.0)
+    · --taxid_clusters    同义 TaxID 合并映射文件
+    · --genes_cov         转录覆盖率文件 (启动双轨B轨, RNA病毒全基因组+基因区过滤)
+    · --min_gene_total_cov 最低转录区总覆盖 %% (默认 80.0)
+    · --min_gene_avr_cov  最低转录区平均覆盖 (默认 5.0)
+    · --use_coverm        启用 CoverM 严格清洗 (仅传统比对)
+    · --min_aln_len       CoverM 最小比对长度 (默认 80)
+    · --min_aln_prop      CoverM 最小比对比例 (默认 0.85)
+    · --min_pid           CoverM 最小序列相似度 (默认 0.90)
+    · --single_end        强制单端模式
+    · --keep_tmp          保留中间 BAM 文件 (调试用)
+    · --verbose           输出详细底层日志
+    · --resume            批次断点续传 (跳过已完成 .parquet)
+    · -t/--threads        并发进程数 (默认 40)
+    · --align_threads     单样本内部比对线程 (默认 8)
 
-  关键参数: --tool, --coverage, --ratio, --sp_thresh, --genes_cov
+  输出: 1_FastViromeExplorer/summary/summary.tsv (含 best.summary.tsv)
 """,
     'variants': """
-  --stage variants — 变异分析 (batch_virus_variants.py)
+  --stage variants — 变异分析 (reads提取 → 共识 → 变异检出 → SnpEff → SnpGenie)
 
-  流程: extract_reads → consensus → call_variants → snpeff → snpgenie
-    提取 reads         --extract_reads     从 FASTQ 重新提取目标病毒 reads
-    共识序列           --consensus          生成 iVar/FreeBayes 共识序列
-    变异检测           --call_variants      检出变异位点 (VCF)
-    SnpEff 注释        --snpeff            变异功能注释 (需 snpEff.jar)
-    SnpGenie 分析      --snpgenie          dN/dS 选择压力 (种群遗传学)
+  子脚本: batch_virus_variants.py  (支持任务级断点续传)
+    三池解耦       : 变异检出池 / SnpEff注释池 / SNPGenie进化池 独立并行
+    ─────────────────────────────────────────────────
+    [1] 提取 reads  : 从 BAM 提取目标病毒 reads (或复用已有 --bam)
+    [2] 共识序列    : iVar/viral_consensus 生成共识 (--vc_qual/depth/freq 质量控制)
+    [3] 变异检出    : FreeBayes/LoFreq/iVar → 动态 VCF 过滤 (QUAL/DP/AF自适应)
+    [4] SnpEff 注释 : 自动 NCBI 下载 GenBank 构建本地 DB → 变异功能注释
+    [5] SnpGenie     : dN/dS 选择压力分析 (种群遗传学)
 
-  输入: 1_FastViromeExplorer/summary/summary.tsv
-  输出: 2_Virus_variants_Results/
+  编排器透传参数 (★ 必需 | · 可选):
+    ★ --reads_dir         清洁 reads 目录
+    ★ --output_dir        输出根目录 (子目录: 2_Virus_variants_Results/)
+    ★ --ref_info          病毒参考信息 TSV
+    ★ --reference         参考基因组 FASTA
+    · --variant_caller    {freebayes,ivar,lofreq} (默认 freebayes)
+    · --snpeff            启用 SnpEff 注释
+    · --snpeff_jar        snpEff.jar 路径 (默认 ~/biosoft/snpEff/snpEff.jar)
+    · --snpeff_config     snpEff 配置文件 (默认 ~/biosoft/snpEff/snpEff.config)
+    · --snpeff_mem        SnpEff 内存限制 (默认 4g)
+    · --snpgenie          启用 SnpGenie dN/dS 分析
+    · --no_extract_reads  跳过 reads 提取 (已有提取结果)
+    · --no_consensus      跳过共识序列生成
+    · --no_call_variants  跳过变异检出 (仅做注释/进化分析)
+    · --bam               已有 BAM 目录 (替代 --reads_dir re-extraction)
+    · --disable_dynamic_vcf 禁用动态 VCF 质量过滤 (使用固定阈值)
+    · -q/--vc_qual        共识碱基最低质量 Phred (默认 20)
+    · -d/--vc_depth       共识最低深度 (默认 5)
+    · -f/--vc_freq        变异最低频率阈值 (默认 0.5)
+    · -a/--vc_ambig       低覆盖碱基填充字符 (默认 N)
+    · -t/--threads        单任务线程数 (默认 40)
+    · -j/--jobs           并行任务数 (默认 4)
+    · --resume            断点续传 (跳过已完成任务)
 
-  参数:
-    --reads_dir        FASTQ/FASTA 目录 [必需]
-    --output_dir       输出根目录 [必需]
-    --ref_info         病毒信息库 TSV [必需]
-    --reference        参考基因组 FASTA [必需]
-    --variant_caller   变异检出工具: freebayes/ivar/lofreq (默认: freebayes)
-    --snpeff           启用 SnpEff 注释
-    --snpeff_jar       snpEff.jar 路径 (默认: ~/biosoft/snpEff/snpEff.jar)
-    --snpeff_config    snpEff 配置 (默认: ~/biosoft/snpEff/snpEff.config)
-    --snpeff_mem       内存限制 (默认: 4g)
-    --snpgenie         启用 SnpGenie dN/dS
-    --vc_qual          共识序列最低质量 Phred (默认: 20)
-    --vc_depth         共识序列最低深度 (默认: 5)
-    --vc_freq          变异最低频率阈值 (默认: 0.5)
-    --vc_ambig         低覆盖碱基填充字符 (默认: N)
-    --bam              已有 BAM 目录 (替代 --reads_dir, 跳过提取)
-    --disable_dynamic_vcf  禁用动态VCF过滤
-    --no_extract_reads  跳过 reads 提取
-    --no_consensus      跳过共识序列生成
-    --no_call_variants  跳过变异检测
-    -t, --threads      线程数 (默认 40)
-    -j, --jobs         并行任务数 (默认 4)
-    --resume           断点续传
-    --force            强制重跑
+  输出:
+    2_Virus_variants_Results/
+    ├── virus-variants/       (VCF + 变异频率 TSV)
+    ├── virus-SnpEff/         (SnpEff 注释 VCF + 摘要 TSV)
+    ├── virus-SNPGenie/       (SNPGenie dN/dS 结果)
+    ├── virus-consensus/      (共识序列 FASTA)
+    ├── virus_reads/          (靶向提取 reads)
+    └── summary/all_summary.tsv
 """,
     'full': """
-  --stage full — 单倍型全长组装
+  --stage full — 单倍型全长组装 (批量调度 virus-full.py)
 
-  运行: batch_virus_full.py → virus-full.py
-    多工具全长组装 (SPAdes/IVA/...), 迭代 3 轮
+  子脚本: batch_virus_full.py  (支持断点续传 + 目录归档)
+    流程      : 靶向提取 reads + 原始 Clean reads → virus-full.py 多工具组装
+    目录结构  : {Taxonomy}_{Accession}/{Sample}_{Accession}/  按分类归档
+    组装工具  : SPAdes/IVA/... (via --assembly_tools)
 
-  输入: 2_Virus_variants_Results/summary/all_summary.tsv
-  输出: 3_Virus_assemblies_final/
+  编排器透传参数 (★ 必需 | · 可选):
+    ★ --reads_dir         清洁 reads 目录 (原始 reads)
+    ★ --output_dir        输出根目录 (子目录: 3_Virus_assemblies_final/)
+    · --assembly_tools    启用的组装工具 (默认 all)
+    · --min_covered       跳过 Covered% 小于等于该值的记录 (默认 10.0)
+    · --extra_args        传递给 virus-full.py 的额外参数 (默认: --iter 3 --vc-min-depth 1)
+    · --virus_full_script  virus-full.py 路径 (默认: 上级目录)
+    · --gb                全局 GenBank (.gb) 文件 (病毒注释信息)
+    · -t/--threads        单任务线程数 (默认 40)
+    · -j/--jobs           并行任务数 (默认 4)
+    · --resume            断点续传 (检测 final.fasta 存在则跳过)
 
-  关键参数: --assembly_tools, --min_covered, --extra_args
+  输出:
+    3_Virus_assemblies_final/{Taxonomy}_{Accession}/{Sample}_{Accession}/
+    ├── final.fasta        (最终组装)
+    ├── scaffolds.fasta    (scaffolds)
+    └── contigs.fasta      (contigs)
 """,
 }
 
@@ -178,6 +231,7 @@ def main():
     g.add_argument("--min_covered", type=float, default=10.0)
     g.add_argument("--extra_args", default="--iter 3 --vc-min-depth 1", help="virus-full 额外参数")
     g.add_argument("--virus_full_script", default=None, help="virus-full.py 路径")
+    g.add_argument("--gb", help="全局 GenBank (.gb) 文件 (virus-full.py 注释用)")
 
     # ── 流程控制 ──
     g = p.add_argument_group("流程控制")
@@ -317,6 +371,8 @@ def main():
         ]
         if args.resume:
             parts.append("--resume")
+        if args.gb:
+            parts.append(f"--gb {args.gb}")
         if not run(' '.join(parts), log, "batch_virus_full"):
             log.warning("  全长组装部分失败, 检查日志")
         else:
