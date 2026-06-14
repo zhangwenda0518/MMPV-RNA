@@ -1296,7 +1296,7 @@ class ViromePipeline:
                 s /= 1024
             return f"{s:.1f} TB"
 
-        def _add(stage, status, details="", key_metric=""):
+        def _add(stage, status, key_metric="", details=""):
             stage_stats.append({"Stage": stage, "Status": status, "Key_Metric": key_metric, "Details": details})
 
         # ── 00a_CleanData ──
@@ -1315,7 +1315,7 @@ class ViromePipeline:
                             js = json.load(jf)
                         n_before = js.get("summary", {}).get("before_filtering", {}).get("total_reads", 0)
                         n_after = js.get("summary", {}).get("after_filtering", {}).get("total_reads", 0)
-                        _add("  └ fastp", "✓", f"reads: {n_before:,}→{n_after:,}", "")
+                        _add("  └ fastp", "✓", details=f"reads: {n_before:,}→{n_after:,}")
                     except: pass
         else:
             _add("00a_CleanData", "○", details="未运行")
@@ -1347,7 +1347,7 @@ class ViromePipeline:
                 n_contig = 0
                 for f in d.glob("*.contig.fasta"):
                     n_contig = _count_fasta(f)
-                _add(f"  └ {d.name}", "✓", key_metric=f"{n_contig} contigs", "")
+                _add(f"  └ {d.name}", "✓", key_metric=f"{n_contig} contigs")
         else:
             _add("01_Assembly", "○", details="未运行")
 
@@ -1369,7 +1369,7 @@ class ViromePipeline:
                         filt_fa = filt_dir / f"{d.name}_virus.uniprot_filtered.fasta"
                         if filt_fa.is_file():
                             n_filt = _count_fasta(filt_fa)
-                            _add(f"  └ {d.name} {filt_dir.name}", "✓", key_metric=f"{n_filt} 过滤后", "")
+                            _add(f"  └ {d.name} {filt_dir.name}", "✓", key_metric=f"{n_filt} 过滤后")
         else:
             _add("02_Identification", "○", details="未运行")
 
@@ -1407,15 +1407,15 @@ class ViromePipeline:
                         sizes.append(len(members.split(',')) if members else 0)
                 singletons = sum(1 for sz in sizes if sz <= 1)
                 max_sz = max(sizes) if sizes else 0
-                _add("  └ vclust", "✓", key_metric=f"{n_clusters:,} 簇, {singletons} 单例, 最大簇={max_sz}", "")
+                _add("  └ vclust", "✓", key_metric=f"{n_clusters:,} 簇, {singletons} 单例, 最大簇={max_sz}")
             # CD-HIT known detail
             known_linked_fa = cluster / "2_cdhit" / "known_linked_centroids.fasta"
             n_linked = _count_fasta(known_linked_fa) if known_linked_fa.is_file() else 0
             if n_linked > 0:
-                _add("  └ CD-HIT linked", "✓", key_metric=f"{n_linked} 有关联contig的已知簇", "")
+                _add("  └ CD-HIT linked", "✓", key_metric=f"{n_linked} 有关联contig的已知簇")
             n_pure = n_known - n_linked
             if n_pure > 0:
-                _add("  └ CD-HIT pure", "○", key_metric=f"{n_pure} 纯参考簇 (不进下游)", "")
+                _add("  └ CD-HIT pure", "○", key_metric=f"{n_pure} 纯参考簇 (不进下游)")
         else:
             _add("04_CLUSTER", "○", details="未运行")
 
@@ -1440,7 +1440,7 @@ class ViromePipeline:
                         else: counts["Novel_Family"] += 1
                 _add("05_Taxonomy", "✓", key_metric=f"{n} 条分类, ★{counts['Known']} 已知, ★★{counts['Novel_Species']} 新种", details=f"{tax}")
                 _add("  └ Novel Rank", "✓",
-                     key_metric=f"Known={counts['Known']} NewSp={counts['Novel_Species']} NewGe={counts['Novel_Genus']} NewFa={counts['Novel_Family']}", "")
+                     key_metric=f"Known={counts['Known']} NewSp={counts['Novel_Species']} NewGe={counts['Novel_Genus']} NewFa={counts['Novel_Family']}")
                 # tool agreement from combined_taxonomy
                 combined = tax / f"WVDB_votus.virus_classed" / "WVDB_votus_combined_taxonomy.tsv"
                 if combined.is_file():
@@ -1451,7 +1451,7 @@ class ViromePipeline:
                                 t = row.get("tool","")
                                 tool_counts[t] = tool_counts.get(t, 0) + 1
                         top_tools = " ".join(f"{t}={c}" for t, c in sorted(tool_counts.items(), key=lambda x:-x[1])[:5])
-                        _add("  └ Tools", "✓", key_metric=top_tools, "")
+                        _add("  └ Tools", "✓", key_metric=top_tools)
                     except: pass
             except: pass
         elif tax.is_dir():
@@ -1475,7 +1475,7 @@ class ViromePipeline:
                     if "Decision_Method" in hdf.columns:
                         dm_counts = hdf.group_by("Decision_Method").agg(pl.len()).sort("len", descending=True)
                         top_methods = " ".join(f"{r[0]}={r[1]}" for r in dm_counts.head(4).iter_rows())
-                        _add("  └ Decision", "✓", key_metric=top_methods, "")
+                        _add("  └ Decision", "✓", key_metric=top_methods)
                 else:
                     _add("06_HostPrediction", "✓", key_metric=f"{n} 条", details=f"{host}")
             except Exception as e:
@@ -1514,7 +1514,7 @@ class ViromePipeline:
                 n_eval = n_total - qd["Not-determined"]
                 _add("07_CheckV", "✓", key_metric=f"{n_hq} HQ / {n_total} total (eval={n_eval})", details=f"{cv_dir}")
                 for q in ["Complete","High-quality","Medium-quality","Low-quality","Not-determined"]:
-                    if qd[q] > 0: _add(f"  └ {q}", "✓", key_metric=f"{qd[q]} 条", "")
+                    if qd[q] > 0: _add(f"  └ {q}", "✓", key_metric=f"{qd[q]} 条")
             else:
                 _add("07_CheckV", "✓", key_metric=f"已运行", details=f"{cv_dir}")
         else:
