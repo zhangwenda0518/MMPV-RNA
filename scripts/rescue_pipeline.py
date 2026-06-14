@@ -626,6 +626,12 @@ def main():
             SeqIO.write(cen_records, centroids_final, "fasta")
             n_final = len(cen_records)
 
+    # 清理 merged_reads 释放磁盘
+    for bd in out.glob("branch_b/merged_reads"):
+        if bd.is_dir():
+            shutil.rmtree(bd, ignore_errors=True)
+            print(f"\n  清理: {bd}")
+
     elapsed = (datetime.now() - start).total_seconds()
     print(f"\n{'=' * 60}")
     print(f"  分支 A (CheckV):      {cnt_a:,}")
