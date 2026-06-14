@@ -1714,6 +1714,26 @@ class ViromePipeline:
         else:
             _add("08_Rescue", "○", details="未运行")
 
+        # ── 可选: taxonomy Sankey 图 ──
+        final_tax = tax / "integrated" / "final_integrated_classification.tsv" if tax.is_dir() else None
+        if final_tax and final_tax.is_file():
+            sankey_script = Path(__file__).resolve().parent.parent / "analysis" / "taxonomic_sankey.py"
+            if sankey_script.is_file():
+                try:
+                    import importlib.util
+                    if importlib.util.find_spec("plotly"):
+                        import subprocess as sp
+                        sp.run([sys.executable, str(sankey_script),
+                                "-i", str(final_tax),
+                                "-o", str(report_dir / "classification_sankey.png"),
+                                "--format", "png", "--min-flow", "1", "--min-genus-flow", "10",
+                                "--palette", "set3", "--height", "1200",
+                                "--node-pad", "30", "--label-truncate", "25",
+                                "--font-size", "9", "--title-font-size", "16"],
+                               capture_output=True, timeout=120)
+                        self.log.info("  Sankey 图 → %s", report_dir / "classification_sankey.png")
+                except: pass
+
         # ── 写入报告 ──
         # 1. stage_summary.tsv
         import csv as csv_mod
