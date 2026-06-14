@@ -207,15 +207,11 @@ def main():
     p.add_argument("-f", "--force", action="store_true", help="Force re-run all stages")
     args = p.parse_args()
 
-    # mode 自动设置 skip 标志
+    # mode 自动设置 skip 标志 (--skip-* 显式传入时优先)
     if args.mode != "all":
-        args.skip_rnavirhost = args.mode != "RNAVirHost"
-        args.skip_phabox = args.mode != "PhaBOX2"
-        args.skip_ictv = args.mode != "ICTV"
-    else:
-        args.skip_rnavirhost = False
-        args.skip_phabox = False
-        args.skip_ictv = False
+        args.skip_rnavirhost = args.skip_rnavirhost or (args.mode != "RNAVirHost")
+        args.skip_phabox     = args.skip_phabox     or (args.mode != "PhaBOX2")
+        args.skip_ictv       = args.skip_ictv       or (args.mode != "ICTV")
 
     if not os.path.isfile(args.input): sys.exit(f"ERROR: FastA file not found: {args.input}")
     os.makedirs(args.output_dir, exist_ok=True)
