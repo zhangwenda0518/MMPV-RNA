@@ -1414,15 +1414,31 @@ class ViromePipeline:
                 for f in d.glob("*virus.all.candidate.fasta"):
                     n_virus += _count_fasta(f)
             _add("02_Identification", "✓", key_metric=f"{ns} 样本, {n_virus:,} 病毒序列", details=f"{ident}")
-            # filter stats
-            for d in sorted(ident.iterdir()):
-                if not d.is_dir(): continue
-                for filt_dir in d.iterdir():
-                    if filt_dir.name.startswith("uniprot_filter_output") and filt_dir.is_dir():
-                        filt_fa = filt_dir / f"{d.name}_virus.uniprot_filtered.fasta"
-                        if filt_fa.is_file():
-                            n_filt = _count_fasta(filt_fa)
-                            _add(f"  └ {d.name} {filt_dir.name}", "✓", key_metric=f"{n_filt} 过滤后")
+            # 生成 ident_summary.tsv + filter_summary.tsv
+            tools_list = ['genomad','blast','metabuli','virsorter2','viralverify',
+                          'virhunter','virbot','viralm','rdrpcatch']
+            with open(report_dir / "ident_summary.tsv", "w") as ids:
+                ids.write("Sample\tAll_Candidate\t" + "\t".join(tools_list) + "\n")
+                for d in sorted(ident.iterdir()):
+                    if not d.is_dir(): continue
+                    all_ids = _count_fasta(d / f"{d.name}_virus.all.candidate.fasta")
+                    tcounts = {}
+                    for tool in tools_list:
+                        idf = d / f"{d.name}_virus.{tool}.result.id"
+                        tcounts[tool] = _count_lines(idf) if idf.is_file() else 0
+                    ids.write(f"{d.name}\t{all_ids}\t" + "\t".join(str(tcounts[t]) for t in tools_list) + "\n")
+            with open(report_dir / "filter_summary.tsv", "w") as fs:
+                fs.write("Sample\tMode\tAll_Candidate\tPassed\tRetained(%)\n")
+                for d in sorted(ident.iterdir()):
+                    if not d.is_dir(): continue
+                    all_n = _count_fasta(d / f"{d.name}_virus.all.candidate.fasta")
+                    for fm, fd in [('filter','uniprot_filter_output_filter'),
+                                   ('strict','uniprot_filter_output_strict'),
+                                   ('comb','uniprot_filter_output')]:
+                        ff = d / fd / f"{d.name}_virus.uniprot_filtered.fasta"
+                        nf = _count_fasta(ff) if ff.is_file() else 0
+                        if nf > 0 or nf == 0 and fd == 'uniprot_filter_output':
+                            fs.write(f"{d.name}\t{fm}\t{all_n}\t{nf}\t{round(nf/max(all_n,1)*100,1)}\n")
         else:
             _add("02_Identification", "○", details="未运行")
 
