@@ -2375,7 +2375,7 @@ def _build_parser(add_help=True):
     g.add_argument('--cdhit_ani', type=float, help='CD-HIT ANI 阈值 (默认 0.95, 转录组建议 0.85)')
     g.add_argument('--cdhit_qcov', type=float, help='CD-HIT qcov 阈值 (默认 0.85, 转录组建议 0.50)')
     g.add_argument('--virseqimprover-path', help='Virseqimprover.py 路径')
-    g.add_argument('--salmon-bin', default='salmon', help='Salmon 二进制路径 (默认: salmon)')
+    g.add_argument('--salmon-bin', default=os.path.expanduser('~/mambaforge/envs/Virseqimprover/bin/salmon'), help='Salmon 二进制路径')
     g.add_argument('--max_vsi_samples', type=int, default=10, help='VSI 最大合并样本数 (0=不限制, 默认: 10)')
     g.add_argument('--min_vsi_len', type=int, default=2000, help='VSI 最小 contig 长度 bp (默认: 2000)')
 

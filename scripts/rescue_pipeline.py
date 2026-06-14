@@ -522,7 +522,7 @@ def main():
     p.add_argument("--checkv-db", "-cv", required=True)
     p.add_argument("--blast-db", "-db", default=None)
     p.add_argument("--virseqimprover-path", default=None)
-    p.add_argument("--salmon-bin", default="salmon")
+    p.add_argument("--salmon-bin", default=os.path.expanduser("~/mambaforge/envs/Virseqimprover/bin/salmon"))
     p.add_argument("--max-vsi-samples", type=int, default=10, help="VSI 最大合并样本数 (0=不限制, 默认10)")
     p.add_argument("--min-vsi-len", type=int, default=2000, help="VSI 最小 contig 长度 bp (短于此值直升分支C, 默认2000)")
     p.add_argument("--threads", "-t", type=int, default=64)

@@ -16,7 +16,7 @@ minIdentityCircular = 95
 salmonReadFraction = 0
 minSuspiciousLen = 1000
 threads = 16
-salmonBin = "salmon"
+salmonBin = os.path.expanduser("~/mambaforge/envs/Virseqimprover/bin/salmon")
 checkv_db = ""
 run_counter = 1
 checkv_triggered = False
@@ -1162,6 +1162,24 @@ def extendOneScaffold():
 args = sys.argv[1:]
 parseArguments(args)
 print("Finished parsing input arguments")
+
+# 检查 salmon 版本 (必须 0.8.1)
+if not os.path.isfile(salmonBin):
+    print(f"ERROR: salmon not found: {salmonBin}")
+    print("Install salmon 0.8.1: conda install -c bioconda salmon=0.8.1")
+    sys.exit(1)
+try:
+    ver_out = subprocess.check_output([salmonBin, "-v"], text=True, stderr=subprocess.STDOUT)
+    if "0.8.1" not in ver_out:
+        print(f"ERROR: salmon version must be 0.8.1, found: {ver_out.strip()}")
+        print(f"Current salmon: {salmonBin}")
+        print("Install salmon 0.8.1: conda install -c bioconda salmon=0.8.1")
+        sys.exit(1)
+    print(f"salmon version OK: {ver_out.strip()}")
+except Exception as e:
+    print(f"ERROR: unable to check salmon version: {e}")
+    sys.exit(1)
+
 getReadLen()
 print("Started growing scaffold: {0}".format(datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')))
 extendOneScaffold()
