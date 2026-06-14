@@ -1730,7 +1730,7 @@ class ViromePipeline:
                     n_rescued += _count_fasta(rf)
             # 各分支统计
             branch_info = []
-            for bname, blabel in [("branch_a","CheckV"),("branch_b","VSI"),("branch_c","BLASTN+VSI")]:
+            for bname, blabel in [("branch_a","CheckV"),("branch_b","VSI"),("branch_c","BLASTN")]:
                 for bd in rescue.rglob(bname):
                     if not bd.is_dir(): continue
                     pass_fa = bd / f"{bname}B" if bname == "branch_b" else bd / f"{bname}_pass.fasta"
@@ -2162,7 +2162,7 @@ STAGE_HELP = {
     分支 A    : CheckV 并行评估 centroids (分块, completeness ≥ 90% pass)
     分支 B    : Virseqimprover reads 迭代延伸 (cluster 内多样本 reads 聚合)
                 Salmon 定量 → BBMap 提取 → SPAdes 组装 → CheckV 验证
-    分支 C    : BLASTN megablast + CheckV + VSI 最后拯救
+    分支 C    : BLASTN megablast + CheckV (纯比对评级)
     合并      : A+B+C pass → vclust 最终去重 → HQ vOTU
 
   免拯救 = CD-HIT known (参考关联) + CheckV pass (completeness ≥ 90%)
@@ -2191,7 +2191,7 @@ STAGE_HELP = {
     │   │           branchA_fail.fasta             (CheckV fail)
     │   ├── branch_b/branchB_pass.fasta           (VSI pass)
     │   │           branchB_fail.fasta             (VSI fail)
-    │   ├── branch_c/branchC_pass.fasta           (BLASTN+VSI pass)
+    │   ├── branch_c/branchC_pass.fasta           (BLASTN pass)
     │   ├── merged/all_HQ.fasta                   (A+B+C 合并)
     │   └── centroids/final_centroids.fasta       (最终 HQ vOTU ★)
     └── checkv/
