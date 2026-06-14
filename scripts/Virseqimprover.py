@@ -198,8 +198,16 @@ def createBed():
     print('Start time: {0}'.format(datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')))
 
     scaffoldFile = outputDir + "/scaffold-truncated/tmp/spades-res/scaffold.fasta"
+    # 提取原始 contig 名 (去掉路径和扩展名)
+    orig_name = os.path.splitext(os.path.basename(scaffold))[0]
     if (os.path.isfile(scaffoldFile) == True) and (os.path.isdir(scaffoldFile) == False):
-        cmd = "cd " + outputDir + "/scaffold-truncated\n" + "rm -f scaffold.fasta*\n" + "cd tmp/spades-res\n" + "mv scaffold.fasta " + outputDir + "/scaffold-truncated\n" + "mv scaffold.fasta.fai " + outputDir + "/scaffold-truncated\n"
+        cmd = ("cd " + outputDir + "/scaffold-truncated\n"
+               + "rm -f scaffold.fasta*\n"
+               + "cd tmp/spades-res\n"
+               # 把 SPAdes 的 NODE_1_... 头改回原始 contig 名
+               + "sed -i \"1s/^>.*/>" + orig_name + "/\" scaffold.fasta\n"
+               + "mv scaffold.fasta " + outputDir + "/scaffold-truncated\n"
+               + "mv scaffold.fasta.fai " + outputDir + "/scaffold-truncated\n")
 
         shellFileWriter = open(outputDir + "/run.sh",'w')
         shellFileWriter.write('#'+"!/bin/bash\n")
