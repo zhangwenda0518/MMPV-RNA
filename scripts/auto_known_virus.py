@@ -20,11 +20,12 @@ from pathlib import Path
 from datetime import datetime
 
 
-def logger(out_dir):
+def logger(out_dir, level='INFO'):
     l = logging.getLogger("KnownVirus"); l.setLevel(logging.DEBUG); l.handlers.clear()
     os.makedirs(out_dir, exist_ok=True)
+    console_level = getattr(logging, level.upper(), logging.INFO)
     for h in [logging.StreamHandler(), logging.FileHandler(os.path.join(out_dir, 'known_virus.log'))]:
-        h.setLevel(logging.INFO)
+        h.setLevel(console_level)
         h.setFormatter(logging.Formatter('[%(asctime)s] %(message)s', datefmt='%H:%M:%S'))
         l.addHandler(h)
     return l
@@ -238,6 +239,10 @@ def main():
     g.add_argument("--stage", default="all", choices=["all","detect","variants","full"],
                    help="运行阶段 (all/detect/variants/full). --help-stage detect 查看详情")
     g.add_argument("--resume", action="store_true", help="断点续传 (Step1+2)")
+    g.add_argument("--force", action="store_true", help="强制重跑 (忽略断点, 覆盖已有结果)")
+    g.add_argument("--dry-run", action="store_true", help="仅显示配置和任务概览, 不实际执行")
+    g.add_argument("--log-level", default="INFO", choices=["DEBUG","INFO","WARNING","ERROR"],
+                   help="日志级别 (默认: INFO)")
     g.add_argument("--threads", type=int, default=40)
     g.add_argument("--jobs", type=int, default=4)
     g.add_argument("--align_threads", type=int, default=8, help="单样本比对线程")
@@ -250,12 +255,35 @@ def main():
     if not reads.exists():
         sys.exit(f"ERROR: reads 目录不存在: {reads}")
 
-    log = logger(str(out))
+    log = logger(str(out), level=args.log_level)
     log.info("=" * 50)
     log.info("已知病毒分析 | Stage=%s | Threads=%d Jobs=%d", args.stage, args.threads, args.jobs)
     log.info("  Reads:  %s", reads)
     log.info("  Output: %s", out)
+    if args.force:
+        log.info("  模式:    强制重跑 (--force)")
+    elif args.resume:
+        log.info("  模式:    断点续传 (--resume)")
+    log.info("  Log:     %s", args.log_level)
     log.info("=" * 50)
+
+    # ── --dry-run: 仅显示配置 ──
+    if args.dry_run:
+        log.info("")
+        log.info("═══ DRY-RUN 模式 — 不执行任何计算 ═══")
+        log.info("  阶段:    %s", args.stage)
+        log.info("  Reads:   %s", reads)
+        log.info("  Output:  %s", out)
+        log.info("  检测工具: %s", args.tool)
+        if args.stage in ("all", "detect"):
+            log.info("  [1/3] 快速检测:  batch_virus_depth40.py")
+        if args.stage in ("all", "variants"):
+            log.info("  [2/3] 变异分析:  batch_virus_variants.py")
+            log.info("         caller=%s snpeff=%s snpgenie=%s", args.variant_caller, args.snpeff, args.snpgenie)
+        if args.stage in ("all", "full"):
+            log.info("  [3/3] 全长组装:  batch_virus_full.py")
+        log.info("═══ DRY-RUN 结束 ═══")
+        return
 
     # ═══ Step 1: 快速检测 ═══
     detect_dir = out / "1_FastViromeExplorer"
@@ -296,7 +324,7 @@ def main():
             parts.append("--keep_tmp")
         if args.verbose:
             parts.append("--verbose")
-        if args.resume:
+        if args.resume and not args.force:
             parts.append("--resume")
         if not run(' '.join(parts), log, "batch_virus_depth40"):
             sys.exit(1)
@@ -339,7 +367,7 @@ def main():
         if args.disable_dynamic_vcf:
             parts.append("--disable_dynamic_vcf")
         parts += [f"-q {args.vc_qual}", f"-d {args.vc_depth}", f"-f {args.vc_freq}", f"-a {args.vc_ambig}"]
-        if args.resume:
+        if args.resume and not args.force:
             parts.append("--resume")
         if not run(' '.join(parts), log, "batch_virus_variants"):
             log.warning("  变异分析部分失败, 检查日志")
@@ -369,7 +397,7 @@ def main():
             f"--extra_args '{args.extra_args}'",
             f"--min_covered {args.min_covered}",
         ]
-        if args.resume:
+        if args.resume and not args.force:
             parts.append("--resume")
         if args.gb:
             parts.append(f"--gb {args.gb}")

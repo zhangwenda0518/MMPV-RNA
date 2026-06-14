@@ -42,7 +42,7 @@ from Bio import SeqIO
 # 1. 日志与工具函数
 # ═══════════════════════════════════════════════════════════════════
 
-def setup_logger(output_dir):
+def setup_logger(output_dir, level='INFO'):
     """配置双通道日志: 控制台 INFO + 文件 DEBUG"""
     logger = logging.getLogger("ViromeOrch")
     logger.setLevel(logging.DEBUG)
@@ -50,7 +50,7 @@ def setup_logger(output_dir):
     os.makedirs(output_dir, exist_ok=True)
 
     ch = logging.StreamHandler()
-    ch.setLevel(logging.INFO)
+    ch.setLevel(getattr(logging, level.upper(), logging.INFO))
     ch.setFormatter(logging.Formatter(
         '[%(asctime)s] %(levelname)s %(message)s', datefmt='%H:%M:%S'))
     logger.addHandler(ch)
@@ -1744,6 +1744,11 @@ def _build_parser(add_help=True):
     g.add_argument('--skip_depletion', action='store_true', help='跳过去宿主')
     g.add_argument('--skip_clumpify', action='store_true', help='跳过 Clumpify')
     g.add_argument('--force', action='store_true', help='强制重跑')
+    g.add_argument('--dry-run', action='store_true', help='仅扫描样本并显示配置，不实际执行')
+    g.add_argument('--log-level', default='INFO', choices=['DEBUG', 'INFO', 'WARNING', 'ERROR'],
+                   help='日志级别 (默认: INFO)')
+    g.add_argument('--stop-on-error', action='store_true',
+                   help='子脚本失败时立即终止 (默认: 仅警告, 继续执行后续阶段)')
 
     g = p.add_argument_group('Clean 阶段 (clean-data.py)')
     g.add_argument('--dedup', action='store_true', help='启用 fastp 自带去重')
@@ -1885,7 +1890,7 @@ def parse_args():
     return _build_parser(add_help=False).parse_args()
 def main():
     args = parse_args()
-    logger = setup_logger(args.output_dir)
+    logger = setup_logger(args.output_dir, level=args.log_level)
 
     stage = args.stage
 
@@ -1932,7 +1937,34 @@ def main():
         flow.append('CheckV')
         flow.append(f'Rescue({args.host_filter})')
         logger.info("  Flow:     %s", ' → '.join(flow))
+    logger.info("  Log Level: %s", args.log_level)
+    if args.stop_on_error:
+        logger.info("  模式:      遇错即停 (--stop-on-error)")
+    else:
+        logger.info("  模式:      容错继续 (默认)")
     logger.info("=" * 50)
+
+    # ── --dry-run: 扫描样本后退出 ──
+    if args.dry_run:
+        logger.info("")
+        logger.info("═══ DRY-RUN 模式 — 不执行任何计算 ═══")
+        if args.input_reads and Path(args.input_reads).exists():
+            samples = scan_samples_in_dir(args.input_reads)
+            if samples:
+                pe = sum(1 for v in samples.values() if v['r2'])
+                logger.info("  输入目录: %s", args.input_reads)
+                logger.info("  检测样本: %d (PE=%d, SE=%d)", len(samples), pe, len(samples) - pe)
+                for name, info in sorted(samples.items()):
+                    tag = "PE" if info['r2'] else "SE"
+                    logger.info("    [%s] %s → %s", tag, name, info['r1'])
+            else:
+                logger.info("  [WARN] 输入目录无序列文件")
+        else:
+            logger.info("  输入目录: %s (不存在或未指定)", args.input_reads)
+        logger.info("  阶段:     %s", stage)
+        logger.info("  输出目录: %s", args.output_dir)
+        logger.info("═══ DRY-RUN 结束 ═══")
+        return
 
     pipe = ViromePipeline(args, logger)
 
@@ -1963,35 +1995,50 @@ def main():
                      len(pipe.orig_samples) - pe)
 
     # ═══ 执行 ═══
+    # --stop-on-error: 遇错即停; 默认: 容错继续 (仅警告)
+    stages_to_run = []
     if stage in ('all', 'clean'):
-        pipe.run_clean()
-
+        stages_to_run.append(('clean', pipe.run_clean))
     if stage in ('all', 'deplete'):
-        pipe.run_depletion()
-
+        stages_to_run.append(('deplete', pipe.run_depletion))
     if stage in ('all', 'assembly'):
-        pipe.run_assembly()
-
+        stages_to_run.append(('assembly', pipe.run_assembly))
     if stage in ('all', 'identification'):
-        pipe.run_identification()
-
+        stages_to_run.append(('identification', pipe.run_identification))
     if stage in ('all', 'cobra'):
-        pipe.run_cobra()
-
+        stages_to_run.append(('cobra', pipe.run_cobra))
     if stage in ('all', 'cluster'):
-        pipe.run_cluster()
-
+        stages_to_run.append(('cluster', pipe.run_cluster))
     if stage in ('all', 'taxonomy'):
-        pipe.run_taxonomy()
-
+        stages_to_run.append(('taxonomy', pipe.run_taxonomy))
     if stage in ('all', 'host'):
-        pipe.run_host()
-
+        stages_to_run.append(('host', pipe.run_host))
     if stage in ('all', 'checkv'):
-        pipe.run_checkv_stage()
-
+        stages_to_run.append(('checkv', pipe.run_checkv_stage))
     if stage in ('all', 'rescue'):
-        pipe.run_rescue()
+        stages_to_run.append(('rescue', pipe.run_rescue))
+
+    failed_stages = []
+    for stage_name, stage_func in stages_to_run:
+        try:
+            stage_func()
+        except SystemExit as e:
+            if args.stop_on_error:
+                logger.error("[%s] 阶段失败 (exit=%d), 终止", stage_name, e.code if e.code else 1)
+                sys.exit(e.code if e.code else 1)
+            else:
+                logger.warning("[%s] 阶段失败 (exit=%d), 继续", stage_name, e.code if e.code else 1)
+                failed_stages.append(stage_name)
+        except Exception as e:
+            if args.stop_on_error:
+                logger.error("[%s] 阶段异常: %s, 终止", stage_name, e)
+                sys.exit(1)
+            else:
+                logger.warning("[%s] 阶段异常: %s, 继续", stage_name, e)
+                failed_stages.append(stage_name)
+
+    if failed_stages:
+        logger.warning("以下阶段失败: %s", ', '.join(failed_stages))
 
     pipe.run_reports()
 
