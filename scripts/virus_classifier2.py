@@ -636,13 +636,17 @@ class VirusClassifier:
                  postproc_vitap)
 
         mdb = self.db_paths.get("mmseqs", os.path.expanduser("~/database/virus-db/RVDB-v30/mmseqs_RVDB_db"))
+        if not os.path.exists(mdb):
+            for alt in ["RVDB-v31/RVDB.mmseqs_db", "RVDB-30/RVDB.mmseqs"]:
+                p = os.path.join(os.path.expanduser("~/database/virus-db"), alt)
+                if os.path.exists(p): mdb = p; break
         _run_ski("mmseqs", mdb, os.path.join(out, f"{s}_mmseqs_taxonomy.tsv"),
                  lambda: (Path(out,"mmseqs_results").mkdir(exist_ok=True),
                           (Path(out,"mmseqs_results")/"tmp").mkdir(exist_ok=True),
                           os.system(f"mmseqs easy-taxonomy {inp} {mdb} {Path(out,'mmseqs_results')}/{s} {Path(out,'mmseqs_results')}/tmp --blacklist '' --tax-lineage 1 --threads {self.threads} --split-memory-limit 80G > /dev/null 2>&1")),
                  postproc_mmseqs)
 
-        adb = self.db_paths.get("ACVirus", os.path.expanduser("~/database/virus-db/ictv-db/acvirus_db"))
+        adb = self.db_paths.get("ACVirus", os.path.expanduser("~/database/virus-db/acvirus_db"))
         _run_ski("ACVirus", adb, os.path.join(out, f"{s}_ACVirus_taxonomy.tsv"),
                  lambda: (Path(out,"ACVirus_results").mkdir(exist_ok=True),
                           os.system(f"ACVirus classify --contig {inp} --data_path {adb} --out {Path(out,'ACVirus_results')}/{s}.acvirus > /dev/null 2>&1")),
@@ -711,7 +715,7 @@ def main():
         "cat_tax": args.cat_tax or os.path.join(args.db_dir,"RVDB-30","CAT-db","tax"),
         "VITAP": args.vitap_db or os.path.join(args.db_dir,"vitap-db","VMR-MSL40_DB"),
         "mmseqs": args.mmseqs_db or os.path.join(args.db_dir,"RVDB-v30","mmseqs_RVDB_db"),
-        "ACVirus": args.acvirus_db or os.path.join(args.db_dir,"ictv-db","acvirus_db"),
+        "ACVirus": args.acvirus_db or os.path.join(args.db_dir,"acvirus_db"),
         "vcontact3": args.vcontact3_db or os.path.join(args.db_dir,"vConTACT3_db"),
     }
 
