@@ -556,18 +556,13 @@ def main():
         fasta_info.update(load_fasta_info(str(fa)))
     print(f"  fasta_info: {len(fasta_info)} 条")
 
-    # 长度过滤: < min_vsi_len → 直升分支 C (跳过 A+B)
-    long_centroids = [r for r in centroids_records if len(r.seq) >= args.min_vsi_len]
-    short_centroids = [r for r in centroids_records if len(r.seq) < args.min_vsi_len]
-    n_long = len(long_centroids); n_short = len(short_centroids)
-    print(f"  长度过滤: ≥{args.min_vsi_len}bp={n_long} 条 (进A→B→C), <{args.min_vsi_len}bp={n_short} 条 (直升C)")
+    # 统计长短序列分布 (短序列后续跳过B直升C)
+    n_long = sum(1 for r in centroids_records if len(r.seq) >= args.min_vsi_len)
+    n_short = len(centroids_records) - n_long
+    if n_short > 0:
+        print(f"  长度分布: ≥{args.min_vsi_len}bp={n_long} 条, <{args.min_vsi_len}bp={n_short} 条 (A后跳过B直升C)")
 
-    # 将短序列写入临时 FASTA 供合并步骤使用
-    short_fasta = out / "short_centroids.fasta"
-    if short_centroids:
-        SeqIO.write(short_centroids, short_fasta, "fasta")
-
-    # 2. 分支 A: CheckV 并行评估 (仅长序列)
+    # 2. 分支 A: CheckV 并行评估 (全部序列)
     print("\n── Step 1: 分支 A (CheckV) ──")
     fa_a_pass = out / "branch_a" / "branchA_pass.fasta"
     fa_a_fail = out / "branch_a" / "branchA_fail.fasta"
@@ -579,7 +574,7 @@ def main():
     else:
         # 写 centroids 到临时文件供 branch_a
         tmp_centroids = out / "input_centroids.fasta"
-        SeqIO.write(long_centroids, tmp_centroids, "fasta")
+        SeqIO.write(centroids_records, tmp_centroids, "fasta")
         fa_a_pass, fa_a_fail, cnt_a, cnt_a_fail = branch_a(str(tmp_centroids), out, args.checkv_db, args.threads, args.jobs)
 
     # 3. 分支 B: Virseqimprover
@@ -624,12 +619,8 @@ def main():
                 if fp and os.path.isfile(fp):
                     with open(fp) as inf:
                         mf.write(inf.read())
-            # 纳入短序列 (< min_vsi_len, 直升 C)
-            if short_fasta.is_file():
-                with open(short_fasta) as inf:
-                    mf.write(inf.read())
         total_m = sum(1 for _ in SeqIO.parse(merged, "fasta"))
-        print(f"  A:{cnt_a}  B:{cnt_b}  C:{cnt_c}  +short:{n_short}  →  {total_m} 条  →  {merged}")
+        print(f"  A:{cnt_a}  B:{cnt_b}  C:{cnt_c}  →  {total_m} 条  →  {merged}")
 
         if total_m < 2:
             print("  [SKIP] <2 条, 跳过最终 vclust")
