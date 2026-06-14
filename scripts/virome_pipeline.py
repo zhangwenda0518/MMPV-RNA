@@ -269,7 +269,7 @@ class ViromePipeline:
 
         stage = self.args.stage
         doing_clean = stage in ('all', 'clean')
-        need_virus_db = stage in ('all', 'assembly', 'identification', 'taxonomy', 'host')
+        need_virus_db = stage in ('all', 'identification', 'taxonomy', 'host')
         need_checkv_db = stage in ('all', 'checkv', 'rescue')
 
         # deplete 阶段需要 kraken2 + host_align (或 --host_db 自动检测)
