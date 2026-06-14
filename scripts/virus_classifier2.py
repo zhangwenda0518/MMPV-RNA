@@ -635,9 +635,9 @@ class VirusClassifier:
                           os.system(f"VITAP assignment -i {inp} -d {vdb} -p {self.threads} -o {Path(out,'VITAP_results')}/{s}.vitap > /dev/null 2>&1")),
                  postproc_vitap)
 
-        mdb = self.db_paths.get("mmseqs", os.path.expanduser("~/database/virus-db/RVDB-v30/mmseqs_RVDB_db"))
+        mdb = self.db_paths.get("mmseqs", os.path.expanduser("~/database/virus-db/RVDB-30/RVDB.mmseqs"))
         if not os.path.exists(mdb):
-            for alt in ["RVDB-v31/RVDB.mmseqs_db", "RVDB-30/RVDB.mmseqs"]:
+            for alt in ["RVDB-30/RVDB.mmseqs", "RVDB-v31/RVDB.mmseqs_db"]:
                 p = os.path.join(os.path.expanduser("~/database/virus-db"), alt)
                 if os.path.exists(p): mdb = p; break
         _run_ski("mmseqs", mdb, os.path.join(out, f"{s}_mmseqs_taxonomy.tsv"),
@@ -714,7 +714,7 @@ def main():
         "cat": args.cat_db or os.path.join(args.db_dir,"RVDB-30","CAT-db","db"),
         "cat_tax": args.cat_tax or os.path.join(args.db_dir,"RVDB-30","CAT-db","tax"),
         "VITAP": args.vitap_db or os.path.join(args.db_dir,"vitap-db","VMR-MSL40_DB"),
-        "mmseqs": args.mmseqs_db or os.path.join(args.db_dir,"RVDB-v30","mmseqs_RVDB_db"),
+        "mmseqs": args.mmseqs_db or os.path.join(args.db_dir,"RVDB-30","RVDB.mmseqs"),
         "ACVirus": args.acvirus_db or os.path.join(args.db_dir,"acvirus_db"),
         "vcontact3": args.vcontact3_db or os.path.join(args.db_dir,"vConTACT3_db"),
     }
