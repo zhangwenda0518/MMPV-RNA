@@ -95,7 +95,7 @@ def parse_checkv(qs_path, threshold=90.0):
             pass_ids.add(cid)
         else:
             fail_ids.add(cid)
-    return pass_ids, fail_ids
+    return pass_ids, fail_ids, skip_ids
 
 
 # ══════════════════════════════════════════════════════════════
