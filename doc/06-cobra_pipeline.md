@@ -1,6 +1,8 @@
-# cobra_pipeline.py — COBRA 批量延伸
+# cobra_pipeline.py — COBRA 批量延伸 / COBRA Batch Extension
 
-## 流程
+> BWA-MEM2 → CoverM coverage → COBRA overlap extension. Auto-matches reads+contig+virus triples, JSON checkpoint.
+
+## 流程 / Workflow
 
 ```
 自动匹配 reads + contig + virus 三元组

@@ -1,6 +1,8 @@
-# Virseqimprover.py — 病毒 contig 迭代延伸引擎
+# Virseqimprover.py — 病毒contig迭代延伸引擎 / Iterative Extension Engine
 
-## 流程
+> Salmon quantification → BBMap extraction → SPAdes assembly → loop until CheckV > 90% or no length gain. Circularity detection.
+
+## 流程 / Workflow
 
 ```
 输入 scaffold + reads

@@ -1,6 +1,8 @@
-# clean-data.py — 数据清洗
+# clean-data.py — 数据清洗 / Data Cleaning
 
-## 流程
+> Fastp QC → Seqkit FASTQ-to-FASTA → Clumpify optical dedup. Checkpoint-resume with `.clean_checkpoints`.
+
+## 流程 / Workflow
 
 ```
 Fastp 质控 → Seqkit 统计 → Clumpify 去重

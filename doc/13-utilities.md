@@ -1,6 +1,8 @@
-# 辅助脚本
+# 辅助脚本 / Utility Scripts
 
-## preprocess.py — 预处理独立入口
+> preprocess.py, viroid_circular_detect.py — independent helpers for data preprocessing and viroid detection.
+
+## preprocess.py — 预处理独立入口 / Combined Preprocessing
 
 ```bash
 python preprocess.py --input <dir> --output <dir> --threads 40 --jobs 10

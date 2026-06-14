@@ -1,15 +1,18 @@
-# MMPV-RNA v2.3 全脚本解读
+# MMPV-RNA v2.3 — 全脚本解读 / Full Script Interpretation
 
 > **Meta-transcriptomic Mining of Plant Virome from RNA-seq data**
-> 宏转录组植物病毒端到端发现管道 — 从原始 RNA-seq reads 到 HQ vOTU 目录
+> 宏转录组植物病毒端到端发现管道 — End-to-end plant virome discovery pipeline
+> Comprehensive 20-script analysis covering architecture, data flow, and implementation details.
 
 ---
 
-## 一、项目总览
+## 一、项目总览 / Project Overview
 
 MMPV-RNA 是一个完整的宏转录组病毒发现与分析框架，包含 **20 个 Python/R 脚本**和 **13 个文档**，覆盖从原始 FASTQ 到最终病毒目录的全流程。
 
-### 核心数据流
+MMPV-RNA is a complete metatranscriptomic virus discovery and analysis framework, comprising **20 Python/R scripts** and **13 documentation files**, covering the full workflow from raw FASTQ to final virus catalog.
+
+### 核心数据流 / Core Data Flow
 
 ```
 Raw FASTQ → clean → deplete → assembly → identification → COBRA → cluster

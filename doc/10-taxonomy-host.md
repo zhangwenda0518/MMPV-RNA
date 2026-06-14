@@ -1,6 +1,8 @@
-# taxonomy + host — 分类注释与宿主预测
+# taxonomy + host — 分类注释与宿主预测 / Taxonomy & Host Prediction
 
-## virus_classifier2.py — 5 工具分类
+> 9-tool classification + R consensus → 8-rank taxonomy. ICTV > RNAVirHost > PhaBOX2 decision tree for host assignment.
+
+## virus_classifier2.py — 9工具分类 / 9-Tool Classification
 
 ### 5 个分类工具
 

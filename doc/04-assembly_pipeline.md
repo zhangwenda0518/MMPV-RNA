@@ -1,6 +1,8 @@
-# assembly_pipeline.py — 宏转录组组装
+# assembly_pipeline.py — 宏转录组组装 / Metatranscriptomic Assembly
 
-## 流程
+> Penguin / MEGAHIT / rnaviralSPAdes 3-tool parallel assembly + refineC split/merge. PE/SE auto-detect, resource monitoring.
+
+## 流程 / Workflow
 
 ```
 选择工具: penguin (默认) / megahit / rnaviralspades / all (三种并行)

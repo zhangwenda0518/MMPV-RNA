@@ -1,4 +1,6 @@
-# virome_pipeline.py — 主控流水线
+# virome_pipeline.py — 主控流水线 / Master Orchestrator
+
+> End-to-end automated virome pipeline controller. 11 independent stages, checkpoint-resume, sub-script progress passthrough.
 
 宏病毒组端到端全自动主控，11 个独立阶段，断点续传，子脚本进度透传。
 

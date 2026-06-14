@@ -1,4 +1,6 @@
-# validate_novel_viruses.py — 交叉验证
+# validate_novel_viruses.py — 交叉验证 / Cross-Validation
+
+> Taxonomy-level novelty judgment without BLASTN. ★known / ★★novel_species / ★★novel_genus / ★★★novel_family+ / ★★★truly_novel.
 
 基于 taxonomy 分类层级判断病毒新颖性，无需 BLASTN。
 

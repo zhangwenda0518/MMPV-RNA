@@ -1,6 +1,8 @@
-# cluster_pipeline.py — 聚类管道
+# cluster_pipeline.py — 聚类管道 / Clustering Pipeline
 
-## 流程
+> CD-HIT reference-guided pre-clustering + vclust Leiden clustering. Produces centroids + per-cluster splits + statistics.
+
+## 流程 / Workflow
 
 ```
 seqkit 长度过滤 (≥500bp)

@@ -1,6 +1,8 @@
-# auto_known_virus.py — 已知病毒分析主控
+# auto_known_virus.py — 已知病毒分析主控 / Known Virus Orchestrator
 
-## 三个独立阶段
+> 3-stage analysis: detect (rapid quantification) → variants (SnpEff+SnpGenie) → full (de novo assembly). Independent of the main discovery pipeline.
+
+## 三个独立阶段 / Three Independent Stages
 
 ```
 --stage detect    batch_virus_depth40.py   Salmon/Bowtie2 快速检测

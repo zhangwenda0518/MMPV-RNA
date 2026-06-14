@@ -1,6 +1,8 @@
-# rescue_pipeline.py — 三支路级联拯救
+# rescue_pipeline.py — 三支路级联拯救 / Three-Branch Cascade Rescue
 
-## 流程
+> Branch A (CheckV) → Branch C (Virseqimprover VSI) → Branch D (BLASTN+VSI). Multi-sample read aggregation, final vclust dedup.
+
+## 流程 / Workflow
 
 ```
 接收: centroids + clusters.tsv + split_fastas (由 cluster_pipeline.py 产出)

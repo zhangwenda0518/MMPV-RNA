@@ -1,6 +1,8 @@
-# virus_identification16.py — 6 工具病毒鉴定
+# virus_identification16.py — 6工具病毒鉴定 / 6-Tool Virus Identification
 
-## 6 个鉴定工具
+> Genomad + Diamond BLASTX + VirSorter2 + ViralVerify + VirHunter + Metabuli. Post-filtering (UniProt/NR), Venn/Upset visualization.
+
+## 6 个鉴定工具 / 6 Identification Tools
 
 | 工具 | 原理 |
 |------|------|

@@ -1,6 +1,8 @@
-# host_depletion.py — 去宿主 + 去 rRNA
+# host_depletion.py — 去宿主 + 去rRNA / Host Depletion & rRNA Removal
 
-## 流程
+> Kraken2 + Bowtie2/HISAT2/Minimap2 + Ribodetector/SILVA. Ablation experiments via `--steps`, resource monitoring per sample.
+
+## 流程 / Workflow
 
 ```
 Kraken2 分类 → Bowtie2/HISAT2 去宿主 → rRNA 去除 (Ribodetector 或 SILVA)
