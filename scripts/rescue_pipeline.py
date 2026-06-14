@@ -193,9 +193,13 @@ def _gather_cluster_reads(fastq_dir, samples, work_dir, prefix="multi"):
         # 单样本: 不合并, 直接返回
         return r1_files[0], r2_files[0] if r2_files else None, n_total
 
+    # 检测 reads 格式 (FASTA vs FASTQ)
+    is_fasta = r1_files[0].endswith(('.fa.gz', '.fasta.gz', '.fa', '.fasta'))
+    ext = '.fa.gz' if is_fasta else '.fastq.gz'
+
     work_dir = Path(work_dir); work_dir.mkdir(parents=True, exist_ok=True)
-    r1_cat = str(work_dir / f"{prefix}_merged_R1.fastq.gz")
-    r2_cat = str(work_dir / f"{prefix}_merged_R2.fastq.gz") if r2_files else None
+    r1_cat = str(work_dir / f"{prefix}_merged_R1{ext}")
+    r2_cat = str(work_dir / f"{prefix}_merged_R2{ext}") if r2_files else None
     with open(r1_cat, "wb") as out:
         for f in r1_files:
             with open(f, "rb") as inf:

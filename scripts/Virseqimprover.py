@@ -740,7 +740,16 @@ def runAlignmentGetCoverage():
         cmd = "bash " + outputDir + "/run.sh"
         subprocess.check_output(cmd, shell=True)
 
+    # 检测 reads 格式: 优先看内容, 其次看扩展名
     isFasta = read1.replace('.gz','').endswith(('.fa','.fasta','.fna','.ffn','.frn'))
+    if not isFasta:
+        try:
+            import gzip
+            opener = gzip.open if read1.endswith('.gz') else open
+            with opener(read1, 'rt') as f:
+                first_char = f.read(1)
+                if first_char == '>': isFasta = True
+        except: pass
     bowtie2FastaFlag = " -f" if isFasta else ""
 
     if len(read2) == 0:
