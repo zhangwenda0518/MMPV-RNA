@@ -1,0 +1,1128 @@
+#!/usr/bin/env python3
+"""
+report_pipeline.py — 独立报告生成器 (MMPV-RNA v2.3)
+
+根据流水线输出目录生成:
+  - 各阶段汇总 TSV (data/assembly/ident/filter/cobra/hostdep/checkv)
+  - Sankey 分类图 (全部 + 植物病毒)
+  - pipeline_report.html (期刊级交互式 HTML)
+
+用法:
+  python report_pipeline.py -o out/                    # 从流水线输出根目录生成
+  python report_pipeline.py -o out/ --skip-sankey      # 跳过 Sankey 图
+"""
+
+import argparse, csv, json, os, re, sys, subprocess, time
+from datetime import datetime
+from pathlib import Path
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+
+# ═══════════════════════════════════════════════════════════════
+# 辅助函数
+# ═══════════════════════════════════════════════════════════════
+
+def _count_fasta(path):
+    if not path or not os.path.isfile(str(path)): return 0
+    return sum(1 for _ in open(str(path)) if _.startswith('>'))
+
+def _count_lines(path):
+    if not path or not os.path.isfile(str(path)): return 0
+    return sum(1 for _ in open(str(path)))
+
+def _count_dir(d):
+    return sum(1 for _ in Path(d).iterdir() if _.is_dir()) if d and Path(d).is_dir() else 0
+
+def _read_tsv(path):
+    rows = []
+    p = Path(path)
+    if not p.is_file(): return rows
+    with open(p) as f:
+        hdr = f.readline().strip().split('\t')
+        for line in f:
+            if not line.strip(): continue
+            rows.append(dict(zip(hdr, line.strip().split('\t'))))
+    return rows
+
+def _n50_n90(lens):
+    if not lens: return (0, 0)
+    lens_s = sorted(lens, reverse=True)
+    total = sum(lens_s); cum = 0; n50 = n90 = 0
+    half, n90t = total / 2, total * 0.9
+    for la in lens_s:
+        cum += la
+        if n50 == 0 and cum >= half: n50 = la
+        if n90 == 0 and cum >= n90t: n90 = la
+        if n50 > 0 and n90 > 0: break
+    return (n50, n90)
+
+def _parse_fasta_lens(fa_path):
+    lens = []; seq = ""
+    for line in open(str(fa_path)):
+        s = line.strip()
+        if s.startswith('>'):
+            if seq: lens.append(len(seq))
+            seq = ""
+        else: seq += s
+    if seq: lens.append(len(seq))
+    return lens
+
+
+# ═══════════════════════════════════════════════════════════════
+# 阶段数据收集
+# ═══════════════════════════════════════════════════════════════
+
+def collect_data(output_dir, report_dir):
+    """收集所有阶段数据 → 生成 TSV + 返回 stage_stats"""
+    root = Path(output_dir).resolve()
+    stage_stats = []
+
+    def _add(stage, status, key_metric="", details=""):
+        stage_stats.append({"Stage": stage, "Status": status, "Key_Metric": key_metric, "Details": details})
+
+    log = print  # simple logger
+
+    # ── 00a_CleanData ──
+    clean = root / "00a_CleanData"
+    if clean.is_dir():
+        ns = _count_dir(clean / "3.clumpify") or _count_dir(clean / "2.fasta") or _count_dir(clean)
+        _add("00a_CleanData", "✓", key_metric=f"{ns} 样本", details=str(clean))
+        fp = clean / "logs"
+        if fp.is_dir():
+            jf_list = list(fp.glob("*_fastp_report.json"))
+            if jf_list:
+                n_total_before, n_total_after = 0, 0
+                with open(report_dir / "data_summary.tsv", "w") as ds:
+                    ds.write("Sample\tRaw_Reads\tClean_Reads\tRetained(%)\tRaw_Q20(%)\tClean_Q20(%)\tRaw_Q30(%)\tClean_Q30(%)\tLowQ_Reads\tTooShort_Reads\tDup_Rate(%)\n")
+                    for jf in sorted(jf_list):
+                        try:
+                            js = json.load(open(jf))
+                            sn = jf.name.replace("_fastp_report.json", "")
+                            bef = js.get("summary", {}).get("before_filtering", {})
+                            aft = js.get("summary", {}).get("after_filtering", {})
+                            fil = js.get("filtering_result", {})
+                            dup = js.get("duplication", {})
+                            nb = bef.get("total_reads", 0); na = aft.get("total_reads", 0)
+                            n_total_before += nb; n_total_after += na
+                            ds.write(f"{sn}\t{nb}\t{na}\t{round(na/max(nb,1)*100,1)}\t"
+                                     f"{round(bef.get('q20_rate',0)*100,1)}\t{round(aft.get('q20_rate',0)*100,1)}\t"
+                                     f"{round(bef.get('q30_rate',0)*100,1)}\t{round(aft.get('q30_rate',0)*100,1)}\t"
+                                     f"{fil.get('low_quality_reads',0)}\t{fil.get('too_short_reads',0)}\t"
+                                     f"{round(dup.get('rate',0)*100,3)}\n")
+                        except: pass
+                    ds.write(f"TOTAL\t{n_total_before}\t{n_total_after}\t{round(n_total_after/max(n_total_before,1)*100,1)}\n")
+                _add("  └ data_summary", "✓", key_metric=f"reads: {n_total_before:,}→{n_total_after:,}")
+    else:
+        _add("00a_CleanData", "○", details="未运行")
+
+    # ── 00b_HostDepletion ──
+    hostdep = root / "00b_HostDepletion"
+    if hostdep.is_dir():
+        ns = _count_dir(hostdep)
+        hd_rows = {}
+        sq_tsv = hostdep / "host_depletion_seqkit_summary.tsv"
+        if sq_tsv.is_file():
+            for r in _read_tsv(sq_tsv):
+                sn = r.get("Sample",""); stage = r.get("Stage","")
+                nseq = int(r.get("num_seqs",0))
+                if sn not in hd_rows: hd_rows[sn] = {"Sample":sn,"Raw":0,"After_Kraken2":0,"After_Host":0}
+                if "Raw" in stage or "1_" in stage: hd_rows[sn]["Raw"] = max(hd_rows[sn]["Raw"], nseq)
+                elif "Kraken" in stage or "2_" in stage: hd_rows[sn]["After_Kraken2"] = max(hd_rows[sn]["After_Kraken2"], nseq)
+                elif "Host" in stage or "3_" in stage: hd_rows[sn]["After_Host"] = max(hd_rows[sn]["After_Host"], nseq)
+        rr_tsv = hostdep / "ribodetector.report.txt"
+        if rr_tsv.is_file():
+            for r in _read_tsv(rr_tsv):
+                sn = r.get("Sample","")
+                if sn not in hd_rows: hd_rows[sn] = {"Sample":sn,"Raw":0,"After_Kraken2":0,"After_Host":0}
+                hd_rows[sn]["rRNA"] = int(r.get("rRNA",0))
+                hd_rows[sn]["non_rRNA"] = int(r.get("non_rRNA",0))
+                hd_rows[sn]["Total_rRNA"] = int(r.get("Total_sequences",0))
+        if hd_rows:
+            with open(report_dir / "hostdep_summary.tsv", "w") as hf:
+                cols = ["Sample","Raw","After_Kraken2","After_Host","Total_rRNA","non_rRNA","rRNA"]
+                hf.write("\t".join(cols)+"\n")
+                for sn in sorted(hd_rows):
+                    r = hd_rows[sn]
+                    hf.write("\t".join(str(r.get(c,0)) for c in cols)+"\n")
+        _add("00b_HostDepletion", "✓", key_metric=f"{ns} 样本", details=str(hostdep))
+    else:
+        _add("00b_HostDepletion", "○", details="未运行")
+
+    # ── 01_Assembly ──
+    asm = root / "01_Assembly"
+    if asm.is_dir():
+        ns = _count_dir(asm)
+        total_contigs, total_bp = 0, 0
+        asm_data = []
+        for d in asm.iterdir():
+            if not d.is_dir(): continue
+            for f in d.glob("*.contig.fasta"):
+                for line in open(f):
+                    if line.startswith('>'): total_contigs += 1
+                    else: total_bp += len(line.strip())
+        _add("01_Assembly", "✓", key_metric=f"{ns} 样本, {total_contigs:,} contigs, {total_bp/1e6:.1f} Mb", details=str(asm))
+        for d in sorted(asm.iterdir()):
+            if not d.is_dir(): continue
+            n_contig = 0
+            for f in d.glob("*.contig.fasta"): n_contig = _count_fasta(f)
+            _add(f"  └ {d.name}", "✓", key_metric=f"{n_contig} contigs")
+        # assembly_summary.tsv
+        with open(report_dir / "assembly_summary.tsv", "w") as af:
+            af.write("Sample\tAssembler\tSize(Mb)\tContigs\tMax_Len\tN50\tN90\t>500bp\t>500bp(%)\t>1000bp\t>1000bp(%)\n")
+            for d in sorted(asm.iterdir()):
+                if not d.is_dir(): continue
+                for f in d.glob("*.contig.fasta"):
+                    lens = _parse_fasta_lens(f)
+                    if not lens: continue
+                    n = len(lens); total = sum(lens); mx = max(lens)
+                    n50, n90 = _n50_n90(lens)
+                    c500 = sum(1 for l in lens if l > 500); r500 = round(c500/n*100,1) if n else 0
+                    c1000 = sum(1 for l in lens if l > 1000); r1000 = round(c1000/n*100,1) if n else 0
+                    at = f.stem.replace(f"{d.name}_", "").replace(".contig", "")
+                    af.write(f"{d.name}\t{at}\t{total/1e6:.1f}\t{n}\t{mx}\t{n50}\t{n90}\t{c500}\t{r500}\t{c1000}\t{r1000}\n")
+                    asm_data.append({'s': d.name, 'n': n, 'total': total, 'n50': n50})
+            if len(asm_data) > 1:
+                t_n = sum(r['n'] for r in asm_data); t_bp = sum(r['total'] for r in asm_data)
+                af.write(f"TOTAL\tall\t{t_bp/1e6:.1f}\t{t_n}\t-\t-\t-\t-\t-\t-\t-\n")
+        # 调用 analysis/assembly_stats.py
+        as_script = SCRIPT_DIR.parent / "analysis" / "assembly_stats.py"
+        if as_script.is_file():
+            try: subprocess.run([sys.executable, str(as_script), "-a", str(asm), "-o", str(report_dir / "assembly_summary.tsv")], capture_output=True, timeout=60)
+            except: pass
+    else:
+        _add("01_Assembly", "○", details="未运行")
+
+    # ── 02_Identification ──
+    ident = root / "02_Identification"
+    if ident.is_dir():
+        ns = _count_dir(ident)
+        n_virus = 0
+        for d in ident.iterdir():
+            if not d.is_dir(): continue
+            for f in d.glob("*virus.all.candidate.fasta"): n_virus += _count_fasta(f)
+        _add("02_Identification", "✓", key_metric=f"{ns} 样本, {n_virus:,} 病毒序列", details=str(ident))
+        tools_list = ['genomad','blast','metabuli','virsorter2','viralverify','virhunter','virbot','viralm','rdrpcatch']
+        ident_data = []
+        with open(report_dir / "ident_summary.tsv", "w") as ids:
+            ids.write("Sample\tAll_Candidate\t" + "\t".join(tools_list) + "\n")
+            for d in sorted(ident.iterdir()):
+                if not d.is_dir(): continue
+                all_ids = _count_fasta(d / f"{d.name}_virus.all.candidate.fasta")
+                tcounts = {}
+                for tool in tools_list:
+                    idf = d / f"{d.name}_virus.{tool}.result.id"
+                    tcounts[tool] = _count_lines(idf) if idf.is_file() else 0
+                ids.write(f"{d.name}\t{all_ids}\t" + "\t".join(str(tcounts[t]) for t in tools_list) + "\n")
+                ident_data.append({'Sample': d.name, 'All': all_ids, **tcounts})
+            if len(ident_data) > 1:
+                total_all = sum(r['All'] for r in ident_data)
+                total_tools = {t: sum(r[t] for r in ident_data) for t in tools_list}
+                ids.write(f"TOTAL\t{total_all}\t" + "\t".join(str(total_tools[t]) for t in tools_list) + "\n")
+                top_tools = sorted(total_tools.items(), key=lambda x: -x[1])[:3]
+                best = " | ".join(f"{t}={c}" for t,c in top_tools)
+                _add("  └ multi-sample", "✓", key_metric=f"total={total_all}, top={best}")
+        filter_data = []; modes_seen = set()
+        with open(report_dir / "filter_summary.tsv", "w") as fs:
+            fs.write("Sample\tMode\tAll_Candidate\tPassed\tRetained(%)\n")
+            for d in sorted(ident.iterdir()):
+                if not d.is_dir(): continue
+                all_n = _count_fasta(d / f"{d.name}_virus.all.candidate.fasta")
+                for fm, fd in [('filter','uniprot_filter_output_filter'),('strict','uniprot_filter_output_strict'),('comb','uniprot_filter_output')]:
+                    ff = d / fd / f"{d.name}_virus.uniprot_filtered.fasta"
+                    nf = _count_fasta(ff) if ff.is_file() else 0
+                    if nf > 0 or (nf == 0 and fd == 'uniprot_filter_output'):
+                        fs.write(f"{d.name}\t{fm}\t{all_n}\t{nf}\t{round(nf/max(all_n,1)*100,1)}\n")
+                        filter_data.append({'Sample': d.name, 'Mode': fm, 'All': all_n, 'Passed': nf})
+                        modes_seen.add(fm)
+            if filter_data:
+                for m in sorted(modes_seen):
+                    mr = [r for r in filter_data if r['Mode'] == m]
+                    t_all = sum(r['All'] for r in mr); t_pass = sum(r['Passed'] for r in mr)
+                    fs.write(f"TOTAL\t{m}\t{t_all}\t{t_pass}\t{round(t_pass/max(t_all,1)*100,1)}\n")
+        # 调用 analysis/ident_stats.py
+        is_script = SCRIPT_DIR.parent / "analysis" / "ident_stats.py"
+        if is_script.is_file():
+            try: subprocess.run([sys.executable, str(is_script), "-i", str(ident), "-o", str(report_dir)], capture_output=True, timeout=120)
+            except: pass
+    else:
+        _add("02_Identification", "○", details="未运行")
+
+    # ── 03_COBRA ──
+    cobra = root / "03_COBRA"
+    if cobra.is_dir():
+        ns = _count_dir(cobra)
+        n_ext, n_queries, n_orphan = 0, 0, 0
+        with open(report_dir / "cobra_summary.tsv", "w") as cs:
+            cs.write("Sample\tTotal_Queries\tExtended_Circular\tExtended_Partial\tExtended_Failed\tOrphan_End\tExtension_Rate(%)\tOrphan_Rate(%)\tExtended_Contigs\tTotal_Gain(bp)\n")
+            for sd in sorted(cobra.iterdir()):
+                if not sd.is_dir(): continue
+                sn = sd.name
+                sn_ext, sn_gain = 0, 0
+                for cf in sd.rglob("*.cobra.fa"):
+                    if cf.stat().st_size > 0:
+                        for rec in _parse_fasta_lens(cf):
+                            pass  # 只计数
+                        sn_ext += _count_fasta(cf)
+                n_ext += sn_ext
+                logs = list(sd.rglob("log"))
+                cobra_logs = [f for f in logs if 'COBRA' in str(f.parent.name)]
+                if not cobra_logs: cobra_logs = logs[:1]
+                tq = ec = ep = ef = oe = 0
+                if cobra_logs:
+                    try:
+                        text = open(str(cobra_logs[0])).read()
+                        for line in text.split('\n'):
+                            s = line.strip()
+                            if s.startswith('# Total queries:'): tq = int(s.split(':')[1].strip())
+                            elif 'Extended_circular' in s: ec = int(s.split(':')[1].strip().split()[0])
+                            elif 'Extended_partial' in s: ep = int(s.split(':')[1].strip().split()[0])
+                            elif 'Extended_failed' in s: ef = int(s.split(':')[1].strip())
+                            elif 'Orphan end' in s: oe = int(s.split(':')[1].strip())
+                    except: pass
+                n_queries += tq; n_orphan += oe
+                er = round((ec+ep)/max(tq,1)*100, 1); or_ = round(oe/max(tq,1)*100, 1)
+                cs.write(f"{sn}\t{tq}\t{ec}\t{ep}\t{ef}\t{oe}\t{er}\t{or_}\t{sn_ext}\t{sn_gain}\n")
+        _add("03_COBRA", "✓", key_metric=f"{ns} 样本, {n_ext} 延伸, {n_queries} query, {n_orphan} orphan")
+        # 调用 analysis/cobra_stats.py
+        cs_script = SCRIPT_DIR.parent / "analysis" / "cobra_stats.py"
+        if cs_script.is_file():
+            try: subprocess.run([sys.executable, str(cs_script), "-c", str(cobra), "-o", str(report_dir)], capture_output=True, timeout=120)
+            except: pass
+    else:
+        _add("03_COBRA", "○", details="未运行")
+
+    # ── 04_Cluster ──
+    cluster = root / "04_Cluster"
+    if cluster.is_dir():
+        centroids_fa = cluster / "centroids" / "final_centroids.fasta"
+        known_fa = cluster / "2_cdhit" / "known_centroids.fasta"
+        n_centroids = _count_fasta(centroids_fa) if centroids_fa.is_file() else 0
+        n_known = _count_fasta(known_fa) if known_fa.is_file() else 0
+        _add("04_CLUSTER", "✓", key_metric=f"{n_centroids:,} novel + {n_known:,} known centroids", details=str(cluster))
+        ctsv = cluster / "3_vclust" / "vclust_clusters.tsv"
+        if ctsv.is_file():
+            n_clusters = _count_lines(ctsv) - 1
+            sizes = []
+            with open(ctsv) as cf:
+                cf.readline()
+                for line in cf:
+                    members = line.strip().split('\t')[1] if '\t' in line else ""
+                    sizes.append(len(members.split(',')) if members else 0)
+            singletons = sum(1 for sz in sizes if sz <= 1)
+            max_sz = max(sizes) if sizes else 0
+            _add("  └ vclust", "✓", key_metric=f"{n_clusters:,} 簇, {singletons} 单例, 最大簇={max_sz}")
+        known_linked_fa = cluster / "2_cdhit" / "known_linked_centroids.fasta"
+        n_linked = _count_fasta(known_linked_fa) if known_linked_fa.is_file() else 0
+        if n_linked > 0: _add("  └ CD-HIT linked", "✓", key_metric=f"{n_linked} 有关联contig的已知簇")
+        if n_known - n_linked > 0: _add("  └ CD-HIT pure", "○", key_metric=f"{n_known - n_linked} 纯参考簇 (不进下游)")
+    else:
+        _add("04_CLUSTER", "○", details="未运行")
+
+    # ── 05_Taxonomy ──
+    tax = root / "05_Taxonomy"
+    final_tax = tax / "integrated" / "final_integrated_classification.tsv"
+    if final_tax.is_file():
+        n = _count_lines(final_tax) - 1
+        counts = {"Known": 0, "Novel_Species": 0, "Novel_Genus": 0, "Novel_Family": 0}
+        rank_fill = {"Realm":0,"Kingdom":0,"Phylum":0,"Class":0,"Order":0,"Family":0,"Genus":0,"Species":0}
+        with open(final_tax) as tf:
+            for row in csv.DictReader(tf, delimiter="\t"):
+                sp = row.get("Species", row.get("species", ""))
+                ge = row.get("Genus", row.get("genus", ""))
+                fa = row.get("Family", row.get("family", ""))
+                if sp and sp not in ("NA", "-"): counts["Known"] += 1
+                elif ge and ge not in ("NA", "-"): counts["Novel_Species"] += 1
+                elif fa and fa not in ("NA", "-"): counts["Novel_Genus"] += 1
+                else: counts["Novel_Family"] += 1
+                for rk in ["Realm","Kingdom","Phylum","Class","Order","Family","Genus","Species"]:
+                    v = row.get(rk, row.get(rk.lower(), ""))
+                    if v and v not in ("NA", "-"): rank_fill[rk] += 1
+        _add("05_Taxonomy", "✓", key_metric=f"{n} 条, ★{counts['Known']} 已知, ★★{counts['Novel_Species']} 新种", details=str(tax))
+        _add("  └ Novel Rank", "✓", key_metric=f"Known={counts['Known']} NewSp={counts['Novel_Species']} NewGe={counts['Novel_Genus']} NewFa={counts['Novel_Family']}")
+        rk_info = " ".join(f"{r}={rank_fill[r]}" for r in ["Realm","Phylum","Class","Order","Family","Genus","Species"] if rank_fill.get(r,0) > 0)
+        if rk_info: _add("  └ Rank Fill", "✓", key_metric=rk_info[:120])
+    elif tax.is_dir():
+        _add("05_Taxonomy", "○", key_metric="已运行但无最终结果", details=str(tax))
+    else:
+        _add("05_Taxonomy", "○", details="未运行")
+
+    # ── 06_HostPrediction ──
+    host = root / "06_HostPrediction"
+    host_summary = host / "ensemble_host_summary.tsv"
+    if host_summary.is_file():
+        n = _count_lines(host_summary) - 1
+        try:
+            import polars as pl
+            hdf = pl.read_csv(str(host_summary), separator="\t", null_values=["NA","N/A",""])
+            if "Final_Host" in hdf.columns:
+                hcounts = hdf.group_by("Final_Host").agg(pl.len()).sort("len", descending=True)
+                top3 = " | ".join(f"{r[0]}={r[1]}" for r in hcounts.head(3).iter_rows())
+                _add("06_HostPrediction", "✓", key_metric=f"{n} 条, {top3}", details=str(host))
+        except Exception as e:
+            _add("06_HostPrediction", "✓", key_metric=f"{n} 条", details=str(host))
+    elif host.is_dir():
+        _add("06_HostPrediction", "○", key_metric="已运行但无最终结果", details=str(host))
+    else:
+        _add("06_HostPrediction", "○", details="未运行")
+
+    # ── 07_CheckV ──
+    cv_dir = root / "07_CheckV"
+    QUALITY_ORDER = ["Complete","High-quality","Medium-quality","Low-quality","Not-determined"]
+    if cv_dir.is_dir():
+        cv_tsvs = list(cv_dir.rglob("completeness.tsv"))
+        if cv_tsvs:
+            host_qd = {}; host_conf = {}
+            for ct in cv_tsvs:
+                host_name = ct.parent.name
+                if host_name not in host_qd:
+                    host_qd[host_name] = dict.fromkeys(QUALITY_ORDER, 0)
+                    host_conf[host_name] = {}
+                try:
+                    import polars as pl
+                    cv = pl.read_csv(str(ct), separator="\t", null_values=["NA","N/A",""])
+                    if "aai_confidence" in cv.columns:
+                        for row in cv.iter_rows(named=True):
+                            conf = str(row.get("aai_confidence","")).strip()
+                            if not conf or conf in ("NA","N/A",""): conf = "Not-determined"
+                            host_conf[host_name][conf] = host_conf[host_name].get(conf,0) + 1
+                    comp_col = next((c for c in ["aai_completeness","completeness"] if c in cv.columns), None)
+                    if comp_col:
+                        for row in cv.iter_rows(named=True):
+                            val = row.get(comp_col)
+                            try:
+                                v = float(val) if val and val != "NA" else None
+                                if v is None: key = "Not-determined"
+                                elif v >= 90: key = "Complete"
+                                elif v >= 50: key = "High-quality"
+                                elif v >= 10: key = "Medium-quality"
+                                else: key = "Low-quality"
+                            except: key = "Not-determined"
+                            host_qd[host_name][key] += 1
+                except: pass
+            global_qd = dict.fromkeys(QUALITY_ORDER, 0)
+            for hqd in host_qd.values():
+                for q in QUALITY_ORDER: global_qd[q] += hqd[q]
+            n_total = sum(global_qd.values())
+            n_hq = global_qd["Complete"] + global_qd["High-quality"]
+            # checkv_summary.tsv
+            with open(report_dir / "checkv_summary.tsv", "w") as cvf:
+                cvf.write("Host\t" + "\t".join(QUALITY_ORDER) + "\tTotal\tHQ\n")
+                for h in sorted(host_qd):
+                    hqd = host_qd[h]; t = sum(hqd.values()); hq = hqd["Complete"]+hqd["High-quality"]
+                    cvf.write(f"{h}\t"+"\t".join(str(hqd[q]) for q in QUALITY_ORDER)+f"\t{t}\t{hq}\n")
+                cvf.write(f"TOTAL\t"+"\t".join(str(global_qd[q]) for q in QUALITY_ORDER)+f"\t{n_total}\t{n_hq}\n")
+            # checkv_confidence.tsv
+            if host_conf:
+                all_confs = set()
+                for hc in host_conf.values(): all_confs.update(hc.keys())
+                conf_order = sorted(all_confs)
+                with open(report_dir / "checkv_confidence.tsv", "w") as cff:
+                    cff.write("Host\t"+"\t".join(conf_order)+"\tTotal\n")
+                    for h in sorted(host_conf):
+                        hc = host_conf[h]; t = sum(hc.values())
+                        cff.write(f"{h}\t"+"\t".join(str(hc.get(c,0)) for c in conf_order)+f"\t{t}\n")
+            _add("07_CheckV", "✓", key_metric=f"{n_hq} HQ / {n_total} total", details=str(cv_dir))
+            for h, hqd in sorted(host_qd.items(), key=lambda x: -sum(x[1].values()))[:8]:
+                tot = sum(hqd.values())
+                if tot > 0: _add(f"  └ {h}", "✓", key_metric=f"HQ={hqd['Complete']+hqd['High-quality']} total={tot}")
+            qparts = [f"{q}={global_qd[q]}" for q in QUALITY_ORDER if global_qd[q] > 0]
+            _add("  └ Distribution", "✓", key_metric=" ".join(qparts[:4]))
+        else:
+            _add("07_CheckV", "✓", key_metric="已运行", details=str(cv_dir))
+    else:
+        _add("07_CheckV", "○", details="未运行")
+
+    # ── 08_Rescue ──
+    rescue = root / "08_Rescue"
+    if rescue.is_dir():
+        rescue_finals = list(rescue.rglob("final_centroids.fasta"))
+        n_rescued = 0
+        for rf in rescue_finals:
+            if "branch" not in str(rf) and "known" not in str(rf): n_rescued += _count_fasta(rf)
+        branch_info = []
+        for bname, blabel in [("branch_a","CheckV"),("branch_b","VSI"),("branch_c","BLASTN")]:
+            for bd in rescue.rglob(bname):
+                if not bd.is_dir(): continue
+                pass_fa = bd / f"{'branchA' if bname=='branch_a' else 'branchB' if bname=='branch_b' else 'branchC'}_pass.fasta"
+                if not pass_fa.is_file():
+                    pass_fa = bd / f"{'branchB' if bname=='branch_b' else 'branchC'}_pass.fasta"
+                if pass_fa.is_file():
+                    bp = _count_fasta(pass_fa)
+                    if bp > 0: branch_info.append(f"{blabel}={bp}")
+        _add("08_Rescue", "✓", key_metric=f"{n_rescued:,} HQ vOTU ({' | '.join(branch_info) if branch_info else '0 pas'})", details=str(rescue))
+    else:
+        _add("08_Rescue", "○", details="未运行")
+
+    return stage_stats
+
+
+# ═══════════════════════════════════════════════════════════════
+# Sankey 图生成
+# ═══════════════════════════════════════════════════════════════
+
+def generate_sankey(output_dir, report_dir):
+    """生成 taxonomy Sankey 图 (全部 + 植物病毒)"""
+    tax = Path(output_dir) / "05_Taxonomy"
+    final_tax = tax / "integrated" / "final_integrated_classification.tsv"
+    if not final_tax.is_file(): return
+    sankey_script = SCRIPT_DIR.parent / "analysis" / "taxonomic_sankey.py"
+    if not sankey_script.is_file(): return
+    try:
+        import importlib.util
+        if not importlib.util.find_spec("plotly"):
+            print("  安装 plotly...")
+            subprocess.run([sys.executable, "-m", "pip", "install", "plotly", "-q"], check=False)
+        subprocess.run([sys.executable, str(sankey_script),
+                        "-i", str(final_tax), "-o", str(report_dir / "classification_sankey.png"),
+                        "--format", "png", "--min-flow", "1", "--min-genus-flow", "10",
+                        "--palette", "set3", "--height", "1200", "--node-pad", "30",
+                        "--label-truncate", "25", "--font-size", "9", "--title-font-size", "16"],
+                       capture_output=True, timeout=120)
+        print(f"  Sankey → {report_dir / 'classification_sankey.png'}")
+        # Plant-only
+        host_summary = Path(output_dir) / "06_HostPrediction" / "ensemble_host_summary.tsv"
+        if host_summary.is_file():
+            try:
+                import polars as pl
+                hdf = pl.read_csv(str(host_summary), separator="\t", null_values=["NA","N/A",""])
+                plant_ids = set(hdf.filter(pl.col("Final_Host")=="Plant")["contig_id"].to_list())
+                if plant_ids:
+                    plant_tax = report_dir / "plant_final_taxonomy.tsv"
+                    with open(final_tax) as tf, open(plant_tax, "w") as pf:
+                        pf.write(tf.readline())
+                        for line in tf:
+                            if line.split('\t')[0] in plant_ids: pf.write(line)
+                    subprocess.run([sys.executable, str(sankey_script),
+                                    "-i", str(plant_tax), "-o", str(report_dir / "classification_sankey_plant.png"),
+                                    "--format", "png", "--min-flow", "1", "--min-genus-flow", "5",
+                                    "--palette", "set3", "--height", "1200", "--node-pad", "30",
+                                    "--label-truncate", "25", "--font-size", "9", "--title-font-size", "16",
+                                    "--title", "Plant Virus Taxonomy Sankey"],
+                                   capture_output=True, timeout=120)
+                    print(f"  Plant Sankey → {report_dir / 'classification_sankey_plant.png'}")
+            except: pass
+    except: pass
+
+
+# ═══════════════════════════════════════════════════════════════
+# HTML 报告生成
+# ═══════════════════════════════════════════════════════════════
+
+def write_html_report(report_dir, stage_stats):
+    """生成期刊级 HTML 流水线报告"""
+    import json as _json, base64 as _b64
+
+    main_stages = [s for s in stage_stats if not s["Stage"].startswith("  ")]
+    sub_stages  = [s for s in stage_stats if s["Stage"].startswith("  ")]
+
+    S = {"✓": "pass", "○": "skip", "✗": "fail"}
+    def _esc(v): return str(v).replace("&","&amp;").replace("<","&lt;").replace(">","&gt;")
+    def _extract_kv(text, pattern):
+        result = {}
+        for m in re.finditer(pattern, text):
+            result[m.group(1)] = int(m.group(2))
+        return result
+
+    n_pass = sum(1 for s in main_stages if s["Status"] == "✓")
+    n_total = sum(1 for s in main_stages if s["Status"] != "○")
+    pct = round(n_pass/max(n_total,1)*100)
+
+    # ── 数据提取 ──
+    chart_scripts = ""
+    stage_has_chart = {}
+
+    # S00a — 数据质量
+    dq_rows = _read_tsv(report_dir / "data_summary.tsv")
+    if dq_rows:
+        dq_samples = [r.get("Sample","")[:14] for r in dq_rows if r.get("Sample","")!="TOTAL"]
+        dq_raw = [int(r.get("Raw_Reads",0)) for r in dq_rows if r.get("Sample","")!="TOTAL"]
+        dq_clean = [int(r.get("Clean_Reads",0)) for r in dq_rows if r.get("Sample","")!="TOTAL"]
+        dq_q20b = [float(r.get("Raw_Q20(%)",0)) for r in dq_rows if r.get("Sample","")!="TOTAL"]
+        dq_q20a = [float(r.get("Clean_Q20(%)",0)) for r in dq_rows if r.get("Sample","")!="TOTAL"]
+        dq_dup = [float(r.get("Dup_Rate(%)",0)) for r in dq_rows if r.get("Sample","")!="TOTAL"]
+        if dq_samples:
+            stage_has_chart['s00a'] = True
+            chart_scripts += f"""
+new Chart(document.getElementById('chart_s00a'), {{
+  type:'bar', data:{{labels:{_json.dumps(dq_samples)},
+  datasets:[{{label:'Raw Reads (M)',data:{_json.dumps([round(v/1e6,1) for v in dq_raw])},backgroundColor:'#90a4ae',yAxisID:'y'}},
+            {{label:'Clean Reads (M)',data:{_json.dumps([round(v/1e6,1) for v in dq_clean])},backgroundColor:'#42a5f5',yAxisID:'y'}},
+            {{label:'Q20 Raw (%)',data:{_json.dumps([round(v,1) for v in dq_q20b])},backgroundColor:'#ffa726',yAxisID:'y1'}},
+            {{label:'Q20 Clean (%)',data:{_json.dumps([round(v,1) for v in dq_q20a])},backgroundColor:'#66bb6a',yAxisID:'y1'}}]}},
+  options:{{responsive:true,plugins:{{title:{{display:true,text:'Read Quality & Filtering'}}}},
+    scales:{{y:{{beginAtZero:true,position:'left',title:{{text:'Reads (M)'}}}},
+             y1:{{beginAtZero:true,position:'right',max:100,grid:{{drawOnChartArea:false}},title:{{text:'Q20 (%)'}}}}}}}}}});
+"""
+    if dq_rows and any(v > 0 for v in dq_dup):
+        chart_scripts += f"""
+new Chart(document.getElementById('chart_s00a_dup'), {{
+  type:'bar', data:{{labels:{_json.dumps(dq_samples)},
+  datasets:[{{label:'Duplication Rate (%)',data:{_json.dumps([round(v,2) for v in dq_dup])},
+            backgroundColor:{_json.dumps(['#ef5350' if v>30 else '#ffa726' if v>15 else '#66bb6a' for v in dq_dup])}}}]}},
+  options:{{responsive:true,plugins:{{title:{{display:true,text:'Duplication Rate per Sample'}}}},
+    scales:{{y:{{beginAtZero:true,title:{{text:'Dup Rate (%)'}}}}}}}}}});
+"""
+
+    # S00b — 宿主去除
+    hd_rows = _read_tsv(report_dir / "hostdep_summary.tsv")
+    if hd_rows:
+        hd_samples = [r.get("Sample","")[:12] for r in hd_rows]
+        hd_raw = [int(r.get("Raw",0)) for r in hd_rows]
+        hd_retained = []
+        for r in hd_rows:
+            nr = int(r.get("non_rRNA",0)); ah = int(r.get("After_Host",0)); ak = int(r.get("After_Kraken2",0))
+            hd_retained.append(nr if nr > 0 else (ah if ah > 0 else ak))
+        hd_removed = [max(0, hd_raw[i] - hd_retained[i]) for i in range(len(hd_samples))]
+        if hd_samples and any(v > 0 for v in hd_raw):
+            stage_has_chart['s00b'] = True
+            chart_scripts += f"""
+new Chart(document.getElementById('chart_s00b'), {{
+  type:'bar', data:{{labels:{_json.dumps(hd_samples)},
+  datasets:[{{label:'Retained (non-host)',data:{_json.dumps(hd_retained)},backgroundColor:'#66bb6a'}},
+            {{label:'Removed (host+rRNA)',data:{_json.dumps(hd_removed)},backgroundColor:'#ef5350'}}]}},
+  options:{{responsive:true,indexAxis:'y',plugins:{{title:{{display:true,text:'Host Depletion: Reads Retained vs Removed'}}}},
+    scales:{{x:{{stacked:true,beginAtZero:true,title:{{text:'Reads'}}}},y:{{stacked:true}}}}}}}}}});
+"""
+
+    # S01 — 组装
+    asm_rows = _read_tsv(report_dir / "assembly_summary.tsv")
+    if asm_rows:
+        asm_samples = [r["Sample"][:12] for r in asm_rows if r.get("Sample","")!="TOTAL"]
+        asm_n50 = [int(r.get("N50",0)) for r in asm_rows if r.get("Sample","")!="TOTAL"]
+        asm_contigs = [int(r.get("Contigs",0)) for r in asm_rows if r.get("Sample","")!="TOTAL"]
+        if asm_samples:
+            stage_has_chart['s01a'] = True
+            chart_scripts += f"""
+new Chart(document.getElementById('chart_s01a'), {{
+  type:'bar', data:{{labels:{_json.dumps(asm_samples)},
+  datasets:[{{label:'N50 (kb)',data:{_json.dumps([round(v/1000,1) for v in asm_n50])},
+  backgroundColor:{_json.dumps(['#1565c0' if v>5000 else '#42a5f5' if v>1000 else '#90caf9' for v in asm_n50])}}}]}},
+  options:{{responsive:true,plugins:{{title:{{display:true,text:'Assembly N50 (kb)'}}}},
+    scales:{{y:{{beginAtZero:true,title:{{text:'N50 (kb)'}}}}}}}}}});
+"""
+            stage_has_chart['s01b'] = True
+            chart_scripts += f"""
+new Chart(document.getElementById('chart_s01b'), {{
+  type:'bar', data:{{labels:{_json.dumps(asm_samples)},
+  datasets:[{{label:'Contigs',data:{_json.dumps(asm_contigs)},
+  backgroundColor:{_json.dumps(['#66bb6a' if v>5000 else '#a5d6a7' if v>1000 else '#c8e6c9' for v in asm_contigs])}}}]}},
+  options:{{responsive:true,plugins:{{title:{{display:true,text:'Assembly Contig Count'}}}},
+    scales:{{y:{{beginAtZero:true,title:{{text:'Contigs'}}}}}}}}}});
+"""
+
+    # S02 — 鉴定
+    id_rows = _read_tsv(report_dir / "ident_summary.tsv")
+    if id_rows:
+        id_row0 = id_rows[0]; id_tools = [k for k in id_row0 if k not in ("Sample","All_Candidate")]
+        id_vals = {}
+        for t in id_tools:
+            try: id_vals[t] = int(id_row0[t])
+            except: pass
+        if id_vals:
+            stage_has_chart['s02a'] = True
+            chart_scripts += f"""
+new Chart(document.getElementById('chart_s02a'), {{
+  type:'bar', data:{{labels:{_json.dumps(list(id_vals.keys()))},
+  datasets:[{{label:'Virus contigs',data:{_json.dumps(list(id_vals.values()))},backgroundColor:'#5c6bc0'}}]}},
+  options:{{responsive:true,indexAxis:'y',plugins:{{title:{{display:true,text:'Per-Tool Identification'}}}}}}}});
+"""
+    fil_rows = _read_tsv(report_dir / "filter_summary.tsv")
+    if fil_rows:
+        flabels = [f"{r['Sample'][:10]}-{r['Mode']}" for r in fil_rows if r.get("Sample","")!="TOTAL"]
+        fvals = [int(r.get("Passed",0)) for r in fil_rows if r.get("Sample","")!="TOTAL"]
+        f_total = [int(r.get("All_Candidate",0)) for r in fil_rows if r.get("Sample","")!="TOTAL"]
+        if flabels:
+            stage_has_chart['s02b'] = True
+            chart_scripts += f"""
+new Chart(document.getElementById('chart_s02b'), {{
+  type:'bar', data:{{labels:{_json.dumps(flabels)},
+  datasets:[{{label:'All candidate',data:{_json.dumps(f_total)},backgroundColor:'#bdbdbd'}},
+            {{label:'Passed filter',data:{_json.dumps(fvals)},backgroundColor:'#66bb6a'}}]}},
+  options:{{responsive:true,plugins:{{title:{{display:true,text:'UniProt Filter: Before vs After'}}}},
+    scales:{{y:{{beginAtZero:true}}}}}}}});
+"""
+
+    # S03 — COBRA
+    cobra_rows = _read_tsv(report_dir / "cobra_summary.tsv")
+    if cobra_rows:
+        csamples = [r.get("Sample","")[:12] for r in cobra_rows]
+        try: er_key = next(k for k in cobra_rows[0] if 'Extension_Rate' in k or 'extension_rate' in k)
+        except: er_key = None
+        try: or_key = next(k for k in cobra_rows[0] if 'Orphan_Rate' in k or 'orphan_rate' in k)
+        except: or_key = None
+        if er_key and csamples:
+            stage_has_chart['s03'] = True
+            cobra_ext = [float(r.get(er_key,0)) for r in cobra_rows]
+            cobra_orph = [float(r.get(or_key,0)) for r in cobra_rows] if or_key else []
+            ds_c = f'{{label:"Extension Rate (%)",data:{_json.dumps(cobra_ext)},backgroundColor:"#66bb6a",yAxisID:"y"}}'
+            if cobra_orph: ds_c += f',{{label:"Orphan Rate (%)",data:{_json.dumps(cobra_orph)},backgroundColor:"#ef5350",yAxisID:"y1"}}'
+            chart_scripts += f"""
+new Chart(document.getElementById('chart_s03'), {{
+  type:'bar', data:{{labels:{_json.dumps(csamples)},
+  datasets:[{ds_c}]}},
+  options:{{responsive:true,plugins:{{title:{{display:true,text:'COBRA Extension & Orphan Rate'}}}},
+    scales:{{y:{{beginAtZero:true,position:'left',title:{{text:'Rate (%)'}}}},
+             y1:{{beginAtZero:true,position:'right',grid:{{drawOnChartArea:false}},title:{{text:'Orphan (%)'}}}}}}}}}});
+"""
+
+    # S05 — Taxonomy novelty
+    tax_novelty_kv = {}
+    for s in stage_stats:
+        if 'Novel Rank' in s['Stage'] and 'Known=' in s.get('Key_Metric',''):
+            tax_novelty_kv = _extract_kv(s['Key_Metric'], r'(Known|NewSp|NewGe|NewFa)=(\d+)')
+    if tax_novelty_kv:
+        stage_has_chart['s05a'] = True
+        chart_scripts += f"""
+new Chart(document.getElementById('chart_s05a'), {{
+  type:'doughnut', data:{{labels:{_json.dumps(list(tax_novelty_kv.keys()))},
+  datasets:[{{data:{_json.dumps(list(tax_novelty_kv.values()))},
+  backgroundColor:['#2e7d32','#1565c0','#ef6c00','#c62828']}}]}},
+  options:{{responsive:true,plugins:{{title:{{display:true,text:'Taxonomy Novelty'}},legend:{{position:'bottom'}}}}}}}});
+"""
+
+    # S06 — Host distribution
+    host_kv = {}
+    for s in stage_stats:
+        if '06_HostPrediction' in s['Stage'] and '=' in s.get('Key_Metric',''):
+            host_kv = _extract_kv(s['Key_Metric'], r'(\w+)=(\d+)')
+    if host_kv:
+        stage_has_chart['s06a'] = True
+        chart_scripts += f"""
+new Chart(document.getElementById('chart_s06a'), {{
+  type:'doughnut', data:{{labels:{_json.dumps(list(host_kv.keys()))},
+  datasets:[{{data:{_json.dumps(list(host_kv.values()))},
+  backgroundColor:['#42a5f5','#66bb6a','#ffa726','#ef5350','#ab47bc','#26c6da','#7e57c2','#78909c']}}]}},
+  options:{{responsive:true,plugins:{{title:{{display:true,text:'Host Prediction Distribution'}},legend:{{position:'bottom'}}}}}}}});
+"""
+
+    # S07 — CheckV quality
+    cv_rows = _read_tsv(report_dir / "checkv_summary.tsv")
+    if cv_rows:
+        qlabels = ["Complete","High-quality","Medium-quality","Low-quality","Not-determined"]
+        cv_hosts = [r["Host"][:14] for r in cv_rows if r.get("Host","")!="TOTAL"]
+        cv_qdata = {q: [] for q in qlabels}
+        for r in cv_rows:
+            if r.get("Host","") == "TOTAL": continue
+            for q in qlabels: cv_qdata[q].append(int(r.get(q,0)))
+        if cv_hosts:
+            stage_has_chart['s07a'] = True
+            colors = ['#2e7d32','#1565c0','#ef6c00','#c62828','#9e9e9e']
+            datasets = ','.join(f'{{label:"{q}",data:{_json.dumps(cv_qdata[q])},backgroundColor:"{colors[i]}"}}' for i,q in enumerate(qlabels))
+            chart_scripts += f"""
+new Chart(document.getElementById('chart_s07a'), {{
+  type:'bar', data:{{labels:{_json.dumps(cv_hosts)},
+  datasets:[{datasets}]}},
+  options:{{responsive:true,plugins:{{title:{{display:true,text:'CheckV Quality by Host'}}}},
+    scales:{{x:{{stacked:true}},y:{{stacked:true,beginAtZero:true,title:{{text:'Contig Count'}}}}}}}}}});
+"""
+    cv_conf_rows = _read_tsv(report_dir / "checkv_confidence.tsv")
+    if cv_conf_rows:
+        cql = [k for k in cv_conf_rows[0] if k not in ("Host","Total")]
+        cf_hosts = [r["Host"][:14] for r in cv_conf_rows]
+        cf_data = {q: [] for q in cql}
+        for r in cv_conf_rows:
+            for q in cql: cf_data[q].append(int(r.get(q,0)))
+        if cf_hosts and cql:
+            stage_has_chart['s07b'] = True
+            colors2 = ['#2e7d32','#ef6c00','#c62828','#1565c0','#9e9e9e']
+            datasets2 = ','.join(f'{{label:"{q}",data:{_json.dumps(cf_data[q])},backgroundColor:"{colors2[i%5]}"}}' for i,q in enumerate(cql))
+            chart_scripts += f"""
+new Chart(document.getElementById('chart_s07b'), {{
+  type:'bar', data:{{labels:{_json.dumps(cf_hosts)},
+  datasets:[{datasets2}]}},
+  options:{{responsive:true,plugins:{{title:{{display:true,text:'CheckV aai_confidence by Host'}}}},
+    scales:{{x:{{stacked:true}},y:{{stacked:true,beginAtZero:true,title:{{text:'Contig Count'}}}}}}}}}});
+"""
+
+    # S08 — Rescue branches
+    rescue_kv = {}
+    for s in stage_stats:
+        if '08_Rescue' in s['Stage']:
+            rescue_kv = _extract_kv(s['Key_Metric'], r'(CheckV|VSI|BLASTN)=(\d+)')
+    if rescue_kv:
+        stage_has_chart['s08'] = True
+        chart_scripts += f"""
+new Chart(document.getElementById('chart_s08'), {{
+  type:'pie', data:{{labels:{_json.dumps(list(rescue_kv.keys()))},
+  datasets:[{{data:{_json.dumps(list(rescue_kv.values()))},
+  backgroundColor:['#66bb6a','#42a5f5','#ffa726']}}]}},
+  options:{{responsive:true,plugins:{{title:{{display:true,text:'Rescue Branch Contributions'}},legend:{{position:'bottom'}}}}}}}});
+"""
+
+    # Sankey 图 base64
+    sankey_imgs = ""
+    for sname, stitle in [("classification_sankey.png","Taxonomy Classification Sankey"),
+                          ("classification_sankey_plant.png","Plant Virus Taxonomy Sankey")]:
+        spath = report_dir / sname
+        if spath.is_file():
+            with open(spath, "rb") as sf:
+                b64 = _b64.b64encode(sf.read()).decode()
+            sankey_imgs += f'<div class="sankey-card"><h3>{stitle}</h3><img src="data:image/png;base64,{b64}" alt="{stitle}"></div>\n'
+
+    # ── KPI ──
+    kpis = {}
+    for s in stage_stats:
+        if s['Stage'] == '00a_CleanData':
+            for m in re.finditer(r'reads:\s*([\d,]+)→([\d,]+)', s.get('Key_Metric','')):
+                kpis['raw_reads'] = m.group(1); kpis['clean_reads'] = m.group(2)
+        if s['Stage'] == '01_Assembly':
+            for m in re.finditer(r'([\d,]+)\s*contigs', s.get('Key_Metric','')): kpis['total_contigs'] = m.group(1)
+            for m in re.finditer(r'([\d.]+)\s*Mb', s.get('Key_Metric','')): kpis['total_mb'] = m.group(1)
+        if s['Stage'] == '02_Identification':
+            for m in re.finditer(r'([\d,]+)\s*病毒序列', s.get('Key_Metric','')): kpis['virus_seqs'] = m.group(1)
+        if 'Novel Rank' in s['Stage']: kpis['novelty'] = s.get('Key_Metric','')
+        if '06_HostPrediction' in s['Stage'] and s['Stage'].startswith('06'):
+            for m in re.finditer(r'([\d,]+)\s*条', s.get('Key_Metric','')): kpis['host_total'] = m.group(1)
+        if '07_CheckV' in s['Stage'] and s['Stage'].startswith('07'):
+            for m in re.finditer(r'(\d+)\s*HQ', s.get('Key_Metric','')): kpis['hq_votus'] = m.group(1)
+        if '08_Rescue' in s['Stage'] and s['Stage'].startswith('08'):
+            for m in re.finditer(r'([\d,]+)\s*HQ vOTU', s.get('Key_Metric','')): kpis['rescued'] = m.group(1)
+
+    # ── Stage sections ──
+    stage_defs = [
+        ("s00a","CleanData","00a Data Preprocessing","QC","#607d8b"),
+        ("s00b","HostDep","00b Host Depletion","DEP","#546e7a"),
+        ("s01","Assembly","01 Assembly","ASM","#1565c0"),
+        ("s02","Ident","02 Identification","ID","#5c6bc0"),
+        ("s03","COBRA","03 COBRA Extension","COBRA","#00897b"),
+        ("s04","Cluster","04 Clustering","CLU","#ef6c00"),
+        ("s05","Taxonomy","05 Taxonomy Classification","TAX","#6a1b9a"),
+        ("s06","Host","06 Host Prediction","HOST","#c62828"),
+        ("s07","CheckV","07 CheckV Quality","CV","#2e7d32"),
+        ("s08","Rescue","08 Rescue","RESCUE","#37474f"),
+    ]
+
+    _skey_to_num = {'s00a':'00a','s00b':'00b','s01':'01','s02':'02','s03':'03',
+                    's04':'04','s05':'05','s06':'06','s07':'07','s08':'08'}
+    stage_status = {}; stage_metric = {}
+    for s in stage_stats:
+        sn = s['Stage']
+        for sk, _, _, _, _ in stage_defs:
+            snum = _skey_to_num.get(sk,'')
+            if sn.startswith(snum) or (snum+'_') in sn or sn == snum:
+                stage_status[sk] = S.get(s['Status'],'skip')
+                stage_metric[sk] = s.get('Key_Metric','')
+                break
+
+    chart_map = {
+        's00a': [('chart_s00a','Read Quality'),('chart_s00a_dup','Duplication Rate')],
+        's00b': [('chart_s00b','Host Depletion')],
+        's01':  [('chart_s01a','N50 (kb)'),('chart_s01b','Contig Count')],
+        's02':  [('chart_s02a','Per-Tool ID'),('chart_s02b','UniProt Filter')],
+        's03':  [('chart_s03','COBRA Rates')],
+        's05':  [('chart_s05a','Taxonomy Novelty')],
+        's06':  [('chart_s06a','Host Distribution')],
+        's07':  [('chart_s07a','CheckV Quality'),('chart_s07b','CheckV Confidence')],
+        's08':  [('chart_s08','Rescue Branches')],
+    }
+
+    sections_html = ""
+    for sk, short, full, icon, color in stage_defs:
+        st = stage_status.get(sk, 'skip'); metric = stage_metric.get(sk, '')
+        if st == 'pass': badge_cls, badge_txt, border_cls = 's-pass','✓ PASS','stage-pass'
+        elif st == 'fail': badge_cls, badge_txt, border_cls = 's-fail','✗ FAIL','stage-fail'
+        else: badge_cls, badge_txt, border_cls = 's-skip','○ SKIP','stage-skip'
+
+        chart_html = ""
+        if sk in chart_map:
+            chs = chart_map[sk]; active = []
+            for cid, _ in chs:
+                if sk == 's00a':
+                    if cid == 'chart_s00a' and stage_has_chart.get('s00a'): active.append(cid)
+                    if cid == 'chart_s00a_dup' and dq_rows and any(float(r.get('Dup_Rate(%)',0))>0 for r in dq_rows if r.get('Sample','')!='TOTAL'): active.append(cid)
+                elif sk == 's00b':
+                    if stage_has_chart.get('s00b'): active.append(cid)
+                elif sk == 's01':
+                    if cid == 'chart_s01a' and stage_has_chart.get('s01a'): active.append(cid)
+                    if cid == 'chart_s01b' and stage_has_chart.get('s01b'): active.append(cid)
+                elif sk == 's02':
+                    if cid == 'chart_s02a' and stage_has_chart.get('s02a'): active.append(cid)
+                    if cid == 'chart_s02b' and stage_has_chart.get('s02b'): active.append(cid)
+                elif sk == 's07':
+                    if cid == 'chart_s07a' and stage_has_chart.get('s07a'): active.append(cid)
+                    if cid == 'chart_s07b' and stage_has_chart.get('s07b'): active.append(cid)
+                else:
+                    if stage_has_chart.get(sk): active.append(cid)
+            if active:
+                cols = '1fr' if len(active) == 1 else '1fr 1fr'
+                chart_html = f'<div class="stage-charts" style="grid-template-columns:{cols}">'
+                for cid in active:
+                    chart_html += f'<div class="chart-box"><canvas id="{cid}" style="max-height:320px"></canvas></div>'
+                chart_html += '</div>'
+
+        if sk == 's05' and sankey_imgs:
+            chart_html += f'<div class="sankey-section">{sankey_imgs}</div>'
+            sankey_imgs = ""
+
+        sections_html += f'''
+<section class="stage {border_cls}" id="stage-{short}">
+  <div class="stage-header">
+    <div class="stage-icon" style="background:{color}">{icon}</div>
+    <div class="stage-title"><h2>{full}</h2><span class="stage-metric">{_esc(metric)}</span></div>
+    <span class="stage-badge {badge_cls}">{badge_txt}</span>
+  </div>
+  {chart_html}
+</section>'''
+
+    # ── Table ──
+    table_rows = ""
+    for i, s in enumerate(main_stages):
+        cls = S.get(s["Status"], "skip")
+        badge_label = {"pass":"PASS","skip":"SKIP","fail":"FAIL"}.get(cls,"SKIP")
+        table_rows += f'<tr class="tr-{cls}"><td class="td-num">{i}</td><td><b>{_esc(s["Stage"])}</b></td><td><span class="tb-badge tb-{cls}">{badge_label}</span></td><td class="td-metric">{_esc(s.get("Key_Metric",""))}</td></tr>'
+    for s in sub_stages:
+        table_rows += f'<tr><td></td><td class="td-sub">{_esc(s["Stage"].strip())}</td><td></td><td class="td-metric">{_esc(s.get("Key_Metric",""))}</td></tr>'
+
+    # ── Nav dots ──
+    nav_dots = ""
+    for sk, short, full, icon, color in stage_defs:
+        st = stage_status.get(sk, 'skip')
+        dot_cls = 'dot-pass' if st=='pass' else ('dot-fail' if st=='fail' else 'dot-skip')
+        nav_dots += f'<a href="#stage-{short}" class="nav-dot {dot_cls}" title="{full}&#10;{stage_metric.get(sk,"")}"><span class="dot-inner" style="background:{color}">{icon}</span></a>'
+
+    gen_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+    # KPI cards
+    kpi_cards = ""
+    kpi_items = [
+        ("Samples", f"{kpis.get('raw_reads','—')} raw → {kpis.get('clean_reads','—')} clean", "🧬"),
+        ("Assembly", f"{kpis.get('total_contigs','—')} contigs, {kpis.get('total_mb','—')} Mb", "🔧"),
+        ("Viruses", f"{kpis.get('virus_seqs','—')} identified", "🦠"),
+        ("HQ vOTUs", f"{kpis.get('hq_votus',kpis.get('rescued','—'))}", "⭐"),
+        ("Hosts", f"{kpis.get('host_total','—')} classified", "🌐"),
+    ]
+    for title, value, icon in kpi_items:
+        kpi_cards += f'<div class="kpi-card"><div class="kpi-icon">{icon}</div><div class="kpi-value">{value}</div><div class="kpi-label">{title}</div></div>'
+
+    html = f'''<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>MMPV-RNA v2.3 — Pipeline Report</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<style>
+:root{{
+  --bg:#f4f6f9;--card-bg:#fff;--text:#263238;--muted:#78909c;
+  --navy:#0d1b3e;--indigo:#1a237e;--blue:#1565c0;--green:#2e7d32;
+  --red:#c62828;--amber:#ef6c00;--border:#e0e0e0;
+  --shadow:0 2px 8px rgba(0,0,0,.06);--shadow-lg:0 4px 16px rgba(0,0,0,.1);
+  --radius:10px;--radius-sm:6px;
+}}
+*{{box-sizing:border-box;margin:0;padding:0}}
+body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans SC',sans-serif;background:var(--bg);color:var(--text);line-height:1.6}}
+.container{{max-width:1200px;margin:0 auto;padding:0 20px 40px}}
+.hero{{background:linear-gradient(135deg,var(--navy) 0%,var(--indigo) 60%,#283593 100%);color:#fff;padding:40px 32px 32px;border-radius:0 0 16px 16px;margin-bottom:28px;position:relative;overflow:hidden}}
+.hero::after{{content:'';position:absolute;top:-50%;right:-20%;width:500px;height:500px;background:rgba(255,255,255,.03);border-radius:50%}}
+.hero h1{{font-size:26px;font-weight:700;margin-bottom:6px;position:relative;z-index:1}}
+.hero .subtitle{{font-size:13px;opacity:.8;position:relative;z-index:1}}
+.hero .gen-time{{font-size:12px;opacity:.65;margin-top:6px;position:relative;z-index:1}}
+.kpi-row{{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin-bottom:28px}}
+.kpi-card{{background:var(--card-bg);border-radius:var(--radius);padding:18px 20px;box-shadow:var(--shadow);text-align:center;transition:transform .15s}}
+.kpi-card:hover{{transform:translateY(-2px);box-shadow:var(--shadow-lg)}}
+.kpi-icon{{font-size:24px;margin-bottom:6px}}
+.kpi-value{{font-size:13px;font-weight:600;color:var(--text);line-height:1.4}}
+.kpi-label{{font-size:11px;color:var(--muted);margin-top:4px;text-transform:uppercase;letter-spacing:.5px}}
+.nav-bar{{background:var(--card-bg);border-radius:var(--radius);box-shadow:var(--shadow);padding:10px 16px;margin-bottom:28px;display:flex;align-items:center;gap:6px;overflow-x:auto;position:sticky;top:8px;z-index:100}}
+.nav-dot{{display:flex;align-items:center;justify-content:center;width:36px;height:36px;border-radius:50%;text-decoration:none;transition:all .2s;flex-shrink:0;position:relative;border:2px solid transparent}}
+.nav-dot:hover{{transform:scale(1.15);z-index:2}}
+.nav-dot::after{{content:attr(title);position:absolute;bottom:110%;left:50%;transform:translateX(-50%);white-space:pre;background:#333;color:#fff;padding:4px 8px;border-radius:4px;font-size:10px;opacity:0;pointer-events:none;transition:opacity .2s;text-align:center;line-height:1.3}}
+.nav-dot:hover::after{{opacity:1}}
+.dot-inner{{width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:700;color:#fff}}
+.dot-pass{{border-color:#66bb6a}}.dot-fail{{border-color:#ef5350}}.dot-skip{{border-color:#bdbdbd}}
+.stage{{background:var(--card-bg);border-radius:var(--radius);box-shadow:var(--shadow);margin-bottom:20px;overflow:hidden}}
+.stage-pass{{border-left:4px solid var(--green)}}.stage-fail{{border-left:4px solid var(--red)}}.stage-skip{{border-left:4px solid #bdbdbd}}
+.stage-header{{display:flex;align-items:center;gap:16px;padding:18px 22px;border-bottom:1px solid var(--border);background:#fafbfc}}
+.stage-icon{{width:44px;height:44px;border-radius:var(--radius-sm);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;color:#fff;flex-shrink:0}}
+.stage-title{{flex:1;min-width:0}}
+.stage-title h2{{font-size:16px;font-weight:700;color:var(--text);margin-bottom:2px}}
+.stage-metric{{font-size:12px;color:var(--muted);display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}}
+.stage-badge{{font-size:11px;font-weight:700;padding:4px 12px;border-radius:12px;flex-shrink:0}}
+.s-pass{{background:#e8f5e9;color:var(--green)}}.s-fail{{background:#fce4ec;color:var(--red)}}.s-skip{{background:#f5f5f5;color:#9e9e9e}}
+.stage-charts{{display:grid;gap:16px;padding:18px 22px}}
+.chart-box{{background:#fafbfc;border-radius:var(--radius-sm);padding:12px;border:1px solid var(--border)}}
+.sankey-section{{padding:18px 22px;display:grid;grid-template-columns:1fr 1fr;gap:16px}}
+@media(max-width:768px){{.sankey-section{{grid-template-columns:1fr}}}}
+.sankey-card{{background:#fafbfc;border-radius:var(--radius-sm);padding:14px;border:1px solid var(--border)}}
+.sankey-card h3{{font-size:13px;color:var(--indigo);margin-bottom:10px;text-align:center}}
+.sankey-card img{{width:100%;height:auto;border-radius:4px}}
+.table-wrap{{background:var(--card-bg);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden;margin-bottom:20px}}
+.table-wrap h3{{font-size:15px;padding:16px 22px;border-bottom:1px solid var(--border);color:var(--text)}}
+table{{width:100%;border-collapse:collapse;font-size:13px}}
+th{{background:#fafbfc;text-align:left;padding:10px 16px;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:2px solid var(--border)}}
+td{{padding:9px 16px;border-bottom:1px solid #f0f0f0}}
+.tr-pass td:first-child{{border-left:3px solid var(--green)}}.tr-fail td:first-child{{border-left:3px solid var(--red)}}.tr-skip td:first-child{{border-left:3px solid #ccc}}
+.td-num{{text-align:center;color:var(--muted);font-size:11px;width:36px}}
+.td-sub{{padding-left:40px!important;color:#78909c;font-size:12px}}
+.td-metric{{font-size:12px;color:#607d8b}}
+.tb-badge{{display:inline-block;padding:1px 8px;border-radius:10px;font-size:10px;font-weight:700}}
+.tb-pass{{background:#e8f5e9;color:var(--green)}}.tb-fail{{background:#fce4ec;color:var(--red)}}.tb-skip{{background:#f5f5f5;color:#9e9e9e}}
+.footer{{text-align:center;padding:24px;color:var(--muted);font-size:11px;line-height:1.8}}
+.footer a{{color:var(--blue);text-decoration:none}}
+@media(max-width:768px){{
+  .hero{{padding:24px 20px 20px}}.hero h1{{font-size:20px}}
+  .kpi-row{{grid-template-columns:repeat(2,1fr)}}
+  .stage-header{{flex-wrap:wrap;gap:10px}}
+  .stage-charts{{grid-template-columns:1fr!important}}
+  .nav-bar{{gap:2px;padding:6px 8px}}
+  .nav-dot{{width:28px;height:28px}}.dot-inner{{width:22px;height:22px;font-size:7px}}
+}}
+@media print{{
+  body{{background:#fff;font-size:11px}}
+  .hero{{background:#1a237e!important;-webkit-print-color-adjust:exact}}
+  .stage,.table-wrap,.kpi-card{{box-shadow:none;border:1px solid #ddd;break-inside:avoid}}
+  .nav-bar{{display:none}}
+}}
+</style>
+</head>
+<body>
+<div class="container">
+<div class="hero">
+  <h1>MMPV-RNA v2.3 — Pipeline Report</h1>
+  <div class="subtitle">Metatranscriptomic Virus Discovery — End-to-End Analysis</div>
+  <div class="gen-time">Generated: {gen_time} &nbsp;|&nbsp; {n_pass}/{n_total} stages completed ({pct}%)</div>
+</div>
+<div class="kpi-row">{kpi_cards}</div>
+<div class="nav-bar">{nav_dots}</div>
+{sections_html}
+<div class="table-wrap">
+  <div style="display:flex;justify-content:space-between;align-items:center;padding-right:16px">
+    <h3>Pipeline Stage Summary</h3>
+    <button onclick="exportTable()" style="background:var(--indigo);color:#fff;border:none;padding:6px 16px;border-radius:6px;cursor:pointer;font-size:12px">Export CSV</button>
+  </div>
+  <div id="table-scroll" style="max-height:520px;overflow-y:auto">
+  <table id="summary-table"><thead><tr><th style="width:36px">#</th><th>Stage</th><th style="width:70px">Status</th><th>Key Metrics</th></tr></thead>
+  <tbody>{table_rows}</tbody></table>
+  </div>
+  <div id="table-pager" style="display:flex;justify-content:center;align-items:center;gap:8px;padding:12px;border-top:1px solid var(--border);font-size:12px;color:var(--muted)"></div>
+</div>
+<div class="footer">
+  <strong>MMPV-RNA v2.3</strong> — Metatranscriptomic Virus Discovery Pipeline<br>
+  Generated by <code>report_pipeline.py</code> &nbsp;|&nbsp; {gen_time}
+</div>
+</div>
+<script>
+{chart_scripts}
+(function(){{
+  const tbody=document.querySelector('#summary-table tbody');
+  if(!tbody)return;
+  const rows=Array.from(tbody.querySelectorAll('tr'));
+  const perPage=10;
+  const totalPages=Math.ceil(rows.length/perPage);
+  if(totalPages<=1)return;
+  const pager=document.getElementById('table-pager');
+  if(!pager)return;
+  let page=0;
+  function show(p){{
+    page=Math.max(0,Math.min(p,totalPages-1));
+    rows.forEach((r,i)=>{{r.style.display=(i>=page*perPage&&i<(page+1)*perPage)?'':'none'}});
+    pager.innerHTML='<button onclick="window._tblPage('+(page-1)+')" '+(page===0?'disabled':'')+' style="border:1px solid #ccc;background:#fff;padding:4px 12px;border-radius:4px;cursor:pointer">← Prev</button>'+
+      '<span>Page <b>'+(page+1)+'</b> of '+totalPages+'</span>'+
+      '<button onclick="window._tblPage('+(page+1)+')" '+(page===totalPages-1?'disabled':'')+' style="border:1px solid #ccc;background:#fff;padding:4px 12px;border-radius:4px;cursor:pointer">Next →</button>';
+  }}
+  window._tblPage=function(p){{show(p)}};
+  show(0);
+}})();
+function exportTable(){{
+  const tbl=document.getElementById('summary-table');
+  if(!tbl)return;
+  let csv='';
+  tbl.querySelectorAll('tr').forEach(tr=>{{
+    let row=[];
+    tr.querySelectorAll('th,td').forEach(cell=>row.push('"'+cell.innerText.replace(/"/g,'""')+'"'));
+    csv+=row.join(',')+'\\n';
+  }});
+  const blob=new Blob([csv],{{type:'text/csv'}});
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  a.download='pipeline_summary.csv';
+  a.click();
+}}
+</script>
+</body></html>'''
+
+    with open(report_dir / "pipeline_report.html", "w", encoding="utf-8") as hf:
+        hf.write(html)
+
+
+# ═══════════════════════════════════════════════════════════════
+# Main
+# ═══════════════════════════════════════════════════════════════
+
+def main():
+    p = argparse.ArgumentParser(description="MMPV-RNA v2.3 — 独立报告生成器")
+    p.add_argument("-o", "--output-dir", required=True, help="流水线输出根目录 (包含 00a_CleanData/ ... 09_Reports/)")
+    p.add_argument("--skip-sankey", action="store_true", help="跳过 Sankey 图生成")
+    p.add_argument("--skip-html", action="store_true", help="仅生成 TSV, 不生成 HTML")
+    args = p.parse_args()
+
+    root = Path(args.output_dir).resolve()
+    if not root.is_dir():
+        sys.exit(f"ERROR: 目录不存在: {root}")
+
+    report_dir = root / "09_Reports"
+    report_dir.mkdir(parents=True, exist_ok=True)
+
+    print(f"{'='*60}")
+    print(f"Report Pipeline v2.3")
+    print(f"  Output: {root}")
+    print(f"  Reports: {report_dir}")
+    print(f"{'='*60}")
+
+    # 1. 收集数据 + 生成 TSV
+    print("\n[1/4] Collecting stage data...")
+    t0 = time.time()
+    stage_stats = collect_data(root, report_dir)
+
+    # 2. 写入 stage_summary.tsv + 目录树
+    with open(report_dir / "stage_summary.tsv", "w", newline="") as sf:
+        w = csv.DictWriter(sf, fieldnames=["Stage","Status","Key_Metric","Details"], delimiter="\t")
+        w.writeheader()
+        for s in stage_stats: w.writerow(s)
+
+    tree_file = report_dir / "directory_tree.txt"
+    with open(tree_file, "w") as tf:
+        for d in sorted(root.iterdir()):
+            if not d.is_dir(): continue
+            tf.write(f"{d.name}/\n")
+            for sd in sorted(d.iterdir()):
+                if sd.is_dir():
+                    tf.write(f"  {sd.name}/\n")
+                    for f in sorted(sd.iterdir())[:5]:
+                        tf.write(f"    {f.name}\n")
+                    rest = sum(1 for _ in sd.iterdir()) - 5
+                    if rest > 0: tf.write(f"    ... +{rest} more\n")
+    print(f"  stage_summary.tsv ({len(stage_stats)} rows), directory_tree.txt — {time.time()-t0:.0f}s")
+
+    # 3. Sankey
+    if not args.skip_sankey:
+        print("\n[2/4] Generating Sankey diagrams...")
+        t0 = time.time()
+        generate_sankey(root, report_dir)
+        print(f"  Done — {time.time()-t0:.0f}s")
+    else:
+        print("\n[2/4] Sankey: skipped")
+
+    # 4. HTML
+    if not args.skip_html:
+        print("\n[3/4] Generating HTML report...")
+        t0 = time.time()
+        write_html_report(report_dir, stage_stats)
+        print(f"  pipeline_report.html — {time.time()-t0:.0f}s")
+    else:
+        print("\n[3/4] HTML: skipped")
+
+    # Summary
+    print(f"\n[4/4] {'='*50}")
+    print(f"  Report complete!")
+    print(f"    {report_dir}/pipeline_report.html")
+    print(f"    {report_dir}/stage_summary.tsv")
+    for tsv in ["data_summary","assembly_summary","ident_summary","filter_summary",
+                "cobra_summary","hostdep_summary","checkv_summary","checkv_confidence"]:
+        p = report_dir / f"{tsv}.tsv"
+        if p.is_file(): print(f"    {report_dir}/{tsv}.tsv")
+    print(f"{'='*50}")
+
+
+if __name__ == "__main__":
+    main()
