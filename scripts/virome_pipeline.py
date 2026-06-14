@@ -250,7 +250,7 @@ class ViromePipeline:
         self._validate()
 
         # 检测原始样本
-        if self.args.stage not in ('identification', 'cluster', 'taxonomy', 'host', 'checkv'):
+        if self.args.stage not in ('identification', 'cluster', 'taxonomy', 'host', 'checkv', 'report'):
             self.orig_samples = scan_samples_in_dir(self.reads_dir)
             if not self.orig_samples:
                 logger.error("在 %s 中未找到序列文件!", self.reads_dir)
@@ -1272,34 +1272,264 @@ class ViromePipeline:
     # ── 汇总 ──
     def run_reports(self):
         self.log.info("=" * 50)
-        self.log.info("[Reports] 流水线汇总")
+        self.log.info("[9] Virome Report — 流水线总结报告")
+        report_dir = self.d['reports']; report_dir.mkdir(parents=True, exist_ok=True)
+        stage_stats = []
 
+        # ── 辅助函数 ──
+        def _count_fasta(path):
+            if not path or not os.path.isfile(path): return 0
+            return sum(1 for _ in open(path) if _.startswith('>'))
+
+        def _count_lines(path):
+            if not path or not os.path.isfile(path): return 0
+            return sum(1 for _ in open(path))
+
+        def _count_dir(d):
+            return sum(1 for _ in Path(d).iterdir() if _.is_dir()) if d and Path(d).is_dir() else 0
+
+        def _file_size(path):
+            if not path or not os.path.isfile(path): return "0 B"
+            s = os.path.getsize(path)
+            for u in ['B', 'KB', 'MB', 'GB']:
+                if s < 1024: return f"{s:.1f} {u}"
+                s /= 1024
+            return f"{s:.1f} TB"
+
+        def _add(stage, status, details="", key_metric=""):
+            stage_stats.append({"Stage": stage, "Status": status, "Key_Metric": key_metric, "Details": details})
+
+        # ── 00a_CleanData ──
+        clean = self.d['clean']
+        if clean.is_dir():
+            ns = _count_dir(clean / "3.clumpify") or _count_dir(clean / "2.fasta") or _count_dir(clean)
+            _add("00a_CleanData", "✓", key_metric=f"{ns} 样本", details=f"{clean}")
+            # fastp stats
+            fp = clean / "logs"
+            if fp.is_dir():
+                jsons = list(fp.glob("*.json"))
+                if jsons:
+                    try:
+                        import json
+                        with open(jsons[0]) as jf:
+                            js = json.load(jf)
+                        n_before = js.get("summary", {}).get("before_filtering", {}).get("total_reads", 0)
+                        n_after = js.get("summary", {}).get("after_filtering", {}).get("total_reads", 0)
+                        _add("  └ fastp", "✓", f"reads: {n_before:,}→{n_after:,}", "")
+                    except: pass
+        else:
+            _add("00a_CleanData", "○", details="未运行")
+
+        # ── 00b_HostDepletion ──
+        hostdep = self.d['hostdep']
+        if hostdep.is_dir():
+            ns = _count_dir(hostdep)
+            _add("00b_HostDepletion", "✓", key_metric=f"{ns} 样本", details=f"{hostdep}")
+        else:
+            _add("00b_HostDepletion", "○", details="未运行")
+
+        # ── 01_Assembly ──
+        asm = self.d['asm']
+        if asm.is_dir():
+            ns = _count_dir(asm)
+            total_contigs, total_bp = 0, 0
+            for d in asm.iterdir():
+                if not d.is_dir(): continue
+                for f in d.glob("*.contig.fasta"):
+                    for line in open(f):
+                        if line.startswith('>'): total_contigs += 1
+                        else: total_bp += len(line.strip())
+            _add("01_Assembly", "✓", key_metric=f"{ns} 样本, {total_contigs:,} contigs, {total_bp/1e6:.1f} Mb",
+                 details=f"{asm}")
+            # per-sample detail
+            for d in sorted(asm.iterdir()):
+                if not d.is_dir(): continue
+                n_contig = 0
+                for f in d.glob("*.contig.fasta"):
+                    n_contig = _count_fasta(f)
+                _add(f"  └ {d.name}", "✓", key_metric=f"{n_contig} contigs", "")
+        else:
+            _add("01_Assembly", "○", details="未运行")
+
+        # ── 02_Identification ──
+        ident = self.d['ident']
+        if ident.is_dir():
+            ns = _count_dir(ident)
+            n_virus = 0
+            for d in ident.iterdir():
+                if not d.is_dir(): continue
+                for f in d.glob("*virus.all.candidate.fasta"):
+                    n_virus += _count_fasta(f)
+            _add("02_Identification", "✓", key_metric=f"{ns} 样本, {n_virus:,} 病毒序列", details=f"{ident}")
+            # filter stats
+            for d in sorted(ident.iterdir()):
+                if not d.is_dir(): continue
+                for filt_dir in d.iterdir():
+                    if filt_dir.name.startswith("uniprot_filter_output") and filt_dir.is_dir():
+                        filt_fa = filt_dir / f"{d.name}_virus.uniprot_filtered.fasta"
+                        if filt_fa.is_file():
+                            n_filt = _count_fasta(filt_fa)
+                            _add(f"  └ {d.name} {filt_dir.name}", "✓", key_metric=f"{n_filt} 过滤后", "")
+        else:
+            _add("02_Identification", "○", details="未运行")
+
+        # ── 03_COBRA ──
+        cobra = self.d['cobra']
+        if cobra.is_dir():
+            ns = _count_dir(cobra)
+            n_ext = 0
+            for cf in cobra.rglob("*.cobra.fa"):
+                if cf.stat().st_size > 0:
+                    n_ext += _count_fasta(cf)
+            _add("03_COBRA", "✓", key_metric=f"{ns} 样本, {n_ext} 延伸结果", details=f"{cobra}")
+        else:
+            _add("03_COBRA", "○", details="未运行")
+
+        # ── 04_CLUSTER ──
+        cluster = self.d['cluster']
+        centroids_fa = cluster / "centroids" / "final_centroids.fasta"
+        known_fa = cluster / "2_cdhit" / "known_centroids.fasta"
+        if cluster.is_dir():
+            n_centroids = _count_fasta(centroids_fa) if centroids_fa.is_file() else 0
+            n_known = _count_fasta(known_fa) if known_fa.is_file() else 0
+            _add("04_CLUSTER", "✓", key_metric=f"{n_centroids:,} novel + {n_known:,} known centroids",
+                 details=f"{cluster}")
+            # vclust stats
+            ctsv = cluster / "3_vclust" / "vclust_clusters.tsv"
+            if ctsv.is_file():
+                n_clusters = _count_lines(ctsv) - 1
+                _add("  └ vclust", "✓", key_metric=f"{n_clusters:,} 簇", "")
+        else:
+            _add("04_CLUSTER", "○", details="未运行")
+
+        # ── 05_Taxonomy ──
+        tax = self.d['taxonomy']
+        final_tax = tax / "integrated" / "final_integrated_classification.tsv"
+        if final_tax.is_file():
+            n = _count_lines(final_tax) - 1
+            # count by rank
+            try:
+                counts = {"Known": 0, "Novel_Species": 0, "Novel_Genus": 0, "Novel_Family": 0}
+                import csv
+                with open(final_tax) as tf:
+                    for row in csv.DictReader(tf, delimiter="\t"):
+                        cl = row.get("Class", row.get("class", ""))
+                        sp = row.get("Species", row.get("species", ""))
+                        ge = row.get("Genus", row.get("genus", ""))
+                        fa = row.get("Family", row.get("family", ""))
+                        if sp and sp not in ("NA", "-"): counts["Known"] += 1
+                        elif ge and ge not in ("NA", "-"): counts["Novel_Species"] += 1
+                        elif fa and fa not in ("NA", "-"): counts["Novel_Genus"] += 1
+                        else: counts["Novel_Family"] += 1
+                _add("05_Taxonomy", "✓", key_metric=f"{n} 条分类, ★{counts['Known']} 已知, ★★{counts['Novel_Species']} 新种", details=f"{tax}")
+            except: pass
+        elif tax.is_dir():
+            _add("05_Taxonomy", "○", key_metric="已运行但无最终结果", details=f"{tax}")
+        else:
+            _add("05_Taxonomy", "○", details="未运行")
+
+        # ── 06_HostPrediction ──
+        host = self.d['host_pred']
+        host_summary = host / "ensemble_host_summary.tsv"
+        if host_summary.is_file():
+            n = _count_lines(host_summary) - 1
+            try:
+                hdf = pl.read_csv(str(host_summary), separator="\t", null_values=["NA", "N/A", ""])
+                if "Final_Host" in hdf.columns:
+                    hcounts = hdf.group_by("Final_Host").agg(pl.len()).sort("len", descending=True)
+                    top = ", ".join(f"{r[0]}={r[1]}" for r in hcounts.head(5).iter_rows())
+                    _add("06_HostPrediction", "✓", key_metric=f"{n} 条, {top}", details=f"{host}")
+                else:
+                    _add("06_HostPrediction", "✓", key_metric=f"{n} 条", details=f"{host}")
+            except: pass
+        elif host.is_dir():
+            _add("06_HostPrediction", "○", key_metric="已运行但无最终结果", details=f"{host}")
+        else:
+            _add("06_HostPrediction", "○", details="未运行")
+
+        # ── 07_CheckV ──
+        cv_dir = self.d['checkv_dir']
+        if cv_dir.is_dir():
+            cv_tsvs = list(cv_dir.rglob("completeness.tsv"))
+            if cv_tsvs:
+                n_total = 0
+                for ct in cv_tsvs:
+                    try:
+                        cv = pl.read_csv(str(ct), separator="\t", null_values=["NA", "N/A", ""])
+                        comp_col = next((c for c in ["aai_completeness", "completeness"] if c in cv.columns), None)
+                        if comp_col:
+                            for row in cv.iter_rows(named=True):
+                                val = row.get(comp_col)
+                                try:
+                                    v = float(val) if val and val != "NA" else None
+                                    if v is not None and v >= 90: n_total += 1
+                                except: pass
+                    except: pass
+                _add("07_CheckV", "✓", key_metric=f"{n_total} 条 ≥90% 完整度", details=f"{cv_dir}")
+            else:
+                _add("07_CheckV", "✓", key_metric=f"已运行", details=f"{cv_dir}")
+        else:
+            _add("07_CheckV", "○", details="未运行")
+
+        # ── 08_Rescue ──
+        rescue = self.d['rescue_dir']
+        if rescue.is_dir():
+            rescue_finals = list(rescue.rglob("final_centroids.fasta"))
+            n_rescued = 0
+            for rf in rescue_finals:
+                if "branch" not in str(rf) and "known" not in str(rf):
+                    n_rescued += _count_fasta(rf)
+            _add("08_Rescue", "✓", key_metric=f"{n_rescued:,} 拯救 HQ vOTU", details=f"{rescue}")
+        else:
+            _add("08_Rescue", "○", details="未运行")
+
+        # ── 写入报告 ──
+        # 1. stage_summary.tsv
+        import csv as csv_mod
+        summary_tsv = report_dir / "stage_summary.tsv"
+        with open(summary_tsv, "w", newline="") as sf:
+            w = csv_mod.DictWriter(sf, fieldnames=["Stage", "Status", "Key_Metric", "Details"], delimiter="\t")
+            w.writeheader()
+            for s in stage_stats: w.writerow(s)
+
+        # 2. 目录树
+        tree_file = report_dir / "directory_tree.txt"
+        with open(tree_file, "w") as tf:
+            for d in sorted(self.d['root'].iterdir()):
+                if not d.is_dir(): continue
+                tf.write(f"{d.name}/\n")
+                for sd in sorted(d.iterdir()):
+                    if sd.is_dir():
+                        tf.write(f"  {sd.name}/\n")
+                        for f in sorted(sd.iterdir())[:5]:
+                            tf.write(f"    {f.name}\n")
+                        rest = sum(1 for _ in sd.iterdir()) - 5
+                        if rest > 0: tf.write(f"    ... +{rest} more\n")
+                    else:
+                        tf.write(f"  {sd.name}\n")
+
+        # 3. 复制日志
+        import shutil as shutil_mod
+        log_src = self.d['root'] / "orchestrator.log"
+        if log_src.is_file():
+            shutil_mod.copy(log_src, report_dir / "orchestrator.log")
+
+        # ── 屏幕输出 ──
         self.log.info("=" * 50)
         self.log.info("  流水线完成!")
         self.log.info("")
-        self.log.info("  输出目录结构:")
-
-        stage_labels = [
-            ('clean',      '数据清洗'),
-            ('hostdep',    '去宿主'),
-            ('asm',        '组装结果'),
-            ('ident',      '病毒鉴定'),
-            ('cobra',      'COBRA 延伸'),
-            ('cluster',    'CLUSTER 去冗余'),
-            ('taxonomy',   'Taxonomy 分类'),
-            ('host_pred',  'Host 宿主预测'),
-            ('checkv_dir', 'CheckV 质量评估'),
-            ('rescue_dir', 'Rescue 拯救'),
-            ('reports',    'Reports 报告'),
-        ]
-        for key, label in stage_labels:
-            d = self.d.get(key)
-            if d and d.is_dir():
-                self.log.info("    %-14s %s", label + ':', d)
-            else:
-                self.log.info("    %-14s (未运行)", label + ':')
-
-        self.log.info("    运行日志:     %s", self.d['root'] / 'orchestrator.log')
+        self.log.info("  阶段汇总:")
+        self.log.info("  %-22s %4s  %s", "Stage", "状态", "关键指标")
+        self.log.info("  " + "-" * 70)
+        for s in stage_stats:
+            if s["Stage"].startswith("  "): continue
+            icon = "✓" if s["Status"] == "✓" else "○"
+            self.log.info("  %-22s  %s   %s", s["Stage"], icon, s["Key_Metric"])
+        self.log.info("")
+        self.log.info("  详细报告: %s", report_dir)
+        self.log.info("    stage_summary.tsv    阶段汇总表")
+        self.log.info("    directory_tree.txt   输出目录树")
+        self.log.info("    orchestrator.log     运行日志")
         self.log.info("=" * 50)
 
 
@@ -1736,7 +1966,7 @@ def _build_parser(add_help=True):
 
     g = p.add_argument_group('流程控制')
     g.add_argument('--stage', default='all',
-                   choices=['all', 'clean', 'deplete', 'assembly', 'identification', 'cobra', 'cluster', 'taxonomy', 'host', 'checkv', 'rescue'],
+                   choices=['all', 'clean', 'deplete', 'assembly', 'identification', 'cobra', 'cluster', 'taxonomy', 'host', 'checkv', 'rescue', 'report'],
                    help='运行阶段')
     g.add_argument('--host-filter', default='Plant',
                    help='目标宿主 (逗号分隔, rescue 阶段使用, 默认: Plant. Unknown 默认跳过并输出到 unknown_votus.fasta)')
@@ -1920,6 +2150,10 @@ def main():
         args.skip_clean = True
         args.skip_depletion = True
         logger.info("  Flow:     %s", stage)
+    elif stage == 'report':
+        args.skip_clean = True
+        args.skip_depletion = True
+        logger.info("  Flow:     report (生成总结报告)")
     elif stage in ('identification', 'cluster', 'taxonomy', 'host', 'checkv'):
         args.skip_clean = True
         args.skip_depletion = True
@@ -2017,6 +2251,8 @@ def main():
         stages_to_run.append(('checkv', pipe.run_checkv_stage))
     if stage in ('all', 'rescue'):
         stages_to_run.append(('rescue', pipe.run_rescue))
+    if stage in ('all', 'report'):
+        stages_to_run.append(('report', pipe.run_reports))
 
     failed_stages = []
     for stage_name, stage_func in stages_to_run:
