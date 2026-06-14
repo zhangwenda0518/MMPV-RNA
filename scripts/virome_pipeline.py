@@ -1426,15 +1426,49 @@ class ViromePipeline:
         else:
             _add("02_Identification", "○", details="未运行")
 
-        # ── 03_COBRA ──
+        # ── 03_COBRA + cobra_summary.tsv ──
         cobra = self.d['cobra']
         if cobra.is_dir():
             ns = _count_dir(cobra)
-            n_ext = 0
-            for cf in cobra.rglob("*.cobra.fa"):
-                if cf.stat().st_size > 0:
-                    n_ext += _count_fasta(cf)
-            _add("03_COBRA", "✓", key_metric=f"{ns} 样本, {n_ext} 延伸结果", details=f"{cobra}")
+            n_ext, n_queries, n_orphan = 0, 0, 0
+            with open(report_dir / "cobra_summary.tsv", "w") as cs:
+                cs.write("Sample\tTotal_Queries\tExtended_Circular\tExtended_Partial\t"
+                         "Extended_Failed\tOrphan_End\tExtension_Rate(%)\tOrphan_Rate(%)\t"
+                         "Extended_Contigs\tTotal_Gain(bp)\n")
+                for sd in sorted(cobra.iterdir()):
+                    if not sd.is_dir(): continue
+                    sn = sd.name
+                    # 统计 cobra.fa
+                    sn_ext, sn_gain = 0, 0
+                    for cf in sd.rglob("*.cobra.fa"):
+                        if cf.stat().st_size > 0:
+                            for rec in SeqIO.parse(str(cf), "fasta"):
+                                sn_ext += 1
+                                sn_gain += len(rec.seq)
+                    n_ext += sn_ext
+                    # 解析 COBRA log
+                    logs = list(sd.rglob("log"))
+                    cobra_logs = [f for f in logs if 'COBRA' in str(f.parent.name)]
+                    if not cobra_logs: cobra_logs = logs[:1]
+                    tq = ec = ep = ef = oe = 0
+                    if cobra_logs:
+                        try:
+                            text = open(str(cobra_logs[0])).read()
+                            for line in text.split('\n'):
+                                s = line.strip()
+                                if s.startswith('# Total queries:'): tq = int(s.split(':')[1].strip())
+                                elif 'Self_circular' in s: pass
+                                elif 'Extended_circular' in s: ec = int(s.split(':')[1].strip().split()[0])
+                                elif 'Extended_partial' in s: ep = int(s.split(':')[1].strip().split()[0])
+                                elif 'Extended_failed' in s: ef = int(s.split(':')[1].strip())
+                                elif 'Orphan end' in s: oe = int(s.split(':')[1].strip())
+                        except: pass
+                    n_queries += tq; n_orphan += oe
+                    er = round((ec+ep)/max(tq,1)*100, 1)
+                    or_ = round(oe/max(tq,1)*100, 1)
+                    cs.write(f"{sn}\t{tq}\t{ec}\t{ep}\t{ef}\t{oe}\t{er}\t{or_}\t{sn_ext}\t{sn_gain}\n")
+            _add("03_COBRA", "✓", key_metric=f"{ns} 样本, {n_ext} 延伸, {n_queries} query, {n_orphan} orphan",
+                 details=f"{report_dir}/cobra_summary.tsv")
         else:
             _add("03_COBRA", "○", details="未运行")
 
