@@ -885,6 +885,7 @@ class ViromePipeline:
         parts += [f"--virseqimprover-path {vsi_path}"]
         parts += [f"--salmon-bin {self.args.salmon_bin}"]
         parts += [f"--max-vsi-samples {self.args.max_vsi_samples}"]
+        parts += [f"--min-vsi-len {self.args.min_vsi_len}"]
         if not self.args.force:
             parts.append("--resume")
 
@@ -2376,6 +2377,7 @@ def _build_parser(add_help=True):
     g.add_argument('--virseqimprover-path', help='Virseqimprover.py 路径')
     g.add_argument('--salmon-bin', default='salmon', help='Salmon 二进制路径 (默认: salmon)')
     g.add_argument('--max_vsi_samples', type=int, default=10, help='VSI 最大合并样本数 (0=不限制, 默认: 10)')
+    g.add_argument('--min_vsi_len', type=int, default=2000, help='VSI 最小 contig 长度 bp (默认: 2000)')
 
     g = p.add_argument_group('分类数据库 (virus_classifier2.py)')
     g.add_argument('--genomad_db', help='genomad DB 路径')

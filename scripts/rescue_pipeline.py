@@ -292,7 +292,7 @@ def branch_a(ref_fasta, work_dir, checkv_db, threads, jobs):
 # 分支 B: Virseqimprover reads 延伸
 # ══════════════════════════════════════════════════════════════
 
-def branch_b(fail_fa, fastq_dir, work_dir, checkv_db, threads, jobs, vsi_path, salmon_bin, clusters=None, fasta_info=None, max_vsi_samples=10):
+def branch_b(fail_fa, fastq_dir, work_dir, checkv_db, threads, jobs, vsi_path, salmon_bin, clusters=None, fasta_info=None, max_vsi_samples=10, min_vsi_len=2000):
     """对 A 失败序列并行 Virseqimprover (cluster 内多样本 reads 聚合)。返回 (pass_fa, fail_fa, pass_count, fail_count)"""
     d = Path(work_dir) / "branch_b"; d.mkdir(parents=True, exist_ok=True)
     log_dir = d / "logs"; log_dir.mkdir(exist_ok=True)
@@ -302,6 +302,18 @@ def branch_b(fail_fa, fastq_dir, work_dir, checkv_db, threads, jobs, vsi_path, s
     total = len(fail_records)
     if not fail_records:
         print("  分支 B: 无失败序列, 跳过"); return None, None, 0, 0
+
+    # 长度过滤: < min_vsi_len 直升 branch C
+    vsi_records = [r for r in fail_records if len(r.seq) >= min_vsi_len]
+    short_records = [r for r in fail_records if len(r.seq) < min_vsi_len]
+    if short_records:
+        print(f"  分支 B: {len(short_records)} 条 <{min_vsi_len}bp → 跳过VSI直升分支C")
+    if not vsi_records:
+        print(f"  分支 B: 全部 <{min_vsi_len}bp, 全部直升分支C")
+        return None, fail_fa, 0, total
+
+    fail_records = vsi_records  # 仅 VSI 候选
+    total = len(fail_records)
 
     scaffold_dir = d / "scaffolds"; scaffold_dir.mkdir(exist_ok=True)
     merged_reads_dir = d / "merged_reads"; merged_reads_dir.mkdir(exist_ok=True)
@@ -392,12 +404,16 @@ def branch_b(fail_fa, fastq_dir, work_dir, checkv_db, threads, jobs, vsi_path, s
         if rec.id in fail_ids:
             vsi_match = [r for r in vsi_records if r.id == rec.id]
             fail_to_write.append(vsi_match[0] if vsi_match else rec)
+    # short_records (< min_vsi_len) 也加入 fail → 直升分支 C
+    if short_records:
+        fail_to_write.extend(short_records)
     SeqIO.write(fail_to_write, fail_fa_out, "fasta")
 
-    print(f"  分支 B: pass={len(pass_ids):,}  fail={len(fail_ids):,}")
+    n_fail_total = len(fail_ids) + len(short_records)
+    print(f"  分支 B: pass={len(pass_ids):,}  fail={n_fail_total} (含{len(short_records)}短序列直升C)")
     return str(pass_fa) if Path(pass_fa).is_file() else None, \
            str(fail_fa_out) if Path(fail_fa_out).is_file() else None, \
-           len(pass_ids), len(fail_ids)
+           len(pass_ids), n_fail_total
 
 
 # ══════════════════════════════════════════════════════════════
@@ -508,6 +524,7 @@ def main():
     p.add_argument("--virseqimprover-path", default=None)
     p.add_argument("--salmon-bin", default="salmon")
     p.add_argument("--max-vsi-samples", type=int, default=10, help="VSI 最大合并样本数 (0=不限制, 默认10)")
+    p.add_argument("--min-vsi-len", type=int, default=2000, help="VSI 最小 contig 长度 bp (短于此值直升分支C, 默认2000)")
     p.add_argument("--threads", "-t", type=int, default=64)
     p.add_argument("--jobs", "-j", type=int, default=4, help="Virseqimprover 并行数")
     p.add_argument("--ani", type=float, default=0.95, help="最终 vclust ANI")
@@ -564,7 +581,7 @@ def main():
         cnt_b_fail = sum(1 for _ in SeqIO.parse(fa_b_fail, "fasta")) if fa_b_fail.is_file() else 0
         fa_b_pass, fa_b_fail = str(fa_b_pass), str(fa_b_fail)
     else:
-        fa_b_pass, fa_b_fail, cnt_b, cnt_b_fail = branch_b(fa_a_fail, args.fastq_dir, out, args.checkv_db, args.threads, args.jobs, args.virseqimprover_path, args.salmon_bin, clusters, fasta_info, args.max_vsi_samples)
+        fa_b_pass, fa_b_fail, cnt_b, cnt_b_fail = branch_b(fa_a_fail, args.fastq_dir, out, args.checkv_db, args.threads, args.jobs, args.virseqimprover_path, args.salmon_bin, clusters, fasta_info, args.max_vsi_samples, args.min_vsi_len)
 
     # 4. 分支 C: BLASTN + VSI
     print("\n── Step 3: 分支 C (BLASTN+VSI) ──")
