@@ -120,7 +120,9 @@ def collect_data(output_dir, report_dir):
     if hostdep.is_dir():
         ns = _count_dir(hostdep)
         hd_rows = {}
-        sq_tsv = hostdep / "host_depletion_seqkit_summary.tsv"
+        sq_tsv = hostdep / "logs" / "host_depletion_seqkit_summary.tsv"
+        if not sq_tsv.is_file():
+            sq_tsv = hostdep / "host_depletion_seqkit_summary.tsv"
         if sq_tsv.is_file():
             for r in _read_tsv(sq_tsv):
                 sn = r.get("Sample",""); stage = r.get("Stage","")
@@ -129,7 +131,9 @@ def collect_data(output_dir, report_dir):
                 if "Raw" in stage or "1_" in stage: hd_rows[sn]["Raw"] = max(hd_rows[sn]["Raw"], nseq)
                 elif "Kraken" in stage or "2_" in stage: hd_rows[sn]["After_Kraken2"] = max(hd_rows[sn]["After_Kraken2"], nseq)
                 elif "Host" in stage or "3_" in stage: hd_rows[sn]["After_Host"] = max(hd_rows[sn]["After_Host"], nseq)
-        rr_tsv = hostdep / "ribodetector.report.txt"
+        rr_tsv = hostdep / "logs" / "ribodetector.report.txt"
+        if not rr_tsv.is_file():
+            rr_tsv = hostdep / "ribodetector.report.txt"
         if rr_tsv.is_file():
             for r in _read_tsv(rr_tsv):
                 sn = r.get("Sample","")
