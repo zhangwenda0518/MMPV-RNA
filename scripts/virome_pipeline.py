@@ -1656,14 +1656,18 @@ class ViromePipeline:
         else:
             _add("06_HostPrediction", "○", details="未运行")
 
-        # ── 07_CheckV ──
+        # ── 07_CheckV + checkv_summary.tsv (按宿主分类) ──
         cv_dir = self.d['checkv_dir']
+        QUALITY_ORDER = ["Complete","High-quality","Medium-quality","Low-quality","Not-determined"]
         if cv_dir.is_dir():
             cv_tsvs = list(cv_dir.rglob("completeness.tsv"))
             if cv_tsvs:
-                qd = {"Complete":0,"High-quality":0,"Medium-quality":0,"Low-quality":0,"Not-determined":0}
-                n_total = 0
+                # 按宿主分组统计
+                host_qd = {}  # {host: {quality: count}}
                 for ct in cv_tsvs:
+                    host_name = ct.parent.name  # 目录名即宿主名
+                    if host_name not in host_qd:
+                        host_qd[host_name] = dict.fromkeys(QUALITY_ORDER, 0)
                     try:
                         cv = pl.read_csv(str(ct), separator="\t", null_values=["NA", "N/A", ""])
                         comp_col = next((c for c in ["aai_completeness", "completeness"] if c in cv.columns), None)
@@ -1672,19 +1676,43 @@ class ViromePipeline:
                                 val = row.get(comp_col)
                                 try:
                                     v = float(val) if val and val != "NA" else None
-                                    if v is None: qd["Not-determined"] += 1
-                                    elif v >= 90: qd["Complete"] += 1
-                                    elif v >= 50: qd["High-quality"] += 1
-                                    elif v >= 10: qd["Medium-quality"] += 1
-                                    else: qd["Low-quality"] += 1
-                                    n_total += 1
-                                except: qd["Not-determined"] += 1; n_total += 1
+                                    if v is None: key = "Not-determined"
+                                    elif v >= 90: key = "Complete"
+                                    elif v >= 50: key = "High-quality"
+                                    elif v >= 10: key = "Medium-quality"
+                                    else: key = "Low-quality"
+                                except: key = "Not-determined"
+                                host_qd[host_name][key] += 1
                     except: pass
-                n_hq = qd["Complete"] + qd["High-quality"]
-                n_eval = n_total - qd["Not-determined"]
-                _add("07_CheckV", "✓", key_metric=f"{n_hq} HQ / {n_total} total (eval={n_eval})", details=f"{cv_dir}")
-                for q in ["Complete","High-quality","Medium-quality","Low-quality","Not-determined"]:
-                    if qd[q] > 0: _add(f"  └ {q}", "✓", key_metric=f"{qd[q]} 条")
+
+                # 全局汇总
+                global_qd = dict.fromkeys(QUALITY_ORDER, 0)
+                for hqd in host_qd.values():
+                    for q in QUALITY_ORDER: global_qd[q] += hqd[q]
+                n_total = sum(global_qd.values())
+                n_hq = global_qd["Complete"] + global_qd["High-quality"]
+                n_eval = n_total - global_qd["Not-determined"]
+
+                # 写入 checkv_summary.tsv
+                with open(report_dir / "checkv_summary.tsv", "w") as cvf:
+                    cvf.write("Host\t" + "\t".join(QUALITY_ORDER) + "\tTotal\tHQ\n")
+                    for h in sorted(host_qd.keys()):
+                        hqd = host_qd[h]; t = sum(hqd.values())
+                        hq = hqd["Complete"] + hqd["High-quality"]
+                        cvf.write(f"{h}\t" + "\t".join(str(hqd[q]) for q in QUALITY_ORDER) + f"\t{t}\t{hq}\n")
+                    cvf.write(f"TOTAL\t" + "\t".join(str(global_qd[q]) for q in QUALITY_ORDER) + f"\t{n_total}\t{n_hq}\n")
+
+                _add("07_CheckV", "✓", key_metric=f"{n_hq} HQ / {n_total} total ({n_eval} evaluated)", details=f"{cv_dir}")
+                # 按宿主显示 HQ 数 (Top 5)
+                host_hq = [(h, host_qd[h]["Complete"]+host_qd[h]["High-quality"], sum(host_qd[h].values()))
+                           for h in host_qd]
+                host_hq.sort(key=lambda x: -x[2])
+                for h, hq, tot in host_hq[:8]:
+                    if tot > 0: _add(f"  └ {h}", "✓", key_metric=f"HQ={hq} total={tot}")
+                if len(host_hq) > 8: _add(f"  └ ...", "✓", key_metric=f"+{len(host_hq)-8} more hosts")
+                # 质量分布摘要
+                qparts = [f"{q}={global_qd[q]}" for q in QUALITY_ORDER if global_qd[q] > 0]
+                _add("  └ Distribution", "✓", key_metric=" ".join(qparts[:4]))
             else:
                 _add("07_CheckV", "✓", key_metric=f"已运行", details=f"{cv_dir}")
         else:
