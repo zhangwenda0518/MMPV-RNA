@@ -2254,8 +2254,17 @@ def main():
     if stage in ('all', 'report'):
         stages_to_run.append(('report', pipe.run_reports))
 
+    # 准备阶段日志目录
+    stage_log_dir = Path(args.output_dir) / "09_Virome_Report" / "logs"
+    stage_log_dir.mkdir(parents=True, exist_ok=True)
+
     failed_stages = []
     for stage_name, stage_func in stages_to_run:
+        # 添加阶段独立日志 handler
+        stage_handler = logging.FileHandler(str(stage_log_dir / f"{stage_name}.log"), encoding='utf-8')
+        stage_handler.setLevel(logging.DEBUG)
+        stage_handler.setFormatter(logging.Formatter('[%(asctime)s] %(levelname)s %(message)s', datefmt='%H:%M:%S'))
+        logger.addHandler(stage_handler)
         try:
             stage_func()
         except SystemExit as e:
@@ -2272,6 +2281,8 @@ def main():
             else:
                 logger.warning("[%s] 阶段异常: %s, 继续", stage_name, e)
                 failed_stages.append(stage_name)
+        finally:
+            logger.removeHandler(stage_handler)
 
     if failed_stages:
         logger.warning("以下阶段失败: %s", ', '.join(failed_stages))
