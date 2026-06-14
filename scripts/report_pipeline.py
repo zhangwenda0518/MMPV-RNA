@@ -292,7 +292,7 @@ def collect_data(output_dir, report_dir):
         _add("03_COBRA", "○", details="未运行")
 
     # ── 04_Cluster ──
-    cluster = root / "04_Cluster"
+    cluster = root / "04_CLUSTER"
     if cluster.is_dir():
         centroids_fa = cluster / "centroids" / "final_centroids.fasta"
         known_fa = cluster / "2_cdhit" / "known_centroids.fasta"
@@ -366,7 +366,7 @@ def collect_data(output_dir, report_dir):
         _add("06_HostPrediction", "○", details="未运行")
 
     # ── 07_CheckV ──
-    cv_dir = root / "07_CheckV"
+    cv_dir = root / "07_Checkv"
     QUALITY_ORDER = ["Complete","High-quality","Medium-quality","Low-quality","Not-determined"]
     if cv_dir.is_dir():
         cv_tsvs = list(cv_dir.rglob("completeness.tsv"))
@@ -672,7 +672,7 @@ new Chart(document.getElementById('chart_s03'), {{
         if 'Novel Rank' in s['Stage'] and 'Known=' in s.get('Key_Metric',''):
             tax_novelty_kv = _extract_kv(s['Key_Metric'], r'(Known|NewSp|NewGe|NewFa)=(\d+)')
     if tax_novelty_kv:
-        stage_has_chart['s05a'] = True
+        stage_has_chart['s05'] = True
         chart_scripts += f"""
 new Chart(document.getElementById('chart_s05a'), {{
   type:'doughnut', data:{{labels:{_json.dumps(list(tax_novelty_kv.keys()))},
@@ -687,7 +687,7 @@ new Chart(document.getElementById('chart_s05a'), {{
         if '06_HostPrediction' in s['Stage'] and '=' in s.get('Key_Metric',''):
             host_kv = _extract_kv(s['Key_Metric'], r'(\w+)=(\d+)')
     if host_kv:
-        stage_has_chart['s06a'] = True
+        stage_has_chart['s06'] = True
         chart_scripts += f"""
 new Chart(document.getElementById('chart_s06a'), {{
   type:'doughnut', data:{{labels:{_json.dumps(list(host_kv.keys()))},
