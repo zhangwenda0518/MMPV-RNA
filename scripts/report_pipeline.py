@@ -461,7 +461,7 @@ def collect_data(output_dir, report_dir):
 # ═══════════════════════════════════════════════════════════════
 
 def generate_sankey(output_dir, report_dir):
-    """生成 taxonomy Sankey 图 (全部 + 植物病毒)"""
+    """生成交互式 taxonomy Sankey HTML (全部 + 植物病毒)"""
     tax = Path(output_dir) / "05_Taxonomy"
     final_tax = tax / "integrated" / "final_integrated_classification.tsv"
     if not final_tax.is_file(): return
@@ -472,13 +472,14 @@ def generate_sankey(output_dir, report_dir):
         if not importlib.util.find_spec("plotly"):
             print("  安装 plotly...")
             subprocess.run([sys.executable, "-m", "pip", "install", "plotly", "-q"], check=False)
+        # 生成交互式 HTML (--format html)
         subprocess.run([sys.executable, str(sankey_script),
-                        "-i", str(final_tax), "-o", str(report_dir / "classification_sankey.png"),
-                        "--format", "png", "--min-flow", "1", "--min-genus-flow", "10",
-                        "--palette", "set3", "--height", "1200", "--node-pad", "30",
-                        "--label-truncate", "25", "--font-size", "9", "--title-font-size", "16"],
+                        "-i", str(final_tax), "-o", str(report_dir / "classification_sankey.html"),
+                        "--format", "html", "--min-flow", "1", "--min-genus-flow", "10",
+                        "--palette", "set3", "--height", "900", "--width", "1000", "--node-pad", "30",
+                        "--label-truncate", "25", "--font-size", "9", "--title-font-size", "14"],
                        capture_output=True, timeout=120)
-        print(f"  Sankey → {report_dir / 'classification_sankey.png'}")
+        print(f"  Sankey HTML → {report_dir / 'classification_sankey.html'}")
         # Plant-only
         host_summary = Path(output_dir) / "06_HostPrediction" / "ensemble_host_summary.tsv"
         if host_summary.is_file():
@@ -493,13 +494,13 @@ def generate_sankey(output_dir, report_dir):
                         for line in tf:
                             if line.split('\t')[0] in plant_ids: pf.write(line)
                     subprocess.run([sys.executable, str(sankey_script),
-                                    "-i", str(plant_tax), "-o", str(report_dir / "classification_sankey_plant.png"),
-                                    "--format", "png", "--min-flow", "1", "--min-genus-flow", "5",
-                                    "--palette", "set3", "--height", "1200", "--node-pad", "30",
-                                    "--label-truncate", "25", "--font-size", "9", "--title-font-size", "16",
+                                    "-i", str(plant_tax), "-o", str(report_dir / "classification_sankey_plant.html"),
+                                    "--format", "html", "--min-flow", "1", "--min-genus-flow", "5",
+                                    "--palette", "set3", "--height", "900", "--width", "1000", "--node-pad", "30",
+                                    "--label-truncate", "25", "--font-size", "9", "--title-font-size", "14",
                                     "--title", "Plant Virus Taxonomy Sankey"],
                                    capture_output=True, timeout=120)
-                    print(f"  Plant Sankey → {report_dir / 'classification_sankey_plant.png'}")
+                    print(f"  Plant Sankey HTML → {report_dir / 'classification_sankey_plant.html'}")
             except: pass
     except: pass
 
@@ -510,7 +511,7 @@ def generate_sankey(output_dir, report_dir):
 
 def write_html_report(report_dir, stage_stats):
     """生成期刊级 HTML 流水线报告"""
-    import json as _json, base64 as _b64
+    import json as _json
 
     main_stages = [s for s in stage_stats if not s["Stage"].startswith("  ")]
     sub_stages  = [s for s in stage_stats if s["Stage"].startswith("  ")]
@@ -749,15 +750,16 @@ new Chart(document.getElementById('chart_s08'), {{
   options:{{responsive:true,plugins:{{title:{{display:true,text:'Rescue Branch Contributions'}},legend:{{position:'bottom'}}}}}}}});
 """
 
-    # Sankey 图 base64
+    # Sankey 交互式嵌入 (iframe 引用同级 HTML)
     sankey_imgs = ""
-    for sname, stitle in [("classification_sankey.png","Taxonomy Classification Sankey"),
-                          ("classification_sankey_plant.png","Plant Virus Taxonomy Sankey")]:
+    for sname, stitle in [("classification_sankey.html","Taxonomy Classification Sankey"),
+                          ("classification_sankey_plant.html","Plant Virus Taxonomy Sankey")]:
         spath = report_dir / sname
         if spath.is_file():
-            with open(spath, "rb") as sf:
-                b64 = _b64.b64encode(sf.read()).decode()
-            sankey_imgs += f'<div class="sankey-card"><h3>{stitle}</h3><img src="data:image/png;base64,{b64}" alt="{stitle}"></div>\n'
+            sankey_imgs += f'''<div class="sankey-card">
+<h3>{stitle} <span style="font-weight:400;font-size:10px;color:var(--muted)">(interactive — hover/zoom/pan)</span></h3>
+<iframe src="{sname}" style="width:100%;height:950px;border:none;border-radius:4px" loading="lazy"></iframe>
+</div>\n'''
 
     # ── KPI ──
     kpis = {}
@@ -941,11 +943,10 @@ body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans SC',san
 .s-pass{{background:#e8f5e9;color:var(--green)}}.s-fail{{background:#fce4ec;color:var(--red)}}.s-skip{{background:#f5f5f5;color:#9e9e9e}}
 .stage-charts{{display:grid;gap:16px;padding:18px 22px}}
 .chart-box{{background:#fafbfc;border-radius:var(--radius-sm);padding:12px;border:1px solid var(--border)}}
-.sankey-section{{padding:18px 22px;display:grid;grid-template-columns:1fr 1fr;gap:16px}}
-@media(max-width:768px){{.sankey-section{{grid-template-columns:1fr}}}}
+.sankey-section{{padding:18px 22px;display:flex;flex-direction:column;gap:16px}}
 .sankey-card{{background:#fafbfc;border-radius:var(--radius-sm);padding:14px;border:1px solid var(--border)}}
-.sankey-card h3{{font-size:13px;color:var(--indigo);margin-bottom:10px;text-align:center}}
-.sankey-card img{{width:100%;height:auto;border-radius:4px}}
+.sankey-card h3{{font-size:14px;color:var(--indigo);margin-bottom:10px;text-align:center}}
+.sankey-card iframe{{display:block;width:100%;border-radius:4px}}
 .table-wrap{{background:var(--card-bg);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden;margin-bottom:20px}}
 .table-wrap h3{{font-size:15px;padding:16px 22px;border-bottom:1px solid var(--border);color:var(--text)}}
 table{{width:100%;border-collapse:collapse;font-size:13px}}
