@@ -2775,7 +2775,7 @@ def main():
     stages_to_run = [(s, stage_map[s]) for s in stage_order if _all or s in stages]
 
     # 准备阶段日志目录
-    stage_log_dir = Path(args.output_dir) / "09_Virome_Report" / "logs"
+    stage_log_dir = Path(args.output_dir) / "09_Reports" / "logs"
     stage_log_dir.mkdir(parents=True, exist_ok=True)
 
     failed_stages = []
