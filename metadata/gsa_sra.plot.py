@@ -11,6 +11,7 @@
 
 import os
 import re
+import math
 import argparse
 import textwrap
 import pandas as pd
@@ -136,24 +137,26 @@ def plot_sci_landscape(csv_path, output_dir="SCI_Figures_Output"):
         pct = val / total * 100
         custom_labels.append(f"{name}\n{pct:.1f}%\n(n={val})")
 
-    # 禁用 autopct 和外部 labels，完全由我们自己控制文字在圆环上的位置 (labeldistance=0.75)
-    wedges, texts = ax.pie(
-        db_counts, 
-        labels=custom_labels, 
-        labeldistance=0.75, 
-        startangle=140, 
+    # 绘制甜甜圈（不放外部标签，手动定位到环形中心）
+    wedges, _ = ax.pie(
+        db_counts,
+        labels=None,
+        startangle=140,
         colors=[colors_db.get(x, '#555555') for x in db_counts.index],
-        wedgeprops=dict(width=0.55, edgecolor='w', linewidth=3), # 稍微加厚色环，方便写字
-        radius=1.3, center=(0, 0)
+        wedgeprops=dict(width=0.55, edgecolor='w', linewidth=3),
+        radius=1.3, center=(0, 0),
     )
-    
-    # 强制将圈上的文字居中、加粗、变白
-    for t in texts:
-        t.set_horizontalalignment('center')
-        t.set_verticalalignment('center')
-        t.set_fontsize(15)
-        t.set_fontweight('bold')
-        t.set_color('white')
+
+    # 将标签精确放置在每个楔形的环形中心
+    ring_center = 1.0 - 0.55 / 2  # 环形中心 = 外半径 - 环宽/2
+    label_r = ring_center * 1.3    # 实际径向距离
+
+    for i, wedge in enumerate(wedges):
+        ang = math.radians((wedge.theta1 + wedge.theta2) / 2)
+        x = label_r * math.cos(ang)
+        y = label_r * math.sin(ang)
+        ax.text(x, y, custom_labels[i], ha='center', va='center',
+                fontsize=15, fontweight='bold', color='white')
 
     ax.set_title('B. Proportion of Data Origin', loc='left', fontsize=20, fontweight='bold', pad=40)
     generate_individual_plot(fig, ax, output_dir, "Panel_B_Origin")
