@@ -73,17 +73,23 @@ def find_cmd(name):
     return found if found else name
 
 
-def run_cmd(cmd, logger, step_name):
-    """执行 shell 命令。stdout/stderr 同时输出到终端和日志文件。"""
+def run_cmd(cmd, logger, step_name, log_file=None):
+    """执行 shell 命令。stdout/stderr 同时输出到终端、主编排日志、可选的阶段日志。"""
     logger.info("[%s] 执行中...", step_name)
     logger.debug("  CMD: %s", cmd)
+    lf = open(log_file, 'a', encoding='utf-8') if log_file else None
     try:
+        if lf:
+            lf.write(f"=== {step_name} ===\nCMD: {cmd}\n\n")
         with subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                               text=True, bufsize=1) as proc:
             for line in proc.stdout:
                 line = line.rstrip('\n\r')
                 print(line, flush=True)
                 logger.debug("  %s", line)
+                if lf:
+                    lf.write(line + '\n')
+                    lf.flush()
             proc.wait()
             if proc.returncode != 0:
                 logger.error("[%s] ✗ 失败 (exit=%d)", step_name, proc.returncode)
@@ -93,6 +99,10 @@ def run_cmd(cmd, logger, step_name):
     except Exception as e:
         logger.error("[%s] ✗ 异常: %s", step_name, e)
         return False, str(e)
+    finally:
+        if lf:
+            lf.write(f"\n=== {step_name} 完成 ===\n\n")
+            lf.close()
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -342,7 +352,7 @@ class ViromePipeline:
         if self.args.clean_debug:
             parts.append("--debug")
 
-        ok, _ = run_cmd(' '.join(parts), self.log, "Clean")
+        ok, _ = run_cmd(' '.join(parts), self.log, "Clean", str(self.d['clean'] / "clean.log"))
         if not ok:
             self.log.error("清洗失败, 终止。")
             sys.exit(1)
@@ -438,7 +448,7 @@ class ViromePipeline:
         if self.args.deplete_debug:
             parts.append("--debug")
 
-        ok, _ = run_cmd(' '.join(parts), self.log, "Host Depletion")
+        ok, _ = run_cmd(' '.join(parts), self.log, "Host Depletion", str(self.d['hostdep'] / "hostdep.log"))
         if not ok:
             self.log.error("去宿主失败, 终止。")
             sys.exit(1)
@@ -484,7 +494,7 @@ class ViromePipeline:
         if self.args.asm_keep_temp:
             parts.append("--keep-temp")
 
-        ok, _ = run_cmd(' '.join(parts), self.log, "Assembly")
+        ok, _ = run_cmd(' '.join(parts), self.log, "Assembly", str(self.d['asm'] / "assembly.log"))
         if not ok:
             self.log.error("组装失败, 终止。")
             sys.exit(1)
@@ -550,7 +560,7 @@ class ViromePipeline:
             parts.append("--skip_plots")
         if self.args.clean_failed:
             parts.append("--clean_failed")
-        run_cmd(' '.join(parts), self.log, "VirusIdentification")
+        run_cmd(' '.join(parts), self.log, "VirusIdentification", str(self.d['ident'] / "ident.log"))
 
         self.viral_map = scan_viral_files(self.d['ident'])
         self.log.info("  鉴定完成: %d 样本有病毒候选序列", len(self.viral_map))
@@ -598,7 +608,7 @@ class ViromePipeline:
         if self.args.cobra_verbose:
             parts.append("--verbose")
 
-        ok, _ = run_cmd(' '.join(parts), self.log, "COBRA Pipeline")
+        ok, _ = run_cmd(' '.join(parts), self.log, "COBRA Pipeline", str(self.d['cobra'] / "cobra.log"))
         if not ok:
             self.log.warning("COBRA 阶段部分任务失败, 检查日志。")
 
@@ -681,7 +691,7 @@ class ViromePipeline:
         if not self.args.force:
             parts.append("--resume")
 
-        ok, _ = run_cmd(' '.join(parts), self.log, "CLUSTER (vclust only)")
+        ok, _ = run_cmd(' '.join(parts), self.log, "CLUSTER (vclust only)", str(self.d['cluster'] / "cluster.log"))
         if not ok:
             self.log.error("CLUSTER vclust 阶段失败, 终止。")
             sys.exit(1)
@@ -902,7 +912,7 @@ class ViromePipeline:
         if not self.args.force:
             parts.append("--resume")
 
-        ok, _ = run_cmd(' '.join(parts), self.log, f"Rescue ({','.join(host_filter)})")
+        ok, _ = run_cmd(' '.join(parts), self.log, f"Rescue ({','.join(host_filter)})", str(rescue_out / "rescue.log"))
         if ok:
             final_out = rescue_out / "centroids" / "final_centroids.fasta"
             if final_out.exists():
@@ -938,7 +948,7 @@ class ViromePipeline:
                 f"checkv completeness {fasta_path} {out_dir} "
                 f"-d {self.args.checkv_db} -t {min(self.args.threads, 16)} "
             )
-            ok, _ = run_cmd(cmd, self.log, f"CheckV: {fasta_path.name}")
+            ok, _ = run_cmd(cmd, self.log, f"CheckV: {fasta_path.name}", str(self.d['checkv_dir'] / "checkv.log"))
             if not ok:
                 self.log.warning("  CheckV 失败: %s", fasta_path.name)
                 return {}, 0
@@ -1133,7 +1143,7 @@ class ViromePipeline:
                 parts.append(f"--remove-suffix {self.args.tax_remove_suffix}")
             if self.args.force:
                 parts.append("-f")
-            ok, _ = run_cmd(' '.join(parts), self.log, "virus_classifier2.py")
+            ok, _ = run_cmd(' '.join(parts), self.log, "virus_classifier2.py", str(self.d['taxonomy'] / "taxonomy.log"))
             if not ok:
                 self.log.warning("  virus_classifier2 失败")
 
@@ -1147,7 +1157,7 @@ class ViromePipeline:
                 "--combined", str(combined_tsv),
                 "--output", str(int_dir),
             ]
-            ok, _ = run_cmd(' '.join(parts), self.log, "R consensus")
+            ok, _ = run_cmd(' '.join(parts), self.log, "R consensus", str(self.d['taxonomy'] / "r_consensus.log"))
             if not ok:
                 self.log.warning("  R consensus 失败")
 
@@ -1196,7 +1206,7 @@ class ViromePipeline:
         if self.args.skip_ictv:
             parts.append("--skip-ictv")
 
-        ok, _ = run_cmd(' '.join(parts), self.log, "Host Prediction")
+        ok, _ = run_cmd(' '.join(parts), self.log, "Host Prediction", str(self.d['host_pred'] / "host.log"))
         if ok:
             self.log.info("  宿主预测完成 → %s", self.d['host_pred'])
         else:
@@ -1254,7 +1264,7 @@ class ViromePipeline:
             else:
                 cmd = (f"checkv completeness {host_fa} {cv_out} "
                        f"-d {self.args.checkv_db} -t {min(self.args.threads, 16)}")
-                run_cmd(cmd, self.log, f"CheckV: {host}")
+                run_cmd(cmd, self.log, f"CheckV: {host}", str(self.d['checkv_dir'] / "checkv.log"))
 
             # 解析结果, 标记 pass (>90%)
             if cv_tsv.is_file():
