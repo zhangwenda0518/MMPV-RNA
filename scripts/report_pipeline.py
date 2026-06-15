@@ -714,10 +714,12 @@ def write_html_report(report_dir, stage_stats):
             tax_novelty_kv = _extract_kv(s['Key_Metric'], r'(Known|NewSp|NewGe|NewFa)=(\d+)')
     if tax_novelty_kv:
         stage_has_chart['s05'] = True
-        chart_scripts += _chart('chart_s05a', 'doughnut', {
+        bar_colors = ["#2e7d32","#1565c0","#ef6c00","#c62828"]
+        chart_scripts += _chart('chart_s05a', 'bar', {
             "labels": list(tax_novelty_kv.keys()),
-            "datasets": [{"data":list(tax_novelty_kv.values()),"backgroundColor":["#2e7d32","#1565c0","#ef6c00","#c62828"]}]},
-            {"responsive":True,"plugins":{"title":{"display":True,"text":"Taxonomy Novelty"},"legend":{"position":"bottom"}}})
+            "datasets": [{"label":"Sequences","data":list(tax_novelty_kv.values()),"backgroundColor":bar_colors}]},
+            {"responsive":True,"plugins":{"title":{"display":True,"text":"Taxonomy Novelty"},"legend":{"display":False}},
+             "scales":{"y":{"beginAtZero":True,"title":{"text":"Sequences"}}}})
 
     # S06 — Host distribution
     host_kv = {}
@@ -726,10 +728,12 @@ def write_html_report(report_dir, stage_stats):
             host_kv = _extract_kv(s['Key_Metric'], r'(\w+)=(\d+)')
     if host_kv:
         stage_has_chart['s06'] = True
-        chart_scripts += _chart('chart_s06a', 'doughnut', {
+        host_colors = ["#42a5f5","#66bb6a","#ffa726","#ef5350","#ab47bc","#26c6da","#7e57c2","#78909c"]
+        chart_scripts += _chart('chart_s06a', 'bar', {
             "labels": list(host_kv.keys()),
-            "datasets": [{"data":list(host_kv.values()),"backgroundColor":["#42a5f5","#66bb6a","#ffa726","#ef5350","#ab47bc","#26c6da","#7e57c2","#78909c"]}]},
-            {"responsive":True,"plugins":{"title":{"display":True,"text":"Host Prediction Distribution"},"legend":{"position":"bottom"}}})
+            "datasets": [{"label":"Sequences","data":list(host_kv.values()),"backgroundColor":host_colors[:len(host_kv)]}]},
+            {"responsive":True,"plugins":{"title":{"display":True,"text":"Host Prediction Distribution"},"legend":{"display":False}},
+             "scales":{"y":{"beginAtZero":True,"title":{"text":"Sequences"}}}})
 
     # S07 — CheckV quality
     cv_rows = _read_tsv(report_dir / "checkv_summary.tsv")
@@ -775,19 +779,23 @@ def write_html_report(report_dir, stage_stats):
             {"responsive":True,"plugins":{"title":{"display":True,"text":"Rescue Branch Contributions"},"legend":{"position":"bottom"}}})
 
     # Sankey 交互式嵌入 (用 Blob URL 动态注入, 避免 data URI 大小限制)
-    sankey_imgs = ""
+    # s05=全部分类, s06=植物病毒
+    sankey_by_stage = {}  # {stage_key: html_string}
     sankey_inject_scripts = ""
-    for i, (sname, stitle) in enumerate([("classification_sankey.html","Taxonomy Classification Sankey"),
-                                          ("classification_sankey_plant.html","Plant Virus Taxonomy Sankey")]):
+    sankey_map = [("classification_sankey.html","Taxonomy Classification Sankey","s05"),
+                  ("classification_sankey_plant.html","Plant Virus Taxonomy Sankey","s06")]
+    for i, (sname, stitle, stage_key) in enumerate(sankey_map):
         spath = report_dir / sname
         if spath.is_file():
             import base64
             with open(spath, "rb") as sf:
                 sankey_b64 = base64.b64encode(sf.read()).decode()
-            sankey_imgs += f'''<div class="sankey-card">
+            card = f'''<div class="sankey-card">
 <h3>{stitle} <span style="font-weight:400;font-size:10px;color:var(--muted)">(interactive — hover/zoom/pan)</span></h3>
 <iframe id="sankey_iframe_{i}" style="width:100%;height:950px;border:none;border-radius:4px" loading="lazy"></iframe>
 </div>\n'''
+            sankey_by_stage.setdefault(stage_key, "")
+            sankey_by_stage[stage_key] += card
             sankey_inject_scripts += f"(function(){{var b='{sankey_b64}';var d=atob(b);var u=URL.createObjectURL(new Blob([d],{{type:'text/html'}}));document.getElementById('sankey_iframe_{i}').src=u;}})();\n"
 
     # ── KPI ──
@@ -864,7 +872,7 @@ def write_html_report(report_dir, stage_stats):
     chart_map = {
         's00a': [('chart_s00a','Read Quality'),('chart_s00a_dup','Duplication Rate')],
         's00b': [('chart_s00b','Host Depletion')],
-        's01':  [('chart_s01a','N50 (kb)'),('chart_s01b','Contig Count')],
+        's01':  [('chart_s01b','Contig Count'),('chart_s01a','N50 (kb)')],
         's02':  [('chart_s02a','Per-Tool ID'),('chart_s02b','UniProt Filter')],
         's03':  [('chart_s03','COBRA Rates')],
         's05':  [('chart_s05a','Taxonomy Novelty')],
@@ -924,9 +932,8 @@ def write_html_report(report_dir, stage_stats):
                     chart_html += f'<canvas id="{cid}" style="max-height:320px"></canvas></div>'
                 chart_html += '</div>'
 
-        if sk == 's05' and sankey_imgs:
-            chart_html += f'<div class="sankey-section">{sankey_imgs}</div>'
-            sankey_imgs = ""
+        if sk in sankey_by_stage:
+            chart_html += f'<div class="sankey-section">{sankey_by_stage[sk]}</div>'
 
         # 在卡片内嵌入对应 TSV 数据表
         table_html = ""
