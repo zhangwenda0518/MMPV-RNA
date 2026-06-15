@@ -996,7 +996,6 @@ def write_html_report(report_dir, stage_stats):
     checkv_kpi = f"{hq} Complete / {cv_t} total" if cv_t else str(hq)
     kpi_items = [
         ("Samples", f"{sample_kpi}<br>{n_sample} 样本", "🧬"),
-        ("Data Size", f"{_fmt_bases(raw_b) if raw_b else '—'} → {_fmt_bases(clean_b) if clean_b else '—'}", "💾"),
         ("Assembly", f"{kpis.get('total_contigs','—')} contigs<br>{kpis.get('total_mb','—')} Mb", "🔧"),
         ("Viruses", f"{kpis.get('virus_seqs','—')} identified", "🦠"),
         ("Novelty", f"{n_novel}/{n_total_tax} novel<br>({novelty_pct})" if n_total_tax > 0 else "—", "🆕"),
