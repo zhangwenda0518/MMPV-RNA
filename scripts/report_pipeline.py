@@ -798,6 +798,8 @@ def write_html_report(report_dir, stage_stats):
                 kpis['raw_reads'] = m.group(1); kpis['clean_reads'] = m.group(2)
             for m in re.finditer(r'bases:\s*([\d,]+)→([\d,]+)', s.get('Key_Metric','')):
                 kpis['raw_bases'] = m.group(1); kpis['clean_bases'] = m.group(2)
+        if s['Stage'] == '00a_CleanData':
+            for m in re.finditer(r'(\d+)\s*样本', s.get('Key_Metric','')): kpis['n_sample'] = m.group(1)
         if s['Stage'] == '01_Assembly':
             for m in re.finditer(r'([\d,]+)\s*contigs', s.get('Key_Metric','')): kpis['total_contigs'] = m.group(1)
             for m in re.finditer(r'([\d.]+)\s*Mb', s.get('Key_Metric','')): kpis['total_mb'] = m.group(1)
@@ -967,13 +969,13 @@ def write_html_report(report_dir, stage_stats):
         if n >= 1e3: return f"{n/1e3:.1f} Kb"
         return str(n)
     kpi_cards = ""
-    raw_r = kpis.get('raw_reads','—'); clean_r = kpis.get('clean_reads','—')
     raw_b = kpis.get('raw_bases',''); clean_b = kpis.get('clean_bases','')
-    sample_kpi = f"{raw_r} raw → {clean_r} clean"
+    n_sample = kpis.get('n_sample','—')
+    sample_kpi = "—"
     if raw_b and clean_b:
-        sample_kpi += f"<br>{_fmt_bases(raw_b)} → {_fmt_bases(clean_b)}"
+        sample_kpi = f"{_fmt_bases(raw_b)} raw → {_fmt_bases(clean_b)} clean"
     kpi_items = [
-        ("Samples", sample_kpi, "🧬"),
+        ("Samples", f"{sample_kpi}<br>{n_sample} 样本", "🧬"),
         ("Assembly", f"{kpis.get('total_contigs','—')} contigs, {kpis.get('total_mb','—')} Mb", "🔧"),
         ("Viruses", f"{kpis.get('virus_seqs','—')} identified", "🦠"),
         ("HQ vOTUs", f"{kpis.get('hq_votus',kpis.get('rescued','—'))}", "⭐"),
