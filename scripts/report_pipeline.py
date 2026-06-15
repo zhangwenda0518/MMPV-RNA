@@ -535,6 +535,16 @@ def write_html_report(report_dir, stage_stats):
     """生成期刊级 HTML 流水线报告"""
     import json as _json
 
+    # 内嵌 Chart.js (避免 CDN 不可用导致图表空白)
+    chart_js_path = SCRIPT_DIR / "chart.min.js"
+    chart_js_inline = ""
+    if chart_js_path.is_file():
+        with open(chart_js_path, "r", encoding="utf-8") as cf:
+            chart_js_inline = cf.read()
+        # 同时复制到报告目录供离线使用
+        import shutil
+        shutil.copy2(str(chart_js_path), str(report_dir / "chart.min.js"))
+
     main_stages = [s for s in stage_stats if not s["Stage"].startswith("  ")]
     sub_stages  = [s for s in stage_stats if s["Stage"].startswith("  ")]
 
@@ -953,7 +963,8 @@ new Chart(document.getElementById('chart_s08'), {{
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>MMPV-RNA v2.3 — Pipeline Report</title>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<script>/*! Chart.js | https://www.chartjs.org | MIT License */
+{{CHART_JS_INLINE}}</script>
 <style>
 :root{{
   --bg:#f4f6f9;--card-bg:#fff;--text:#263238;--muted:#78909c;
@@ -1101,7 +1112,7 @@ function exportTable(){{
 </body></html>'''
 
     with open(report_dir / "pipeline_report.html", "w", encoding="utf-8") as hf:
-        hf.write(html)
+        hf.write(html.replace("{{CHART_JS_INLINE}}", chart_js_inline))
 
 
 # ═══════════════════════════════════════════════════════════════
