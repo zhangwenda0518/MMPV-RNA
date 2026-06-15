@@ -889,33 +889,38 @@ def configure_layout(fig, args, num_nodes, num_links, color_info, taxonomic_leve
     # 增加底部边距，为图例留出空间
     bottom_margin = 50 + (num_levels * 15)
 
+    # 标题: 空标题时跳过 (避免 HTML 嵌入时重叠)
+    if args.title.strip():
+        fig.update_layout(
+            title_text=args.title + title_suffix,
+            title_font_size=args.title_font_size,
+            title_x=0.5,
+            title_y=0.98,
+        )
+        # 统计信息注解 - 只在有标题时放在标题下方
+        fig.add_annotation(
+            text=f"Total sequences: {args.total_sequences:,} | Nodes: {num_nodes:,} | Links: {num_links:,}",
+            showarrow=False,
+            xref="paper", yref="paper",
+            x=0.5, y=1.08,
+            font_size=12,
+            font_color="#333333",
+            bgcolor="rgba(245,245,245,0.8)",
+            bordercolor="#dddddd",
+            borderwidth=1,
+            borderpad=6,
+            opacity=0.9
+        )
+    else:
+        top_margin = 20  # 无标题时缩小顶部边距
     fig.update_layout(
-        title_text=args.title + title_suffix,
-        title_font_size=args.title_font_size,
-        title_x=0.5,
-        title_y=0.98,  # 稍微降低标题位置
         font_size=args.font_size,
         font_family=args.font_family,
         height=args.height,
         width=args.width,
-        margin=dict(t=top_margin, b=bottom_margin, l=120, r=80),  # 调整底部边距
+        margin=dict(t=top_margin, b=bottom_margin, l=120, r=80),
         paper_bgcolor='white',
         plot_bgcolor='white',
-    )
-
-    # 统计信息注解 - 放在标题下方
-    fig.add_annotation(
-        text=f"Total sequences: {args.total_sequences:,} | Nodes: {num_nodes:,} | Links: {num_links:,}",
-        showarrow=False,
-        xref="paper", yref="paper",
-        x=0.5, y=1.12,  # 放在标题下方
-        font_size=12,
-        font_color="#333333",
-        bgcolor="rgba(245,245,245,0.8)",
-        bordercolor="#dddddd",
-        borderwidth=1,
-        borderpad=6,
-        opacity=0.9
     )
 
     # Add level annotations with matching colors - 移动到图表最下方
@@ -957,7 +962,7 @@ def configure_layout(fig, args, num_nodes, num_links, color_info, taxonomic_leve
             yref="paper",
             text=f"<b>{level}</b>",
             showarrow=False,
-            font=dict(size=font_size, color="white", family=args.font_family, weight=font_weight),
+            font=dict(size=font_size, color="#1a1a1a", family=args.font_family, weight=font_weight),
             bgcolor=color,
             bordercolor="rgba(0,0,0,0.5)",
             borderwidth=2,
