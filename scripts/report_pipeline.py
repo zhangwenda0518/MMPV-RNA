@@ -24,11 +24,13 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 
 def _count_fasta(path):
     if not path or not os.path.isfile(str(path)): return 0
-    return sum(1 for _ in open(str(path)) if _.startswith('>'))
+    with open(str(path)) as f:
+        return sum(1 for _ in f if _.startswith('>'))
 
 def _count_lines(path):
     if not path or not os.path.isfile(str(path)): return 0
-    return sum(1 for _ in open(str(path)))
+    with open(str(path)) as f:
+        return sum(1 for _ in f)
 
 def _count_dir(d):
     return sum(1 for _ in Path(d).iterdir() if _.is_dir()) if d and Path(d).is_dir() else 0
@@ -58,271 +60,265 @@ def _n50_n90(lens):
 
 def _parse_fasta_lens(fa_path):
     lens = []; seq = ""
-    for line in open(str(fa_path)):
-        s = line.strip()
-        if s.startswith('>'):
-            if seq: lens.append(len(seq))
-            seq = ""
-        else: seq += s
+    with open(str(fa_path)) as f:
+        for line in f:
+            s = line.strip()
+            if s.startswith('>'):
+                if seq: lens.append(len(seq))
+                seq = ""
+            else: seq += s
     if seq: lens.append(len(seq))
     return lens
 
 
 # ═══════════════════════════════════════════════════════════════
-# 阶段数据收集
+# 阶段数据收集 (各阶段独立函数)
 # ═══════════════════════════════════════════════════════════════
 
-def collect_data(output_dir, report_dir):
-    """收集所有阶段数据 → 生成 TSV + 返回 stage_stats"""
-    root = Path(output_dir).resolve()
-    stage_stats = []
-
-    def _add(stage, status, key_metric="", details=""):
-        stage_stats.append({"Stage": stage, "Status": status, "Key_Metric": key_metric, "Details": details})
-
-    log = print  # simple logger
-
-    # ── 00a_CleanData ──
+def _collect_cleandata(root, report_dir, _add):
+    """00a_CleanData 阶段"""
     clean = root / "00a_CleanData"
-    if clean.is_dir():
-        ns = _count_dir(clean / "3.clumpify") or _count_dir(clean / "2.fasta") or _count_dir(clean)
-        _add("00a_CleanData", "✓", key_metric=f"{ns} 样本", details=str(clean))
-        fp = clean / "logs"
-        if fp.is_dir():
-            jf_list = list(fp.glob("*_fastp_report.json"))
-            if jf_list:
-                n_total_before, n_total_after = 0, 0
-                with open(report_dir / "data_summary.tsv", "w") as ds:
-                    ds.write("Sample\tRaw_Reads\tClean_Reads\tRetained(%)\tRaw_Q20(%)\tClean_Q20(%)\tRaw_Q30(%)\tClean_Q30(%)\tLowQ_Reads\tTooShort_Reads\tDup_Rate(%)\n")
-                    for jf in sorted(jf_list):
-                        try:
-                            js = json.load(open(jf))
-                            sn = jf.name.replace("_fastp_report.json", "")
-                            bef = js.get("summary", {}).get("before_filtering", {})
-                            aft = js.get("summary", {}).get("after_filtering", {})
-                            fil = js.get("filtering_result", {})
-                            dup = js.get("duplication", {})
-                            nb = bef.get("total_reads", 0); na = aft.get("total_reads", 0)
-                            n_total_before += nb; n_total_after += na
-                            ds.write(f"{sn}\t{nb}\t{na}\t{round(na/max(nb,1)*100,1)}\t"
-                                     f"{round(bef.get('q20_rate',0)*100,1)}\t{round(aft.get('q20_rate',0)*100,1)}\t"
-                                     f"{round(bef.get('q30_rate',0)*100,1)}\t{round(aft.get('q30_rate',0)*100,1)}\t"
-                                     f"{fil.get('low_quality_reads',0)}\t{fil.get('too_short_reads',0)}\t"
-                                     f"{round(dup.get('rate',0)*100,3)}\n")
-                        except: pass
-                    ds.write(f"TOTAL\t{n_total_before}\t{n_total_after}\t{round(n_total_after/max(n_total_before,1)*100,1)}\n")
-                _add("  └ data_summary", "✓", key_metric=f"reads: {n_total_before:,}→{n_total_after:,}")
-    else:
-        _add("00a_CleanData", "○", details="未运行")
+    if not clean.is_dir():
+        _add("00a_CleanData", "○", details="未运行"); return
+    ns = _count_dir(clean / "3.clumpify") or _count_dir(clean / "2.fasta") or _count_dir(clean)
+    _add("00a_CleanData", "✓", key_metric=f"{ns} 样本", details=str(clean))
+    fp = clean / "logs"
+    if not fp.is_dir(): return
+    jf_list = list(fp.glob("*_fastp_report.json"))
+    if not jf_list: return
+    n_total_before, n_total_after = 0, 0
+    with open(report_dir / "data_summary.tsv", "w") as ds:
+        ds.write("Sample\tRaw_Reads\tClean_Reads\tRetained(%)\tRaw_Q20(%)\tClean_Q20(%)\tRaw_Q30(%)\tClean_Q30(%)\tLowQ_Reads\tTooShort_Reads\tDup_Rate(%)\n")
+        for jf in sorted(jf_list):
+            try:
+                with open(jf) as jfh:
+                    js = json.load(jfh)
+                sn = jf.name.replace("_fastp_report.json", "")
+                bef = js.get("summary", {}).get("before_filtering", {})
+                aft = js.get("summary", {}).get("after_filtering", {})
+                fil = js.get("filtering_result", {})
+                dup = js.get("duplication", {})
+                nb = bef.get("total_reads", 0); na = aft.get("total_reads", 0)
+                n_total_before += nb; n_total_after += na
+                ds.write(f"{sn}\t{nb}\t{na}\t{round(na/max(nb,1)*100,1)}\t"
+                         f"{round(bef.get('q20_rate',0)*100,1)}\t{round(aft.get('q20_rate',0)*100,1)}\t"
+                         f"{round(bef.get('q30_rate',0)*100,1)}\t{round(aft.get('q30_rate',0)*100,1)}\t"
+                         f"{fil.get('low_quality_reads',0)}\t{fil.get('too_short_reads',0)}\t"
+                         f"{round(dup.get('rate',0)*100,3)}\n")
+            except Exception as e: print(f"  [WARN] 解析 fastp JSON 失败 ({jf.name}): {e}")
+        ds.write(f"TOTAL\t{n_total_before}\t{n_total_after}\t{round(n_total_after/max(n_total_before,1)*100,1)}\n")
+    _add("  └ data_summary", "✓", key_metric=f"reads: {n_total_before:,}→{n_total_after:,}")
 
-    # ── 00b_HostDepletion ──
+
+def _collect_hostdepletion(root, report_dir, _add):
+    """00b_HostDepletion 阶段"""
     hostdep = root / "00b_HostDepletion"
-    if hostdep.is_dir():
-        ns = _count_dir(hostdep)
-        hd_rows = {}
-        sq_tsv = hostdep / "logs" / "host_depletion_seqkit_summary.tsv"
-        if not sq_tsv.is_file():
-            sq_tsv = hostdep / "host_depletion_seqkit_summary.tsv"
-        if sq_tsv.is_file():
-            for r in _read_tsv(sq_tsv):
-                sn = r.get("Sample",""); stage = r.get("Stage","")
-                nseq = int(r.get("num_seqs",0))
-                if sn not in hd_rows: hd_rows[sn] = {"Sample":sn,"Raw":0,"After_Kraken2":0,"After_Host":0}
-                if "Raw" in stage or "1_" in stage: hd_rows[sn]["Raw"] = max(hd_rows[sn]["Raw"], nseq)
-                elif "Kraken" in stage or "2_" in stage: hd_rows[sn]["After_Kraken2"] = max(hd_rows[sn]["After_Kraken2"], nseq)
-                elif "Host" in stage or "3_" in stage: hd_rows[sn]["After_Host"] = max(hd_rows[sn]["After_Host"], nseq)
-        rr_tsv = hostdep / "logs" / "ribodetector.report.txt"
-        if not rr_tsv.is_file():
-            rr_tsv = hostdep / "ribodetector.report.txt"
-        if rr_tsv.is_file():
-            for r in _read_tsv(rr_tsv):
-                sn = r.get("Sample","")
-                if sn not in hd_rows: hd_rows[sn] = {"Sample":sn,"Raw":0,"After_Kraken2":0,"After_Host":0}
-                hd_rows[sn]["rRNA"] = int(r.get("rRNA",0))
-                hd_rows[sn]["non_rRNA"] = int(r.get("non_rRNA",0))
-                hd_rows[sn]["Total_rRNA"] = int(r.get("Total_sequences",0))
-        if hd_rows:
-            with open(report_dir / "hostdep_summary.tsv", "w") as hf:
-                cols = ["Sample","Raw","After_Kraken2","After_Host","Total_rRNA","non_rRNA","rRNA"]
-                hf.write("\t".join(cols)+"\n")
-                for sn in sorted(hd_rows):
-                    r = hd_rows[sn]
-                    hf.write("\t".join(str(r.get(c,0)) for c in cols)+"\n")
-        _add("00b_HostDepletion", "✓", key_metric=f"{ns} 样本", details=str(hostdep))
-    else:
-        _add("00b_HostDepletion", "○", details="未运行")
+    if not hostdep.is_dir():
+        _add("00b_HostDepletion", "○", details="未运行"); return
+    ns = _count_dir(hostdep)
+    hd_rows = {}
+    sq_tsv = hostdep / "logs" / "host_depletion_seqkit_summary.tsv"
+    if not sq_tsv.is_file():
+        sq_tsv = hostdep / "host_depletion_seqkit_summary.tsv"
+    if sq_tsv.is_file():
+        for r in _read_tsv(sq_tsv):
+            sn = r.get("Sample",""); stage = r.get("Stage","")
+            nseq = int(r.get("num_seqs",0))
+            if sn not in hd_rows: hd_rows[sn] = {"Sample":sn,"Raw":0,"After_Kraken2":0,"After_Host":0}
+            if "Raw" in stage or "1_" in stage: hd_rows[sn]["Raw"] = max(hd_rows[sn]["Raw"], nseq)
+            elif "Kraken" in stage or "2_" in stage: hd_rows[sn]["After_Kraken2"] = max(hd_rows[sn]["After_Kraken2"], nseq)
+            elif "Host" in stage or "3_" in stage: hd_rows[sn]["After_Host"] = max(hd_rows[sn]["After_Host"], nseq)
+    rr_tsv = hostdep / "logs" / "ribodetector.report.txt"
+    if not rr_tsv.is_file():
+        rr_tsv = hostdep / "ribodetector.report.txt"
+    if rr_tsv.is_file():
+        for r in _read_tsv(rr_tsv):
+            sn = r.get("Sample","")
+            if sn not in hd_rows: hd_rows[sn] = {"Sample":sn,"Raw":0,"After_Kraken2":0,"After_Host":0}
+            hd_rows[sn]["rRNA"] = int(r.get("rRNA",0))
+            hd_rows[sn]["non_rRNA"] = int(r.get("non_rRNA",0))
+            hd_rows[sn]["Total_rRNA"] = int(r.get("Total_sequences",0))
+    if hd_rows:
+        with open(report_dir / "hostdep_summary.tsv", "w") as hf:
+            cols = ["Sample","Raw","After_Kraken2","After_Host","Total_rRNA","non_rRNA","rRNA"]
+            hf.write("\t".join(cols)+"\n")
+            for sn in sorted(hd_rows):
+                r = hd_rows[sn]
+                hf.write("\t".join(str(r.get(c,0)) for c in cols)+"\n")
+    _add("00b_HostDepletion", "✓", key_metric=f"{ns} 样本", details=str(hostdep))
 
-    # ── 01_Assembly ──
+
+def _collect_assembly(root, report_dir, _add):
+    """01_Assembly 阶段"""
     asm = root / "01_Assembly"
-    if asm.is_dir():
-        ns = _count_dir(asm)
-        total_contigs, total_bp = 0, 0
-        asm_data = []
-        for d in asm.iterdir():
-            if not d.is_dir(): continue
-            for f in d.glob("*.contig.fasta"):
-                for line in open(f):
-                    if line.startswith('>'): total_contigs += 1
-                    else: total_bp += len(line.strip())
-        _add("01_Assembly", "✓", key_metric=f"{ns} 样本, {total_contigs:,} contigs, {total_bp/1e6:.1f} Mb", details=str(asm))
+    if not asm.is_dir():
+        _add("01_Assembly", "○", details="未运行"); return
+    ns = _count_dir(asm)
+    total_contigs, total_bp = 0, 0
+    asm_data = []
+    with open(report_dir / "assembly_summary.tsv", "w") as af:
+        af.write("Sample\tAssembler\tSize(Mb)\tContigs\tMax_Len\tN50\tN90\t>500bp\t>500bp(%)\t>1000bp\t>1000bp(%)\n")
         for d in sorted(asm.iterdir()):
             if not d.is_dir(): continue
-            n_contig = 0
-            for f in d.glob("*.contig.fasta"): n_contig = _count_fasta(f)
-            _add(f"  └ {d.name}", "✓", key_metric=f"{n_contig} contigs")
-        # assembly_summary.tsv
-        with open(report_dir / "assembly_summary.tsv", "w") as af:
-            af.write("Sample\tAssembler\tSize(Mb)\tContigs\tMax_Len\tN50\tN90\t>500bp\t>500bp(%)\t>1000bp\t>1000bp(%)\n")
-            for d in sorted(asm.iterdir()):
-                if not d.is_dir(): continue
-                for f in d.glob("*.contig.fasta"):
-                    lens = _parse_fasta_lens(f)
-                    if not lens: continue
-                    n = len(lens); total = sum(lens); mx = max(lens)
-                    n50, n90 = _n50_n90(lens)
-                    c500 = sum(1 for l in lens if l > 500); r500 = round(c500/n*100,1) if n else 0
-                    c1000 = sum(1 for l in lens if l > 1000); r1000 = round(c1000/n*100,1) if n else 0
-                    at = f.stem.replace(f"{d.name}_", "").replace(".contig", "")
-                    af.write(f"{d.name}\t{at}\t{total/1e6:.1f}\t{n}\t{mx}\t{n50}\t{n90}\t{c500}\t{r500}\t{c1000}\t{r1000}\n")
-                    asm_data.append({'s': d.name, 'n': n, 'total': total, 'n50': n50})
-            if len(asm_data) > 1:
-                t_n = sum(r['n'] for r in asm_data); t_bp = sum(r['total'] for r in asm_data)
-                af.write(f"TOTAL\tall\t{t_bp/1e6:.1f}\t{t_n}\t-\t-\t-\t-\t-\t-\t-\n")
-        # 调用 analysis/assembly_stats.py
-        as_script = SCRIPT_DIR.parent / "analysis" / "assembly_stats.py"
-        if as_script.is_file():
-            try: subprocess.run([sys.executable, str(as_script), "-a", str(asm), "-o", str(report_dir / "assembly_summary.tsv")], capture_output=True, timeout=60)
-            except: pass
-    else:
-        _add("01_Assembly", "○", details="未运行")
+            sample_contigs = 0
+            for f in d.glob("*.contig.fasta"):
+                lens = _parse_fasta_lens(f)
+                if not lens: continue
+                n = len(lens); total = sum(lens); mx = max(lens)
+                n50, n90 = _n50_n90(lens)
+                c500 = sum(1 for l in lens if l > 500); r500 = round(c500/n*100,1) if n else 0
+                c1000 = sum(1 for l in lens if l > 1000); r1000 = round(c1000/n*100,1) if n else 0
+                at = f.stem.replace(f"{d.name}_", "").replace(".contig", "")
+                af.write(f"{d.name}\t{at}\t{total/1e6:.1f}\t{n}\t{mx}\t{n50}\t{n90}\t{c500}\t{r500}\t{c1000}\t{r1000}\n")
+                asm_data.append({'s': d.name, 'n': n, 'total': total, 'n50': n50})
+                total_contigs += n; total_bp += total
+                sample_contigs += n
+            _add(f"  └ {d.name}", "✓", key_metric=f"{sample_contigs} contigs")
+        if len(asm_data) > 1:
+            t_n = sum(r['n'] for r in asm_data); t_bp = sum(r['total'] for r in asm_data)
+            af.write(f"TOTAL\tall\t{t_bp/1e6:.1f}\t{t_n}\t-\t-\t-\t-\t-\t-\t-\n")
+    _add("01_Assembly", "✓", key_metric=f"{ns} 样本, {total_contigs:,} contigs, {total_bp/1e6:.1f} Mb", details=str(asm))
+    as_script = SCRIPT_DIR.parent / "analysis" / "assembly_stats.py"
+    if as_script.is_file():
+        as_out = report_dir / "assembly_detail"
+        as_out.mkdir(parents=True, exist_ok=True)
+        try: subprocess.run([sys.executable, str(as_script), "-a", str(asm), "-o", str(as_out / "assembly_summary.tsv")], capture_output=True, timeout=60)
+        except Exception as e: print(f"  [WARN] assembly_stats.py 失败: {e}")
 
-    # ── 02_Identification ──
+
+def _collect_identification(root, report_dir, _add):
+    """02_Identification 阶段"""
     ident = root / "02_Identification"
-    if ident.is_dir():
-        ns = _count_dir(ident)
-        n_virus = 0
-        for d in ident.iterdir():
+    if not ident.is_dir():
+        _add("02_Identification", "○", details="未运行"); return
+    ns = _count_dir(ident)
+    n_virus = 0
+    for d in ident.iterdir():
+        if not d.is_dir(): continue
+        for f in d.glob("*virus.all.candidate.fasta"): n_virus += _count_fasta(f)
+    _add("02_Identification", "✓", key_metric=f"{ns} 样本, {n_virus:,} 病毒序列", details=str(ident))
+    tools_list = ['genomad','blast','metabuli','virsorter2','viralverify','virhunter','virbot','viralm','rdrpcatch']
+    ident_data = []
+    with open(report_dir / "ident_summary.tsv", "w") as ids:
+        ids.write("Sample\tAll_Candidate\t" + "\t".join(tools_list) + "\n")
+        for d in sorted(ident.iterdir()):
             if not d.is_dir(): continue
-            for f in d.glob("*virus.all.candidate.fasta"): n_virus += _count_fasta(f)
-        _add("02_Identification", "✓", key_metric=f"{ns} 样本, {n_virus:,} 病毒序列", details=str(ident))
-        tools_list = ['genomad','blast','metabuli','virsorter2','viralverify','virhunter','virbot','viralm','rdrpcatch']
-        ident_data = []
-        with open(report_dir / "ident_summary.tsv", "w") as ids:
-            ids.write("Sample\tAll_Candidate\t" + "\t".join(tools_list) + "\n")
-            for d in sorted(ident.iterdir()):
-                if not d.is_dir(): continue
-                all_ids = _count_fasta(d / f"{d.name}_virus.all.candidate.fasta")
-                tcounts = {}
-                for tool in tools_list:
-                    idf = d / f"{d.name}_virus.{tool}.result.id"
-                    tcounts[tool] = _count_lines(idf) if idf.is_file() else 0
-                ids.write(f"{d.name}\t{all_ids}\t" + "\t".join(str(tcounts[t]) for t in tools_list) + "\n")
-                ident_data.append({'Sample': d.name, 'All': all_ids, **tcounts})
-            if len(ident_data) > 1:
-                total_all = sum(r['All'] for r in ident_data)
-                total_tools = {t: sum(r[t] for r in ident_data) for t in tools_list}
-                ids.write(f"TOTAL\t{total_all}\t" + "\t".join(str(total_tools[t]) for t in tools_list) + "\n")
-                top_tools = sorted(total_tools.items(), key=lambda x: -x[1])[:3]
-                best = " | ".join(f"{t}={c}" for t,c in top_tools)
-                _add("  └ multi-sample", "✓", key_metric=f"total={total_all}, top={best}")
-        filter_data = []; modes_seen = set()
-        with open(report_dir / "filter_summary.tsv", "w") as fs:
-            fs.write("Sample\tMode\tAll_Candidate\tPassed\tRetained(%)\n")
-            for d in sorted(ident.iterdir()):
-                if not d.is_dir(): continue
-                all_n = _count_fasta(d / f"{d.name}_virus.all.candidate.fasta")
-                for fm, fd in [('filter','uniprot_filter_output_filter'),('strict','uniprot_filter_output_strict'),('comb','uniprot_filter_output')]:
-                    ff = d / fd / f"{d.name}_virus.uniprot_filtered.fasta"
-                    nf = _count_fasta(ff) if ff.is_file() else 0
-                    if nf > 0 or (nf == 0 and fd == 'uniprot_filter_output'):
-                        fs.write(f"{d.name}\t{fm}\t{all_n}\t{nf}\t{round(nf/max(all_n,1)*100,1)}\n")
-                        filter_data.append({'Sample': d.name, 'Mode': fm, 'All': all_n, 'Passed': nf})
-                        modes_seen.add(fm)
-            if filter_data:
-                for m in sorted(modes_seen):
-                    mr = [r for r in filter_data if r['Mode'] == m]
-                    t_all = sum(r['All'] for r in mr); t_pass = sum(r['Passed'] for r in mr)
-                    fs.write(f"TOTAL\t{m}\t{t_all}\t{t_pass}\t{round(t_pass/max(t_all,1)*100,1)}\n")
-        # 调用 analysis/ident_stats.py
-        is_script = SCRIPT_DIR.parent / "analysis" / "ident_stats.py"
-        if is_script.is_file():
-            try: subprocess.run([sys.executable, str(is_script), "-i", str(ident), "-o", str(report_dir)], capture_output=True, timeout=120)
-            except: pass
-    else:
-        _add("02_Identification", "○", details="未运行")
+            all_ids = _count_fasta(d / f"{d.name}_virus.all.candidate.fasta")
+            tcounts = {}
+            for tool in tools_list:
+                idf = d / f"{d.name}_virus.{tool}.result.id"
+                tcounts[tool] = _count_lines(idf) if idf.is_file() else 0
+            ids.write(f"{d.name}\t{all_ids}\t" + "\t".join(str(tcounts[t]) for t in tools_list) + "\n")
+            ident_data.append({'Sample': d.name, 'All': all_ids, **tcounts})
+        if len(ident_data) > 1:
+            total_all = sum(r['All'] for r in ident_data)
+            total_tools = {t: sum(r[t] for r in ident_data) for t in tools_list}
+            ids.write(f"TOTAL\t{total_all}\t" + "\t".join(str(total_tools[t]) for t in tools_list) + "\n")
+            top_tools = sorted(total_tools.items(), key=lambda x: -x[1])[:3]
+            best = " | ".join(f"{t}={c}" for t,c in top_tools)
+            _add("  └ multi-sample", "✓", key_metric=f"total={total_all}, top={best}")
+    filter_data = []; modes_seen = set()
+    with open(report_dir / "filter_summary.tsv", "w") as fs:
+        fs.write("Sample\tMode\tAll_Candidate\tPassed\tRetained(%)\n")
+        for d in sorted(ident.iterdir()):
+            if not d.is_dir(): continue
+            all_n = _count_fasta(d / f"{d.name}_virus.all.candidate.fasta")
+            for fm, fd in [('filter','uniprot_filter_output_filter'),('strict','uniprot_filter_output_strict'),('comb','uniprot_filter_output')]:
+                ff = d / fd / f"{d.name}_virus.uniprot_filtered.fasta"
+                nf = _count_fasta(ff) if ff.is_file() else 0
+                if nf > 0 or (nf == 0 and fd == 'uniprot_filter_output'):
+                    fs.write(f"{d.name}\t{fm}\t{all_n}\t{nf}\t{round(nf/max(all_n,1)*100,1)}\n")
+                    filter_data.append({'Sample': d.name, 'Mode': fm, 'All': all_n, 'Passed': nf})
+                    modes_seen.add(fm)
+        if filter_data:
+            for m in sorted(modes_seen):
+                mr = [r for r in filter_data if r['Mode'] == m]
+                t_all = sum(r['All'] for r in mr); t_pass = sum(r['Passed'] for r in mr)
+                fs.write(f"TOTAL\t{m}\t{t_all}\t{t_pass}\t{round(t_pass/max(t_all,1)*100,1)}\n")
+    is_script = SCRIPT_DIR.parent / "analysis" / "ident_stats.py"
+    if is_script.is_file():
+        is_out = report_dir / "ident_detail"
+        is_out.mkdir(parents=True, exist_ok=True)
+        try: subprocess.run([sys.executable, str(is_script), "-i", str(ident), "-o", str(is_out)], capture_output=True, timeout=120)
+        except Exception as e: print(f"  [WARN] ident_stats.py 失败: {e}")
 
-    # ── 03_COBRA ──
+
+def _collect_cobra(root, report_dir, _add):
+    """03_COBRA 阶段"""
     cobra = root / "03_COBRA"
-    if cobra.is_dir():
-        ns = _count_dir(cobra)
-        n_ext, n_queries, n_orphan = 0, 0, 0
-        with open(report_dir / "cobra_summary.tsv", "w") as cs:
-            cs.write("Sample\tTotal_Queries\tExtended_Circular\tExtended_Partial\tExtended_Failed\tOrphan_End\tExtension_Rate(%)\tOrphan_Rate(%)\tExtended_Contigs\tTotal_Gain(bp)\n")
-            for sd in sorted(cobra.iterdir()):
-                if not sd.is_dir(): continue
-                sn = sd.name
-                sn_ext, sn_gain = 0, 0
-                for cf in sd.rglob("*.cobra.fa"):
-                    if cf.stat().st_size > 0:
-                        for rec in _parse_fasta_lens(cf):
-                            pass  # 只计数
-                        sn_ext += _count_fasta(cf)
-                n_ext += sn_ext
-                logs = list(sd.rglob("log"))
-                cobra_logs = [f for f in logs if 'COBRA' in str(f.parent.name)]
-                if not cobra_logs: cobra_logs = logs[:1]
-                tq = ec = ep = ef = oe = 0
-                if cobra_logs:
-                    try:
-                        text = open(str(cobra_logs[0])).read()
-                        for line in text.split('\n'):
+    if not cobra.is_dir():
+        _add("03_COBRA", "○", details="未运行"); return
+    ns = _count_dir(cobra)
+    n_ext, n_queries, n_orphan, n_total_gain = 0, 0, 0, 0
+    with open(report_dir / "cobra_summary.tsv", "w") as cs:
+        cs.write("Sample\tTotal_Queries\tExtended_Circular\tExtended_Partial\tExtended_Failed\tOrphan_End\tExtension_Rate(%)\tOrphan_Rate(%)\tExtended_Contigs\tTotal_Gain(bp)\n")
+        for sd in sorted(cobra.iterdir()):
+            if not sd.is_dir(): continue
+            sn = sd.name
+            sn_ext, sn_gain = 0, 0
+            for cf in sd.rglob("*.cobra.fa"):
+                if cf.stat().st_size > 0:
+                    cobra_lens = _parse_fasta_lens(cf)
+                    sn_ext += len(cobra_lens)
+                    sn_gain += sum(cobra_lens)
+            n_ext += sn_ext; n_total_gain += sn_gain
+            logs = list(sd.rglob("log"))
+            cobra_logs = [f for f in logs if 'COBRA' in str(f.parent.name)]
+            if not cobra_logs: cobra_logs = logs[:1]
+            tq = ec = ep = ef = oe = 0
+            if cobra_logs:
+                try:
+                    with open(str(cobra_logs[0])) as lf:
+                        for line in lf:
                             s = line.strip()
                             if s.startswith('# Total queries:'): tq = int(s.split(':')[1].strip())
                             elif 'Extended_circular' in s: ec = int(s.split(':')[1].strip().split()[0])
                             elif 'Extended_partial' in s: ep = int(s.split(':')[1].strip().split()[0])
                             elif 'Extended_failed' in s: ef = int(s.split(':')[1].strip())
                             elif 'Orphan end' in s: oe = int(s.split(':')[1].strip())
-                    except: pass
-                n_queries += tq; n_orphan += oe
-                er = round((ec+ep)/max(tq,1)*100, 1); or_ = round(oe/max(tq,1)*100, 1)
-                cs.write(f"{sn}\t{tq}\t{ec}\t{ep}\t{ef}\t{oe}\t{er}\t{or_}\t{sn_ext}\t{sn_gain}\n")
-        _add("03_COBRA", "✓", key_metric=f"{ns} 样本, {n_ext} 延伸, {n_queries} query, {n_orphan} orphan")
-        # 调用 analysis/cobra_stats.py
-        cs_script = SCRIPT_DIR.parent / "analysis" / "cobra_stats.py"
-        if cs_script.is_file():
-            try: subprocess.run([sys.executable, str(cs_script), "-c", str(cobra), "-o", str(report_dir)], capture_output=True, timeout=120)
-            except: pass
-    else:
-        _add("03_COBRA", "○", details="未运行")
+                except Exception as e: print(f"  [WARN] COBRA log 解析失败 ({sd.name}): {e}")
+            n_queries += tq; n_orphan += oe
+            er = round((ec+ep)/max(tq,1)*100, 1); or_ = round(oe/max(tq,1)*100, 1)
+            cs.write(f"{sn}\t{tq}\t{ec}\t{ep}\t{ef}\t{oe}\t{er}\t{or_}\t{sn_ext}\t{sn_gain}\n")
+    _add("03_COBRA", "✓", key_metric=f"{ns} 样本, {n_ext} 延伸, {n_queries} query, {n_orphan} orphan, {n_total_gain:,} bp gain")
+    cs_script = SCRIPT_DIR.parent / "analysis" / "cobra_stats.py"
+    if cs_script.is_file():
+        cs_out = report_dir / "cobra_detail"
+        cs_out.mkdir(parents=True, exist_ok=True)
+        try: subprocess.run([sys.executable, str(cs_script), "-c", str(cobra), "-o", str(cs_out)], capture_output=True, timeout=120)
+        except Exception as e: print(f"  [WARN] cobra_stats.py 失败: {e}")
 
-    # ── 04_Cluster ──
+
+def _collect_cluster(root, report_dir, _add):
+    """04_CLUSTER 阶段"""
     cluster = root / "04_CLUSTER"
-    if cluster.is_dir():
-        centroids_fa = cluster / "centroids" / "final_centroids.fasta"
-        known_fa = cluster / "2_cdhit" / "known_centroids.fasta"
-        n_centroids = _count_fasta(centroids_fa) if centroids_fa.is_file() else 0
-        n_known = _count_fasta(known_fa) if known_fa.is_file() else 0
-        _add("04_CLUSTER", "✓", key_metric=f"{n_centroids:,} novel + {n_known:,} known centroids", details=str(cluster))
-        ctsv = cluster / "3_vclust" / "vclust_clusters.tsv"
-        if ctsv.is_file():
-            n_clusters = _count_lines(ctsv) - 1
-            sizes = []
-            with open(ctsv) as cf:
-                cf.readline()
-                for line in cf:
-                    members = line.strip().split('\t')[1] if '\t' in line else ""
-                    sizes.append(len(members.split(',')) if members else 0)
-            singletons = sum(1 for sz in sizes if sz <= 1)
-            max_sz = max(sizes) if sizes else 0
-            _add("  └ vclust", "✓", key_metric=f"{n_clusters:,} 簇, {singletons} 单例, 最大簇={max_sz}")
-        known_linked_fa = cluster / "2_cdhit" / "known_linked_centroids.fasta"
-        n_linked = _count_fasta(known_linked_fa) if known_linked_fa.is_file() else 0
-        if n_linked > 0: _add("  └ CD-HIT linked", "✓", key_metric=f"{n_linked} 有关联contig的已知簇")
-        if n_known - n_linked > 0: _add("  └ CD-HIT pure", "○", key_metric=f"{n_known - n_linked} 纯参考簇 (不进下游)")
-    else:
-        _add("04_CLUSTER", "○", details="未运行")
+    if not cluster.is_dir():
+        _add("04_CLUSTER", "○", details="未运行"); return
+    centroids_fa = cluster / "centroids" / "final_centroids.fasta"
+    known_fa = cluster / "2_cdhit" / "known_centroids.fasta"
+    n_centroids = _count_fasta(centroids_fa) if centroids_fa.is_file() else 0
+    n_known = _count_fasta(known_fa) if known_fa.is_file() else 0
+    _add("04_CLUSTER", "✓", key_metric=f"{n_centroids:,} novel + {n_known:,} known centroids", details=str(cluster))
+    ctsv = cluster / "3_vclust" / "vclust_clusters.tsv"
+    if ctsv.is_file():
+        n_clusters = _count_lines(ctsv) - 1
+        sizes = []
+        with open(ctsv) as cf:
+            cf.readline()
+            for line in cf:
+                members = line.strip().split('\t')[1] if '\t' in line else ""
+                sizes.append(len(members.split(',')) if members else 0)
+        singletons = sum(1 for sz in sizes if sz <= 1)
+        max_sz = max(sizes) if sizes else 0
+        _add("  └ vclust", "✓", key_metric=f"{n_clusters:,} 簇, {singletons} 单例, 最大簇={max_sz}")
+    known_linked_fa = cluster / "2_cdhit" / "known_linked_centroids.fasta"
+    n_linked = _count_fasta(known_linked_fa) if known_linked_fa.is_file() else 0
+    if n_linked > 0: _add("  └ CD-HIT linked", "✓", key_metric=f"{n_linked} 有关联contig的已知簇")
+    if n_known - n_linked > 0: _add("  └ CD-HIT pure", "○", key_metric=f"{n_known - n_linked} 纯参考簇 (不进下游)")
 
-    # ── 05_Taxonomy ──
+
+def _collect_taxonomy(root, report_dir, _add):
+    """05_Taxonomy 阶段"""
     tax = root / "05_Taxonomy"
     final_tax = tax / "integrated" / "final_integrated_classification.tsv"
     if final_tax.is_file():
@@ -350,7 +346,9 @@ def collect_data(output_dir, report_dir):
     else:
         _add("05_Taxonomy", "○", details="未运行")
 
-    # ── 06_HostPrediction ──
+
+def _collect_hostprediction(root, report_dir, _add):
+    """06_HostPrediction 阶段"""
     host = root / "06_HostPrediction"
     host_summary = host / "ensemble_host_summary.tsv"
     if host_summary.is_file():
@@ -363,99 +361,119 @@ def collect_data(output_dir, report_dir):
                 top3 = " | ".join(f"{r[0]}={r[1]}" for r in hcounts.head(3).iter_rows())
                 _add("06_HostPrediction", "✓", key_metric=f"{n} 条, {top3}", details=str(host))
         except Exception as e:
+            print(f"  [WARN] HostPrediction polars 解析失败: {e}")
             _add("06_HostPrediction", "✓", key_metric=f"{n} 条", details=str(host))
     elif host.is_dir():
         _add("06_HostPrediction", "○", key_metric="已运行但无最终结果", details=str(host))
     else:
         _add("06_HostPrediction", "○", details="未运行")
 
-    # ── 07_CheckV ──
+
+def _collect_checkv(root, report_dir, _add):
+    """07_CheckV 阶段"""
     cv_dir = root / "07_Checkv"
     QUALITY_ORDER = ["Complete","High-quality","Medium-quality","Low-quality","Not-determined"]
-    if cv_dir.is_dir():
-        cv_tsvs = list(cv_dir.rglob("completeness.tsv"))
-        if cv_tsvs:
-            host_qd = {}; host_conf = {}
-            for ct in cv_tsvs:
-                host_name = ct.parent.name
-                if host_name not in host_qd:
-                    host_qd[host_name] = dict.fromkeys(QUALITY_ORDER, 0)
-                    host_conf[host_name] = {}
-                try:
-                    import polars as pl
-                    cv = pl.read_csv(str(ct), separator="\t", null_values=["NA","N/A",""])
-                    if "aai_confidence" in cv.columns:
-                        for row in cv.iter_rows(named=True):
-                            conf = str(row.get("aai_confidence","")).strip()
-                            if not conf or conf in ("NA","N/A",""): conf = "Not-determined"
-                            host_conf[host_name][conf] = host_conf[host_name].get(conf,0) + 1
-                    comp_col = next((c for c in ["aai_completeness","completeness"] if c in cv.columns), None)
-                    if comp_col:
-                        for row in cv.iter_rows(named=True):
-                            val = row.get(comp_col)
-                            try:
-                                v = float(val) if val and val != "NA" else None
-                                if v is None: key = "Not-determined"
-                                elif v >= 90: key = "Complete"
-                                elif v >= 50: key = "High-quality"
-                                elif v >= 10: key = "Medium-quality"
-                                else: key = "Low-quality"
-                            except: key = "Not-determined"
-                            host_qd[host_name][key] += 1
-                except: pass
-            global_qd = dict.fromkeys(QUALITY_ORDER, 0)
-            for hqd in host_qd.values():
-                for q in QUALITY_ORDER: global_qd[q] += hqd[q]
-            n_total = sum(global_qd.values())
-            n_hq = global_qd["Complete"] + global_qd["High-quality"]
-            # checkv_summary.tsv
-            with open(report_dir / "checkv_summary.tsv", "w") as cvf:
-                cvf.write("Host\t" + "\t".join(QUALITY_ORDER) + "\tTotal\tHQ\n")
-                for h in sorted(host_qd):
-                    hqd = host_qd[h]; t = sum(hqd.values()); hq = hqd["Complete"]+hqd["High-quality"]
-                    cvf.write(f"{h}\t"+"\t".join(str(hqd[q]) for q in QUALITY_ORDER)+f"\t{t}\t{hq}\n")
-                cvf.write(f"TOTAL\t"+"\t".join(str(global_qd[q]) for q in QUALITY_ORDER)+f"\t{n_total}\t{n_hq}\n")
-            # checkv_confidence.tsv
-            if host_conf:
-                all_confs = set()
-                for hc in host_conf.values(): all_confs.update(hc.keys())
-                conf_order = sorted(all_confs)
-                with open(report_dir / "checkv_confidence.tsv", "w") as cff:
-                    cff.write("Host\t"+"\t".join(conf_order)+"\tTotal\n")
-                    for h in sorted(host_conf):
-                        hc = host_conf[h]; t = sum(hc.values())
-                        cff.write(f"{h}\t"+"\t".join(str(hc.get(c,0)) for c in conf_order)+f"\t{t}\n")
-            _add("07_CheckV", "✓", key_metric=f"{n_hq} HQ / {n_total} total", details=str(cv_dir))
-            for h, hqd in sorted(host_qd.items(), key=lambda x: -sum(x[1].values()))[:8]:
-                tot = sum(hqd.values())
-                if tot > 0: _add(f"  └ {h}", "✓", key_metric=f"HQ={hqd['Complete']+hqd['High-quality']} total={tot}")
-            qparts = [f"{q}={global_qd[q]}" for q in QUALITY_ORDER if global_qd[q] > 0]
-            _add("  └ Distribution", "✓", key_metric=" ".join(qparts[:4]))
-        else:
-            _add("07_CheckV", "✓", key_metric="已运行", details=str(cv_dir))
-    else:
-        _add("07_CheckV", "○", details="未运行")
+    if not cv_dir.is_dir():
+        _add("07_CheckV", "○", details="未运行"); return
+    cv_tsvs = list(cv_dir.rglob("completeness.tsv"))
+    if not cv_tsvs:
+        _add("07_CheckV", "✓", key_metric="已运行", details=str(cv_dir)); return
+    host_qd = {}; host_conf = {}
+    for ct in cv_tsvs:
+        host_name = ct.parent.name
+        if host_name not in host_qd:
+            host_qd[host_name] = dict.fromkeys(QUALITY_ORDER, 0)
+            host_conf[host_name] = {}
+        try:
+            import polars as pl
+            cv = pl.read_csv(str(ct), separator="\t", null_values=["NA","N/A",""])
+            if "aai_confidence" in cv.columns:
+                for row in cv.iter_rows(named=True):
+                    conf = str(row.get("aai_confidence","")).strip()
+                    if not conf or conf in ("NA","N/A",""): conf = "Not-determined"
+                    host_conf[host_name][conf] = host_conf[host_name].get(conf,0) + 1
+            comp_col = next((c for c in ["aai_completeness","completeness"] if c in cv.columns), None)
+            if comp_col:
+                for row in cv.iter_rows(named=True):
+                    val = row.get(comp_col)
+                    try:
+                        v = float(val) if val and val != "NA" else None
+                        if v is None: key = "Not-determined"
+                        elif v >= 90: key = "Complete"
+                        elif v >= 50: key = "High-quality"
+                        elif v >= 10: key = "Medium-quality"
+                        else: key = "Low-quality"
+                    except (ValueError, TypeError): key = "Not-determined"
+                    host_qd[host_name][key] += 1
+        except Exception as e: print(f"  [WARN] CheckV 解析失败 ({ct.name}): {e}")
+    global_qd = dict.fromkeys(QUALITY_ORDER, 0)
+    for hqd in host_qd.values():
+        for q in QUALITY_ORDER: global_qd[q] += hqd[q]
+    n_total = sum(global_qd.values())
+    n_hq = global_qd["Complete"] + global_qd["High-quality"]
+    with open(report_dir / "checkv_summary.tsv", "w") as cvf:
+        cvf.write("Host\t" + "\t".join(QUALITY_ORDER) + "\tTotal\tHQ\n")
+        for h in sorted(host_qd):
+            hqd = host_qd[h]; t = sum(hqd.values()); hq = hqd["Complete"]+hqd["High-quality"]
+            cvf.write(f"{h}\t"+"\t".join(str(hqd[q]) for q in QUALITY_ORDER)+f"\t{t}\t{hq}\n")
+        cvf.write(f"TOTAL\t"+"\t".join(str(global_qd[q]) for q in QUALITY_ORDER)+f"\t{n_total}\t{n_hq}\n")
+    if host_conf:
+        all_confs = set()
+        for hc in host_conf.values(): all_confs.update(hc.keys())
+        conf_order = sorted(all_confs)
+        with open(report_dir / "checkv_confidence.tsv", "w") as cff:
+            cff.write("Host\t"+"\t".join(conf_order)+"\tTotal\n")
+            for h in sorted(host_conf):
+                hc = host_conf[h]; t = sum(hc.values())
+                cff.write(f"{h}\t"+"\t".join(str(hc.get(c,0)) for c in conf_order)+f"\t{t}\n")
+    _add("07_CheckV", "✓", key_metric=f"{n_hq} HQ / {n_total} total", details=str(cv_dir))
+    for h, hqd in sorted(host_qd.items(), key=lambda x: -sum(x[1].values()))[:8]:
+        tot = sum(hqd.values())
+        if tot > 0: _add(f"  └ {h}", "✓", key_metric=f"HQ={hqd['Complete']+hqd['High-quality']} total={tot}")
+    qparts = [f"{q}={global_qd[q]}" for q in QUALITY_ORDER if global_qd[q] > 0]
+    _add("  └ Distribution", "✓", key_metric=" ".join(qparts[:4]))
 
-    # ── 08_Rescue ──
+
+def _collect_rescue(root, report_dir, _add):
+    """08_Rescue 阶段"""
     rescue = root / "08_Rescue"
-    if rescue.is_dir():
-        rescue_finals = list(rescue.rglob("final_centroids.fasta"))
-        n_rescued = 0
-        for rf in rescue_finals:
-            if "branch" not in str(rf) and "known" not in str(rf): n_rescued += _count_fasta(rf)
-        branch_info = []
-        for bname, blabel in [("branch_a","CheckV"),("branch_b","VSI"),("branch_c","BLASTN")]:
-            for bd in rescue.rglob(bname):
-                if not bd.is_dir(): continue
-                pass_fa = bd / f"{'branchA' if bname=='branch_a' else 'branchB' if bname=='branch_b' else 'branchC'}_pass.fasta"
-                if not pass_fa.is_file():
-                    pass_fa = bd / f"{'branchB' if bname=='branch_b' else 'branchC'}_pass.fasta"
-                if pass_fa.is_file():
-                    bp = _count_fasta(pass_fa)
-                    if bp > 0: branch_info.append(f"{blabel}={bp}")
-        _add("08_Rescue", "✓", key_metric=f"{n_rescued:,} HQ vOTU ({' | '.join(branch_info) if branch_info else '0 pas'})", details=str(rescue))
-    else:
-        _add("08_Rescue", "○", details="未运行")
+    if not rescue.is_dir():
+        _add("08_Rescue", "○", details="未运行"); return
+    rescue_finals = list(rescue.rglob("final_centroids.fasta"))
+    n_rescued = 0
+    for rf in rescue_finals:
+        if "branch" not in str(rf) and "known" not in str(rf): n_rescued += _count_fasta(rf)
+    branch_info = []
+    for bname, blabel in [("branch_a","CheckV"),("branch_b","VSI"),("branch_c","BLASTN")]:
+        for bd in rescue.rglob(bname):
+            if not bd.is_dir(): continue
+            pass_fa = bd / f"{'branchA' if bname=='branch_a' else 'branchB' if bname=='branch_b' else 'branchC'}_pass.fasta"
+            if not pass_fa.is_file():
+                pass_fa = bd / f"{'branchB' if bname=='branch_b' else 'branchC'}_pass.fasta"
+            if pass_fa.is_file():
+                bp = _count_fasta(pass_fa)
+                if bp > 0: branch_info.append(f"{blabel}={bp}")
+    _add("08_Rescue", "✓", key_metric=f"{n_rescued:,} HQ vOTU ({' | '.join(branch_info) if branch_info else '0 pas'})", details=str(rescue))
+
+
+def collect_data(output_dir, report_dir):
+    """收集所有阶段数据 → 生成 TSV + 返回 stage_stats"""
+    root = Path(output_dir).resolve()
+    stage_stats = []
+
+    def _add(stage, status, key_metric="", details=""):
+        stage_stats.append({"Stage": stage, "Status": status, "Key_Metric": key_metric, "Details": details})
+
+    _collect_cleandata(root, report_dir, _add)
+    _collect_hostdepletion(root, report_dir, _add)
+    _collect_assembly(root, report_dir, _add)
+    _collect_identification(root, report_dir, _add)
+    _collect_cobra(root, report_dir, _add)
+    _collect_cluster(root, report_dir, _add)
+    _collect_taxonomy(root, report_dir, _add)
+    _collect_hostprediction(root, report_dir, _add)
+    _collect_checkv(root, report_dir, _add)
+    _collect_rescue(root, report_dir, _add)
 
     return stage_stats
 
@@ -505,8 +523,8 @@ def generate_sankey(output_dir, report_dir):
                                     "--title", "Plant Virus Taxonomy Sankey"],
                                    capture_output=True, timeout=120)
                     print(f"  Plant Sankey HTML → {report_dir / 'classification_sankey_plant.html'}")
-            except: pass
-    except: pass
+            except Exception as e: print(f"  [WARN] Plant Sankey 生成失败: {e}")
+    except Exception as e: print(f"  [WARN] Sankey 生成失败: {e}")
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -615,21 +633,25 @@ new Chart(document.getElementById('chart_s01b'), {{
     scales:{{y:{{beginAtZero:true,title:{{text:'Contigs'}}}}}}}}}});
 """
 
-    # S02 — 鉴定
+    # S02 — 鉴定 (聚合所有样本的工具计数, 而非只取第一行)
     id_rows = _read_tsv(report_dir / "ident_summary.tsv")
     if id_rows:
-        id_row0 = id_rows[0]; id_tools = [k for k in id_row0 if k not in ("Sample","All_Candidate")]
+        id_tools = [k for k in id_rows[0] if k not in ("Sample","All_Candidate")]
         id_vals = {}
         for t in id_tools:
-            try: id_vals[t] = int(id_row0[t])
-            except: pass
+            total = 0
+            for r in id_rows:
+                if r.get("Sample","") == "TOTAL": continue
+                try: total += int(r.get(t, 0))
+                except: pass
+            if total > 0: id_vals[t] = total
         if id_vals:
             stage_has_chart['s02a'] = True
             chart_scripts += f"""
 new Chart(document.getElementById('chart_s02a'), {{
   type:'bar', data:{{labels:{_json.dumps(list(id_vals.keys()))},
   datasets:[{{label:'Virus contigs',data:{_json.dumps(list(id_vals.values()))},backgroundColor:'#5c6bc0'}}]}},
-  options:{{responsive:true,indexAxis:'y',plugins:{{title:{{display:true,text:'Per-Tool Identification'}}}}}}}});
+  options:{{responsive:true,indexAxis:'y',plugins:{{title:{{display:true,text:'Per-Tool Identification (All Samples Sum)'}}}}}}}});
 """
     fil_rows = _read_tsv(report_dir / "filter_summary.tsv")
     if fil_rows:
