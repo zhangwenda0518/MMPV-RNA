@@ -805,11 +805,19 @@ def write_html_report(report_dir, stage_stats):
             for m in re.finditer(r'([\d.]+)\s*Mb', s.get('Key_Metric','')): kpis['total_mb'] = m.group(1)
         if s['Stage'] == '02_Identification':
             for m in re.finditer(r'([\d,]+)\s*病毒序列', s.get('Key_Metric','')): kpis['virus_seqs'] = m.group(1)
-        if 'Novel Rank' in s['Stage']: kpis['novelty'] = s.get('Key_Metric','')
+        if 'Novel Rank' in s['Stage']:
+            kpis['novelty'] = s.get('Key_Metric','')
+            for m in re.finditer(r'Known=(\d+)', s.get('Key_Metric','')): kpis['n_known'] = m.group(1)
+            for m in re.finditer(r'NewSp=(\d+)', s.get('Key_Metric','')): kpis['n_newsp'] = m.group(1)
+            for m in re.finditer(r'NewGe=(\d+)', s.get('Key_Metric','')): kpis['n_newge'] = m.group(1)
+            for m in re.finditer(r'NewFa=(\d+)', s.get('Key_Metric','')): kpis['n_newfa'] = m.group(1)
+        if '  └ vclust' in s['Stage']:
+            for m in re.finditer(r'([\d,]+)\s*簇', s.get('Key_Metric','')): kpis['n_clusters'] = m.group(1)
         if '06_HostPrediction' in s['Stage'] and s['Stage'].startswith('06'):
             for m in re.finditer(r'([\d,]+)\s*条', s.get('Key_Metric','')): kpis['host_total'] = m.group(1)
         if '07_CheckV' in s['Stage'] and s['Stage'].startswith('07'):
             for m in re.finditer(r'(\d+)\s*HQ', s.get('Key_Metric','')): kpis['hq_votus'] = m.group(1)
+            for m in re.finditer(r'(\d+)\s*total', s.get('Key_Metric','')): kpis['cv_total'] = m.group(1)
         if '08_Rescue' in s['Stage'] and s['Stage'].startswith('08'):
             for m in re.finditer(r'([\d,]+)\s*HQ vOTU', s.get('Key_Metric','')): kpis['rescued'] = m.group(1)
 
@@ -974,11 +982,26 @@ def write_html_report(report_dir, stage_stats):
     sample_kpi = "—"
     if raw_b and clean_b:
         sample_kpi = f"{_fmt_bases(raw_b)} raw → {_fmt_bases(clean_b)} clean"
+    # Novelty calculation
+    n_known = int(kpis.get('n_known','0').replace(',','') or 0)
+    n_newsp = int(kpis.get('n_newsp','0').replace(',','') or 0)
+    n_newge = int(kpis.get('n_newge','0').replace(',','') or 0)
+    n_newfa = int(kpis.get('n_newfa','0').replace(',','') or 0)
+    n_total_tax = n_known + n_newsp + n_newge + n_newfa
+    n_novel = n_newsp + n_newge + n_newfa
+    novelty_pct = f"{n_novel/n_total_tax*100:.0f}%" if n_total_tax > 0 else "—"
+    # CheckV
+    hq = kpis.get('hq_votus','—')
+    cv_t = kpis.get('cv_total','')
+    checkv_kpi = f"{hq} Complete / {cv_t} total" if cv_t else str(hq)
     kpi_items = [
         ("Samples", f"{sample_kpi}<br>{n_sample} 样本", "🧬"),
-        ("Assembly", f"{kpis.get('total_contigs','—')} contigs, {kpis.get('total_mb','—')} Mb", "🔧"),
+        ("Data Size", f"{_fmt_bases(raw_b) if raw_b else '—'} → {_fmt_bases(clean_b) if clean_b else '—'}", "💾"),
+        ("Assembly", f"{kpis.get('total_contigs','—')} contigs<br>{kpis.get('total_mb','—')} Mb", "🔧"),
         ("Viruses", f"{kpis.get('virus_seqs','—')} identified", "🦠"),
-        ("HQ vOTUs", f"{kpis.get('hq_votus',kpis.get('rescued','—'))}", "⭐"),
+        ("Novelty", f"{n_novel}/{n_total_tax} novel<br>({novelty_pct})" if n_total_tax > 0 else "—", "🆕"),
+        ("vOTU Clusters", f"{kpis.get('n_clusters','—')}", "📦"),
+        ("CheckV", checkv_kpi, "✅"),
         ("Hosts", f"{kpis.get('host_total','—')} classified", "🌐"),
     ]
     for title, value, icon in kpi_items:
