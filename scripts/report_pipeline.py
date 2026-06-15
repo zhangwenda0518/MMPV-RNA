@@ -503,7 +503,7 @@ def _collect_rescue(root, report_dir, _add):
     _add("08_Rescue", "✓", key_metric=f"{n_rescued:,} HQ vOTU ({' | '.join(branch_info) if branch_info else '0 pas'})", details=str(rescue))
 
 
-def collect_data(output_dir, report_dir):
+def collect_data(output_dir, report_dir, blast_db=None):
     """收集所有阶段数据 → 生成 TSV + 返回 stage_stats"""
     root = Path(output_dir).resolve()
     stage_stats = []
@@ -523,12 +523,12 @@ def collect_data(output_dir, report_dir):
     _collect_rescue(root, report_dir, _add)
 
     # 最终植物病毒汇总表 + 旭日图
-    _generate_plant_virus_summary(root, report_dir, _add)
+    _generate_plant_virus_summary(root, report_dir, _add, blast_db)
 
     return stage_stats
 
 
-def _generate_plant_virus_summary(root, report_dir, _add):
+def _generate_plant_virus_summary(root, report_dir, _add, blast_db=None):
     """生成 plant_virus_summary.tsv + taxonomy_sunburst.html"""
     all_plant_fa = root / "08_Rescue" / "all_plant_viruses.fasta"
     if not all_plant_fa.is_file(): return
@@ -572,19 +572,85 @@ def _generate_plant_virus_summary(root, report_dir, _add):
                     tax_data[cid] = {rk: row.get(rk, row.get(rk.lower(),"")) for rk in
                                      ["Realm","Kingdom","Phylum","Class","Order","Family","Genus","Species"]}
 
-    # 4. 写入 plant_virus_summary.tsv
+    # 4. BLAST 相似度分类 (参考 VIGA 阈值: Known≥95% | NewSp≥78% | NewGe≥65% | NewFa<65%)
+    plant_records = list(SeqIO.parse(str(all_plant_fa), "fasta"))
+    novel_by_sim = {}
+    _bd = blast_db
+    if _bd:
+        _bd = Path(_bd)
+        if not (str(_bd)+".nin" in {f for f in (os.listdir(str(_bd.parent)) if _bd.parent.is_dir() else [])}):
+            print(f"  [WARN] BLAST 数据库无效: {_bd} (缺少 .nin 文件)"); _bd = None
+    if not _bd:
+        for p in [Path("/home/zhangwenda/db/viral_nt"), Path("/home/zhangwenda/db/nt"),
+                  root.parent / "database" / "viral_nt"]:
+            if any((str(p)+ext) in {f for f in (os.listdir(str(p.parent)) if p.parent.is_dir() else [])} for ext in [".nin",".nal"]):
+                _bd = p; break
+    if not _bd and os.environ.get("BLAST_DB"):
+        _bd = Path(os.environ["BLAST_DB"])
+    blast_db = _bd
+
+    if blast_db:
+        print(f"  BLAST 参考数据库: {blast_db}")
+        cq_fa = report_dir / "tmp_plant_virus.fa"
+        SeqIO.write(plant_records, str(cq_fa), "fasta")
+        blast_out = report_dir / "tmp_blast.tsv"
+        subprocess.run(["blastn", "-task", "dc-megablast", "-query", str(cq_fa),
+                      "-db", str(blast_db), "-outfmt", "6 qseqid sseqid pident length",
+                      "-max_target_seqs", "1", "-evalue", "1e-5", "-num_threads", "4",
+                      "-out", str(blast_out)], capture_output=True, check=False)
+        if blast_out.is_file():
+            n_hits = 0
+            for line in open(blast_out):
+                parts = line.strip().split('\t')
+                if len(parts) >= 3:
+                    cid, pident = parts[0], float(parts[2])
+                    for label, thresh in [("Known",95),("NewSp",78),("NewGe",65)]:
+                        if pident >= thresh:
+                            novel_by_sim[cid] = label; break
+                    else: novel_by_sim[cid] = "NewFa"
+                    n_hits += 1
+            print(f"  BLAST 命中: {n_hits}/{len(plant_records)} 条")
+        # 无命中用 plant_records 补齐
+        for rec in plant_records:
+            if rec.id not in novel_by_sim:
+                novel_by_sim[rec.id] = "NewFa"
+        for _tf in [cq_fa, blast_out]:
+            try: _tf.unlink()
+            except: pass
+    else:
+        print("  [SKIP] BLAST 相似度分类: 未找到参考数据库 (设置 --blast-db 或 BLAST_DB)")
+
+    # 写入 plant_virus_summary.tsv
     cols = ["contig_id","length","source","aai_completeness","aai_confidence",
             "viral_length","aai_expected_length","kmer_freq",
-            "Realm","Kingdom","Phylum","Class","Order","Family","Genus","Species"]
+            "Realm","Kingdom","Phylum","Class","Order","Family","Genus","Species",
+            "novelty_tool","novelty_similarity"]
     with open(report_dir / "plant_virus_summary.tsv", "w") as pvf:
         pvf.write("\t".join(cols) + "\n")
         for cid in sorted(plant_data):
             d = plant_data[cid]; cv = cv_data.get(cid, {}); tx = tax_data.get(cid, {})
+            # tool-based novelty
+            sp, ge, fa = tx.get("Species",""), tx.get("Genus",""), tx.get("Family","")
+            nt = "Known" if (sp and sp not in ("NA","-")) else "NewSp" if (ge and ge not in ("NA","-")) else "NewGe" if (fa and fa not in ("NA","-")) else "NewFa"
+            ns = novel_by_sim.get(cid, "NA")
             vals = [cid, d["length"], d["source"],
                     cv.get("aai_completeness","NA"), cv.get("aai_confidence","NA"),
                     cv.get("viral_length","NA"), cv.get("aai_expected_length","NA"), cv.get("kmer_freq","NA")]
             vals += [tx.get(rk,"") for rk in ["Realm","Kingdom","Phylum","Class","Order","Family","Genus","Species"]]
+            vals += [nt, ns]
             pvf.write("\t".join(str(v) for v in vals) + "\n")
+
+    # 按 BLAST 相似度分类更新环形图数据
+    if novel_by_sim:
+        p_counts = {"Known":0,"Novel_Species":0,"Novel_Genus":0,"Novel_Family":0}
+        for cid, label in novel_by_sim.items():
+            if label in ("Known",): p_counts["Known"] += 1
+            elif label in ("NewSp",): p_counts["Novel_Species"] += 1
+            elif label in ("NewGe",): p_counts["Novel_Genus"] += 1
+            else: p_counts["Novel_Family"] += 1
+        with open(report_dir / "plant_virus_taxonomy.tsv", "w") as pvf:
+            pvf.write("Category\tCount\n")
+            for k, v in p_counts.items(): pvf.write(f"{k}\t{v}\n")
 
     n = len(plant_data)
     n_no_rescue = sum(1 for v in plant_data.values() if v["source"]=="免拯救")
@@ -1659,6 +1725,7 @@ def main():
     p.add_argument("-o", "--output-dir", required=True, help="流水线输出根目录 (包含 00a_CleanData/ ... 09_Reports/)")
     p.add_argument("--skip-sankey", action="store_true", help="跳过 Sankey 图生成")
     p.add_argument("--skip-html", action="store_true", help="仅生成 TSV, 不生成 HTML")
+    p.add_argument("--blast-db", help="BLAST 参考数据库路径 (用于序列相似度分类)")
     p.add_argument("--ai-summary", action="store_true", help="生成 AI 管线总结 (需 --ai-key)")
     p.add_argument("--ai-provider", default="openai", choices=["openai","ollama","deepseek","custom"], help="AI 提供商 (default: openai)")
     p.add_argument("--ai-model", default="gpt-4o-mini", help="模型名 (default: gpt-4o-mini)")
@@ -1682,7 +1749,7 @@ def main():
     # 1. 收集数据 + 生成 TSV
     print("\n[1/4] Collecting stage data...")
     t0 = time.time()
-    stage_stats = collect_data(root, report_dir)
+    stage_stats = collect_data(root, report_dir, args.blast_db)
 
     # 2. 写入 stage_summary.tsv + 目录树
     with open(report_dir / "stage_summary.tsv", "w", newline="") as sf:
