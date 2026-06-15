@@ -543,16 +543,16 @@ def _generate_plant_virus_summary(root, report_dir, _add):
 
     if not plant_data: return
 
-    # 2. CheckV 数据: 合并 07_Checkv/Plant + 08_Rescue/checkv
+    # 2. CheckV 数据: 优先 post-rescue (最新评估), 回退 CheckV 阶段原始值
     cv_data = {}
-    for cv_tsv in [root / "07_Checkv" / "Plant" / "completeness.tsv",
-                   root / "08_Rescue" / "checkv" / "Plant" / "completeness.tsv",
-                   root / "08_Rescue" / "checkv" / "no_rescue" / "completeness.tsv"]:
+    for cv_tsv in [root / "08_Rescue" / "checkv" / "Plant" / "completeness.tsv",
+                   root / "08_Rescue" / "checkv" / "no_rescue" / "completeness.tsv",
+                   root / "07_Checkv" / "Plant" / "completeness.tsv"]:
         if not cv_tsv.is_file(): continue
         rows = _read_tsv(cv_tsv)
         for r in rows:
             cid = r.get("contig_id","")
-            if cid in plant_data:
+            if cid in plant_data and cid not in cv_data:
                 cv_data[cid] = {
                     "aai_completeness": r.get("aai_completeness","NA"),
                     "aai_confidence": r.get("aai_confidence","NA"),
@@ -1120,7 +1120,8 @@ def write_html_report(report_dir, stage_stats):
             if not tsv_path.is_file(): continue
             tsv_rows = _read_tsv(tsv_path)
             if not tsv_rows: continue
-            preview = tsv_rows[:8]
+            max_preview = 200 if tsv_name == "plant_virus_summary.tsv" else 8
+            preview = tsv_rows[:max_preview]
             cols = list(preview[0].keys())
             th_h = "".join(f"<th>{_esc(c)}</th>" for c in cols)
             tr_h = ""
