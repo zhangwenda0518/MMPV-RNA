@@ -103,9 +103,13 @@ def parse_checkv(qs_path, threshold=90.0):
 # ══════════════════════════════════════════════════════════════
 
 def run_blastn(query, db, out, threads=4):
-    run(["blastn", "-task", "megablast", "-query", str(query), "-db", str(db),
+    """BLASTN 搜索: dc-megablast (不连续匹配, 适合远缘病毒) → 回退 blastn"""
+    # 先试 dc-megablast (敏感度介于 megablast 和 blastn 之间)
+    run(["blastn", "-task", "dc-megablast", "-query", str(query), "-db", str(db),
          "-outfmt", "6 qseqid sseqid pident length evalue bitscore",
-         "-num_threads", str(threads), "-max_target_seqs", "10", "-out", str(out)],
+         "-num_threads", str(threads), "-max_target_seqs", "5",
+         "-evalue", "1e-5", "-word_size", "11",
+         "-out", str(out)],
         f"BLASTN: {Path(query).name}", check=False)
 
 
