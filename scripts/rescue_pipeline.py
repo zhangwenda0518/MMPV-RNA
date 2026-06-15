@@ -439,7 +439,7 @@ def branch_b(fail_fa, fastq_dir, work_dir, checkv_db, threads, jobs, vsi_path, s
 
 def branch_c(fail_fa, fastq_dir, work_dir,
              checkv_db, blast_db, threads, jobs, vsi_path=None, salmon_bin=None, clusters=None, fasta_info=None, max_vsi_samples=10):
-    """B 失败 → BLASTN + CheckV (纯比对评级, 不跑 VSI)"""
+    """B 失败 → BLASTN + CheckV (纯比对评级, 不跑 VSI)。支持断点续传。"""
     d = Path(work_dir) / "branch_c"; d.mkdir(parents=True, exist_ok=True)
 
     if not fail_fa or not os.path.isfile(fail_fa):
@@ -451,37 +451,63 @@ def branch_c(fail_fa, fastq_dir, work_dir,
     if not blast_db:
         print("  分支 C: 无 BLAST 数据库, 跳过"); return None, 0
 
+    # 断点续传: 检查已完成的 contig
+    pass_fa = d / "branchC_pass.fasta"
+    ckpt_file = d / "branchC_checkpoint.txt"
+    done_ids = set()
+    if pass_fa.is_file() and pass_fa.stat().st_size > 0:
+        for rec in SeqIO.parse(str(pass_fa), "fasta"):
+            done_ids.add(rec.id)
+        print(f"  分支 C: [resume] 已完成 {len(done_ids)} 条 → {pass_fa}")
+    if ckpt_file.is_file():
+        with open(ckpt_file) as cf:
+            for line in cf:
+                done_ids.add(line.strip())
+
+    pending = [r for r in fail_records if r.id not in done_ids]
+    n_skip = len(fail_records) - len(pending)
+    if n_skip > 0:
+        print(f"  分支 C: [resume] 跳过 {n_skip} 条已完成, 剩余 {len(pending)} 条")
+
     lock = threading.Lock()
     complete = {}
+    # 从已有 pass_fa 恢复
+    for rid in done_ids:
+        match = [r for r in fail_records if r.id == rid]
+        if match: complete[rid] = match[0]
 
     def _do(rec):
         ref = rec.id
         sub_dir = d / f"tmp_{ref[:30]}"; sub_dir.mkdir(exist_ok=True)
         tmp = sub_dir / f"{ref[:30]}.fa"
-        SeqIO.write([rec], tmp, "fasta")
+        cv_out = sub_dir / "cv" / "completeness.tsv"
 
-        run_blastn(tmp, blast_db, sub_dir / "blastn.tsv", threads)
+        # 断点续传: CheckV 结果已存在 → 直接评估
+        if not cv_out.is_file():
+            SeqIO.write([rec], tmp, "fasta")
+            run_blastn(tmp, blast_db, sub_dir / "blastn.tsv", threads)
+            run_checkv(tmp, sub_dir / "cv", checkv_db, threads)
 
-        qs = run_checkv(tmp, sub_dir / "cv", checkv_db, threads)
-        pids, _, _ = parse_checkv(qs)
+        pids, _, _ = parse_checkv(cv_out)
         if ref in pids:
             with lock:
                 complete[ref] = rec
+                with open(ckpt_file, "a") as cf: cf.write(ref + "\n")
                 print(f"  [BLASTN-HQ] {ref[:50]}", flush=True)
 
-    print(f"  分支 C: BLASTN {len(fail_records)} 条 (jobs={jobs})")
-    if jobs > 1 and len(fail_records) > 1:
-        with ThreadPoolExecutor(max_workers=min(jobs, len(fail_records))) as ex:
-            list(tqdm(ex.map(_do, fail_records), total=len(fail_records), desc="  分支 C", unit="task"))
+    print(f"  分支 C: BLASTN {len(pending)} 条 (jobs={jobs})")
+    if jobs > 1 and len(pending) > 1:
+        with ThreadPoolExecutor(max_workers=min(jobs, len(pending))) as ex:
+            list(tqdm(ex.map(_do, pending), total=len(pending), desc="  分支 C", unit="task"))
     else:
-        for rec in tqdm(fail_records, desc="  分支 C", unit="task"):
+        for rec in tqdm(pending, desc="  分支 C", unit="task"):
             _do(rec)
 
+    if complete:
+        SeqIO.write(list(complete.values()), pass_fa, "fasta")
     if not complete:
         return None, 0
 
-    pass_fa = d / "branchC_pass.fasta"
-    SeqIO.write(list(complete.values()), pass_fa, "fasta")
     print(f"  分支 C: pass={len(complete)}")
     return str(pass_fa), len(complete)
 
