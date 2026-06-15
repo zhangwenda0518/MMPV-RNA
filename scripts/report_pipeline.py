@@ -519,7 +519,8 @@ def generate_sankey(output_dir, report_dir):
                     with open(final_tax) as tf, open(plant_tax, "w") as pf:
                         pf.write(tf.readline())
                         for line in tf:
-                            if line.split('\t')[0] in plant_ids: pf.write(line)
+                            cid = line.split('\t')[0].strip('"')
+                            if cid in plant_ids: pf.write(line)
                     subprocess.run([sys.executable, str(sankey_script),
                                     "-i", str(plant_tax), "-o", str(report_dir / "classification_sankey_plant.html"),
                                     "--format", "html", "--min-flow", "1", "--min-genus-flow", "5",
