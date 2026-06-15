@@ -921,7 +921,7 @@ def write_html_report(report_dir, stage_stats):
                     is_stacked = cid in ('chart_s07a', 'chart_s07b')
                     chart_html += f'<div class="chart-box">'
                     if is_stacked:
-                        chart_html += f'<div style="display:flex;justify-content:flex-end;margin-bottom:4px"><button class="pct-btn" data-chart="{cid}" data-mode="abs" style="font-size:10px;padding:2px 8px;border:1px solid #ccc;border-radius:3px;background:#fff;cursor:pointer" onclick="toggleStackedPct(this)">Show %</button></div>'
+                        chart_html += f'<div style="display:flex;justify-content:flex-end;margin-bottom:6px"><button class="pct-btn" data-chart="{cid}" data-mode="abs" onclick="toggleStackedPct(this)">Show %</button></div>'
                     chart_html += f'<canvas id="{cid}" style="max-height:320px"></canvas></div>'
                 chart_html += '</div>'
 
@@ -1076,8 +1076,8 @@ body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans SC',san
 .s-pass{{background:#e8f5e9;color:var(--green)}}.s-fail{{background:#fce4ec;color:var(--red)}}.s-skip{{background:#f5f5f5;color:#9e9e9e}}
 .stage-charts{{display:grid;gap:16px;padding:18px 22px}}
 .chart-box{{background:#fafbfc;border-radius:var(--radius-sm);padding:12px;border:1px solid var(--border);position:relative}}
-.pct-btn{{font-size:10px;padding:2px 10px;border:1px solid #bbb;border-radius:3px;background:#fff;cursor:pointer;color:#555;transition:all .15s}}
-.pct-btn:hover{{background:var(--indigo);color:#fff;border-color:var(--indigo)}}
+.pct-btn{{font-size:11px;padding:4px 14px;border:1px solid var(--indigo);border-radius:4px;background:var(--indigo);cursor:pointer;color:#fff;font-weight:600;transition:all .15s}}
+.pct-btn:hover{{background:#283593;border-color:#283593}}
 .sankey-section{{padding:18px 22px;display:flex;flex-direction:column;gap:16px}}
 .sankey-card{{background:#fafbfc;border-radius:var(--radius-sm);padding:14px;border:1px solid var(--border)}}
 .sankey-card h3{{font-size:14px;color:var(--indigo);margin-bottom:10px;text-align:center}}
