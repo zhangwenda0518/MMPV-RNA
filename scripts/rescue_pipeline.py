@@ -509,36 +509,58 @@ def branch_c(fail_fa, fastq_dir, work_dir,
         if not cq_fa.is_file():
             SeqIO.write([rec], cq_fa, "fasta")
         blast_out = sub_dir / "blastn.tsv"
+        n_hits = 0; top_acc = ""; top_pident = ""
         if not blast_out.is_file():
             run_blastn(cq_fa, blast_db, blast_out, threads)
+        if blast_out.is_file():
+            hits = [l.strip() for l in open(blast_out) if l.strip() and not l.startswith('#')]
+            n_hits = len(hits)
+            if n_hits > 0:
+                top = hits[0].split('\t')
+                if len(top) >= 3:
+                    top_acc = top[1]; top_pident = top[2]
 
         # Step 2: 提取参考 → ragtag 参考引导延伸
-        if has_ragtag and blast_out.is_file() and blast_out.stat().st_size > 0 and not scaffold_fa.is_file():
-            try:
-                with open(blast_out) as bf:
-                    top = bf.readline().strip().split('\t')
-                if len(top) >= 2 and top[0] != '#':
-                    ref_acc = top[1]
-                    ref_fa = sub_dir / "reference.fa"
-                    if not ref_fa.is_file():
-                        subprocess.run([blastdbcmd_bin, "-db", str(blast_db), "-entry", ref_acc,
-                                      "-out", str(ref_fa)], capture_output=True, check=False)
-                    if ref_fa.is_file() and ref_fa.stat().st_size > 100:
-                        ragtag_out = sub_dir / "ragtag_out"
-                        ragtag_out.mkdir(exist_ok=True)
-                        subprocess.run([ragtag_bin, "scaffold", str(ref_fa), str(cq_fa),
-                                      "-o", str(ragtag_out), "-t", str(threads), "-w"],
-                                     capture_output=True, check=False)
-                        if scaffold_fa.is_file() and scaffold_fa.stat().st_size > 0:
-                            print(f"  [RAGTAG] {ref_id[:40]} ← {ref_acc}", flush=True)
-                            final_fa = scaffold_fa
-            except Exception as e:
-                print(f"  [WARN] ragtag 失败 ({ref_id[:30]}): {e}", flush=True)
+        if has_ragtag and n_hits > 0 and not scaffold_fa.is_file():
+            ref_fa = sub_dir / "reference.fa"
+            if not ref_fa.is_file():
+                result = subprocess.run([blastdbcmd_bin, "-db", str(blast_db), "-entry", top_acc,
+                                      "-out", str(ref_fa)], capture_output=True, text=True)
+                if result.returncode != 0:
+                    print(f"  [WARN] blastdbcmd 失败: {top_acc} — {result.stderr[:100]}", flush=True)
+            ref_len = ref_fa.stat().st_size if ref_fa.is_file() else 0
+            if ref_len > 100:
+                ragtag_out = sub_dir / "ragtag_out"
+                ragtag_out.mkdir(exist_ok=True)
+                rlog = sub_dir / "ragtag.log"
+                with open(rlog, "w") as rlf:
+                    subprocess.run([ragtag_bin, "scaffold", str(ref_fa), str(cq_fa),
+                                  "-o", str(ragtag_out), "-t", str(threads), "-w"],
+                                 stdout=rlf, stderr=subprocess.STDOUT, check=False)
+                if scaffold_fa.is_file() and scaffold_fa.stat().st_size > 0:
+                    # 计算延伸前后长度
+                    scf_recs = list(SeqIO.parse(str(scaffold_fa), "fasta"))
+                    scf_len = sum(len(r.seq) for r in scf_recs) if scf_recs else 0
+                    print(f"  [RAGTAG] {ref_id[:40]} | contig={len(rec.seq)}bp → scaffold={scf_len}bp | ref={ref_len}bp ← {top_acc} ({top_pident}%)", flush=True)
+                    final_fa = scaffold_fa
+            else:
+                print(f"  [SKIP] blastdbcmd 参考过短 ({ref_len}bp) for {top_acc}", flush=True)
 
         # Step 3: CheckV
         if not cv_out.is_file() or (scaffold_fa.is_file() and cv_out.stat().st_mtime < scaffold_fa.stat().st_mtime):
             run_checkv(final_fa, sub_dir / "cv", checkv_db, threads)
         pids, _, _ = parse_checkv(cv_out, threshold)
+        # 读取 completeness 用于日志
+        comp_val = "NA"
+        if cv_out.is_file():
+            try:
+                df = pd.read_csv(cv_out, sep='\t')
+                if 'aai_completeness' in df.columns and len(df) > 0:
+                    cv = df['aai_completeness'].iloc[0]
+                    comp_val = f"{cv:.1f}%" if not pd.isna(cv) else "NA"
+            except: pass
+        status = "✓ HQ" if ref_id in pids else f"✗ ({comp_val})"
+        print(f"  [{status}] {ref_id[:45]} | hits={n_hits} comp={comp_val}", flush=True)
         if ref_id in pids:
             with lock:
                 # 用 ragtag 延伸后的序列替换原 record
@@ -550,7 +572,6 @@ def branch_c(fail_fa, fastq_dir, work_dir,
                     except: pass
                 complete[ref_id] = rec
                 with open(ckpt_file, "a") as cf: cf.write(ref_id + "\n")
-                print(f"  [HQ] {ref_id[:50]}", flush=True)
 
     print(f"  分支 C: 参考引导延伸 {len(pending)} 条 (jobs={jobs})")
     if jobs > 1 and len(pending) > 1:
