@@ -791,9 +791,8 @@ def write_html_report(report_dir, stage_stats):
             import base64
             with open(spath, "rb") as sf:
                 sankey_b64 = base64.b64encode(sf.read()).decode()
-            card = f'''<div class="sankey-card">
-<h3>{stitle} <span style="font-weight:400;font-size:10px;color:var(--muted)">(interactive — hover/zoom/pan)</span></h3>
-<iframe id="sankey_iframe_{i}" style="width:100%;height:950px;border:none;border-radius:4px" loading="lazy"></iframe>
+            card = f'''<div class="sankey-card" style="padding-top:0">
+<iframe id="sankey_iframe_{i}" style="width:100%;height:880px;border:none;border-radius:4px" loading="lazy"></iframe>
 </div>\n'''
             sankey_by_stage.setdefault(stage_key, "")
             sankey_by_stage[stage_key] += card
@@ -1133,7 +1132,6 @@ body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans SC',san
 .pct-btn:hover{{background:#283593;border-color:#283593}}
 .sankey-section{{padding:18px 22px;display:flex;flex-direction:column;gap:16px}}
 .sankey-card{{background:#fafbfc;border-radius:var(--radius-sm);padding:14px;border:1px solid var(--border)}}
-.sankey-card h3{{font-size:14px;color:var(--indigo);margin-bottom:10px;text-align:center}}
 .sankey-card iframe{{display:block;width:100%;border-radius:4px}}
 .stage-tables{{padding:0 22px 14px;display:flex;flex-direction:column;gap:8px}}
 .stage-table-detail{{border-top:1px solid var(--border);padding:8px 0 4px}}
