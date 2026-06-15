@@ -338,7 +338,10 @@ def branch_b(fail_fa, fastq_dir, work_dir, checkv_db, threads, jobs, vsi_path, s
         sample = sid.split('_')[0]
 
         out_dir = d / f"out_{sid}"
-        vsi_fa = out_dir / "scaffold.fasta"
+        # 优先取 scaffold-truncated (完整延伸版), 回退 scaffold.fasta → pilon_out.fasta
+        vsi_fa = out_dir / "scaffold-truncated" / "scaffold.fasta"
+        if not vsi_fa.is_file():
+            vsi_fa = out_dir / "scaffold.fasta"
         if not vsi_fa.is_file():
             vsi_fa = out_dir / "pilon_out.fasta"
 
@@ -366,7 +369,9 @@ def branch_b(fail_fa, fastq_dir, work_dir, checkv_db, threads, jobs, vsi_path, s
 
         _, ok = run_vsi(sf, r1, r2, out_dir, threads_per_job, vsi_path, salmon_bin, checkv_db)
 
-        vsi_fa = out_dir / "scaffold.fasta"
+        vsi_fa = out_dir / "scaffold-truncated" / "scaffold.fasta"
+        if not vsi_fa.is_file():
+            vsi_fa = out_dir / "scaffold.fasta"
         if not vsi_fa.is_file():
             vsi_fa = out_dir / "pilon_out.fasta"
         if ok and vsi_fa.is_file():
