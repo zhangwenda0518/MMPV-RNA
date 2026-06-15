@@ -936,12 +936,13 @@ def write_html_report(report_dir, stage_stats):
     for s in sub_stages:
         table_rows += f'<tr><td></td><td class="td-sub">{_esc(s["Stage"].strip())}</td><td></td><td class="td-metric">{_esc(s.get("Key_Metric",""))}</td></tr>'
 
-    # ── Nav dots ──
-    nav_dots = ""
+    # ── Sidebar nav ──
+    sidebar_items = ""
     for sk, short, full, icon, color in stage_defs:
         st = stage_status.get(sk, 'skip')
-        dot_cls = 'dot-pass' if st=='pass' else ('dot-fail' if st=='fail' else 'dot-skip')
-        nav_dots += f'<a href="#stage-{short}" class="nav-dot {dot_cls}" title="{full}&#10;{stage_metric.get(sk,"")}"><span class="dot-inner" style="background:{color}">{icon}</span></a>'
+        item_cls = 'sb-pass' if st=='pass' else ('sb-fail' if st=='fail' else 'sb-skip')
+        metric_text = stage_metric.get(sk, '')
+        sidebar_items += f'<a href="#stage-{short}" class="sb-item {item_cls}" title="{metric_text}"><span class="sb-dot" style="background:{color}"></span><span class="sb-label">{full}</span></a>'
 
     gen_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
@@ -975,7 +976,7 @@ def write_html_report(report_dir, stage_stats):
 }}
 *{{box-sizing:border-box;margin:0;padding:0}}
 body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans SC',sans-serif;background:var(--bg);color:var(--text);line-height:1.6}}
-.container{{max-width:1200px;margin:0 auto;padding:0 20px 40px}}
+.container{{max-width:1200px;margin:0 auto;padding:0 20px 40px;padding-left:240px}}
 .hero{{background:linear-gradient(135deg,var(--navy) 0%,var(--indigo) 60%,#283593 100%);color:#fff;padding:40px 32px 32px;border-radius:0 0 16px 16px;margin-bottom:28px;position:relative;overflow:hidden}}
 .hero::after{{content:'';position:absolute;top:-50%;right:-20%;width:500px;height:500px;background:rgba(255,255,255,.03);border-radius:50%}}
 .hero h1{{font-size:26px;font-weight:700;margin-bottom:6px;position:relative;z-index:1}}
@@ -987,13 +988,15 @@ body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans SC',san
 .kpi-icon{{font-size:24px;margin-bottom:6px}}
 .kpi-value{{font-size:13px;font-weight:600;color:var(--text);line-height:1.4}}
 .kpi-label{{font-size:11px;color:var(--muted);margin-top:4px;text-transform:uppercase;letter-spacing:.5px}}
-.nav-bar{{background:var(--card-bg);border-radius:var(--radius);box-shadow:var(--shadow);padding:10px 16px;margin-bottom:28px;display:flex;align-items:center;gap:6px;overflow-x:auto;position:sticky;top:8px;z-index:100}}
-.nav-dot{{display:flex;align-items:center;justify-content:center;width:36px;height:36px;border-radius:50%;text-decoration:none;transition:all .2s;flex-shrink:0;position:relative;border:2px solid transparent}}
-.nav-dot:hover{{transform:scale(1.15);z-index:2}}
-.nav-dot::after{{content:attr(title);position:absolute;bottom:110%;left:50%;transform:translateX(-50%);white-space:pre;background:#333;color:#fff;padding:4px 8px;border-radius:4px;font-size:10px;opacity:0;pointer-events:none;transition:opacity .2s;text-align:center;line-height:1.3}}
-.nav-dot:hover::after{{opacity:1}}
-.dot-inner{{width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:700;color:#fff}}
-.dot-pass{{border-color:#66bb6a}}.dot-fail{{border-color:#ef5350}}.dot-skip{{border-color:#bdbdbd}}
+.sidebar{{position:fixed;top:0;left:0;width:224px;height:100vh;background:var(--card-bg);border-right:1px solid var(--border);box-shadow:2px 0 8px rgba(0,0,0,.04);z-index:200;display:flex;flex-direction:column;padding-top:12px;overflow-y:auto}}
+.sb-title{{font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;padding:8px 16px 6px;margin:0}}
+.sb-item{{display:flex;align-items:center;gap:10px;padding:9px 16px;text-decoration:none;color:var(--text);font-size:12.5px;font-weight:500;border-left:3px solid transparent;transition:all .15s}}
+.sb-item:hover{{background:#f0f4ff;border-left-color:var(--blue)}}
+.sb-dot{{width:10px;height:10px;border-radius:50%;flex-shrink:0}}
+.sb-label{{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}}
+.sb-pass{{border-left-color:var(--green)}}.sb-fail{{border-left-color:var(--red)}}.sb-skip{{border-left-color:#e0e0e0}}
+.sb-pass .sb-dot{{box-shadow:0 0 0 2px #66bb6a}}.sb-fail .sb-dot{{box-shadow:0 0 0 2px #ef5350}}.sb-skip .sb-dot{{box-shadow:0 0 0 2px #bdbdbd}}
+.sb-active{{background:#e8eaf6;font-weight:700;border-left-color:var(--indigo)!important}}
 .stage{{background:var(--card-bg);border-radius:var(--radius);box-shadow:var(--shadow);margin-bottom:20px;overflow:hidden}}
 .stage-pass{{border-left:4px solid var(--green)}}.stage-fail{{border-left:4px solid var(--red)}}.stage-skip{{border-left:4px solid #bdbdbd}}
 .stage-header{{display:flex;align-items:center;gap:16px;padding:18px 22px;border-bottom:1px solid var(--border);background:#fafbfc}}
@@ -1030,22 +1033,27 @@ td{{padding:9px 16px;border-bottom:1px solid #f0f0f0}}
 .footer{{text-align:center;padding:24px;color:var(--muted);font-size:11px;line-height:1.8}}
 .footer a{{color:var(--blue);text-decoration:none}}
 @media(max-width:768px){{
+  .sidebar{{display:none}}
+  .container{{padding-left:20px}}
   .hero{{padding:24px 20px 20px}}.hero h1{{font-size:20px}}
   .kpi-row{{grid-template-columns:repeat(2,1fr)}}
   .stage-header{{flex-wrap:wrap;gap:10px}}
   .stage-charts{{grid-template-columns:1fr!important}}
-  .nav-bar{{gap:2px;padding:6px 8px}}
-  .nav-dot{{width:28px;height:28px}}.dot-inner{{width:22px;height:22px;font-size:7px}}
 }}
 @media print{{
   body{{background:#fff;font-size:11px}}
   .hero{{background:#1a237e!important;-webkit-print-color-adjust:exact}}
   .stage,.table-wrap,.kpi-card{{box-shadow:none;border:1px solid #ddd;break-inside:avoid}}
-  .nav-bar{{display:none}}
+  .sidebar{{display:none}}
+  .container{{padding-left:20px}}
 }}
 </style>
 </head>
 <body>
+<div class="sidebar">
+  <div class="sb-title">Pipeline Modules</div>
+  {sidebar_items}
+</div>
 <div class="container">
 <div class="hero">
   <h1>MMPV-RNA v2.3 — Pipeline Report</h1>
@@ -1053,7 +1061,6 @@ td{{padding:9px 16px;border-bottom:1px solid #f0f0f0}}
   <div class="gen-time">Generated: {gen_time} &nbsp;|&nbsp; {n_pass}/{n_total} stages completed ({pct}%)</div>
 </div>
 <div class="kpi-row">{kpi_cards}</div>
-<div class="nav-bar">{nav_dots}</div>
 {sections_html}
 <div class="table-wrap">
   <div style="display:flex;justify-content:space-between;align-items:center;padding-right:16px">
@@ -1109,6 +1116,21 @@ function exportTable(){{
   a.download='pipeline_summary.csv';
   a.click();
 }}
+// Sidebar scroll-spy
+(function(){{
+  const items=document.querySelectorAll('.sb-item');
+  const stages=document.querySelectorAll('.stage[id]');
+  if(!items.length||!stages.length)return;
+  function onScroll(){{
+    let current='';
+    stages.forEach(s=>{{if(s.getBoundingClientRect().top<=160)current=s.id}});
+    items.forEach(a=>{{
+      a.classList.toggle('sb-active',a.getAttribute('href')==='#'+current);
+    }});
+  }}
+  window.addEventListener('scroll',onScroll,{{passive:true}});
+  onScroll();
+}})();
 </script>
 </body></html>'''
 
