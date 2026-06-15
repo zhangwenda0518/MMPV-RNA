@@ -830,6 +830,19 @@ def write_html_report(report_dir, stage_stats):
         's08':  [('chart_s08','Rescue Branches')],
     }
 
+    # 每个阶段对应的 TSV 文件, 用于在卡片内嵌入数据表
+    stage_tsv_map = {
+        's00a': ['data_summary.tsv'],
+        's00b': ['hostdep_summary.tsv'],
+        's01':  ['assembly_summary.tsv'],
+        's02':  ['ident_summary.tsv', 'filter_summary.tsv'],
+        's03':  ['cobra_summary.tsv'],
+        's05':  [],
+        's06':  [],
+        's07':  ['checkv_summary.tsv', 'checkv_confidence.tsv'],
+        's08':  [],
+    }
+
     sections_html = ""
     for sk, short, full, icon, color in stage_defs:
         st = stage_status.get(sk, 'skip'); metric = stage_metric.get(sk, '')
@@ -868,6 +881,28 @@ def write_html_report(report_dir, stage_stats):
             chart_html += f'<div class="sankey-section">{sankey_imgs}</div>'
             sankey_imgs = ""
 
+        # 在卡片内嵌入对应 TSV 数据表
+        table_html = ""
+        for tsv_name in stage_tsv_map.get(sk, []):
+            tsv_path = report_dir / tsv_name
+            if not tsv_path.is_file(): continue
+            tsv_rows = _read_tsv(tsv_path)
+            if not tsv_rows: continue
+            preview = tsv_rows[:8]
+            cols = list(preview[0].keys())
+            th_h = "".join(f"<th>{_esc(c)}</th>" for c in cols)
+            tr_h = ""
+            for r in preview:
+                tr_h += "<tr>" + "".join(f"<td>{_esc(str(r.get(c,'')))[:50]}</td>" for c in cols) + "</tr>"
+            more = f' <span style="color:var(--muted);font-size:10px">(+{len(tsv_rows)-8} more)</span>' if len(tsv_rows) > 8 else ""
+            table_html += f'''<details class="stage-table-detail" open>
+<summary>{tsv_name} — {len(tsv_rows)} rows{more}
+  <a href="{tsv_name}" download style="font-size:10px;margin-left:6px;color:var(--blue)">[download]</a></summary>
+<div style="overflow-x:auto;margin-top:6px"><table class="app-table"><thead><tr>{th_h}</tr></thead><tbody>{tr_h}</tbody></table></div>
+</details>'''
+        if table_html:
+            table_html = f'<div class="stage-tables">{table_html}</div>'
+
         sections_html += f'''
 <section class="stage {border_cls}" id="stage-{short}">
   <div class="stage-header">
@@ -876,6 +911,7 @@ def write_html_report(report_dir, stage_stats):
     <span class="stage-badge {badge_cls}">{badge_txt}</span>
   </div>
   {chart_html}
+  {table_html}
 </section>'''
 
     # ── Table ──
@@ -985,6 +1021,10 @@ body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans SC',san
 .sankey-card{{background:#fafbfc;border-radius:var(--radius-sm);padding:14px;border:1px solid var(--border)}}
 .sankey-card h3{{font-size:14px;color:var(--indigo);margin-bottom:10px;text-align:center}}
 .sankey-card iframe{{display:block;width:100%;border-radius:4px}}
+.stage-tables{{padding:0 22px 14px;display:flex;flex-direction:column;gap:8px}}
+.stage-table-detail{{border-top:1px solid var(--border);padding:8px 0 4px}}
+.stage-table-detail summary{{cursor:pointer;font-size:12px;padding:2px 0;color:var(--muted)}}
+.stage-table-detail summary:hover{{color:var(--blue)}}
 .table-wrap{{background:var(--card-bg);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden;margin-bottom:20px}}
 .table-wrap h3{{font-size:15px;padding:16px 22px;border-bottom:1px solid var(--border);color:var(--text)}}
 table{{width:100%;border-collapse:collapse;font-size:13px}}
