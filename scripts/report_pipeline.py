@@ -1011,8 +1011,9 @@ def write_html_report(report_dir, stage_stats):
     # Host depletion — 显示数据量 (Gb/Mb), 从 reads 按平均 read 长度换算
     hd_kpi = "—"
     if kpis.get('hd_retained'):
-        hd_kpi = f"{_fmt_bases(str(int(kpis['hd_raw_bp'])))} → {_fmt_bases(str(int(kpis['hd_after_bp'])))}
-({kpis['hd_retained']}% retained)"
+        hd_raw_str = _fmt_bases(str(int(kpis['hd_raw_bp'])))
+        hd_after_str = _fmt_bases(str(int(kpis['hd_after_bp'])))
+        hd_kpi = f"{hd_raw_str} → {hd_after_str}<br>({kpis['hd_retained']}% retained)"
     kpi_items = [
         ("Samples", f"{sample_kpi}<br>{n_sample} 样本", "🧬"),
         ("Host Depletion", hd_kpi, "🧹"),
