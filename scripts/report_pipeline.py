@@ -1112,7 +1112,7 @@ function exportTable(){{
 </body></html>'''
 
     with open(report_dir / "pipeline_report.html", "w", encoding="utf-8") as hf:
-        hf.write(html.replace("{{CHART_JS_INLINE}}", chart_js_inline))
+        hf.write(html.replace("{CHART_JS_INLINE}", chart_js_inline))
 
 
 # ═══════════════════════════════════════════════════════════════
