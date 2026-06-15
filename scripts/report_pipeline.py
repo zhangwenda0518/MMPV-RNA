@@ -792,21 +792,6 @@ def write_html_report(report_dir, stage_stats):
 
     # ── KPI ──
     kpis = {}
-    # 从 hostdep_summary.tsv 提取宿主去除统计
-    hd_rows = _read_tsv(report_dir / "hostdep_summary.tsv")
-    hd_raw_total = sum(int(r.get("Raw",0)) for r in hd_rows)
-    hd_after_total = sum(int(r.get("After_Host",0)) for r in hd_rows)
-    if hd_raw_total > 0:
-        hd_pct = hd_after_total / hd_raw_total * 100
-        kpis['hd_retained'] = f"{hd_pct:.1f}" if hd_pct >= 1 else f"{hd_pct:.2f}"
-        # 总reads数用_K/M 缩写
-        def _fmt_n(n):
-            if n >= 1e9: return f"{n/1e9:.1f}B"
-            if n >= 1e6: return f"{n/1e6:.1f}M"
-            if n >= 1e3: return f"{n/1e3:.1f}K"
-            return str(n)
-        kpis['hd_raw'] = _fmt_n(hd_raw_total)
-        kpis['hd_after'] = _fmt_n(hd_after_total)
     for s in stage_stats:
         if s['Stage'] in ('00a_CleanData', '  └ data_summary'):
             for m in re.finditer(r'reads:\s*([\d,]+)→([\d,]+)', s.get('Key_Metric','')):
@@ -835,6 +820,20 @@ def write_html_report(report_dir, stage_stats):
             for m in re.finditer(r'(\d+)\s*total', s.get('Key_Metric','')): kpis['cv_total'] = m.group(1)
         if '08_Rescue' in s['Stage'] and s['Stage'].startswith('08'):
             for m in re.finditer(r'([\d,]+)\s*HQ vOTU', s.get('Key_Metric','')): kpis['rescued'] = m.group(1)
+    # 从 hostdep_summary.tsv 提取宿主去除统计, 用量化的数据量(Gb/Mb)
+    hd_rows = _read_tsv(report_dir / "hostdep_summary.tsv")
+    if hd_rows:
+        hd_raw_total = sum(int(r.get("Raw",0)) for r in hd_rows)
+        hd_after_total = sum(int(r.get("After_Host",0)) for r in hd_rows)
+        if hd_raw_total > 0:
+            hd_pct = hd_after_total / hd_raw_total * 100
+            kpis['hd_retained'] = f"{hd_pct:.1f}" if hd_pct >= 1 else f"{hd_pct:.2f}"
+            # 用 QC 平均 read 长度换算 bases
+            try:
+                avg_len = int(kpis.get('raw_bases','0').replace(',','')) / max(int(kpis.get('raw_reads','1').replace(',','')), 1)
+            except: avg_len = 150
+            kpis['hd_raw_bp'] = hd_raw_total * avg_len
+            kpis['hd_after_bp'] = hd_after_total * avg_len
 
     # ── Stage sections ──
     stage_defs = [
@@ -1009,10 +1008,11 @@ def write_html_report(report_dir, stage_stats):
     hq = kpis.get('hq_votus','—')
     cv_t = kpis.get('cv_total','')
     checkv_kpi = f"{hq} Complete / {cv_t} total" if cv_t else str(hq)
-    # Host depletion
+    # Host depletion — 显示数据量 (Gb/Mb), 从 reads 按平均 read 长度换算
     hd_kpi = "—"
     if kpis.get('hd_retained'):
-        hd_kpi = f"{kpis['hd_raw']} → {kpis['hd_after']}<br>({kpis['hd_retained']}% retained)"
+        hd_kpi = f"{_fmt_bases(str(int(kpis['hd_raw_bp'])))} → {_fmt_bases(str(int(kpis['hd_after_bp'])))}
+({kpis['hd_retained']}% retained)"
     kpi_items = [
         ("Samples", f"{sample_kpi}<br>{n_sample} 样本", "🧬"),
         ("Host Depletion", hd_kpi, "🧹"),
