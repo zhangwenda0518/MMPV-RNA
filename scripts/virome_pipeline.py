@@ -103,6 +103,16 @@ def run_cmd(cmd, logger, step_name, log_file=None):
         if lf:
             lf.write(f"\n=== {step_name} 完成 ===\n\n")
             lf.close()
+            # 复制到 09_Reports/logs/ (从 output_dir/orchestrator.log 反推)
+            try:
+                import shutil
+                for h in logger.handlers:
+                    if isinstance(h, logging.FileHandler):
+                        reports_log = Path(h.baseFilename).resolve().parent / "09_Reports" / "logs"
+                        reports_log.mkdir(parents=True, exist_ok=True)
+                        shutil.copy2(log_file, str(reports_log / Path(log_file).name))
+                        break
+            except: pass
 
 
 # ═══════════════════════════════════════════════════════════════════
