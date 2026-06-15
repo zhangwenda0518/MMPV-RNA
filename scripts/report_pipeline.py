@@ -1026,10 +1026,10 @@ def write_html_report(report_dir, stage_stats):
         ("Host Depletion", hd_kpi, "🧹"),
         ("Assembly", f"{kpis.get('total_contigs','—')} contigs<br>{kpis.get('total_mb','—')} Mb", "🔧"),
         ("Viruses", f"{kpis.get('virus_seqs','—')} identified", "🦠"),
-        ("Novelty", f"{n_novel}/{n_total_tax} novel<br>({novelty_pct})" if n_total_tax > 0 else "—", "🆕"),
         ("vOTU Clusters", f"{kpis.get('n_clusters','—')}", "📦"),
-        ("CheckV", checkv_kpi, "✅"),
+        ("Novelty", f"{n_novel}/{n_total_tax} novel<br>({novelty_pct})" if n_total_tax > 0 else "—", "🆕"),
         ("Hosts", f"{kpis.get('host_total','—')} classified", "🌐"),
+        ("CheckV", checkv_kpi, "✅"),
     ]
     for title, value, icon in kpi_items:
         kpi_cards += f'<div class="kpi-card"><div class="kpi-icon">{icon}</div><div class="kpi-value">{value}</div><div class="kpi-label">{title}</div></div>'
