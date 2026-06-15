@@ -572,6 +572,13 @@ def write_html_report(report_dir, stage_stats):
         cfg_js = _json.dumps(cfg, ensure_ascii=False)
         return f"new Chart(document.getElementById('{canvas_id}'), {cfg_js});\n"
 
+    def _tsv_data_uri(tsv_path):
+        """将 TSV 文件转为 data:text/tab-separated-values;base64,... URI, 用于离线下载"""
+        import base64
+        if not Path(tsv_path).is_file(): return ""
+        with open(tsv_path, "rb") as f:
+            return "data:text/tab-separated-values;base64," + base64.b64encode(f.read()).decode()
+
     # S00a — 数据质量
     dq_rows = _read_tsv(report_dir / "data_summary.tsv")
     if dq_rows:
@@ -762,15 +769,18 @@ def write_html_report(report_dir, stage_stats):
             "datasets": [{"data":list(rescue_kv.values()),"backgroundColor":["#66bb6a","#42a5f5","#ffa726"]}]},
             {"responsive":True,"plugins":{"title":{"display":True,"text":"Rescue Branch Contributions"},"legend":{"position":"bottom"}}})
 
-    # Sankey 交互式嵌入 (iframe 引用同级文件, 09_Reports/ 目录即为完整报告包)
+    # Sankey 交互式嵌入 (用 srcdoc 内嵌到单文件, 不依赖外部文件)
     sankey_imgs = ""
     for sname, stitle in [("classification_sankey.html","Taxonomy Classification Sankey"),
                           ("classification_sankey_plant.html","Plant Virus Taxonomy Sankey")]:
         spath = report_dir / sname
         if spath.is_file():
+            import base64
+            with open(spath, "rb") as sf:
+                sankey_b64 = base64.b64encode(sf.read()).decode()
             sankey_imgs += f'''<div class="sankey-card">
 <h3>{stitle} <span style="font-weight:400;font-size:10px;color:var(--muted)">(interactive — hover/zoom/pan)</span></h3>
-<iframe src="{sname}" style="width:100%;height:950px;border:none;border-radius:4px" loading="lazy"></iframe>
+<iframe src="data:text/html;base64,{sankey_b64}" style="width:100%;height:950px;border:none;border-radius:4px" loading="lazy"></iframe>
 </div>\n'''
 
     # ── KPI ──
@@ -895,9 +905,10 @@ def write_html_report(report_dir, stage_stats):
             for r in preview:
                 tr_h += "<tr>" + "".join(f"<td>{_esc(str(r.get(c,'')))[:50]}</td>" for c in cols) + "</tr>"
             more = f' <span style="color:var(--muted);font-size:10px">(+{len(tsv_rows)-8} more)</span>' if len(tsv_rows) > 8 else ""
+            dl_uri = _tsv_data_uri(tsv_path)
+            dl_link = f'<a href="{dl_uri}" download="{tsv_name}" style="font-size:10px;margin-left:6px;color:var(--blue)">[download]</a>' if dl_uri else ""
             table_html += f'''<details class="stage-table-detail" open>
-<summary>{tsv_name} — {len(tsv_rows)} rows{more}
-  <a href="{tsv_name}" download style="font-size:10px;margin-left:6px;color:var(--blue)">[download]</a></summary>
+<summary>{tsv_name} — {len(tsv_rows)} rows{more} {dl_link}</summary>
 <div style="overflow-x:auto;margin-top:6px"><table class="app-table"><thead><tr>{th_h}</tr></thead><tbody>{tr_h}</tbody></table></div>
 </details>'''
         if table_html:
@@ -945,9 +956,10 @@ def write_html_report(report_dir, stage_stats):
             for r in preview:
                 tr_html += "<tr>" + "".join(f"<td>{_esc(str(r.get(c,'')))[:60]}</td>" for c in cols) + "</tr>"
             more = f' <span style="color:var(--muted);font-size:10px">(+{len(rows)-10} more rows)</span>' if len(rows) > 10 else ""
+            dl_uri = _tsv_data_uri(tf)
+            dl_link = f'<a href="{dl_uri}" download="{tf.name}" style="font-size:10px;margin-left:8px;color:var(--blue)">[download]</a>' if dl_uri else ""
             rows_html_app += f'''<details class="app-detail">
-<summary><strong>{tf.name}</strong> — {len(rows)} rows, {len(cols)} cols{more}
-  <a href="{tf.name}" download style="font-size:10px;margin-left:8px;color:var(--blue)">[download]</a></summary>
+<summary><strong>{tf.name}</strong> — {len(rows)} rows, {len(cols)} cols{more} {dl_link}</summary>
 <div style="overflow-x:auto;margin-top:8px"><table class="app-table"><thead><tr>{th_html}</tr></thead><tbody>{tr_html}</tbody></table></div>
 </details>'''
         data_appendix = f'''<div class="table-wrap" id="data-appendix">
