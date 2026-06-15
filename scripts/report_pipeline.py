@@ -1149,24 +1149,51 @@ def write_html_report(report_dir, stage_stats):
 
         # 在卡片内嵌入对应 TSV 数据表
         table_html = ""
+        table_pager_js = ""
         for tsv_name in stage_tsv_map.get(sk, []):
             tsv_path = report_dir / tsv_name
             if not tsv_path.is_file(): continue
             tsv_rows = _read_tsv(tsv_path)
             if not tsv_rows: continue
-            max_preview = 200 if tsv_name == "plant_virus_summary.tsv" else 8
-            preview = tsv_rows[:max_preview]
-            cols = list(preview[0].keys())
+            use_pagination = len(tsv_rows) > 10
+            preview = tsv_rows[:10] if use_pagination else tsv_rows
+            cols = list(preview[0].keys()) if preview else []
             th_h = "".join(f"<th>{_esc(c)}</th>" for c in cols)
             tr_h = ""
-            for r in preview:
-                tr_h += "<tr>" + "".join(f"<td>{_esc(str(r.get(c,'')))[:50]}</td>" for c in cols) + "</tr>"
-            more = f' <span style="color:var(--muted);font-size:10px">(+{len(tsv_rows)-8} more)</span>' if len(tsv_rows) > 8 else ""
+            for r in tsv_rows if use_pagination else preview:
+                tr_h += "<tr" + (" class='pag-row' style='display:none'" if use_pagination else "") + ">" + "".join(f"<td>{_esc(str(r.get(c,'')))[:60]}</td>" for c in cols) + "</tr>"
+            more = f'<span style="color:var(--muted);font-size:10px">({len(tsv_rows)} rows)</span>'
             dl_uri = _tsv_data_uri(tsv_path)
             dl_link = f'<a href="{dl_uri}" download="{tsv_name}" style="font-size:10px;margin-left:6px;color:var(--blue)">[download]</a>' if dl_uri else ""
+            tbid = f"stagetbl_{sk}"
+            pager_html = ""
+            if use_pagination:
+                pager_html = f'<div id="pager_{tbid}" style="display:flex;justify-content:center;gap:8px;padding:8px;font-size:11px;color:var(--muted)"></div>'
+                table_pager_js += f"""
+(function(){{
+  var tbody=document.getElementById('{tbid}').querySelector('tbody');
+  var rows=Array.from(tbody.querySelectorAll('.pag-row'));
+  var perPage=10,totalPages=Math.ceil(rows.length/perPage);
+  var pager=document.getElementById('pager_{tbid}');
+  var page=0;
+  function show(p){{
+    page=Math.max(0,Math.min(p,totalPages-1));
+    rows.forEach(function(r,i){{r.style.display=(i>=page*perPage&&i<(page+1)*perPage)?'':'none'}});
+    pager.innerHTML='<button onclick=\"arguments[0]\" '+(page===0?'disabled':'')+' style=\"border:1px solid #ccc;background:#fff;padding:3px 10px;border-radius:4px;cursor:pointer;font-size:11px\">← Prev</button>'+
+      '<span>Page <b>'+(page+1)+'</b> of '+totalPages+'</span>'+
+      '<button '+(page===totalPages-1?'disabled':'')+' style=\"border:1px solid #ccc;background:#fff;padding:3px 10px;border-radius:4px;cursor:pointer;font-size:11px\">Next →</button>';
+    pager.querySelectorAll('button')[0].onclick=function(){{show(page-1)}};
+    pager.querySelectorAll('button')[1].onclick=function(){{show(page+1)}};
+  }}
+  show(0);
+}})();
+"""
             table_html += f'''<details class="stage-table-detail" open>
-<summary>{tsv_name} — {len(tsv_rows)} rows{more} {dl_link}</summary>
-<div style="overflow-x:auto;margin-top:6px"><table class="app-table"><thead><tr>{th_h}</tr></thead><tbody>{tr_h}</tbody></table></div>
+<summary>{tsv_name} {more} {dl_link}</summary>
+<div style="overflow-x:auto;margin-top:6px">
+<table class="app-table" id="{tbid}"><thead><tr>{th_h}</tr></thead><tbody>{tr_h}</tbody></table>
+{pager_html}
+</div>
 </details>'''
         if table_html:
             table_html = f'<div class="stage-tables">{table_html}</div>'
@@ -1474,6 +1501,7 @@ function exportTable(){{
   a.download='pipeline_summary.csv';
   a.click();
 }}
+{table_pager_js}
 // Sidebar scroll-spy
 (function(){{
   const items=document.querySelectorAll('.sb-item');
