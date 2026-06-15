@@ -888,6 +888,8 @@ class ViromePipeline:
         parts += [f"--salmon-bin {self.args.salmon_bin}"]
         parts += [f"--max-vsi-samples {self.args.max_vsi_samples}"]
         parts += [f"--min-vsi-len {self.args.min_vsi_len}"]
+        if hasattr(self.args, 'checkv_threshold'):
+            parts += [f"--checkv-threshold {self.args.checkv_threshold}"]
         if not self.args.force:
             parts.append("--resume")
 
@@ -1464,6 +1466,7 @@ def _build_parser(add_help=True):
     g.add_argument('--salmon-bin', default=os.path.expanduser('~/mambaforge/envs/Virseqimprover/bin/salmon'), help='Salmon 二进制路径')
     g.add_argument('--max_vsi_samples', type=int, default=10, help='VSI 最大合并样本数 (0=不限制, 默认: 10)')
     g.add_argument('--min_vsi_len', type=int, default=2000, help='VSI 最小 contig 长度 bp (默认: 2000)')
+    g.add_argument('--checkv_threshold', type=float, default=90.0, help='CheckV completeness 通过阈值 (默认90, 植物病毒建议80)')
 
     g = p.add_argument_group('分类数据库 (virus_classifier2.py)')
     g.add_argument('--genomad_db', help='genomad DB 路径')
