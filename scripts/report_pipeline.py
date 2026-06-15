@@ -499,12 +499,13 @@ def generate_sankey(output_dir, report_dir):
         if not importlib.util.find_spec("plotly"):
             print("  安装 plotly...")
             subprocess.run([sys.executable, "-m", "pip", "install", "plotly", "-q"], check=False)
-        # 生成交互式 HTML (--format html)
+        # 生成交互式 HTML (--format html, 不设 title 避免重叠)
         subprocess.run([sys.executable, str(sankey_script),
                         "-i", str(final_tax), "-o", str(report_dir / "classification_sankey.html"),
                         "--format", "html", "--min-flow", "1", "--min-genus-flow", "10",
-                        "--palette", "set3", "--height", "900", "--width", "1000", "--node-pad", "30",
-                        "--label-truncate", "25", "--font-size", "9", "--title-font-size", "14"],
+                        "--palette", "set3", "--height", "860", "--width", "1000", "--node-pad", "30",
+                        "--label-truncate", "25", "--font-size", "9", "--title-font-size", "14",
+                        "--title", ""],
                        capture_output=True, timeout=120)
         print(f"  Sankey HTML → {report_dir / 'classification_sankey.html'}")
         # Plant-only
@@ -524,9 +525,9 @@ def generate_sankey(output_dir, report_dir):
                     subprocess.run([sys.executable, str(sankey_script),
                                     "-i", str(plant_tax), "-o", str(report_dir / "classification_sankey_plant.html"),
                                     "--format", "html", "--min-flow", "1", "--min-genus-flow", "5",
-                                    "--palette", "set3", "--height", "900", "--width", "1000", "--node-pad", "30",
+                                    "--palette", "set3", "--height", "860", "--width", "1000", "--node-pad", "30",
                                     "--label-truncate", "25", "--font-size", "9", "--title-font-size", "14",
-                                    "--title", "Plant Virus Taxonomy Sankey"],
+                                    "--title", ""],
                                    capture_output=True, timeout=120)
                     print(f"  Plant Sankey HTML → {report_dir / 'classification_sankey_plant.html'}")
             except Exception as e: print(f"  [WARN] Plant Sankey 生成失败: {e}")
@@ -790,8 +791,9 @@ def write_html_report(report_dir, stage_stats):
             import base64
             with open(spath, "rb") as sf:
                 sankey_b64 = base64.b64encode(sf.read()).decode()
-            card = f'''<div class="sankey-card" style="padding-top:0">
-<iframe id="sankey_iframe_{i}" style="width:100%;height:880px;border:none;border-radius:4px" loading="lazy"></iframe>
+            card = f'''<div class="sankey-card">
+<h3>{stitle}</h3>
+<iframe id="sankey_iframe_{i}" style="width:100%;height:860px;border:none;border-radius:4px" loading="lazy"></iframe>
 </div>\n'''
             sankey_by_stage.setdefault(stage_key, "")
             sankey_by_stage[stage_key] += card
@@ -1135,6 +1137,7 @@ body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans SC',san
 .pct-btn:hover{{background:#283593;border-color:#283593}}
 .sankey-section{{padding:18px 22px;display:flex;flex-direction:column;gap:16px}}
 .sankey-card{{background:#fafbfc;border-radius:var(--radius-sm);padding:14px;border:1px solid var(--border)}}
+.sankey-card h3{{font-size:14px;color:var(--indigo);margin-bottom:8px;text-align:center}}
 .sankey-card iframe{{display:block;width:100%;border-radius:4px}}
 .stage-tables{{padding:0 22px 14px;display:flex;flex-direction:column;gap:8px}}
 .stage-table-detail{{border-top:1px solid var(--border);padding:8px 0 4px}}
