@@ -1232,7 +1232,7 @@ def main():
     parser.add_argument("-t", "--threads", type=int, default=4)
     parser.add_argument("--kimi-api", help="Kimi API Key")
     parser.add_argument("--deepseek-api", help="DeepSeek API Key")
-    parser.add_argument("--deepseek-model", default="deepseek-v4-pro", choices=["deepseek-chat", "deepseek-reasoner", "deepseek-v4-flash", "deepseek-v4-pro"], help="指定 DeepSeek 模型版本")
+    parser.add_argument("--deepseek-model", default="deepseek-v4-flash", choices=["deepseek-chat", "deepseek-reasoner", "deepseek-v4-flash", "deepseek-v4-pro"], help="指定 DeepSeek 模型版本")
     parser.add_argument("--ncbi-api", help="NCBI API Key")
     parser.add_argument("--use-scholar", action="store_true", help="允许调用 Google Scholar")
     parser.add_argument("--fill-date", action="store_true", help="时间兜底")
