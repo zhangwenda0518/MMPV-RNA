@@ -363,8 +363,8 @@ def _collect_hostprediction(root, report_dir, _add):
             hdf = pl.read_csv(str(host_summary), separator="\t", null_values=["NA","N/A",""])
             if "Final_Host" in hdf.columns:
                 hcounts = hdf.group_by("Final_Host").agg(pl.len()).sort("len", descending=True)
-                top3 = " | ".join(f"{r[0]}={r[1]}" for r in hcounts.head(3).iter_rows())
-                _add("06_HostPrediction", "✓", key_metric=f"{n} 条, {top3}", details=str(host))
+                all_hosts = " | ".join(f"{r[0]}={r[1]}" for r in hcounts.iter_rows())
+                _add("06_HostPrediction", "✓", key_metric=f"{n} 条, {all_hosts}", details=str(host))
         except Exception as e:
             print(f"  [WARN] HostPrediction polars 解析失败: {e}")
             _add("06_HostPrediction", "✓", key_metric=f"{n} 条", details=str(host))
