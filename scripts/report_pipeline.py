@@ -568,6 +568,8 @@ def write_html_report(report_dir, stage_stats):
 
     # ── 数据提取 ──
     chart_scripts = ""
+    # Chart.js 全局数据标签插件
+    chart_scripts += """/**/var _dlpId='dlp';if(!Chart.registry.plugins.get(_dlpId)){Chart.register({id:_dlpId,afterDatasetsDraw:function(chart,args,opts){var ctx=chart.ctx;ctx.save();ctx.font='bold 11px -apple-system,sans-serif';ctx.textAlign='center';ctx.textBaseline='bottom';chart.data.datasets.forEach(function(ds,di){var meta=chart.getDatasetMeta(di);meta.data.forEach(function(bar,i){var v=ds.data[i];if(v===0||v===null)return;var label=v>=1e6?(v/1e6).toFixed(1)+'M':v>=1e3?(v/1e3).toFixed(1)+'K':String(Math.round(v));var isH=bar.height!==undefined;if(isH){ctx.textAlign='left';ctx.textBaseline='middle';var midY=bar.y+bar.height/2;ctx.fillStyle='#263238';ctx.fillText(label,bar.x+4,midY+1)}else{ctx.fillStyle='#263238';ctx.fillText(label,bar.x,bar.y-4)}})})}});}/**/\n"""
     stage_has_chart = {}
 
     def _chart(canvas_id, chart_type, data_obj, options_obj=None):
@@ -716,11 +718,12 @@ def write_html_report(report_dir, stage_stats):
     if tax_novelty_kv:
         stage_has_chart['s05'] = True
         bar_colors = ["#2e7d32","#1565c0","#ef6c00","#c62828"]
+        _tax_label_map = {"Known":"已知","NewSp":"新种","NewGe":"新属","NewFa":"新科"}
         chart_scripts += _chart('chart_s05a', 'bar', {
-            "labels": list(tax_novelty_kv.keys()),
-            "datasets": [{"label":"Sequences","data":list(tax_novelty_kv.values()),"backgroundColor":bar_colors}]},
+            "labels": [_tax_label_map.get(k,k) for k in tax_novelty_kv.keys()],
+            "datasets": [{"label":"序列数","data":list(tax_novelty_kv.values()),"backgroundColor":bar_colors}]},
             {"responsive":True,"plugins":{"title":{"display":True,"text":"Taxonomy Novelty"},"legend":{"display":False}},
-             "scales":{"y":{"beginAtZero":True,"title":{"text":"Sequences"}}}})
+             "scales":{"y":{"beginAtZero":True,"title":{"text":"序列数"}}}})
 
     # S06 — Host distribution
     host_kv = {}
@@ -793,7 +796,7 @@ def write_html_report(report_dir, stage_stats):
                 sankey_b64 = base64.b64encode(sf.read()).decode()
             card = f'''<div class="sankey-card">
 <h3>{stitle}</h3>
-<iframe id="sankey_iframe_{i}" style="width:100%;height:860px;border:none;border-radius:4px" loading="lazy"></iframe>
+<iframe id="sankey_iframe_{i}" style="width:100%;height:700px;border:none;border-radius:4px" loading="lazy"></iframe>
 </div>\n'''
             sankey_by_stage.setdefault(stage_key, "")
             sankey_by_stage[stage_key] += card
