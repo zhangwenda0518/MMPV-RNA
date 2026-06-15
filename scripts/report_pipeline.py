@@ -552,7 +552,6 @@ def write_html_report(report_dir, stage_stats):
         shutil.copy2(str(chart_js_path), str(report_dir / "chart.min.js"))
 
     main_stages = [s for s in stage_stats if not s["Stage"].startswith("  ")]
-    sub_stages  = [s for s in stage_stats if s["Stage"].startswith("  ")]
 
     S = {"✓": "pass", "○": "skip", "✗": "fail"}
     def _esc(v): return str(v).replace("&","&amp;").replace("<","&lt;").replace(">","&gt;")
@@ -975,8 +974,6 @@ def write_html_report(report_dir, stage_stats):
         cls = S.get(s["Status"], "skip")
         badge_label = {"pass":"PASS","skip":"SKIP","fail":"FAIL"}.get(cls,"SKIP")
         table_rows += f'<tr class="tr-{cls}"><td class="td-num">{i}</td><td><b>{_esc(s["Stage"])}</b></td><td><span class="tb-badge tb-{cls}">{badge_label}</span></td><td class="td-metric">{_esc(s.get("Key_Metric",""))}</td></tr>'
-    for s in sub_stages:
-        table_rows += f'<tr><td></td><td class="td-sub">{_esc(s["Stage"].strip())}</td><td></td><td class="td-metric">{_esc(s.get("Key_Metric",""))}</td></tr>'
 
     # ── Sidebar nav ──
     sidebar_items = ""
