@@ -568,8 +568,6 @@ def write_html_report(report_dir, stage_stats):
 
     # ── 数据提取 ──
     chart_scripts = ""
-    # Chart.js 全局数据标签插件
-    chart_scripts += """/**/var _dlpId='dlp';if(!Chart.registry.plugins.get(_dlpId)){Chart.register({id:_dlpId,afterDatasetsDraw:function(chart,args,opts){var ctx=chart.ctx;ctx.save();ctx.font='bold 11px -apple-system,sans-serif';ctx.textAlign='center';ctx.textBaseline='bottom';chart.data.datasets.forEach(function(ds,di){var meta=chart.getDatasetMeta(di);meta.data.forEach(function(bar,i){var v=ds.data[i];if(v===0||v===null)return;var label=v>=1e6?(v/1e6).toFixed(1)+'M':v>=1e3?(v/1e3).toFixed(1)+'K':String(Math.round(v));var isH=bar.height!==undefined;if(isH){ctx.textAlign='left';ctx.textBaseline='middle';var midY=bar.y+bar.height/2;ctx.fillStyle='#263238';ctx.fillText(label,bar.x+4,midY+1)}else{ctx.fillStyle='#263238';ctx.fillText(label,bar.x,bar.y-4)}})})}});}/**/\n"""
     stage_has_chart = {}
 
     def _chart(canvas_id, chart_type, data_obj, options_obj=None):
@@ -657,7 +655,7 @@ def write_html_report(report_dir, stage_stats):
                 {"responsive":True,"plugins":{"title":{"display":True,"text":"Assembly Contig Count"}},
                  "scales":{"y":{"beginAtZero":True,"title":{"text":"Contigs"}}}})
 
-    # S02 — 鉴定 (聚合所有样本的工具计数, 而非只取第一行)
+    # S02 — 鉴定: 各工具汇总 + UniProt过滤前后
     id_rows = _read_tsv(report_dir / "ident_summary.tsv")
     if id_rows:
         id_tools = [k for k in id_rows[0] if k not in ("Sample","All_Candidate")]
@@ -665,7 +663,7 @@ def write_html_report(report_dir, stage_stats):
         for t in id_tools:
             total = 0
             for r in id_rows:
-                if r.get("Sample","") == "TOTAL": continue
+                if r.get("Sample","") == "TOTAL" or r.get("Sample","") == "summary_plots": continue
                 try: total += int(r.get(t, 0))
                 except: pass
             if total > 0: id_vals[t] = total
@@ -673,21 +671,30 @@ def write_html_report(report_dir, stage_stats):
             stage_has_chart['s02a'] = True
             chart_scripts += _chart('chart_s02a', 'bar', {
                 "labels": list(id_vals.keys()),
-                "datasets": [{"label":"Virus contigs","data":list(id_vals.values()),"backgroundColor":"#5c6bc0"}]},
-                {"responsive":True,"indexAxis":"y","plugins":{"title":{"display":True,"text":"Per-Tool Identification (All Samples Sum)"}}})
+                "datasets": [{"label":"Identified","data":list(id_vals.values()),"backgroundColor":"#5c6bc0"}]},
+                {"responsive":True,"indexAxis":"y","plugins":{"title":{"display":True,"text":"Per-Tool Identification"}},
+                 "scales":{"x":{"beginAtZero":True,"title":{"text":"Sequences"}}}})
+    # UniProt 过滤: 按 mode 汇总, 非按样本
     fil_rows = _read_tsv(report_dir / "filter_summary.tsv")
     if fil_rows:
-        flabels = [f"{r['Sample'][:10]}-{r['Mode']}" for r in fil_rows if r.get("Sample","")!="TOTAL"]
-        fvals = [int(r.get("Passed",0)) for r in fil_rows if r.get("Sample","")!="TOTAL"]
-        f_total = [int(r.get("All_Candidate",0)) for r in fil_rows if r.get("Sample","")!="TOTAL"]
-        if flabels:
+        mode_all = {}; mode_pass = {}
+        for r in fil_rows:
+            m = r.get("Mode","")
+            if r.get("Sample","") in ("TOTAL","summary_plots"): continue
+            if m not in mode_all: mode_all[m] = 0; mode_pass[m] = 0
+            mode_all[m] += int(r.get("All_Candidate",0))
+            mode_pass[m] += int(r.get("Passed",0))
+        modes = [m for m in mode_all if mode_all[m] > 0]
+        if modes:
             stage_has_chart['s02b'] = True
             chart_scripts += _chart('chart_s02b', 'bar', {
-                "labels": flabels,
-                "datasets": [{"label":"All candidate","data":f_total,"backgroundColor":"#bdbdbd"},
-                              {"label":"Passed filter","data":fvals,"backgroundColor":"#66bb6a"}]},
-                {"responsive":True,"plugins":{"title":{"display":True,"text":"UniProt Filter: Before vs After"}},
-                 "scales":{"y":{"beginAtZero":True}}})
+                "labels": modes,
+                "datasets": [
+                    {"label":"All candidate","data":[mode_all[m] for m in modes],"backgroundColor":"#bdbdbd"},
+                    {"label":"Passed","data":[mode_pass[m] for m in modes],"backgroundColor":"#66bb6a"},
+                ]},
+                {"responsive":True,"plugins":{"title":{"display":True,"text":"UniProt Filter: Before vs After (All Samples)"}},
+                 "scales":{"y":{"beginAtZero":True,"title":{"text":"Sequences"}}}})
 
     # S03 — COBRA
     cobra_rows = _read_tsv(report_dir / "cobra_summary.tsv")
@@ -785,6 +792,8 @@ def write_html_report(report_dir, stage_stats):
     # Sankey 交互式嵌入 (用 Blob URL 动态注入, 避免 data URI 大小限制)
     # s05=全部分类, s06=植物病毒
     sankey_by_stage = {}  # {stage_key: html_string}
+    # 堆叠图默认切换为百分比模式 (延迟执行, 等图表全部渲染完)
+    chart_scripts += "setTimeout(function(){document.querySelectorAll('.pct-btn').forEach(function(b){toggleStackedPct(b)})},100);\n"
     sankey_inject_scripts = ""
     sankey_map = [("classification_sankey.html","Taxonomy Classification Sankey","s05"),
                   ("classification_sankey_plant.html","Plant Virus Taxonomy Sankey","s06")]
