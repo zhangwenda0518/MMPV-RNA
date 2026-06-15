@@ -976,18 +976,18 @@ def configure_layout(fig, args, num_nodes, num_links, color_info, taxonomic_leve
         text="<b>Taxonomic Levels Legend</b>",
         showarrow=False,
         xref="paper", yref="paper",
-        x=0.5, y=-0.10,  # 放在图例下方
+        x=0.5, y=-0.16,  # 放在图例下方
         font_size=14,
         font_color="#333333",
         font_weight="bold"
     )
 
-    # 统计信息注解放到 Legend 下方 (y=-0.16)
+    # 统计信息注解放到 Legend 下方
     fig.add_annotation(
         text=f"Total sequences: {args.total_sequences:,} | Nodes: {num_nodes:,} | Links: {num_links:,}",
         showarrow=False,
         xref="paper", yref="paper",
-        x=0.5, y=-0.16,
+        x=0.5, y=-0.22,
         font_size=11,
         font_color="#555555",
     )

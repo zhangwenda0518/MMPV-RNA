@@ -1310,8 +1310,7 @@ body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans SC',san
 .s-pass{{background:#e8f5e9;color:var(--green)}}.s-fail{{background:#fce4ec;color:var(--red)}}.s-skip{{background:#f5f5f5;color:#9e9e9e}}
 .stage-charts{{display:grid;gap:16px;padding:18px 22px}}
 .chart-box{{background:#fafbfc;border-radius:var(--radius-sm);padding:12px;border:1px solid var(--border);position:relative}}
-.chart-scroll{{overflow-x:auto;padding-bottom:4px}}
-.chart-scroll canvas{{min-width:600px}}
+.chart-scroll{{overflow-x:auto;max-width:100%}}
 .pct-btn{{font-size:11px;padding:4px 14px;border:1px solid var(--indigo);border-radius:4px;background:var(--indigo);cursor:pointer;color:#fff;font-weight:600;transition:all .15s}}
 .pct-btn:hover{{background:#283593;border-color:#283593}}
 .sankey-section{{padding:18px 22px;display:flex;flex-direction:column;gap:16px}}
