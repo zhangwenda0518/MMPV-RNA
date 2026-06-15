@@ -272,7 +272,7 @@ examples:
     if 'all' in args.stage:
         stages_to_run = list(BuildHostPipeline.STAGES)
     else:
-        stages_to_run = [s for s in BuildHostPipeline.STAGES if s in args.stage]
+        stages_to_run = [s for s in args.stage if s in BuildHostPipeline.STAGES]
 
     ckpt = Checkpoint(os.path.abspath(args.work_dir))
     if args.force:

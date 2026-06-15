@@ -237,7 +237,7 @@ examples:
     if 'all' in args.stage:
         stages_to_run = list(PublicDataPipeline.STAGES)
     else:
-        stages_to_run = [s for s in PublicDataPipeline.STAGES if s in args.stage]
+        stages_to_run = [s for s in args.stage if s in PublicDataPipeline.STAGES]
 
     ckpt = Checkpoint(os.path.abspath(args.work_dir))
     if args.force:
