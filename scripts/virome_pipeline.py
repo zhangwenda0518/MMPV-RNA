@@ -950,8 +950,10 @@ class ViromePipeline:
                     for line in open(rescue_final): apf.write(line)
                     n_rescued_total += sum(1 for l in open(rescue_final) if l.startswith('>'))
         self.log.info("=" * 50)
-        self.log.info("  完整植物病毒: %d 条 (免拯救=%d + rescue=%d) → %s",
-                      n_no_rescue + n_rescued_total, n_no_rescue, n_rescued_total, all_plant)
+        self.log.info("  完整植物病毒: %d 条 → %s",
+                      n_no_rescue + n_rescued_total, all_plant)
+        self.log.info("    CD-HIT known: %d  |  CheckV pass(≥90%%): %d  |  rescued: %d",
+                      n_cdhit, n_checkv, n_rescued_total)
 
         # ── CheckV 质量评估 (按宿主统计) ──
         self.log.info("=" * 50)
@@ -1055,11 +1057,11 @@ class ViromePipeline:
             dist, total = self._run_checkv_on_fasta(rescue_final, checkv_dir)
             all_stats[f"Rescue_{host}"] = (dist, total)
 
-        # 1.5 CD-HIT known centroids (完整参考, 免 rescue)
-        known_centroids = self.d['rescue_dir'] / "known" / "centroids" / "final_centroids.fasta"
-        if known_centroids.is_file():
-            dist, total = self._run_checkv_on_fasta(known_centroids, self.d['rescue_dir'] / "checkv" / "known_ref")
-            all_stats["Known_ref"] = (dist, total)
+        # 1.5 免拯救: CD-HIT known + CheckV pass (≥90%) — 无需经过 rescue
+        no_rescue_fa = self.d['rescue_dir'] / "known" / "centroids" / "final_centroids.fasta"
+        if no_rescue_fa.is_file():
+            dist, total = self._run_checkv_on_fasta(no_rescue_fa, self.d['rescue_dir'] / "checkv" / "no_rescue")
+            all_stats["免拯救(known+≥90%)"] = (dist, total)
 
         # 2. Unknown centroids
         unknown_fa = self.d['cluster'] / "centroids" / "unknown_votus.fasta"
@@ -1105,15 +1107,33 @@ class ViromePipeline:
 
         self.log.info("  " + "-" * 82)
 
-        # 汇总: 所有 rescue 产出合并
-        if any(k.startswith("Rescue_") for k in all_stats):
-            self.log.info("  注: Complete ≥90% | High-quality ≥50% | Medium ≥10% | Low <10% | Not-det 无法判断")
-            rescue_total = sum(v[1] for k, v in all_stats.items() if k.startswith("Rescue_"))
-            rescue_complete = sum(v[0].get("Complete", 0) + v[0].get("High-quality", 0)
-                                 for k, v in all_stats.items() if k.startswith("Rescue_"))
-            self.log.info("  Rescue 汇总 HQ (Complete+High): %d / %d (%.1f%%)",
-                         rescue_complete, rescue_total,
-                         rescue_complete / rescue_total * 100 if rescue_total else 0)
+        # 汇总: 按来源分别统计
+        self.log.info("  注: Complete ≥90% | High-quality ≥50% | Medium ≥10% | Low <10% | Not-det 无法判断")
+
+        # 免拯救
+        no_rescue_dist = all_stats.get("免拯救(known+≥90%)", ({}, 0))
+        no_rescue_total = no_rescue_dist[1]
+        no_rescue_hq = no_rescue_dist[0].get("Complete", 0) + no_rescue_dist[0].get("High-quality", 0)
+        self.log.info("  免拯救 HQ (Complete+High): %d / %d (%.1f%%)",
+                     no_rescue_hq, no_rescue_total,
+                     no_rescue_hq / no_rescue_total * 100 if no_rescue_total else 0)
+
+        # Rescue 产出
+        rescue_keys = [k for k in all_stats if k.startswith("Rescue_")]
+        if rescue_keys:
+            rescue_total = sum(v[1] for k, v in all_stats.items() if k in rescue_keys)
+            rescue_hq = sum(v[0].get("Complete", 0) + v[0].get("High-quality", 0)
+                           for k, v in all_stats.items() if k in rescue_keys)
+            self.log.info("  Rescue 产出 HQ (Complete+High): %d / %d (%.1f%%)",
+                         rescue_hq, rescue_total,
+                         rescue_hq / rescue_total * 100 if rescue_total else 0)
+
+        # 全部植物病毒
+        plant_total = no_rescue_total + rescue_total
+        plant_hq = no_rescue_hq + rescue_hq
+        self.log.info("  ★ 全部植物病毒 HQ: %d / %d (%.1f%%)",
+                     plant_hq, plant_total,
+                     plant_hq / plant_total * 100 if plant_total else 0)
 
     # ── Step 5: 分类注释 ──
     def run_taxonomy(self):
