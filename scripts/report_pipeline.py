@@ -589,8 +589,9 @@ def _generate_plant_virus_summary(root, report_dir, _add):
     n = len(plant_data)
     n_no_rescue = sum(1 for v in plant_data.values() if v["source"]=="免拯救")
     n_rescued = n - n_no_rescue
-    _add("  └ Plant Virus Summary", "✓",
-         key_metric=f"{n} 条 (免拯救={n_no_rescue} + rescued={n_rescued}) | {report_dir}/plant_virus_summary.tsv")
+    _add("09_Plant_virus", "✓",
+         key_metric=f"{n} 条 (免拯救={n_no_rescue} + rescued={n_rescued})",
+         details=str(report_dir / "plant_virus_summary.tsv"))
 
     # 5. 旭日图 (Plotly Sunburst)
     if not tax_data: return
@@ -959,8 +960,8 @@ def write_html_report(report_dir, stage_stats):
 <h3>Plant Virus Taxonomy Sunburst</h3>
 <iframe id="sunburst_iframe" style="width:100%;height:750px;border:none;border-radius:4px" loading="lazy"></iframe>
 </div>\n'''
-        sankey_by_stage.setdefault("s05", "")
-        sankey_by_stage["s05"] += sunburst_card
+        sankey_by_stage.setdefault("s09", "")
+        sankey_by_stage["s09"] += sunburst_card
         sankey_inject_scripts += f"(function(){{var b='{sunburst_b64}';var d=atob(b);var u=URL.createObjectURL(new Blob([d],{{type:'text/html'}}));document.getElementById('sunburst_iframe').src=u;}})();\n"
 
     # ── KPI ──
@@ -1020,10 +1021,11 @@ def write_html_report(report_dir, stage_stats):
         ("s06","Host","06 Host Prediction","HOST","#c62828"),
         ("s07","CheckV","07 CheckV Quality","CV","#2e7d32"),
         ("s08","Rescue","08 Rescue","RESCUE","#37474f"),
+        ("s09","PlantVirus","09 Plant Virus Collection","PV","#00838f"),
     ]
 
     _skey_to_num = {'s00a':'00a','s00b':'00b','s01':'01','s02':'02','s03':'03',
-                    's04':'04','s05':'05','s06':'06','s07':'07','s08':'08'}
+                    's04':'04','s05':'05','s06':'06','s07':'07','s08':'08','s09':'09'}
     stage_status = {}; stage_metric = {}
     for s in stage_stats:
         sn = s['Stage']
@@ -1040,7 +1042,8 @@ def write_html_report(report_dir, stage_stats):
         's01':  [('chart_s01b','Contig Count'),('chart_s01a','N50 (kb)')],
         's02':  [('chart_s02','UniProt Filter')],
         's03':  [('chart_s03','COBRA Rates')],
-        's05':  [('chart_s05a','Taxonomy Novelty'),('chart_s05b','Plant Virus Taxonomy')],
+        's05':  [('chart_s05a','Taxonomy Novelty')],
+        's09':  [('chart_s05b','Plant Virus Taxonomy')],
         's06':  [('chart_s06a','Host Distribution')],
         's07':  [('chart_s07a','CheckV Quality'),('chart_s07b','CheckV Confidence')],
         's08':  [('chart_s08','Rescue Branches')],
@@ -1057,6 +1060,7 @@ def write_html_report(report_dir, stage_stats):
         's06':  [],
         's07':  ['checkv_summary.tsv', 'checkv_confidence.tsv'],
         's08':  [],
+        's09':  ['plant_virus_summary.tsv'],
     }
 
     sections_html = ""
@@ -1082,6 +1086,7 @@ def write_html_report(report_dir, stage_stats):
                     if stage_has_chart.get('s02'): active.append(cid)
                 elif sk == 's05':
                     if cid == 'chart_s05a' and stage_has_chart.get('s05'): active.append(cid)
+                elif sk == 's09':
                     if cid == 'chart_s05b' and stage_has_chart.get('s05b'): active.append(cid)
                 elif sk == 's07':
                     if cid == 'chart_s07a' and stage_has_chart.get('s07a'): active.append(cid)
