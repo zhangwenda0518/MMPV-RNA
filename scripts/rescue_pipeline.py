@@ -443,7 +443,7 @@ def branch_b(fail_fa, fastq_dir, work_dir, checkv_db, threads, jobs, vsi_path, s
 
 def branch_c(fail_fa, fastq_dir, work_dir,
              checkv_db, blast_db, threads, jobs, vsi_path=None, salmon_bin=None, clusters=None, fasta_info=None, max_vsi_samples=10, threshold=90.0):
-    """B 失败 → BLASTN + CheckV (纯比对评级, 不跑 VSI)。支持断点续传。"""
+    """B 失败 → BLASTN + ragtag 参考引导延伸 + CheckV。支持断点续传。"""
     d = Path(work_dir) / "branch_c"; d.mkdir(parents=True, exist_ok=True)
 
     if not fail_fa or not os.path.isfile(fail_fa):
@@ -455,7 +455,13 @@ def branch_c(fail_fa, fastq_dir, work_dir,
     if not blast_db:
         print("  分支 C: 无 BLAST 数据库, 跳过"); return None, 0
 
-    # 断点续传: 检查已完成的 contig
+    # 查找工具
+    ragtag_bin = shutil.which("ragtag.py") or os.path.expanduser("~/mambaforge/bin/ragtag.py")
+    blastdbcmd_bin = shutil.which("blastdbcmd") or "blastdbcmd"
+    has_ragtag = os.path.isfile(ragtag_bin) if ragtag_bin else False
+    print(f"  分支 C: ragtag={'✓' if has_ragtag else '✗ (仅BLASTN)'}  blastdbcmd={shutil.which('blastdbcmd') or '?'}")
+
+    # 断点续传
     pass_fa = d / "branchC_pass.fasta"
     ckpt_file = d / "branchC_checkpoint.txt"
     done_ids = set()
@@ -475,31 +481,78 @@ def branch_c(fail_fa, fastq_dir, work_dir,
 
     lock = threading.Lock()
     complete = {}
-    # 从已有 pass_fa 恢复
     for rid in done_ids:
         match = [r for r in fail_records if r.id == rid]
         if match: complete[rid] = match[0]
 
     def _do(rec):
-        ref = rec.id
-        sub_dir = d / f"tmp_{ref[:30]}"; sub_dir.mkdir(exist_ok=True)
-        tmp = sub_dir / f"{ref[:30]}.fa"
+        ref_id = rec.id
+        sub_dir = d / f"tmp_{ref_id[:30]}"; sub_dir.mkdir(exist_ok=True)
+        cq_fa = sub_dir / f"{ref_id[:30]}.fa"      # 原始 contig
         cv_out = sub_dir / "cv" / "completeness.tsv"
+        scaffold_fa = sub_dir / "ragtag_out" / "ragtag.scaffold.fasta"
+        final_fa = scaffold_fa if scaffold_fa.is_file() else cq_fa
 
-        # 断点续传: CheckV 结果已存在 → 直接评估
-        if not cv_out.is_file():
-            SeqIO.write([rec], tmp, "fasta")
-            run_blastn(tmp, blast_db, sub_dir / "blastn.tsv", threads)
-            run_checkv(tmp, sub_dir / "cv", checkv_db, threads)
+        # 断点续传: CheckV 结果已存在且是最新的 → 跳过
+        if cv_out.is_file():
+            final_mtime = scaffold_fa.stat().st_mtime if scaffold_fa.is_file() else cq_fa.stat().st_mtime if cq_fa.is_file() else 0
+            if cv_out.stat().st_mtime >= final_mtime:
+                pids, _, _ = parse_checkv(cv_out, threshold)
+                if ref_id in pids:
+                    with lock:
+                        complete[ref_id] = rec
+                        with open(ckpt_file, "a") as cf: cf.write(ref_id + "\n")
+                        print(f"  [RESUME-HQ] {ref_id[:50]}", flush=True)
+                    return
 
-        pids, _, _ = parse_checkv(cv_out)
-        if ref in pids:
+        # Step 1: BLASTN
+        if not cq_fa.is_file():
+            SeqIO.write([rec], cq_fa, "fasta")
+        blast_out = sub_dir / "blastn.tsv"
+        if not blast_out.is_file():
+            run_blastn(cq_fa, blast_db, blast_out, threads)
+
+        # Step 2: 提取参考 → ragtag 参考引导延伸
+        if has_ragtag and blast_out.is_file() and blast_out.stat().st_size > 0 and not scaffold_fa.is_file():
+            try:
+                with open(blast_out) as bf:
+                    top = bf.readline().strip().split('\t')
+                if len(top) >= 2 and top[0] != '#':
+                    ref_acc = top[1]
+                    ref_fa = sub_dir / "reference.fa"
+                    if not ref_fa.is_file():
+                        subprocess.run([blastdbcmd_bin, "-db", str(blast_db), "-entry", ref_acc,
+                                      "-out", str(ref_fa)], capture_output=True, check=False)
+                    if ref_fa.is_file() and ref_fa.stat().st_size > 100:
+                        ragtag_out = sub_dir / "ragtag_out"
+                        ragtag_out.mkdir(exist_ok=True)
+                        subprocess.run([ragtag_bin, "scaffold", str(ref_fa), str(cq_fa),
+                                      "-o", str(ragtag_out), "-t", str(threads), "-w"],
+                                     capture_output=True, check=False)
+                        if scaffold_fa.is_file() and scaffold_fa.stat().st_size > 0:
+                            print(f"  [RAGTAG] {ref_id[:40]} ← {ref_acc}", flush=True)
+                            final_fa = scaffold_fa
+            except Exception as e:
+                print(f"  [WARN] ragtag 失败 ({ref_id[:30]}): {e}", flush=True)
+
+        # Step 3: CheckV
+        if not cv_out.is_file() or (scaffold_fa.is_file() and cv_out.stat().st_mtime < scaffold_fa.stat().st_mtime):
+            run_checkv(final_fa, sub_dir / "cv", checkv_db, threads)
+        pids, _, _ = parse_checkv(cv_out, threshold)
+        if ref_id in pids:
             with lock:
-                complete[ref] = rec
-                with open(ckpt_file, "a") as cf: cf.write(ref + "\n")
-                print(f"  [BLASTN-HQ] {ref[:50]}", flush=True)
+                # 用 ragtag 延伸后的序列替换原 record
+                if scaffold_fa.is_file():
+                    try:
+                        for srec in SeqIO.parse(str(scaffold_fa), "fasta"):
+                            rec.seq = srec.seq
+                            break
+                    except: pass
+                complete[ref_id] = rec
+                with open(ckpt_file, "a") as cf: cf.write(ref_id + "\n")
+                print(f"  [HQ] {ref_id[:50]}", flush=True)
 
-    print(f"  分支 C: BLASTN {len(pending)} 条 (jobs={jobs})")
+    print(f"  分支 C: 参考引导延伸 {len(pending)} 条 (jobs={jobs})")
     if jobs > 1 and len(pending) > 1:
         with ThreadPoolExecutor(max_workers=min(jobs, len(pending))) as ex:
             list(tqdm(ex.map(_do, pending), total=len(pending), desc="  分支 C", unit="task"))
