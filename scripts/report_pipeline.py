@@ -564,6 +564,14 @@ def write_html_report(report_dir, stage_stats):
     chart_scripts = ""
     stage_has_chart = {}
 
+    def _chart(canvas_id, chart_type, data_obj, options_obj=None):
+        """生成 new Chart() JS 调用, 用 json.dumps 避免花括号转义问题"""
+        cfg = {"type": chart_type, "data": data_obj}
+        if options_obj:
+            cfg["options"] = options_obj
+        cfg_js = _json.dumps(cfg, ensure_ascii=False)
+        return f"new Chart(document.getElementById('{canvas_id}'), {cfg_js});\n"
+
     # S00a — 数据质量
     dq_rows = _read_tsv(report_dir / "data_summary.tsv")
     if dq_rows:
@@ -575,26 +583,23 @@ def write_html_report(report_dir, stage_stats):
         dq_dup = [float(r.get("Dup_Rate(%)",0)) for r in dq_rows if r.get("Sample","")!="TOTAL"]
         if dq_samples:
             stage_has_chart['s00a'] = True
-            chart_scripts += f"""
-new Chart(document.getElementById('chart_s00a'), {{
-  type:'bar', data:{{labels:{_json.dumps(dq_samples)},
-  datasets:[{{label:'Raw Reads (M)',data:{_json.dumps([round(v/1e6,1) for v in dq_raw])},backgroundColor:'#90a4ae',yAxisID:'y'}},
-            {{label:'Clean Reads (M)',data:{_json.dumps([round(v/1e6,1) for v in dq_clean])},backgroundColor:'#42a5f5',yAxisID:'y'}},
-            {{label:'Q20 Raw (%)',data:{_json.dumps([round(v,1) for v in dq_q20b])},backgroundColor:'#ffa726',yAxisID:'y1'}},
-            {{label:'Q20 Clean (%)',data:{_json.dumps([round(v,1) for v in dq_q20a])},backgroundColor:'#66bb6a',yAxisID:'y1'}}]}},
-  options:{{responsive:true,plugins:{{title:{{display:true,text:'Read Quality & Filtering'}}}},
-    scales:{{y:{{beginAtZero:true,position:'left',title:{{text:'Reads (M)'}}}},
-             y1:{{beginAtZero:true,position:'right',max:100,grid:{{drawOnChartArea:false}},title:{{text:'Q20 (%)'}}}}}}}}}});
-"""
+            chart_scripts += _chart('chart_s00a', 'bar', {
+                "labels": dq_samples,
+                "datasets": [
+                    {"label":"Raw Reads (M)","data":[round(v/1e6,1) for v in dq_raw],"backgroundColor":"#90a4ae","yAxisID":"y"},
+                    {"label":"Clean Reads (M)","data":[round(v/1e6,1) for v in dq_clean],"backgroundColor":"#42a5f5","yAxisID":"y"},
+                    {"label":"Q20 Raw (%)","data":[round(v,1) for v in dq_q20b],"backgroundColor":"#ffa726","yAxisID":"y1"},
+                    {"label":"Q20 Clean (%)","data":[round(v,1) for v in dq_q20a],"backgroundColor":"#66bb6a","yAxisID":"y1"},
+                ]}, {"responsive":True,"plugins":{"title":{"display":True,"text":"Read Quality & Filtering"}},
+                     "scales":{"y":{"beginAtZero":True,"position":"left","title":{"text":"Reads (M)"}},
+                              "y1":{"beginAtZero":True,"position":"right","max":100,"grid":{"drawOnChartArea":False},"title":{"text":"Q20 (%)"}}}})
     if dq_rows and any(v > 0 for v in dq_dup):
-        chart_scripts += f"""
-new Chart(document.getElementById('chart_s00a_dup'), {{
-  type:'bar', data:{{labels:{_json.dumps(dq_samples)},
-  datasets:[{{label:'Duplication Rate (%)',data:{_json.dumps([round(v,2) for v in dq_dup])},
-            backgroundColor:{_json.dumps(['#ef5350' if v>30 else '#ffa726' if v>15 else '#66bb6a' for v in dq_dup])}}}]}},
-  options:{{responsive:true,plugins:{{title:{{display:true,text:'Duplication Rate per Sample'}}}},
-    scales:{{y:{{beginAtZero:true,title:{{text:'Dup Rate (%)'}}}}}}}}}});
-"""
+        chart_scripts += _chart('chart_s00a_dup', 'bar', {
+            "labels": dq_samples,
+            "datasets": [{"label":"Duplication Rate (%)","data":[round(v,2) for v in dq_dup],
+                          "backgroundColor":['#ef5350' if v>30 else '#ffa726' if v>15 else '#66bb6a' for v in dq_dup]}]},
+            {"responsive":True,"plugins":{"title":{"display":True,"text":"Duplication Rate per Sample"}},
+             "scales":{"y":{"beginAtZero":True,"title":{"text":"Dup Rate (%)"}}}})
 
     # S00b — 宿主去除
     hd_rows = _read_tsv(report_dir / "hostdep_summary.tsv")
@@ -608,14 +613,12 @@ new Chart(document.getElementById('chart_s00a_dup'), {{
         hd_removed = [max(0, hd_raw[i] - hd_retained[i]) for i in range(len(hd_samples))]
         if hd_samples and any(v > 0 for v in hd_raw):
             stage_has_chart['s00b'] = True
-            chart_scripts += f"""
-new Chart(document.getElementById('chart_s00b'), {{
-  type:'bar', data:{{labels:{_json.dumps(hd_samples)},
-  datasets:[{{label:'Retained (non-host)',data:{_json.dumps(hd_retained)},backgroundColor:'#66bb6a'}},
-            {{label:'Removed (host+rRNA)',data:{_json.dumps(hd_removed)},backgroundColor:'#ef5350'}}]}},
-  options:{{responsive:true,indexAxis:'y',plugins:{{title:{{display:true,text:'Host Depletion: Reads Retained vs Removed'}}}},
-    scales:{{x:{{stacked:true,beginAtZero:true,title:{{text:'Reads'}}}},y:{{stacked:true}}}}}}}}}});
-"""
+            chart_scripts += _chart('chart_s00b', 'bar', {
+                "labels": hd_samples,
+                "datasets": [{"label":"Retained (non-host)","data":hd_retained,"backgroundColor":"#66bb6a"},
+                              {"label":"Removed (host+rRNA)","data":hd_removed,"backgroundColor":"#ef5350"}]},
+                {"responsive":True,"indexAxis":"y","plugins":{"title":{"display":True,"text":"Host Depletion: Reads Retained vs Removed"}},
+                 "scales":{"x":{"stacked":True,"beginAtZero":True,"title":{"text":"Reads"}},"y":{"stacked":True}}})
 
     # S01 — 组装
     asm_rows = _read_tsv(report_dir / "assembly_summary.tsv")
@@ -625,23 +628,19 @@ new Chart(document.getElementById('chart_s00b'), {{
         asm_contigs = [int(r.get("Contigs",0)) for r in asm_rows if r.get("Sample","")!="TOTAL"]
         if asm_samples:
             stage_has_chart['s01a'] = True
-            chart_scripts += f"""
-new Chart(document.getElementById('chart_s01a'), {{
-  type:'bar', data:{{labels:{_json.dumps(asm_samples)},
-  datasets:[{{label:'N50 (kb)',data:{_json.dumps([round(v/1000,1) for v in asm_n50])},
-  backgroundColor:{_json.dumps(['#1565c0' if v>5000 else '#42a5f5' if v>1000 else '#90caf9' for v in asm_n50])}}}]}},
-  options:{{responsive:true,plugins:{{title:{{display:true,text:'Assembly N50 (kb)'}}}},
-    scales:{{y:{{beginAtZero:true,title:{{text:'N50 (kb)'}}}}}}}}}});
-"""
+            chart_scripts += _chart('chart_s01a', 'bar', {
+                "labels": asm_samples,
+                "datasets": [{"label":"N50 (kb)","data":[round(v/1000,1) for v in asm_n50],
+                              "backgroundColor":['#1565c0' if v>5000 else '#42a5f5' if v>1000 else '#90caf9' for v in asm_n50]}]},
+                {"responsive":True,"plugins":{"title":{"display":True,"text":"Assembly N50 (kb)"}},
+                 "scales":{"y":{"beginAtZero":True,"title":{"text":"N50 (kb)"}}}})
             stage_has_chart['s01b'] = True
-            chart_scripts += f"""
-new Chart(document.getElementById('chart_s01b'), {{
-  type:'bar', data:{{labels:{_json.dumps(asm_samples)},
-  datasets:[{{label:'Contigs',data:{_json.dumps(asm_contigs)},
-  backgroundColor:{_json.dumps(['#66bb6a' if v>5000 else '#a5d6a7' if v>1000 else '#c8e6c9' for v in asm_contigs])}}}]}},
-  options:{{responsive:true,plugins:{{title:{{display:true,text:'Assembly Contig Count'}}}},
-    scales:{{y:{{beginAtZero:true,title:{{text:'Contigs'}}}}}}}}}});
-"""
+            chart_scripts += _chart('chart_s01b', 'bar', {
+                "labels": asm_samples,
+                "datasets": [{"label":"Contigs","data":asm_contigs,
+                              "backgroundColor":['#66bb6a' if v>5000 else '#a5d6a7' if v>1000 else '#c8e6c9' for v in asm_contigs]}]},
+                {"responsive":True,"plugins":{"title":{"display":True,"text":"Assembly Contig Count"}},
+                 "scales":{"y":{"beginAtZero":True,"title":{"text":"Contigs"}}}})
 
     # S02 — 鉴定 (聚合所有样本的工具计数, 而非只取第一行)
     id_rows = _read_tsv(report_dir / "ident_summary.tsv")
@@ -657,12 +656,10 @@ new Chart(document.getElementById('chart_s01b'), {{
             if total > 0: id_vals[t] = total
         if id_vals:
             stage_has_chart['s02a'] = True
-            chart_scripts += f"""
-new Chart(document.getElementById('chart_s02a'), {{
-  type:'bar', data:{{labels:{_json.dumps(list(id_vals.keys()))},
-  datasets:[{{label:'Virus contigs',data:{_json.dumps(list(id_vals.values()))},backgroundColor:'#5c6bc0'}}]}},
-  options:{{responsive:true,indexAxis:'y',plugins:{{title:{{display:true,text:'Per-Tool Identification (All Samples Sum)'}}}}}}}});
-"""
+            chart_scripts += _chart('chart_s02a', 'bar', {
+                "labels": list(id_vals.keys()),
+                "datasets": [{"label":"Virus contigs","data":list(id_vals.values()),"backgroundColor":"#5c6bc0"}]},
+                {"responsive":True,"indexAxis":"y","plugins":{"title":{"display":True,"text":"Per-Tool Identification (All Samples Sum)"}}})
     fil_rows = _read_tsv(report_dir / "filter_summary.tsv")
     if fil_rows:
         flabels = [f"{r['Sample'][:10]}-{r['Mode']}" for r in fil_rows if r.get("Sample","")!="TOTAL"]
@@ -670,14 +667,12 @@ new Chart(document.getElementById('chart_s02a'), {{
         f_total = [int(r.get("All_Candidate",0)) for r in fil_rows if r.get("Sample","")!="TOTAL"]
         if flabels:
             stage_has_chart['s02b'] = True
-            chart_scripts += f"""
-new Chart(document.getElementById('chart_s02b'), {{
-  type:'bar', data:{{labels:{_json.dumps(flabels)},
-  datasets:[{{label:'All candidate',data:{_json.dumps(f_total)},backgroundColor:'#bdbdbd'}},
-            {{label:'Passed filter',data:{_json.dumps(fvals)},backgroundColor:'#66bb6a'}}]}},
-  options:{{responsive:true,plugins:{{title:{{display:true,text:'UniProt Filter: Before vs After'}}}},
-    scales:{{y:{{beginAtZero:true}}}}}}}});
-"""
+            chart_scripts += _chart('chart_s02b', 'bar', {
+                "labels": flabels,
+                "datasets": [{"label":"All candidate","data":f_total,"backgroundColor":"#bdbdbd"},
+                              {"label":"Passed filter","data":fvals,"backgroundColor":"#66bb6a"}]},
+                {"responsive":True,"plugins":{"title":{"display":True,"text":"UniProt Filter: Before vs After"}},
+                 "scales":{"y":{"beginAtZero":True}}})
 
     # S03 — COBRA
     cobra_rows = _read_tsv(report_dir / "cobra_summary.tsv")
@@ -691,16 +686,14 @@ new Chart(document.getElementById('chart_s02b'), {{
             stage_has_chart['s03'] = True
             cobra_ext = [float(r.get(er_key,0)) for r in cobra_rows]
             cobra_orph = [float(r.get(or_key,0)) for r in cobra_rows] if or_key else []
-            ds_c = f'{{label:"Extension Rate (%)",data:{_json.dumps(cobra_ext)},backgroundColor:"#66bb6a",yAxisID:"y"}}'
-            if cobra_orph: ds_c += f',{{label:"Orphan Rate (%)",data:{_json.dumps(cobra_orph)},backgroundColor:"#ef5350",yAxisID:"y1"}}'
-            chart_scripts += f"""
-new Chart(document.getElementById('chart_s03'), {{
-  type:'bar', data:{{labels:{_json.dumps(csamples)},
-  datasets:[{ds_c}]}},
-  options:{{responsive:true,plugins:{{title:{{display:true,text:'COBRA Extension & Orphan Rate'}}}},
-    scales:{{y:{{beginAtZero:true,position:'left',title:{{text:'Rate (%)'}}}},
-             y1:{{beginAtZero:true,position:'right',grid:{{drawOnChartArea:false}},title:{{text:'Orphan (%)'}}}}}}}}}});
-"""
+            ds_c = [{"label":"Extension Rate (%)","data":cobra_ext,"backgroundColor":"#66bb6a","yAxisID":"y"}]
+            if cobra_orph:
+                ds_c.append({"label":"Orphan Rate (%)","data":cobra_orph,"backgroundColor":"#ef5350","yAxisID":"y1"})
+            scales_c = {"y":{"beginAtZero":True,"position":"left","title":{"text":"Rate (%)"}}}
+            if cobra_orph:
+                scales_c["y1"] = {"beginAtZero":True,"position":"right","grid":{"drawOnChartArea":False},"title":{"text":"Orphan (%)"}}
+            chart_scripts += _chart('chart_s03', 'bar', {"labels":csamples,"datasets":ds_c},
+                {"responsive":True,"plugins":{"title":{"display":True,"text":"COBRA Extension & Orphan Rate"}},"scales":scales_c})
 
     # S05 — Taxonomy novelty
     tax_novelty_kv = {}
@@ -709,13 +702,10 @@ new Chart(document.getElementById('chart_s03'), {{
             tax_novelty_kv = _extract_kv(s['Key_Metric'], r'(Known|NewSp|NewGe|NewFa)=(\d+)')
     if tax_novelty_kv:
         stage_has_chart['s05'] = True
-        chart_scripts += f"""
-new Chart(document.getElementById('chart_s05a'), {{
-  type:'doughnut', data:{{labels:{_json.dumps(list(tax_novelty_kv.keys()))},
-  datasets:[{{data:{_json.dumps(list(tax_novelty_kv.values()))},
-  backgroundColor:['#2e7d32','#1565c0','#ef6c00','#c62828']}}]}},
-  options:{{responsive:true,plugins:{{title:{{display:true,text:'Taxonomy Novelty'}},legend:{{position:'bottom'}}}}}}}});
-"""
+        chart_scripts += _chart('chart_s05a', 'doughnut', {
+            "labels": list(tax_novelty_kv.keys()),
+            "datasets": [{"data":list(tax_novelty_kv.values()),"backgroundColor":["#2e7d32","#1565c0","#ef6c00","#c62828"]}]},
+            {"responsive":True,"plugins":{"title":{"display":True,"text":"Taxonomy Novelty"},"legend":{"position":"bottom"}}})
 
     # S06 — Host distribution
     host_kv = {}
@@ -724,13 +714,10 @@ new Chart(document.getElementById('chart_s05a'), {{
             host_kv = _extract_kv(s['Key_Metric'], r'(\w+)=(\d+)')
     if host_kv:
         stage_has_chart['s06'] = True
-        chart_scripts += f"""
-new Chart(document.getElementById('chart_s06a'), {{
-  type:'doughnut', data:{{labels:{_json.dumps(list(host_kv.keys()))},
-  datasets:[{{data:{_json.dumps(list(host_kv.values()))},
-  backgroundColor:['#42a5f5','#66bb6a','#ffa726','#ef5350','#ab47bc','#26c6da','#7e57c2','#78909c']}}]}},
-  options:{{responsive:true,plugins:{{title:{{display:true,text:'Host Prediction Distribution'}},legend:{{position:'bottom'}}}}}}}});
-"""
+        chart_scripts += _chart('chart_s06a', 'doughnut', {
+            "labels": list(host_kv.keys()),
+            "datasets": [{"data":list(host_kv.values()),"backgroundColor":["#42a5f5","#66bb6a","#ffa726","#ef5350","#ab47bc","#26c6da","#7e57c2","#78909c"]}]},
+            {"responsive":True,"plugins":{"title":{"display":True,"text":"Host Prediction Distribution"},"legend":{"position":"bottom"}}})
 
     # S07 — CheckV quality
     cv_rows = _read_tsv(report_dir / "checkv_summary.tsv")
@@ -744,14 +731,10 @@ new Chart(document.getElementById('chart_s06a'), {{
         if cv_hosts:
             stage_has_chart['s07a'] = True
             colors = ['#2e7d32','#1565c0','#ef6c00','#c62828','#9e9e9e']
-            datasets = ','.join(f'{{label:"{q}",data:{_json.dumps(cv_qdata[q])},backgroundColor:"{colors[i]}"}}' for i,q in enumerate(qlabels))
-            chart_scripts += f"""
-new Chart(document.getElementById('chart_s07a'), {{
-  type:'bar', data:{{labels:{_json.dumps(cv_hosts)},
-  datasets:[{datasets}]}},
-  options:{{responsive:true,plugins:{{title:{{display:true,text:'CheckV Quality by Host'}}}},
-    scales:{{x:{{stacked:true}},y:{{stacked:true,beginAtZero:true,title:{{text:'Contig Count'}}}}}}}}}});
-"""
+            cv_datasets = [{"label":q,"data":cv_qdata[q],"backgroundColor":colors[i]} for i,q in enumerate(qlabels)]
+            chart_scripts += _chart('chart_s07a', 'bar', {"labels":cv_hosts,"datasets":cv_datasets},
+                {"responsive":True,"plugins":{"title":{"display":True,"text":"CheckV Quality by Host"}},
+                 "scales":{"x":{"stacked":True},"y":{"stacked":True,"beginAtZero":True,"title":{"text":"Contig Count"}}}})
     cv_conf_rows = _read_tsv(report_dir / "checkv_confidence.tsv")
     if cv_conf_rows:
         cql = [k for k in cv_conf_rows[0] if k not in ("Host","Total")]
@@ -762,14 +745,10 @@ new Chart(document.getElementById('chart_s07a'), {{
         if cf_hosts and cql:
             stage_has_chart['s07b'] = True
             colors2 = ['#2e7d32','#ef6c00','#c62828','#1565c0','#9e9e9e']
-            datasets2 = ','.join(f'{{label:"{q}",data:{_json.dumps(cf_data[q])},backgroundColor:"{colors2[i%5]}"}}' for i,q in enumerate(cql))
-            chart_scripts += f"""
-new Chart(document.getElementById('chart_s07b'), {{
-  type:'bar', data:{{labels:{_json.dumps(cf_hosts)},
-  datasets:[{datasets2}]}},
-  options:{{responsive:true,plugins:{{title:{{display:true,text:'CheckV aai_confidence by Host'}}}},
-    scales:{{x:{{stacked:true}},y:{{stacked:true,beginAtZero:true,title:{{text:'Contig Count'}}}}}}}}}});
-"""
+            cf_datasets = [{"label":q,"data":cf_data[q],"backgroundColor":colors2[i%5]} for i,q in enumerate(cql)]
+            chart_scripts += _chart('chart_s07b', 'bar', {"labels":cf_hosts,"datasets":cf_datasets},
+                {"responsive":True,"plugins":{"title":{"display":True,"text":"CheckV aai_confidence by Host"}},
+                 "scales":{"x":{"stacked":True},"y":{"stacked":True,"beginAtZero":True,"title":{"text":"Contig Count"}}}})
 
     # S08 — Rescue branches
     rescue_kv = {}
@@ -778,13 +757,10 @@ new Chart(document.getElementById('chart_s07b'), {{
             rescue_kv = _extract_kv(s['Key_Metric'], r'(CheckV|VSI|BLASTN)=(\d+)')
     if rescue_kv:
         stage_has_chart['s08'] = True
-        chart_scripts += f"""
-new Chart(document.getElementById('chart_s08'), {{
-  type:'pie', data:{{labels:{_json.dumps(list(rescue_kv.keys()))},
-  datasets:[{{data:{_json.dumps(list(rescue_kv.values()))},
-  backgroundColor:['#66bb6a','#42a5f5','#ffa726']}}]}},
-  options:{{responsive:true,plugins:{{title:{{display:true,text:'Rescue Branch Contributions'}},legend:{{position:'bottom'}}}}}}}});
-"""
+        chart_scripts += _chart('chart_s08', 'pie', {
+            "labels": list(rescue_kv.keys()),
+            "datasets": [{"data":list(rescue_kv.values()),"backgroundColor":["#66bb6a","#42a5f5","#ffa726"]}]},
+            {"responsive":True,"plugins":{"title":{"display":True,"text":"Rescue Branch Contributions"},"legend":{"position":"bottom"}}})
 
     # Sankey 交互式嵌入 (iframe 引用同级文件, 09_Reports/ 目录即为完整报告包)
     sankey_imgs = ""
