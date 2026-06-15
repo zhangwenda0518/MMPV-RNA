@@ -917,7 +917,7 @@ def write_html_report(report_dir, stage_stats):
                 cols = '1fr' if len(active) == 1 else '1fr 1fr'
                 chart_html = f'<div class="stage-charts" style="grid-template-columns:{cols}">'
                 for cid in active:
-                    is_stacked = cid in ('chart_s07a', 'chart_s07b')
+                    is_stacked = cid in ('chart_s00b', 'chart_s07a', 'chart_s07b')
                     chart_html += f'<div class="chart-box">'
                     if is_stacked:
                         chart_html += f'<div style="display:flex;justify-content:flex-end;margin-bottom:6px"><button class="pct-btn" data-chart="{cid}" data-mode="abs" onclick="toggleStackedPct(this)">Show %</button></div>'
