@@ -248,16 +248,29 @@ def _contig_cluster_samples(contig_id, clusters, fasta_info=None, max_samples=10
 # ══════════════════════════════════════════════════════════════
 
 def branch_a(ref_fasta, work_dir, checkv_db, threads, jobs, threshold=90.0):
-    """CheckV 并行评估 centroids。返回 (pass_fa, fail_fa, pass_count, fail_count)"""
+    """CheckV 并行评估 centroids。返回 (pass_fa, fail_fa, pass_count, fail_count)。支持断点续传。"""
     d = Path(work_dir) / "branch_a"; d.mkdir(parents=True, exist_ok=True)
+
+    # 断点续传: 最终输出文件已存在 → 直接恢复
+    pass_fa = d / "branchA_pass.fasta"
+    fail_fa = d / "branchA_fail.fasta"
+    if pass_fa.is_file() and fail_fa.is_file():
+        n_pass = sum(1 for _ in SeqIO.parse(str(pass_fa), "fasta"))
+        n_fail = sum(1 for _ in SeqIO.parse(str(fail_fa), "fasta"))
+        if n_pass + n_fail > 0:
+            print(f"  分支 A: [resume] pass={n_pass} fail={n_fail} → 跳过 CheckV")
+            return str(pass_fa) if n_pass > 0 else None, \
+                   str(fail_fa) if n_fail > 0 else None, \
+                   n_pass, n_fail
+
     records = list(SeqIO.parse(ref_fasta, "fasta"))
     total = len(records)
     if not records:
         print("  分支 A: 无 centroids, 跳过"); return None, None, 0, 0
 
-    # 分块并行
+    # 分块并行 (用 chunk 索引确保目录名稳定 → 断点续传)
     chunk_size = max(1, total // min(jobs, total))
-    chunks = [records[i:i+chunk_size] for i in range(0, total, chunk_size)]
+    chunks = [(i, records[i:i+chunk_size]) for i in range(0, total, chunk_size)]
     print(f"  分支 A: {total} 条, {len(chunks)} 块 (jobs={jobs})")
 
     t_per = max(1, threads // min(jobs, len(chunks)))
@@ -266,14 +279,21 @@ def branch_a(ref_fasta, work_dir, checkv_db, threads, jobs, threshold=90.0):
     fail_records = []
     skip_records = []  # aai_completeness=NA, 不进B/C
 
-    def _do(chunk):
+    def _do(args):
+        chunk_idx, chunk = args
         lp, lf, ls = [], [], []
-        tmp_dir = d / f"chunk_{hash(str(chunk[0].id))}"
+        tmp_dir = d / f"chunk_{chunk_idx}"
         tmp_dir.mkdir(exist_ok=True)
         chunk_fa = tmp_dir / "chunk.fasta"
-        SeqIO.write(chunk, chunk_fa, "fasta")
-        qs = run_checkv(chunk_fa, tmp_dir / "checkv_out", checkv_db, t_per)
-        pids, fids, sids = parse_checkv(qs, threshold)
+        cv_tsv = tmp_dir / "checkv_out" / "completeness.tsv"
+
+        # 断点续传: completeness.tsv 已存在 → 直接解析
+        if cv_tsv.is_file():
+            pids, fids, sids = parse_checkv(cv_tsv, threshold)
+        else:
+            SeqIO.write(chunk, chunk_fa, "fasta")
+            qs = run_checkv(chunk_fa, tmp_dir / "checkv_out", checkv_db, t_per)
+            pids, fids, sids = parse_checkv(qs, threshold)
         for r in chunk:
             if r.id in pids:
                 lp.append(r)
@@ -293,8 +313,6 @@ def branch_a(ref_fasta, work_dir, checkv_db, threads, jobs, threshold=90.0):
         for chunk in chunks:
             _do(chunk)
 
-    pass_fa = d / "branchA_pass.fasta"
-    fail_fa = d / "branchA_fail.fasta"
     SeqIO.write(pass_records, pass_fa, "fasta")
     SeqIO.write(fail_records, fail_fa, "fasta")  # fail ≠ skip
     n_pass, n_fail, n_skip = len(pass_records), len(fail_records), len(skip_records)
