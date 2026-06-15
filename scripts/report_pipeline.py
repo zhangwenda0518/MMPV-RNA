@@ -615,9 +615,10 @@ def _generate_plant_virus_summary(root, report_dir, _add, blast_db=None):
     n = len(plant_data)
     n_no_rescue = sum(1 for v in plant_data.values() if v["source"]=="免拯救")
     n_rescued = n - n_no_rescue
+    cls_info = f"Known={p_counts.get('Known',0)} NewSp={p_counts.get('Novel_Species',0)} NewGe={p_counts.get('Novel_Genus',0)} NewFa={p_counts.get('Novel_Family',0)}"
     _add("09_Plant_virus", "✓",
-         key_metric=f"{n} 条 (免拯救={n_no_rescue} + rescued={n_rescued})",
-         details=str(report_dir / "plant_virus_summary.tsv"))
+         key_metric=f"{n} 条 (免拯救={n_no_rescue} + rescued={n_rescued}) | {cls_info}",
+         details=f"分类: 05_Taxonomy 9工具共识 (mmseqs/BLAST/CAT等蛋白级比对) | {report_dir / 'plant_virus_summary.tsv'}")
 
     # 5. 旭日图 (Plotly Sunburst)
     if not tax_data: return
@@ -895,7 +896,7 @@ def write_html_report(report_dir, stage_stats):
             chart_scripts += _chart('chart_s05b', 'doughnut', {
                 "labels": [_pt_label_map.get(k,k) for k in pt_kv.keys()],
                 "datasets": [{"data":list(pt_kv.values()),"backgroundColor":pt_colors[:len(pt_kv)]}]},
-                {"responsive":True,"plugins":{"title":{"display":True,"text":"Plant Virus Taxonomy"},"legend":{"position":"bottom"}}})
+                {"responsive":True,"plugins":{"title":{"display":True,"text":"Plant Virus Taxonomy (05_Taxonomy 9-tool consensus)"},"legend":{"position":"bottom"}}})
 
     # S06 — Host distribution
     host_kv = {}
@@ -1138,6 +1139,13 @@ def write_html_report(report_dir, stage_stats):
 
         if sk in sankey_by_stage:
             chart_html += f'<div class="sankey-section">{sankey_by_stage[sk]}</div>'
+
+        # S09 分类方法说明
+        if sk == 's09' and stage_has_chart.get('s05b'):
+            chart_html += '<div style="padding:4px 22px 12px;font-size:11px;color:var(--muted);line-height:1.6">' \
+                'Classification: 05_Taxonomy 9-tool consensus (genomad/metabuli/CAT/diamond_lca/mmseqs/VITAP/' \
+                'ACVirus/vcontact3/PhaGCN3) — incorporates protein-level alignments (mmseqs RVDB, DIAMOND, CAT).' \
+                '<br>Novelty: Known = has Species annotation | NewSp = has Genus | NewGe = has Family | NewFa = above-family novel.</div>'
 
         # 在卡片内嵌入对应 TSV 数据表
         table_html = ""
