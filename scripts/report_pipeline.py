@@ -1031,21 +1031,11 @@ def write_html_report(report_dir, stage_stats):
     for title, value, icon in kpi_items:
         kpi_cards += f'<div class="kpi-card"><div class="kpi-icon">{icon}</div><div class="kpi-value">{value}</div><div class="kpi-label">{title}</div></div>'
 
-    # ── AI 总结 ──
+    # ── AI 总结 (IMRaD 格式) ──
     ai_summary_html = ""
     if getattr(generate_ai_summary, '_api_key', ''):
-        print("  生成 AI 总结...")
-        ai_text = generate_ai_summary(stage_stats, kpis, report_dir)
-        if ai_text and not ai_text.startswith('<div class="ai-error"'):
-            ai_summary_html = f'''<div class="ai-section" id="ai-summary">
-<div class="ai-header">
-  <span class="ai-title">🤖 AI 研究简报</span>
-  <span class="ai-model-tag">{getattr(generate_ai_summary, '_model', '')}</span>
-</div>
-<div class="ai-content">{ai_text.replace(chr(10), '<br>')}</div>
-</div>'''
-        else:
-            ai_summary_html = ai_text
+        print("  生成 AI 总结 (IMRaD)...")
+        ai_summary_html = generate_ai_summary(stage_stats, kpis, report_dir) or ""
 
     # ── Pipeline Flow 图: 展示从 raw reads → HQ vOTUs 的逐级筛选 ──
     def _intv(s):
@@ -1164,11 +1154,16 @@ td{{padding:9px 16px;border-bottom:1px solid #f0f0f0}}
 .app-table{{width:100%;border-collapse:collapse;font-size:11px;margin-bottom:8px}}
 .app-table th{{background:#f5f5f5;padding:6px 8px;font-size:10px;text-align:left;border:1px solid #e0e0e0;white-space:nowrap}}
 .app-table td{{padding:4px 8px;border:1px solid #f0f0f0;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px}}
-.ai-section{{background:linear-gradient(135deg,#f0f4ff 0%,#e8eaf6 100%);border-radius:var(--radius);box-shadow:var(--shadow);padding:20px 24px;margin-bottom:28px;border-left:4px solid var(--indigo)}}
-.ai-header{{display:flex;align-items:center;gap:10px;margin-bottom:12px}}
+.ai-section{{background:var(--card-bg);border-radius:var(--radius);box-shadow:var(--shadow);padding:20px 24px;margin-bottom:28px;border-top:4px solid var(--indigo)}}
+.ai-header{{display:flex;align-items:center;gap:10px;margin-bottom:16px;border-bottom:1px solid #e8eaf6;padding-bottom:12px}}
 .ai-title{{font-size:15px;font-weight:700;color:var(--indigo)}}
 .ai-model-tag{{font-size:10px;background:var(--indigo);color:#fff;padding:2px 8px;border-radius:8px}}
-.ai-content{{font-size:13px;line-height:1.9;color:#37474f;text-align:justify}}
+.ai-format-tag{{font-size:10px;background:#e8eaf6;color:var(--indigo);padding:2px 8px;border-radius:8px;font-weight:600}}
+.ai-block{{margin-bottom:14px;padding-left:16px;border-left:3px solid #e0e0e0}}
+.ai-block:last-child{{margin-bottom:0}}
+.ai-block-title{{font-size:12px;font-weight:700;color:var(--indigo);margin-bottom:4px}}
+.ai-block-text{{font-size:13px;line-height:1.9;color:#37474f;text-align:justify}}
+.ai-bg{{border-left-color:#1565c0}}.ai-methods{{border-left-color:#00897b}}.ai-results{{border-left-color:#ef6c00}}.ai-discussion{{border-left-color:#6a1b9a}}
 .ai-error{{color:var(--red);font-size:12px;padding:8px}}
 .footer{{text-align:center;padding:24px;color:var(--muted);font-size:11px;line-height:1.8}}
 .footer a{{color:var(--blue);text-decoration:none}}
@@ -1315,8 +1310,9 @@ function exportTable(){{
 # ═══════════════════════════════════════════════════════════════
 
 def generate_ai_summary(stage_stats, kpis, report_dir):
-    """调用 LLM 生成管线汇总中文摘要, 返回 HTML 字符串或空"""
+    """调用 LLM 生成 IMRaD 格式中文研究简报, 返回 HTML 或空"""
     import json as _json
+    import re
 
     # 收集管线数据构建 prompt
     main_stages = [s for s in stage_stats if not s["Stage"].startswith("  ")]
@@ -1325,32 +1321,41 @@ def generate_ai_summary(stage_stats, kpis, report_dir):
         st = s["Status"]; badge = "✓" if st == "✓" else ("✗" if st == "✗" else "○")
         stage_lines.append(f"  {badge} {s['Stage']}: {s.get('Key_Metric','')}")
 
-    # 宿主分布详情 (从 S06 子阶段)
     host_detail = ""
     for s in stage_stats:
         if s["Stage"].startswith("  ") and s["Stage"].strip() in ("Bacteria","Protist","Animal","Plant","Algae","Mammalia","Fungi","Unknown"):
             host_detail += f"    {s['Stage'].strip()}: {s.get('Key_Metric','')}\n"
 
-    prompt = f"""你是一位病毒宏基因组学专家。请基于以下 MMPV-RNA v2.3 病毒发现管线的运行结果, 用中文撰写一段 250-350 字的研究简报。包含: 样本和数据概况、病毒鉴定与分类结果、新颖性发现、宿主关联、以及质量评估。用自然的段落形式, 不要列表。
+    prompt = f"""你是一位病毒宏基因组学领域的研究科学家。请基于以下 MMPV-RNA v2.3 病毒发现管线的分析结果，按照学术论文的标准格式，撰写一份结构化的研究简报（IMRaD）。严格按四段输出，每段以指定标签开头。
 
-## 管线概况
-- 样本: {kpis.get('n_sample','?')} 个
-- 原始数据: {kpis.get('raw_bases','?')} → 清洗后: {kpis.get('clean_bases','?')}
+## 数据
+- 样本数: {kpis.get('n_sample','?')}
+- 数据量: {kpis.get('raw_bases','?')} → {kpis.get('clean_bases','?')} (QC 后)
 - 宿主去除保留率: {kpis.get('hd_retained','?')}%
-
-## 各阶段结果
+- 各阶段结果:
 {chr(10).join(stage_lines)}
-
-## 宿主分布详情
+- 宿主分布:
 {host_detail if host_detail else '  见 Host Prediction 阶段'}
+- 新颖性统计: 已知={kpis.get('n_known','?')}, 新种={kpis.get('n_newsp','?')}, 新属={kpis.get('n_newge','?')}, 新科={kpis.get('n_newfa','?')}
+- CheckV HQ vOTUs: {kpis.get('hq_votus','?')} / {kpis.get('cv_total','?')}
 
-## 新颖性
-- 已知: {kpis.get('n_known','?')} | 新种: {kpis.get('n_newsp','?')} | 新属: {kpis.get('n_newge','?')} | 新科: {kpis.get('n_newfa','?')}
+## 输出格式 (严格按此结构)
+[BACKGROUND]
+1-2句。宏转录组病毒发现背景及本研究目标。说明样本来源和研究目的。
 
-## CheckV 质量
-- HQ vOTUs: {kpis.get('hq_votus','?')} / 总计: {kpis.get('cv_total','?')}
+[METHODS]
+2-3句。简述 MMPV-RNA v2.3 管线主要步骤：原始reads质控(fastp/clumpify)→宿主去除(Kraken2+ribodetector)→组装(SPAdes/MEGAHIT)→病毒鉴定(multi-tool: Viralm/BLAST/VirHunter)→聚类(CD-HIT)→分类(CAT/VITAP/ACVirus)→宿主预测→CheckV质量评估→Rescue。
 
-请用一段流畅的中文摘要回复, 200-300 字, 适合放在研究报告开头。"""
+[RESULTS]
+3-5句。报告关键数值：样本数和数据量、组装contigs、鉴定病毒序列数、vOTU簇数、新颖性比例、宿主分布概况、HQ vOTU数量。必须引用具体数字。
+
+[DISCUSSION]
+3-5句。解释意义：新颖性比例、宿主分布趋势、HQ vOTU对后续分析的价值。指出管线优势与局限。提出下一步方向(功能注释/比较基因组学/系统发育等)。
+
+## 要求
+- 每段2-5句, 总字数300-500字
+- 专业客观学术语气, 不要 "一些" "大量" 等模糊词
+- 仅输出四段加标签, 不添加额外说明"""
 
     try:
         provider = getattr(generate_ai_summary, '_provider', 'openai')
@@ -1366,11 +1371,11 @@ def generate_ai_summary(stage_stats, kpis, report_dir):
         body = _json.dumps({
             "model": model,
             "messages": [
-                {"role": "system", "content": "你是病毒宏基因组学专家, 用中文回复, 语言精炼专业。"},
+                {"role": "system", "content": "你是病毒宏基因组学研究科学家。仅按要求的IMRaD格式输出,使用精确学术语言,不添加额外内容。"},
                 {"role": "user", "content": prompt}
             ],
             "temperature": 0.3,
-            "max_tokens": 800
+            "max_tokens": 1200
         }).encode()
         req = urllib.request.Request(url, data=body, headers={
             "Content-Type": "application/json",
@@ -1378,9 +1383,46 @@ def generate_ai_summary(stage_stats, kpis, report_dir):
         })
         with urllib.request.urlopen(req, timeout=60) as resp:
             result = _json.loads(resp.read())
-        text = result["choices"][0]["message"]["content"].strip()
-        print(f"  AI Summary generated ({len(text)} chars)")
-        return text
+        raw = result["choices"][0]["message"]["content"].strip()
+        print(f"  AI Summary generated ({len(raw)} chars)")
+
+        # 解析 IMRaD 四段
+        def _extract_section(text, tag):
+            m = re.search(
+                rf'\[{tag}\]\s*(.*?)(?=\[(?:BACKGROUND|METHODS|RESULTS|DISCUSSION)\]|\Z)',
+                text, re.DOTALL | re.IGNORECASE)
+            return m.group(1).strip() if m else ""
+
+        sections = {
+            "background": _extract_section(raw, "BACKGROUND"),
+            "methods": _extract_section(raw, "METHODS"),
+            "results": _extract_section(raw, "RESULTS"),
+            "discussion": _extract_section(raw, "DISCUSSION"),
+        }
+        if not any(sections.values()):
+            sections = {"background": raw, "methods": "", "results": "", "discussion": ""}
+
+        sec_labels = {
+            "background": ("📖 研究背景", "ai-bg"),
+            "methods": ("🔬 分析方法", "ai-methods"),
+            "results": ("📊 关键结果", "ai-results"),
+            "discussion": ("💡 讨论与展望", "ai-discussion"),
+        }
+        items = ""
+        for key in ("background","methods","results","discussion"):
+            text = sections.get(key, "")
+            if not text: continue
+            label, cls = sec_labels[key]
+            items += f'<div class="ai-block {cls}"><div class="ai-block-title">{label}</div><div class="ai-block-text">{text}</div></div>'
+
+        return f'''<div class="ai-section" id="ai-summary">
+<div class="ai-header">
+  <span class="ai-title">🤖 AI 研究简报</span>
+  <span class="ai-model-tag">{model}</span>
+  <span class="ai-format-tag">IMRaD</span>
+</div>
+{items}
+</div>'''
     except Exception as e:
         print(f"  [WARN] AI Summary failed: {e}")
         return f'<div class="ai-error">⚠ AI 总结生成失败: {e}</div>'
