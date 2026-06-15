@@ -578,12 +578,19 @@ def _generate_plant_virus_summary(root, report_dir, _add, blast_db=None):
     _bd = blast_db
     if _bd:
         _bd = Path(_bd)
-        if not (str(_bd)+".nin" in {f for f in (os.listdir(str(_bd.parent)) if _bd.parent.is_dir() else [])}):
-            print(f"  [WARN] BLAST 数据库无效: {_bd} (缺少 .nin 文件)"); _bd = None
+        # BLAST DB 判定: 父目录中有 {db_basename}.nin 文件
+        db_dir = _bd.parent if _bd.parent.is_dir() else None
+        db_basenames = set(os.listdir(str(db_dir))) if db_dir else set()
+        bname = _bd.name
+        if not any(bname+ext in db_basenames for ext in [".nin",".nal"]):
+            print(f"  [WARN] BLAST 数据库无效: {_bd} (缺少 {bname}.nin)"); _bd = None
     if not _bd:
         for p in [Path("/home/zhangwenda/db/viral_nt"), Path("/home/zhangwenda/db/nt"),
-                  root.parent / "database" / "viral_nt"]:
-            if any((str(p)+ext) in {f for f in (os.listdir(str(p.parent)) if p.parent.is_dir() else [])} for ext in [".nin",".nal"]):
+                  root.parent / "database" / "viral_nt",
+                  Path("/home/zhangwenda/database/virus-db/ncbi-virus_ref/ncbi-virus_ref.blast.db")]:
+            dp = p.parent; bn = p.name
+            bfs = set(os.listdir(str(dp))) if dp.is_dir() else set()
+            if any(bn+ext in bfs for ext in [".nin",".nal"]):
                 _bd = p; break
     if not _bd and os.environ.get("BLAST_DB"):
         _bd = Path(os.environ["BLAST_DB"])
