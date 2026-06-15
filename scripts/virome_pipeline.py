@@ -932,15 +932,16 @@ class ViromePipeline:
         else:
             self.log.warning("  Rescue 部分任务失败")
 
-        # ── 合并 known + 各宿主 rescue → 最终完整病毒集合 ──
+        # ── 合并 免拯救(known+CheckV-pass) + rescue → 完整病毒集合 ──
         all_plant = self.d['rescue_dir'] / "all_plant_viruses.fasta"
+        no_rescue_fa = self.d['rescue_dir'] / "no_rescue" / "centroids" / "final_centroids.fasta"
+        if not no_rescue_fa.is_file():
+            no_rescue_fa = self.d['rescue_dir'] / "known" / "centroids" / "final_centroids.fasta"
         with open(all_plant, "w") as apf:
-            known_fa = self.d['rescue_dir'] / "known" / "centroids" / "final_centroids.fasta"
-            if known_fa.is_file():
-                for line in open(known_fa): apf.write(line)
-                n_known = sum(1 for l in open(known_fa) if l.startswith('>'))
-            else:
-                n_known = 0
+            n_no_rescue = 0
+            if no_rescue_fa.is_file():
+                for line in open(no_rescue_fa): apf.write(line)
+                n_no_rescue = sum(1 for l in open(no_rescue_fa) if l.startswith('>'))
             n_rescued_total = 0
             for host in host_filter:
                 safe_host = host.replace("/", "_").replace(" ", "_")
@@ -949,8 +950,8 @@ class ViromePipeline:
                     for line in open(rescue_final): apf.write(line)
                     n_rescued_total += sum(1 for l in open(rescue_final) if l.startswith('>'))
         self.log.info("=" * 50)
-        self.log.info("  完整植物病毒集合: %d 条 (known=%d + rescued=%d) → %s",
-                      n_known + n_rescued_total, n_known, n_rescued_total, all_plant)
+        self.log.info("  完整植物病毒: %d 条 (免拯救=%d + rescue=%d) → %s",
+                      n_no_rescue + n_rescued_total, n_no_rescue, n_rescued_total, all_plant)
 
         # ── CheckV 质量评估 (按宿主统计) ──
         self.log.info("=" * 50)
