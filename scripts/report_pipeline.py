@@ -655,26 +655,7 @@ def write_html_report(report_dir, stage_stats):
                 {"responsive":True,"plugins":{"title":{"display":True,"text":"Assembly Contig Count"}},
                  "scales":{"y":{"beginAtZero":True,"title":{"text":"Contigs"}}}})
 
-    # S02 — 鉴定: 各工具汇总 + UniProt过滤前后
-    id_rows = _read_tsv(report_dir / "ident_summary.tsv")
-    if id_rows:
-        id_tools = [k for k in id_rows[0] if k not in ("Sample","All_Candidate")]
-        id_vals = {}
-        for t in id_tools:
-            total = 0
-            for r in id_rows:
-                if r.get("Sample","") == "TOTAL" or r.get("Sample","") == "summary_plots": continue
-                try: total += int(r.get(t, 0))
-                except: pass
-            if total > 0: id_vals[t] = total
-        if id_vals:
-            stage_has_chart['s02a'] = True
-            chart_scripts += _chart('chart_s02a', 'bar', {
-                "labels": list(id_vals.keys()),
-                "datasets": [{"label":"Identified","data":list(id_vals.values()),"backgroundColor":"#5c6bc0"}]},
-                {"responsive":True,"indexAxis":"y","plugins":{"title":{"display":True,"text":"Per-Tool Identification"}},
-                 "scales":{"x":{"beginAtZero":True,"title":{"text":"Sequences"}}}})
-    # UniProt 过滤: 按 mode 汇总, 非按样本
+    # S02 — UniProt 过滤: 按 mode 汇总
     fil_rows = _read_tsv(report_dir / "filter_summary.tsv")
     if fil_rows:
         mode_all = {}; mode_pass = {}
@@ -686,8 +667,8 @@ def write_html_report(report_dir, stage_stats):
             mode_pass[m] += int(r.get("Passed",0))
         modes = [m for m in mode_all if mode_all[m] > 0]
         if modes:
-            stage_has_chart['s02b'] = True
-            chart_scripts += _chart('chart_s02b', 'bar', {
+            stage_has_chart['s02'] = True
+            chart_scripts += _chart('chart_s02', 'bar', {
                 "labels": modes,
                 "datasets": [
                     {"label":"All candidate","data":[mode_all[m] for m in modes],"backgroundColor":"#bdbdbd"},
@@ -886,7 +867,7 @@ def write_html_report(report_dir, stage_stats):
         's00a': [('chart_s00a','Read Quality'),('chart_s00a_dup','Duplication Rate')],
         's00b': [('chart_s00b','Host Depletion')],
         's01':  [('chart_s01b','Contig Count'),('chart_s01a','N50 (kb)')],
-        's02':  [('chart_s02a','Per-Tool ID'),('chart_s02b','UniProt Filter')],
+        's02':  [('chart_s02','UniProt Filter')],
         's03':  [('chart_s03','COBRA Rates')],
         's05':  [('chart_s05a','Taxonomy Novelty')],
         's06':  [('chart_s06a','Host Distribution')],
@@ -927,8 +908,7 @@ def write_html_report(report_dir, stage_stats):
                     if cid == 'chart_s01a' and stage_has_chart.get('s01a'): active.append(cid)
                     if cid == 'chart_s01b' and stage_has_chart.get('s01b'): active.append(cid)
                 elif sk == 's02':
-                    if cid == 'chart_s02a' and stage_has_chart.get('s02a'): active.append(cid)
-                    if cid == 'chart_s02b' and stage_has_chart.get('s02b'): active.append(cid)
+                    if stage_has_chart.get('s02'): active.append(cid)
                 elif sk == 's07':
                     if cid == 'chart_s07a' and stage_has_chart.get('s07a'): active.append(cid)
                     if cid == 'chart_s07b' and stage_has_chart.get('s07b'): active.append(cid)
