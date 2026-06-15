@@ -393,7 +393,9 @@ if __name__ == "__main__":
     parser.add_argument("--detailed", action="store_true", help="开启详细模式，抓取并解析 Tissue/Stage/Location 等深层特征")
     parser.add_argument("--ncbi-api", help="NCBI E-utilities API Key (提升速率)")
     parser.add_argument("--deepseek-api", help="DeepSeek API Key (AI 智能清洗)")
-    parser.add_argument("--deepseek-model", default="deepseek-chat", help="DeepSeek 模型名称")
+    parser.add_argument("--deepseek-model", default="deepseek-v4-flash",
+                        choices=["deepseek-chat", "deepseek-reasoner", "deepseek-v4-flash", "deepseek-v4-pro"],
+                        help="DeepSeek 模型")
 
     args = parser.parse_args()
     os.makedirs(args.outdir, exist_ok=True)
