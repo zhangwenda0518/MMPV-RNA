@@ -15,6 +15,7 @@ report_pipeline.py — 独立报告生成器 (MMPV-RNA v2.3)
 import argparse, csv, json, os, re, sys, subprocess, time
 from datetime import datetime
 from pathlib import Path
+from Bio import SeqIO
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 
@@ -521,7 +522,112 @@ def collect_data(output_dir, report_dir):
     _collect_checkv(root, report_dir, _add)
     _collect_rescue(root, report_dir, _add)
 
+    # 最终植物病毒汇总表 + 旭日图
+    _generate_plant_virus_summary(root, report_dir, _add)
+
     return stage_stats
+
+
+def _generate_plant_virus_summary(root, report_dir, _add):
+    """生成 plant_virus_summary.tsv + taxonomy_sunburst.html"""
+    all_plant_fa = root / "08_Rescue" / "all_plant_viruses.fasta"
+    if not all_plant_fa.is_file(): return
+
+    # 1. 读取 contig IDs + lengths + 来源
+    plant_data = {}  # {contig_id: {length, source, ...}}
+    for src_label, src_fa in [("免拯救", root / "08_Rescue" / "known" / "centroids" / "final_centroids.fasta"),
+                               ("rescued", root / "08_Rescue" / "Plant" / "centroids" / "final_centroids.fasta")]:
+        if not src_fa.is_file(): continue
+        for rec in SeqIO.parse(str(src_fa), "fasta"):
+            plant_data[rec.id] = {"contig_id": rec.id, "length": len(rec.seq), "source": src_label}
+
+    if not plant_data: return
+
+    # 2. CheckV 数据: 合并 07_Checkv/Plant + 08_Rescue/checkv
+    cv_data = {}
+    for cv_tsv in [root / "07_Checkv" / "Plant" / "completeness.tsv",
+                   root / "08_Rescue" / "checkv" / "Plant" / "completeness.tsv",
+                   root / "08_Rescue" / "checkv" / "no_rescue" / "completeness.tsv"]:
+        if not cv_tsv.is_file(): continue
+        rows = _read_tsv(cv_tsv)
+        for r in rows:
+            cid = r.get("contig_id","")
+            if cid in plant_data:
+                cv_data[cid] = {
+                    "aai_completeness": r.get("aai_completeness","NA"),
+                    "aai_confidence": r.get("aai_confidence","NA"),
+                    "viral_length": r.get("viral_length","NA"),
+                    "aai_expected_length": r.get("aai_expected_length","NA"),
+                    "kmer_freq": r.get("kmer_freq","NA"),
+                }
+
+    # 3. Taxonomy
+    tax_tsv = root / "05_Taxonomy" / "integrated" / "final_integrated_classification.tsv"
+    tax_data = {}
+    if tax_tsv.is_file():
+        with open(tax_tsv) as tf:
+            for row in csv.DictReader(tf, delimiter="\t"):
+                cid = row.get("contig_id","")
+                if cid in plant_data:
+                    tax_data[cid] = {rk: row.get(rk, row.get(rk.lower(),"")) for rk in
+                                     ["Realm","Kingdom","Phylum","Class","Order","Family","Genus","Species"]}
+
+    # 4. 写入 plant_virus_summary.tsv
+    cols = ["contig_id","length","source","aai_completeness","aai_confidence",
+            "viral_length","aai_expected_length","kmer_freq",
+            "Realm","Kingdom","Phylum","Class","Order","Family","Genus","Species"]
+    with open(report_dir / "plant_virus_summary.tsv", "w") as pvf:
+        pvf.write("\t".join(cols) + "\n")
+        for cid in sorted(plant_data):
+            d = plant_data[cid]; cv = cv_data.get(cid, {}); tx = tax_data.get(cid, {})
+            vals = [cid, d["length"], d["source"],
+                    cv.get("aai_completeness","NA"), cv.get("aai_confidence","NA"),
+                    cv.get("viral_length","NA"), cv.get("aai_expected_length","NA"), cv.get("kmer_freq","NA")]
+            vals += [tx.get(rk,"") for rk in ["Realm","Kingdom","Phylum","Class","Order","Family","Genus","Species"]]
+            pvf.write("\t".join(str(v) for v in vals) + "\n")
+
+    n = len(plant_data)
+    n_no_rescue = sum(1 for v in plant_data.values() if v["source"]=="免拯救")
+    n_rescued = n - n_no_rescue
+    _add("  └ Plant Virus Summary", "✓",
+         key_metric=f"{n} 条 (免拯救={n_no_rescue} + rescued={n_rescued}) | {report_dir}/plant_virus_summary.tsv")
+
+    # 5. 旭日图 (Plotly Sunburst)
+    if not tax_data: return
+    try:
+        import importlib.util
+        if not importlib.util.find_spec("plotly"):
+            subprocess.run([sys.executable, "-m", "pip", "install", "plotly", "-q"], check=False)
+        import plotly.express as px
+        import pandas as pd
+        tax_rows = []
+        for cid, d in plant_data.items():
+            tx = tax_data.get(cid, {})
+            row = {
+                "Realm": tx.get("Realm","") or "Unclassified",
+                "Kingdom": tx.get("Kingdom","") or "",
+                "Phylum": tx.get("Phylum","") or "",
+                "Class": tx.get("Class","") or "",
+                "Order": tx.get("Order","") or "",
+                "Family": tx.get("Family","") or "",
+                "Genus": tx.get("Genus","") or "",
+            }
+            tax_rows.append(row)
+        if tax_rows:
+            df = pd.DataFrame(tax_rows)
+            # 填充空值
+            for col in df.columns:
+                df[col] = df[col].replace("","Unclassified")
+            path = ["Realm","Kingdom","Phylum","Class","Order","Family","Genus"]
+            fig = px.sunburst(df, path=[p for p in path if p in df.columns],
+                             title="Plant Virus Taxonomy Hierarchy",
+                             height=700, width=900)
+            fig.update_traces(textinfo="label+percent entry")
+            fig.write_html(str(report_dir / "taxonomy_sunburst.html"),
+                          include_plotlyjs='cdn', full_html=True)
+            print(f"  Sunburst → {report_dir / 'taxonomy_sunburst.html'}")
+    except Exception as e:
+        print(f"  [WARN] 旭日图生成失败: {e}")
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -842,6 +948,20 @@ def write_html_report(report_dir, stage_stats):
             sankey_by_stage.setdefault(stage_key, "")
             sankey_by_stage[stage_key] += card
             sankey_inject_scripts += f"(function(){{var b='{sankey_b64}';var d=atob(b);var u=URL.createObjectURL(new Blob([d],{{type:'text/html'}}));document.getElementById('sankey_iframe_{i}').src=u;}})();\n"
+
+    # 旭日图 (Plotly Sunburst) → s05 section
+    sunburst_path = report_dir / "taxonomy_sunburst.html"
+    if sunburst_path.is_file():
+        import base64
+        with open(sunburst_path, "rb") as sf:
+            sunburst_b64 = base64.b64encode(sf.read()).decode()
+        sunburst_card = f'''<div class="sankey-card">
+<h3>Plant Virus Taxonomy Sunburst</h3>
+<iframe id="sunburst_iframe" style="width:100%;height:750px;border:none;border-radius:4px" loading="lazy"></iframe>
+</div>\n'''
+        sankey_by_stage.setdefault("s05", "")
+        sankey_by_stage["s05"] += sunburst_card
+        sankey_inject_scripts += f"(function(){{var b='{sunburst_b64}';var d=atob(b);var u=URL.createObjectURL(new Blob([d],{{type:'text/html'}}));document.getElementById('sunburst_iframe').src=u;}})();\n"
 
     # ── KPI ──
     kpis = {}
