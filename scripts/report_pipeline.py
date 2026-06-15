@@ -240,6 +240,20 @@ def _collect_identification(root, report_dir, _add):
                 mr = [r for r in filter_data if r['Mode'] == m]
                 t_all = sum(r['All'] for r in mr); t_pass = sum(r['Passed'] for r in mr)
                 fs.write(f"TOTAL\t{m}\t{t_all}\t{t_pass}\t{round(t_pass/max(t_all,1)*100,1)}\n")
+    # Per-tool raw/filter/strict 统计
+    with open(report_dir / "tool_filter_summary.tsv", "w") as tfs:
+        tfs.write("Tool\tRaw\tFilter\tStrict\n")
+        tool_filter = {t: [0, 0, 0] for t in tools_list}  # [raw, filter, strict]
+        for d in sorted(ident.iterdir()):
+            if not d.is_dir(): continue
+            for tool in tools_list:
+                tool_filter[tool][0] += _count_lines(d / f"{d.name}_virus.{tool}.result.id")
+                tool_filter[tool][1] += _count_lines(d / "uniprot_filter_output_filter" / f"{d.name}_virus.{tool}.uniprot_filtered.id")
+                tool_filter[tool][2] += _count_lines(d / "uniprot_filter_output_strict" / f"{d.name}_virus.{tool}.uniprot_filtered.id")
+        for tool in sorted(tool_filter, key=lambda t: -tool_filter[t][0]):
+            raw, filt, strict = tool_filter[tool]
+            if raw > 0:
+                tfs.write(f"{tool}\t{raw}\t{filt}\t{strict}\n")
     is_script = SCRIPT_DIR.parent / "analysis" / "ident_stats.py"
     if is_script.is_file():
         is_out = report_dir / "ident_detail"
@@ -655,26 +669,23 @@ def write_html_report(report_dir, stage_stats):
                 {"responsive":True,"plugins":{"title":{"display":True,"text":"Assembly Contig Count"}},
                  "scales":{"y":{"beginAtZero":True,"title":{"text":"Contigs"}}}})
 
-    # S02 — UniProt 过滤: 按 mode 汇总
-    fil_rows = _read_tsv(report_dir / "filter_summary.tsv")
-    if fil_rows:
-        mode_all = {}; mode_pass = {}
-        for r in fil_rows:
-            m = r.get("Mode","")
-            if r.get("Sample","") in ("TOTAL","summary_plots"): continue
-            if m not in mode_all: mode_all[m] = 0; mode_pass[m] = 0
-            mode_all[m] += int(r.get("All_Candidate",0))
-            mode_pass[m] += int(r.get("Passed",0))
-        modes = [m for m in mode_all if mode_all[m] > 0]
-        if modes:
+    # S02 — 每个工具的 raw/filter/strict 分组条形图
+    tf_rows = _read_tsv(report_dir / "tool_filter_summary.tsv")
+    if tf_rows:
+        tools = [r["Tool"] for r in tf_rows]
+        raw_vals = [int(r.get("Raw",0)) for r in tf_rows]
+        filt_vals = [int(r.get("Filter",0)) for r in tf_rows]
+        strict_vals = [int(r.get("Strict",0)) for r in tf_rows]
+        if tools:
             stage_has_chart['s02'] = True
             chart_scripts += _chart('chart_s02', 'bar', {
-                "labels": modes,
+                "labels": tools,
                 "datasets": [
-                    {"label":"All candidate","data":[mode_all[m] for m in modes],"backgroundColor":"#bdbdbd"},
-                    {"label":"Passed","data":[mode_pass[m] for m in modes],"backgroundColor":"#66bb6a"},
+                    {"label":"Raw","data":raw_vals,"backgroundColor":"#90caf9"},
+                    {"label":"Filter","data":filt_vals,"backgroundColor":"#42a5f5"},
+                    {"label":"Strict","data":strict_vals,"backgroundColor":"#1565c0"},
                 ]},
-                {"responsive":True,"plugins":{"title":{"display":True,"text":"UniProt Filter: Before vs After (All Samples)"}},
+                {"responsive":True,"plugins":{"title":{"display":True,"text":"Per-Tool: Raw vs Filter vs Strict"}},
                  "scales":{"y":{"beginAtZero":True,"title":{"text":"Sequences"}}}})
 
     # S03 — COBRA
