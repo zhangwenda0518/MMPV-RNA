@@ -1263,6 +1263,8 @@ function exportTable(){{
     if(!chart)return;
     var ds=chart.data.datasets;
     var n=chart.data.labels.length;
+    // 检测值轴: 横向图(indexAxis='y')值轴是x, 纵向图值轴是y
+    var valAxis=chart.options.indexAxis==='y'?'x':'y';
     if(btn.getAttribute('data-mode')==='abs'){{
       if(!_orig[cid])_orig[cid]=ds.map(function(d){{return d.data.slice()}});
       for(var i=0;i<n;i++){{
@@ -1270,13 +1272,13 @@ function exportTable(){{
         for(var j=0;j<ds.length;j++)tot+=Number(_orig[cid][j][i])||0;
         for(var j=0;j<ds.length;j++)ds[j].data[i]=tot>0?((Number(_orig[cid][j][i])||0)/tot*100):0;
       }}
-      chart.options.scales.y.title={{display:true,text:'%'}};
-      chart.options.scales.y.max=100;chart.options.scales.y.min=0;
+      chart.options.scales[valAxis].title={{display:true,text:'%'}};
+      chart.options.scales[valAxis].max=100;chart.options.scales[valAxis].min=0;
       btn.setAttribute('data-mode','pct');btn.textContent='Show Count';
     }}else{{
       if(_orig[cid])for(var j=0;j<ds.length;j++)ds[j].data=_orig[cid][j].slice();
-      chart.options.scales.y.title={{display:true,text:'Contig Count'}};
-      chart.options.scales.y.max=undefined;chart.options.scales.y.min=0;
+      chart.options.scales[valAxis].title={{display:true,text:'Reads'}};
+      chart.options.scales[valAxis].max=undefined;chart.options.scales[valAxis].min=0;
       btn.setAttribute('data-mode','abs');btn.textContent='Show %';
     }}
     chart.update();
