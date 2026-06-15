@@ -572,42 +572,30 @@ def _generate_plant_virus_summary(root, report_dir, _add, blast_db=None):
                     tax_data[cid] = {rk: row.get(rk, row.get(rk.lower(),"")) for rk in
                                      ["Realm","Kingdom","Phylum","Class","Order","Family","Genus","Species"]}
 
-    # 4. BLAST 相似度分类 (参考 VIGA 阈值: Known≥95% | NewSp≥78% | NewGe≥65% | NewFa<65%)
+    # 4. DIAMOND blastx 蛋白级相似度分类 (蛋白 identity, 参考 VIGA 阈值)
+    #    Known≥95% | NewSp≥78% | NewGe≥65% | NewFa<65% (蛋白水平)
     plant_records = list(SeqIO.parse(str(all_plant_fa), "fasta"))
     novel_by_sim = {}
-    _bd = blast_db
-    if _bd:
-        _bd = Path(_bd)
-        # BLAST DB 判定: 父目录中有 {db_basename}.nin 文件
-        db_dir = _bd.parent if _bd.parent.is_dir() else None
-        db_basenames = set(os.listdir(str(db_dir))) if db_dir else set()
-        bname = _bd.name
-        if not any(bname+ext in db_basenames for ext in [".nin",".nal"]):
-            print(f"  [WARN] BLAST 数据库无效: {_bd} (缺少 {bname}.nin)"); _bd = None
-    if not _bd:
-        for p in [Path("/home/zhangwenda/db/viral_nt"), Path("/home/zhangwenda/db/nt"),
-                  root.parent / "database" / "viral_nt",
-                  Path("/home/zhangwenda/database/virus-db/ncbi-virus_ref/ncbi-virus_ref.blast.db")]:
-            dp = p.parent; bn = p.name
-            bfs = set(os.listdir(str(dp))) if dp.is_dir() else set()
-            if any(bn+ext in bfs for ext in [".nin",".nal"]):
-                _bd = p; break
-    if not _bd and os.environ.get("BLAST_DB"):
-        _bd = Path(os.environ["BLAST_DB"])
-    blast_db = _bd
+    diamond_bin = "/home/zhangwenda/biosoft/binary/diamond"
+    # 自动检测 diamond 数据库
+    dmnd_db = None
+    for p in [Path("/home/zhangwenda/database/nr_diamond/nr.dmnd"),
+              Path("/home/zhangwenda/db/nr.dmnd"),
+              Path("/home/zhangwenda/database/virus_protein/viral.dmnd")]:
+        if p.is_file(): dmnd_db = p; break
 
-    if blast_db:
-        print(f"  BLAST 参考数据库: {blast_db}")
+    if dmnd_db:
+        print(f"  DIAMOND 蛋白数据库: {dmnd_db}")
         cq_fa = report_dir / "tmp_plant_virus.fa"
         SeqIO.write(plant_records, str(cq_fa), "fasta")
-        blast_out = report_dir / "tmp_blast.tsv"
-        subprocess.run(["blastn", "-task", "dc-megablast", "-query", str(cq_fa),
-                      "-db", str(blast_db), "-outfmt", "6 qseqid sseqid pident length",
-                      "-max_target_seqs", "1", "-evalue", "1e-5", "-num_threads", "4",
-                      "-out", str(blast_out)], capture_output=True, check=False)
-        if blast_out.is_file():
+        dmnd_out = report_dir / "tmp_diamond.tsv"
+        subprocess.run([diamond_bin, "blastx", "-d", str(dmnd_db), "-q", str(cq_fa),
+                       "-o", str(dmnd_out), "--outfmt", "6", "qseqid", "sseqid", "pident",
+                       "--max-target-seqs", "1", "--evalue", "1e-5", "--threads", "4",
+                       "--fast"], capture_output=True, check=False)
+        if dmnd_out.is_file() and dmnd_out.stat().st_size > 0:
             n_hits = 0
-            for line in open(blast_out):
+            for line in open(dmnd_out):
                 parts = line.strip().split('\t')
                 if len(parts) >= 3:
                     cid, pident = parts[0], float(parts[2])
@@ -616,16 +604,16 @@ def _generate_plant_virus_summary(root, report_dir, _add, blast_db=None):
                             novel_by_sim[cid] = label; break
                     else: novel_by_sim[cid] = "NewFa"
                     n_hits += 1
-            print(f"  BLAST 命中: {n_hits}/{len(plant_records)} 条")
-        # 无命中用 plant_records 补齐
+            print(f"  DIAMOND 命中: {n_hits}/{len(plant_records)} 条")
+        # 无命中/未比对上的
         for rec in plant_records:
             if rec.id not in novel_by_sim:
                 novel_by_sim[rec.id] = "NewFa"
-        for _tf in [cq_fa, blast_out]:
+        for _tf in [cq_fa, dmnd_out]:
             try: _tf.unlink()
             except: pass
     else:
-        print("  [SKIP] BLAST 相似度分类: 未找到参考数据库 (设置 --blast-db 或 BLAST_DB)")
+        print("  [SKIP] DIAMOND 蛋白相似度分类: 未找到 .dmnd 数据库")
 
     # 写入 plant_virus_summary.tsv
     cols = ["contig_id","length","source","aai_completeness","aai_confidence",
