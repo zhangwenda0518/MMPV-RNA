@@ -769,10 +769,11 @@ def write_html_report(report_dir, stage_stats):
             "datasets": [{"data":list(rescue_kv.values()),"backgroundColor":["#66bb6a","#42a5f5","#ffa726"]}]},
             {"responsive":True,"plugins":{"title":{"display":True,"text":"Rescue Branch Contributions"},"legend":{"position":"bottom"}}})
 
-    # Sankey 交互式嵌入 (用 srcdoc 内嵌到单文件, 不依赖外部文件)
+    # Sankey 交互式嵌入 (用 Blob URL 动态注入, 避免 data URI 大小限制)
     sankey_imgs = ""
-    for sname, stitle in [("classification_sankey.html","Taxonomy Classification Sankey"),
-                          ("classification_sankey_plant.html","Plant Virus Taxonomy Sankey")]:
+    sankey_inject_scripts = ""
+    for i, (sname, stitle) in enumerate([("classification_sankey.html","Taxonomy Classification Sankey"),
+                                          ("classification_sankey_plant.html","Plant Virus Taxonomy Sankey")]):
         spath = report_dir / sname
         if spath.is_file():
             import base64
@@ -780,8 +781,9 @@ def write_html_report(report_dir, stage_stats):
                 sankey_b64 = base64.b64encode(sf.read()).decode()
             sankey_imgs += f'''<div class="sankey-card">
 <h3>{stitle} <span style="font-weight:400;font-size:10px;color:var(--muted)">(interactive — hover/zoom/pan)</span></h3>
-<iframe src="data:text/html;base64,{sankey_b64}" style="width:100%;height:950px;border:none;border-radius:4px" loading="lazy"></iframe>
+<iframe id="sankey_iframe_{i}" style="width:100%;height:950px;border:none;border-radius:4px" loading="lazy"></iframe>
 </div>\n'''
+            sankey_inject_scripts += f"(function(){{var b='{sankey_b64}';var d=atob(b);var u=URL.createObjectURL(new Blob([d],{{type:'text/html'}}));document.getElementById('sankey_iframe_{i}').src=u;}})();\n"
 
     # ── KPI ──
     kpis = {}
@@ -1071,6 +1073,7 @@ td{{padding:9px 16px;border-bottom:1px solid #f0f0f0}}
 </div>
 <script>
 {chart_scripts}
+{sankey_inject_scripts}
 (function(){{
   const tbody=document.querySelector('#summary-table tbody');
   if(!tbody)return;
