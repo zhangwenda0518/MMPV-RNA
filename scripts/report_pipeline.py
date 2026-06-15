@@ -1155,10 +1155,15 @@ td{{padding:9px 16px;border-bottom:1px solid #f0f0f0}}
 .app-table th{{background:#f5f5f5;padding:6px 8px;font-size:10px;text-align:left;border:1px solid #e0e0e0;white-space:nowrap}}
 .app-table td{{padding:4px 8px;border:1px solid #f0f0f0;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px}}
 .ai-section{{background:var(--card-bg);border-radius:var(--radius);box-shadow:var(--shadow);padding:20px 24px;margin-bottom:28px;border-top:4px solid var(--indigo)}}
-.ai-header{{display:flex;align-items:center;gap:10px;margin-bottom:16px;border-bottom:1px solid #e8eaf6;padding-bottom:12px}}
+.ai-header{{display:flex;align-items:center;gap:10px;margin-bottom:14px;border-bottom:1px solid #e8eaf6;padding-bottom:10px}}
 .ai-title{{font-size:15px;font-weight:700;color:var(--indigo)}}
 .ai-model-tag{{font-size:10px;background:var(--indigo);color:#fff;padding:2px 8px;border-radius:8px}}
 .ai-format-tag{{font-size:10px;background:#e8eaf6;color:var(--indigo);padding:2px 8px;border-radius:8px;font-weight:600}}
+.ai-brief{{font-size:14px;line-height:1.8;color:#1a237e;background:linear-gradient(135deg,#e8eaf6 0%,#f0f4ff 100%);padding:14px 18px;border-radius:var(--radius-sm);margin-bottom:14px;text-align:justify;font-weight:500}}
+.ai-detail-toggle{{margin-top:8px}}
+.ai-detail-toggle summary{{cursor:pointer;font-size:13px;font-weight:600;color:var(--indigo);padding:10px 14px;background:#f5f6fa;border-radius:var(--radius-sm);user-select:none;transition:all .15s}}
+.ai-detail-toggle summary:hover{{background:#e8eaf6}}
+.ai-detail-content{{margin-top:14px}}
 .ai-block{{margin-bottom:14px;padding-left:16px;border-left:3px solid #e0e0e0}}
 .ai-block:last-child{{margin-bottom:0}}
 .ai-block-title{{font-size:12px;font-weight:700;color:var(--indigo);margin-bottom:4px}}
@@ -1310,52 +1315,77 @@ function exportTable(){{
 # ═══════════════════════════════════════════════════════════════
 
 def generate_ai_summary(stage_stats, kpis, report_dir):
-    """调用 LLM 生成 IMRaD 格式中文研究简报, 返回 HTML 或空"""
+    """调用 LLM 生成双层 AI 总结: 简报 + IMRaD 详报, 返回 HTML 或空"""
     import json as _json
     import re
 
-    # 收集管线数据构建 prompt
+    # 收集管线数据
     main_stages = [s for s in stage_stats if not s["Stage"].startswith("  ")]
     stage_lines = []
     for s in main_stages:
         st = s["Status"]; badge = "✓" if st == "✓" else ("✗" if st == "✗" else "○")
         stage_lines.append(f"  {badge} {s['Stage']}: {s.get('Key_Metric','')}")
 
+    # 宿主分布 + CheckV 详情
     host_detail = ""
+    cv_detail = ""
     for s in stage_stats:
         if s["Stage"].startswith("  ") and s["Stage"].strip() in ("Bacteria","Protist","Animal","Plant","Algae","Mammalia","Fungi","Unknown"):
             host_detail += f"    {s['Stage'].strip()}: {s.get('Key_Metric','')}\n"
+        if s["Stage"].startswith("  ") and "HQ=" in s.get("Key_Metric",""):
+            cv_detail += f"    {s['Stage'].strip()}: {s.get('Key_Metric','')}\n"
 
-    prompt = f"""你是一位病毒宏基因组学领域的研究科学家。请基于以下 MMPV-RNA v2.3 病毒发现管线的分析结果，按照学术论文的标准格式，撰写一份结构化的研究简报（IMRaD）。严格按四段输出，每段以指定标签开头。
+    prompt = f"""你是一位病毒宏基因组学领域的研究科学家。请基于以下 MMPV-RNA v2.3 病毒发现管线的分析结果, 撰写双层研究总结: 先写一段精炼的研究简报, 再写一份完整的 IMRaD 详报。严格按标签输出。
 
-## 数据
+## 管线数据
 - 样本数: {kpis.get('n_sample','?')}
-- 数据量: {kpis.get('raw_bases','?')} → {kpis.get('clean_bases','?')} (QC 后)
-- 宿主去除保留率: {kpis.get('hd_retained','?')}%
+- 数据量: QC前 {kpis.get('raw_bases','?')} → QC后 {kpis.get('clean_bases','?')}
+- 宿主去除总保留率: {kpis.get('hd_retained','?')}%
 - 各阶段结果:
 {chr(10).join(stage_lines)}
-- 宿主分布:
-{host_detail if host_detail else '  见 Host Prediction 阶段'}
-- 新颖性统计: 已知={kpis.get('n_known','?')}, 新种={kpis.get('n_newsp','?')}, 新属={kpis.get('n_newge','?')}, 新科={kpis.get('n_newfa','?')}
-- CheckV HQ vOTUs: {kpis.get('hq_votus','?')} / {kpis.get('cv_total','?')}
+- 宿主分布 (各宿主HQ/total):
+{host_detail if host_detail else '  见各阶段'}
+- CheckV 各宿主质量:
+{cv_detail if cv_detail else '  见各阶段'}
+- 新颖性: 已知={kpis.get('n_known','?')} | 新种={kpis.get('n_newsp','?')} | 新属={kpis.get('n_newge','?')} | 新科={kpis.get('n_newfa','?')}
+- HQ vOTUs: {kpis.get('hq_votus','?')} / {kpis.get('cv_total','?')}
 
 ## 输出格式 (严格按此结构)
+
+[BRIEF]
+一段 150-200 字中文精炼摘要。涵盖: 研究目的、样本规模、关键发现(鉴定病毒数、新颖性比例、HQ vOTU数)、主要结论。如果数据中有植物病毒, 必须重点提及。风格类似顶刊 Highlights。
+
+[DETAILED]
+按以下 IMRaD 结构撰写详报 (400-600字):
+
 [BACKGROUND]
-1-2句。宏转录组病毒发现背景及本研究目标。说明样本来源和研究目的。
+1-2句。病毒宏基因组学背景 + 本研究目标。
 
 [METHODS]
-2-3句。简述 MMPV-RNA v2.3 管线主要步骤：原始reads质控(fastp/clumpify)→宿主去除(Kraken2+ribodetector)→组装(SPAdes/MEGAHIT)→病毒鉴定(multi-tool: Viralm/BLAST/VirHunter)→聚类(CD-HIT)→分类(CAT/VITAP/ACVirus)→宿主预测→CheckV质量评估→Rescue。
+4-6句。完整列出 MMPV-RNA v2.3 全部阶段:
+- 00a: fastp 质控 (Q20/Q30过滤) + clumpify 去重 → 高质量 clean reads
+- 00b: Kraken2 去除宿主 reads + ribodetector 去除 rRNA → 非宿主非核糖体 reads
+- 01: SPAdes/MEGAHIT 从头组装 → contigs
+- 02: 多工具病毒鉴定 (Viralm, BLASTx/n, VirHunter, CAT, genomad, metabuli, mmseqs, vcontact3) → 病毒候选序列
+- 03: COBRA 延伸 (BLAST-based contig extension)
+- 04: CD-HIT 聚类 (去冗余) + vclust → vOTU 簇
+- 05: 分类学注释 (CAT + VITAP + ACVirus 集成) → 科/属/种级别分类
+- 06: 宿主预测 (ICTV + VITAP + CAT + ACVirus + BLAST 共识决策) → Final_Host
+- 07: CheckV 完整性评估 (AAI + HMM) → HQ/MQ/LQ 分级
+- 08: Rescue (从低质量序列中恢复 HQ vOTU)
+每步说明目的, 用 → 连接。
 
 [RESULTS]
-3-5句。报告关键数值：样本数和数据量、组装contigs、鉴定病毒序列数、vOTU簇数、新颖性比例、宿主分布概况、HQ vOTU数量。必须引用具体数字。
+4-6句。报告数值发现: 数据量与QC保留率、组装contigs数和总长、病毒序列数与vOTU簇数、新颖性分布 (已知/新种/新属/新科) 及比例、宿主分布 (如有植物病毒需重点描述: 数量、分类层级、完整性)、CheckV 质量分布 (Complete/HQ/MQ/LQ)、Rescue结果。
 
 [DISCUSSION]
-3-5句。解释意义：新颖性比例、宿主分布趋势、HQ vOTU对后续分析的价值。指出管线优势与局限。提出下一步方向(功能注释/比较基因组学/系统发育等)。
+3-5句。解读意义: 新颖性比例的生物学含义、宿主分布的特征趋势 (噬菌体 vs 真核病毒)、植物病毒的发现意义和完整性。管线优势与局限。下一步: 功能注释、比较基因组、系统发育、宿主-病毒互作网络。
 
 ## 要求
-- 每段2-5句, 总字数300-500字
-- 专业客观学术语气, 不要 "一些" "大量" 等模糊词
-- 仅输出四段加标签, 不添加额外说明"""
+- 专业学术语气, 精确引用数据中的数字
+- Brief 后空一行再输出 DETAILED 部分
+- DETAILED 内四段以 [BACKGROUND][METHODS][RESULTS][DISCUSSION] 开头
+- 仅输出要求的格式, 不要额外说明"""
 
     try:
         provider = getattr(generate_ai_summary, '_provider', 'openai')
@@ -1371,57 +1401,71 @@ def generate_ai_summary(stage_stats, kpis, report_dir):
         body = _json.dumps({
             "model": model,
             "messages": [
-                {"role": "system", "content": "你是病毒宏基因组学研究科学家。仅按要求的IMRaD格式输出,使用精确学术语言,不添加额外内容。"},
+                {"role": "system", "content": "你是病毒宏基因组学研究科学家。严格按要求的双层格式输出: BRIEF(简洁亮点摘要)+DETAILED(IMRaD完整详报)。用中文,客观精确,引用数据数字,不编造。"},
                 {"role": "user", "content": prompt}
             ],
             "temperature": 0.3,
-            "max_tokens": 1200
+            "max_tokens": 2000
         }).encode()
         req = urllib.request.Request(url, data=body, headers={
             "Content-Type": "application/json",
             "Authorization": f"Bearer {api_key}"
         })
-        with urllib.request.urlopen(req, timeout=60) as resp:
+        with urllib.request.urlopen(req, timeout=90) as resp:
             result = _json.loads(resp.read())
         raw = result["choices"][0]["message"]["content"].strip()
         print(f"  AI Summary generated ({len(raw)} chars)")
 
-        # 解析 IMRaD 四段
+        # 解析 Brief 和 Detailed
+        brief_m = re.search(r'\[BRIEF\]\s*(.*?)(?=\[DETAILED\]|\Z)', raw, re.DOTALL | re.IGNORECASE)
+        brief = brief_m.group(1).strip() if brief_m else ""
+
+        detailed_raw = ""
+        det_m = re.search(r'\[DETAILED\]\s*(.*)', raw, re.DOTALL | re.IGNORECASE)
+        if det_m: detailed_raw = det_m.group(1).strip()
+
         def _extract_section(text, tag):
             m = re.search(
                 rf'\[{tag}\]\s*(.*?)(?=\[(?:BACKGROUND|METHODS|RESULTS|DISCUSSION)\]|\Z)',
                 text, re.DOTALL | re.IGNORECASE)
             return m.group(1).strip() if m else ""
 
-        sections = {
-            "background": _extract_section(raw, "BACKGROUND"),
-            "methods": _extract_section(raw, "METHODS"),
-            "results": _extract_section(raw, "RESULTS"),
-            "discussion": _extract_section(raw, "DISCUSSION"),
-        }
+        sections = {}
+        if detailed_raw:
+            sections = {
+                "background": _extract_section(detailed_raw, "BACKGROUND"),
+                "methods": _extract_section(detailed_raw, "METHODS"),
+                "results": _extract_section(detailed_raw, "RESULTS"),
+                "discussion": _extract_section(detailed_raw, "DISCUSSION"),
+            }
         if not any(sections.values()):
-            sections = {"background": raw, "methods": "", "results": "", "discussion": ""}
+            sections = {"background": detailed_raw or raw, "methods": "", "results": "", "discussion": ""}
 
+        # 构建 HTML: Brief + 可折叠 Detail
         sec_labels = {
             "background": ("📖 研究背景", "ai-bg"),
-            "methods": ("🔬 分析方法", "ai-methods"),
+            "methods": ("🔬 完整方法", "ai-methods"),
             "results": ("📊 关键结果", "ai-results"),
-            "discussion": ("💡 讨论与展望", "ai-discussion"),
+            "discussion": ("💡 讨论展望", "ai-discussion"),
         }
-        items = ""
+        detail_items = ""
         for key in ("background","methods","results","discussion"):
             text = sections.get(key, "")
             if not text: continue
             label, cls = sec_labels[key]
-            items += f'<div class="ai-block {cls}"><div class="ai-block-title">{label}</div><div class="ai-block-text">{text}</div></div>'
+            detail_items += f'<div class="ai-block {cls}"><div class="ai-block-title">{label}</div><div class="ai-block-text">{text}</div></div>'
 
         return f'''<div class="ai-section" id="ai-summary">
 <div class="ai-header">
   <span class="ai-title">🤖 AI 研究简报</span>
   <span class="ai-model-tag">{model}</span>
-  <span class="ai-format-tag">IMRaD</span>
+  <span class="ai-format-tag">Brief + IMRaD</span>
 </div>
-{items}
+<div class="ai-brief">{brief}</div>
+<details class="ai-detail-toggle">
+  <summary>📋 展开详细报告 (IMRaD)</summary>
+  <div class="ai-detail-content">{detail_items}</div>
+</details>
 </div>'''
     except Exception as e:
         print(f"  [WARN] AI Summary failed: {e}")
