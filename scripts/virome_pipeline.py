@@ -74,16 +74,25 @@ def find_cmd(name):
 
 
 def run_cmd(cmd, logger, step_name):
-    """执行 shell 命令。stdout/stderr 透传 (进度条可见)。"""
+    """执行 shell 命令。stdout/stderr 同时输出到终端和日志文件。"""
     logger.info("[%s] 执行中...", step_name)
     logger.debug("  CMD: %s", cmd)
     try:
-        subprocess.run(cmd, shell=True, check=True)
+        with subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                              text=True, bufsize=1) as proc:
+            for line in proc.stdout:
+                line = line.rstrip('\n\r')
+                print(line, flush=True)
+                logger.debug("  %s", line)
+            proc.wait()
+            if proc.returncode != 0:
+                logger.error("[%s] ✗ 失败 (exit=%d)", step_name, proc.returncode)
+                return False, f"exit={proc.returncode}"
         logger.info("[%s] ✓ 成功", step_name)
         return True, ""
-    except subprocess.CalledProcessError as e:
-        logger.error("[%s] ✗ 失败 (exit=%d)", step_name, e.returncode)
-        return False, f"exit={e.returncode}"
+    except Exception as e:
+        logger.error("[%s] ✗ 异常: %s", step_name, e)
+        return False, str(e)
 
 
 # ═══════════════════════════════════════════════════════════════════
