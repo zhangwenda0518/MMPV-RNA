@@ -87,8 +87,9 @@ def _collect_cleandata(root, report_dir, _add):
     jf_list = list(fp.glob("*_fastp_report.json"))
     if not jf_list: return
     n_total_before, n_total_after = 0, 0
+    b_total_before, b_total_after = 0, 0  # bases
     with open(report_dir / "data_summary.tsv", "w") as ds:
-        ds.write("Sample\tRaw_Reads\tClean_Reads\tRetained(%)\tRaw_Q20(%)\tClean_Q20(%)\tRaw_Q30(%)\tClean_Q30(%)\tLowQ_Reads\tTooShort_Reads\tDup_Rate(%)\n")
+        ds.write("Sample\tRaw_Reads\tClean_Reads\tRetained(%)\tRaw_Bases\tClean_Bases\tRaw_Q20(%)\tClean_Q20(%)\tRaw_Q30(%)\tClean_Q30(%)\tLowQ_Reads\tTooShort_Reads\tDup_Rate(%)\n")
         for jf in sorted(jf_list):
             try:
                 with open(jf) as jfh:
@@ -99,15 +100,19 @@ def _collect_cleandata(root, report_dir, _add):
                 fil = js.get("filtering_result", {})
                 dup = js.get("duplication", {})
                 nb = bef.get("total_reads", 0); na = aft.get("total_reads", 0)
+                bb = bef.get("total_bases", 0); ba = aft.get("total_bases", 0)
                 n_total_before += nb; n_total_after += na
+                b_total_before += bb; b_total_after += ba
                 ds.write(f"{sn}\t{nb}\t{na}\t{round(na/max(nb,1)*100,1)}\t"
+                         f"{bb}\t{ba}\t"
                          f"{round(bef.get('q20_rate',0)*100,1)}\t{round(aft.get('q20_rate',0)*100,1)}\t"
                          f"{round(bef.get('q30_rate',0)*100,1)}\t{round(aft.get('q30_rate',0)*100,1)}\t"
                          f"{fil.get('low_quality_reads',0)}\t{fil.get('too_short_reads',0)}\t"
                          f"{round(dup.get('rate',0)*100,3)}\n")
             except Exception as e: print(f"  [WARN] 解析 fastp JSON 失败 ({jf.name}): {e}")
-        ds.write(f"TOTAL\t{n_total_before}\t{n_total_after}\t{round(n_total_after/max(n_total_before,1)*100,1)}\n")
-    _add("  └ data_summary", "✓", key_metric=f"reads: {n_total_before:,}→{n_total_after:,}")
+        ds.write(f"TOTAL\t{n_total_before}\t{n_total_after}\t{round(n_total_after/max(n_total_before,1)*100,1)}\t"
+                 f"{b_total_before}\t{b_total_after}\n")
+    _add("  └ data_summary", "✓", key_metric=f"reads: {n_total_before:,}→{n_total_after:,}  bases: {b_total_before:,}→{b_total_after:,}")
 
 
 def _collect_hostdepletion(root, report_dir, _add):
@@ -788,9 +793,11 @@ def write_html_report(report_dir, stage_stats):
     # ── KPI ──
     kpis = {}
     for s in stage_stats:
-        if s['Stage'] == '00a_CleanData':
+        if s['Stage'] in ('00a_CleanData', '  └ data_summary'):
             for m in re.finditer(r'reads:\s*([\d,]+)→([\d,]+)', s.get('Key_Metric','')):
                 kpis['raw_reads'] = m.group(1); kpis['clean_reads'] = m.group(2)
+            for m in re.finditer(r'bases:\s*([\d,]+)→([\d,]+)', s.get('Key_Metric','')):
+                kpis['raw_bases'] = m.group(1); kpis['clean_bases'] = m.group(2)
         if s['Stage'] == '01_Assembly':
             for m in re.finditer(r'([\d,]+)\s*contigs', s.get('Key_Metric','')): kpis['total_contigs'] = m.group(1)
             for m in re.finditer(r'([\d.]+)\s*Mb', s.get('Key_Metric','')): kpis['total_mb'] = m.group(1)
@@ -886,7 +893,11 @@ def write_html_report(report_dir, stage_stats):
                 cols = '1fr' if len(active) == 1 else '1fr 1fr'
                 chart_html = f'<div class="stage-charts" style="grid-template-columns:{cols}">'
                 for cid in active:
-                    chart_html += f'<div class="chart-box"><canvas id="{cid}" style="max-height:320px"></canvas></div>'
+                    is_stacked = cid in ('chart_s07a', 'chart_s07b')
+                    chart_html += f'<div class="chart-box">'
+                    if is_stacked:
+                        chart_html += f'<div style="display:flex;justify-content:flex-end;margin-bottom:4px"><button class="pct-btn" data-chart="{cid}" data-mode="abs" style="font-size:10px;padding:2px 8px;border:1px solid #ccc;border-radius:3px;background:#fff;cursor:pointer" onclick="toggleStackedPct(this)">Show %</button></div>'
+                    chart_html += f'<canvas id="{cid}" style="max-height:320px"></canvas></div>'
                 chart_html += '</div>'
 
         if sk == 's05' and sankey_imgs:
@@ -947,9 +958,22 @@ def write_html_report(report_dir, stage_stats):
     gen_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
     # KPI cards
+    def _fmt_bases(v):
+        """格式化碱基数为人可读: 1234567890 → 1.23 Gb"""
+        try: n = int(v.replace(',',''))
+        except: return v
+        if n >= 1e9: return f"{n/1e9:.1f} Gb"
+        if n >= 1e6: return f"{n/1e6:.1f} Mb"
+        if n >= 1e3: return f"{n/1e3:.1f} Kb"
+        return str(n)
     kpi_cards = ""
+    raw_r = kpis.get('raw_reads','—'); clean_r = kpis.get('clean_reads','—')
+    raw_b = kpis.get('raw_bases',''); clean_b = kpis.get('clean_bases','')
+    sample_kpi = f"{raw_r} raw → {clean_r} clean"
+    if raw_b and clean_b:
+        sample_kpi += f"<br>{_fmt_bases(raw_b)} → {_fmt_bases(clean_b)}"
     kpi_items = [
-        ("Samples", f"{kpis.get('raw_reads','—')} raw → {kpis.get('clean_reads','—')} clean", "🧬"),
+        ("Samples", sample_kpi, "🧬"),
         ("Assembly", f"{kpis.get('total_contigs','—')} contigs, {kpis.get('total_mb','—')} Mb", "🔧"),
         ("Viruses", f"{kpis.get('virus_seqs','—')} identified", "🦠"),
         ("HQ vOTUs", f"{kpis.get('hq_votus',kpis.get('rescued','—'))}", "⭐"),
@@ -1007,7 +1031,9 @@ body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans SC',san
 .stage-badge{{font-size:11px;font-weight:700;padding:4px 12px;border-radius:12px;flex-shrink:0}}
 .s-pass{{background:#e8f5e9;color:var(--green)}}.s-fail{{background:#fce4ec;color:var(--red)}}.s-skip{{background:#f5f5f5;color:#9e9e9e}}
 .stage-charts{{display:grid;gap:16px;padding:18px 22px}}
-.chart-box{{background:#fafbfc;border-radius:var(--radius-sm);padding:12px;border:1px solid var(--border)}}
+.chart-box{{background:#fafbfc;border-radius:var(--radius-sm);padding:12px;border:1px solid var(--border);position:relative}}
+.pct-btn{{font-size:10px;padding:2px 10px;border:1px solid #bbb;border-radius:3px;background:#fff;cursor:pointer;color:#555;transition:all .15s}}
+.pct-btn:hover{{background:var(--indigo);color:#fff;border-color:var(--indigo)}}
 .sankey-section{{padding:18px 22px;display:flex;flex-direction:column;gap:16px}}
 .sankey-card{{background:#fafbfc;border-radius:var(--radius-sm);padding:14px;border:1px solid var(--border)}}
 .sankey-card h3{{font-size:14px;color:var(--indigo);margin-bottom:10px;text-align:center}}
@@ -1130,6 +1156,34 @@ function exportTable(){{
   }}
   window.addEventListener('scroll',onScroll,{{passive:true}});
   onScroll();
+}})();
+// Stacked bar chart % toggle
+(function(){{
+  var _orig={{}};
+  window.toggleStackedPct=function(btn){{
+    var cid=btn.getAttribute('data-chart');
+    var chart=Chart.getChart(cid);
+    if(!chart)return;
+    var ds=chart.data.datasets;
+    var n=chart.data.labels.length;
+    if(btn.getAttribute('data-mode')==='abs'){{
+      if(!_orig[cid])_orig[cid]=ds.map(function(d){{return d.data.slice()}});
+      for(var i=0;i<n;i++){{
+        var tot=0;
+        for(var j=0;j<ds.length;j++)tot+=Number(_orig[cid][j][i])||0;
+        for(var j=0;j<ds.length;j++)ds[j].data[i]=tot>0?((Number(_orig[cid][j][i])||0)/tot*100):0;
+      }}
+      chart.options.scales.y.title={{display:true,text:'%'}};
+      chart.options.scales.y.max=100;chart.options.scales.y.min=0;
+      btn.setAttribute('data-mode','pct');btn.textContent='Show Count';
+    }}else{{
+      if(_orig[cid])for(var j=0;j<ds.length;j++)ds[j].data=_orig[cid][j].slice();
+      chart.options.scales.y.title={{display:true,text:'Contig Count'}};
+      chart.options.scales.y.max=undefined;chart.options.scales.y.min=0;
+      btn.setAttribute('data-mode','abs');btn.textContent='Show %';
+    }}
+    chart.update();
+  }};
 }})();
 </script>
 </body></html>'''
