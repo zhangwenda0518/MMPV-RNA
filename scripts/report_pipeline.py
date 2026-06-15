@@ -365,6 +365,33 @@ def _collect_taxonomy(root, report_dir, _add):
     else:
         _add("05_Taxonomy", "○", details="未运行")
 
+    # 最终植物病毒分类汇总 (all_plant_viruses.fasta × taxonomy)
+    all_plant_fa = root / "08_Rescue" / "all_plant_viruses.fasta"
+    if all_plant_fa.is_file() and final_tax.is_file():
+        plant_ids = set()
+        for line in open(all_plant_fa):
+            if line.startswith('>'): plant_ids.add(line[1:].split()[0])
+        counts_p = {"Known": 0, "Novel_Species": 0, "Novel_Genus": 0, "Novel_Family": 0}
+        with open(final_tax) as tf:
+            for row in csv.DictReader(tf, delimiter="\t"):
+                cid = row.get("contig_id", row.get("Contig_ID", ""))
+                if cid not in plant_ids: continue
+                sp = row.get("Species", row.get("species", ""))
+                ge = row.get("Genus", row.get("genus", ""))
+                fa = row.get("Family", row.get("family", ""))
+                if sp and sp not in ("NA", "-"): counts_p["Known"] += 1
+                elif ge and ge not in ("NA", "-"): counts_p["Novel_Species"] += 1
+                elif fa and fa not in ("NA", "-"): counts_p["Novel_Genus"] += 1
+                else: counts_p["Novel_Family"] += 1
+        n_plant = sum(counts_p.values())
+        if n_plant > 0:
+            _add("  └ Plant Virus Taxonomy", "✓",
+                 key_metric=f"{n_plant} 条, Known={counts_p['Known']} NewSp={counts_p['Novel_Species']} NewGe={counts_p['Novel_Genus']} NewFa={counts_p['Novel_Family']}")
+            # 写入 plant_virus_taxonomy.tsv 供 HTML 图表使用
+            with open(report_dir / "plant_virus_taxonomy.tsv", "w") as pvf:
+                pvf.write("Category\tCount\n")
+                for k, v in counts_p.items(): pvf.write(f"{k}\t{v}\n")
+
 
 def _collect_hostprediction(root, report_dir, _add):
     """06_HostPrediction 阶段"""
@@ -724,6 +751,19 @@ def write_html_report(report_dir, stage_stats):
             {"responsive":True,"plugins":{"title":{"display":True,"text":"Taxonomy Novelty"},"legend":{"display":False}},
              "scales":{"y":{"beginAtZero":True,"title":{"text":"序列数"}}}})
 
+    # S05b — 最终植物病毒分类 (all_plant_viruses.fasta × taxonomy)
+    plant_tax_rows = _read_tsv(report_dir / "plant_virus_taxonomy.tsv")
+    if plant_tax_rows:
+        pt_kv = {r["Category"]: int(r["Count"]) for r in plant_tax_rows if int(r.get("Count",0)) > 0}
+        if pt_kv:
+            stage_has_chart['s05b'] = True
+            pt_colors = ["#2e7d32","#1565c0","#ef6c00","#c62828"]
+            _pt_label_map = {"Known":"已知","Novel_Species":"新种","Novel_Genus":"新属","Novel_Family":"新科"}
+            chart_scripts += _chart('chart_s05b', 'doughnut', {
+                "labels": [_pt_label_map.get(k,k) for k in pt_kv.keys()],
+                "datasets": [{"data":list(pt_kv.values()),"backgroundColor":pt_colors[:len(pt_kv)]}]},
+                {"responsive":True,"plugins":{"title":{"display":True,"text":"Plant Virus Taxonomy"},"legend":{"position":"bottom"}}})
+
     # S06 — Host distribution
     host_kv = {}
     for s in stage_stats:
@@ -880,7 +920,7 @@ def write_html_report(report_dir, stage_stats):
         's01':  [('chart_s01b','Contig Count'),('chart_s01a','N50 (kb)')],
         's02':  [('chart_s02','UniProt Filter')],
         's03':  [('chart_s03','COBRA Rates')],
-        's05':  [('chart_s05a','Taxonomy Novelty')],
+        's05':  [('chart_s05a','Taxonomy Novelty'),('chart_s05b','Plant Virus Taxonomy')],
         's06':  [('chart_s06a','Host Distribution')],
         's07':  [('chart_s07a','CheckV Quality'),('chart_s07b','CheckV Confidence')],
         's08':  [('chart_s08','Rescue Branches')],
@@ -920,6 +960,9 @@ def write_html_report(report_dir, stage_stats):
                     if cid == 'chart_s01b' and stage_has_chart.get('s01b'): active.append(cid)
                 elif sk == 's02':
                     if stage_has_chart.get('s02'): active.append(cid)
+                elif sk == 's05':
+                    if cid == 'chart_s05a' and stage_has_chart.get('s05'): active.append(cid)
+                    if cid == 'chart_s05b' and stage_has_chart.get('s05b'): active.append(cid)
                 elif sk == 's07':
                     if cid == 'chart_s07a' and stage_has_chart.get('s07a'): active.append(cid)
                     if cid == 'chart_s07b' and stage_has_chart.get('s07b'): active.append(cid)
