@@ -897,7 +897,7 @@ def configure_layout(fig, args, num_nodes, num_links, color_info, taxonomic_leve
             title_x=0.5,
             title_y=0.98,
         )
-        # 统计信息注解 - 只在有标题时放在标题下方
+        # 统计信息注解 - 有标题时放在标题下方
         fig.add_annotation(
             text=f"Total sequences: {args.total_sequences:,} | Nodes: {num_nodes:,} | Links: {num_links:,}",
             showarrow=False,
@@ -976,10 +976,20 @@ def configure_layout(fig, args, num_nodes, num_links, color_info, taxonomic_leve
         text="<b>Taxonomic Levels Legend</b>",
         showarrow=False,
         xref="paper", yref="paper",
-        x=0.5, y=-0.12,  # 放在图例下方
+        x=0.5, y=-0.10,  # 放在图例下方
         font_size=14,
         font_color="#333333",
         font_weight="bold"
+    )
+
+    # 统计信息注解放到 Legend 下方 (y=-0.16)
+    fig.add_annotation(
+        text=f"Total sequences: {args.total_sequences:,} | Nodes: {num_nodes:,} | Links: {num_links:,}",
+        showarrow=False,
+        xref="paper", yref="paper",
+        x=0.5, y=-0.16,
+        font_size=11,
+        font_color="#555555",
     )
 
     return fig

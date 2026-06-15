@@ -930,10 +930,16 @@ def write_html_report(report_dir, stage_stats):
                 chart_html = f'<div class="stage-charts" style="grid-template-columns:{cols}">'
                 for cid in active:
                     is_stacked = cid in ('chart_s00b', 'chart_s07a', 'chart_s07b')
+                    is_per_sample = cid in ('chart_s00a','chart_s00a_dup','chart_s01a','chart_s01b')
                     chart_html += f'<div class="chart-box">'
                     if is_stacked:
                         chart_html += f'<div style="display:flex;justify-content:flex-end;margin-bottom:6px"><button class="pct-btn" data-chart="{cid}" data-mode="abs" onclick="toggleStackedPct(this)">Show %</button></div>'
-                    chart_html += f'<canvas id="{cid}" style="max-height:320px"></canvas></div>'
+                    if is_per_sample:
+                        chart_html += '<div class="chart-scroll">'
+                    chart_html += f'<canvas id="{cid}" style="max-height:320px"></canvas>'
+                    if is_per_sample:
+                        chart_html += '</div>'
+                    chart_html += '</div>'
                 chart_html += '</div>'
 
         if sk in sankey_by_stage:
@@ -1136,6 +1142,8 @@ body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans SC',san
 .s-pass{{background:#e8f5e9;color:var(--green)}}.s-fail{{background:#fce4ec;color:var(--red)}}.s-skip{{background:#f5f5f5;color:#9e9e9e}}
 .stage-charts{{display:grid;gap:16px;padding:18px 22px}}
 .chart-box{{background:#fafbfc;border-radius:var(--radius-sm);padding:12px;border:1px solid var(--border);position:relative}}
+.chart-scroll{{overflow-x:auto;padding-bottom:4px}}
+.chart-scroll canvas{{min-width:600px}}
 .pct-btn{{font-size:11px;padding:4px 14px;border:1px solid var(--indigo);border-radius:4px;background:var(--indigo);cursor:pointer;color:#fff;font-weight:600;transition:all .15s}}
 .pct-btn:hover{{background:#283593;border-color:#283593}}
 .sankey-section{{padding:18px 22px;display:flex;flex-direction:column;gap:16px}}
