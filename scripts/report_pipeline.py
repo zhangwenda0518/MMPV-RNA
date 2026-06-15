@@ -572,77 +572,42 @@ def _generate_plant_virus_summary(root, report_dir, _add, blast_db=None):
                     tax_data[cid] = {rk: row.get(rk, row.get(rk.lower(),"")) for rk in
                                      ["Realm","Kingdom","Phylum","Class","Order","Family","Genus","Species"]}
 
-    # 4. DIAMOND blastx 蛋白级相似度分类 (蛋白 identity, 参考 VIGA 阈值)
-    #    Known≥95% | NewSp≥78% | NewGe≥65% | NewFa<65% (蛋白水平)
-    plant_records = list(SeqIO.parse(str(all_plant_fa), "fasta"))
+    # 4. Novelty 分类: 基于已有的 05_Taxonomy 多工具共识 (含蛋白级比对)
+    #    无需额外 DIAMOND — 02_Identification blast_output/*.vp.txt + mmseqs 已在分类中体现
     novel_by_sim = {}
-    diamond_bin = "/home/zhangwenda/biosoft/binary/diamond"
-    # 自动检测 diamond 数据库
-    dmnd_db = None
-    for p in [Path("/home/zhangwenda/database/nr_diamond/nr.dmnd"),
-              Path("/home/zhangwenda/db/nr.dmnd"),
-              Path("/home/zhangwenda/database/virus_protein/viral.dmnd")]:
-        if p.is_file(): dmnd_db = p; break
-
-    if dmnd_db:
-        print(f"  DIAMOND 蛋白数据库: {dmnd_db}")
-        cq_fa = report_dir / "tmp_plant_virus.fa"
-        SeqIO.write(plant_records, str(cq_fa), "fasta")
-        dmnd_out = report_dir / "tmp_diamond.tsv"
-        subprocess.run([diamond_bin, "blastx", "-d", str(dmnd_db), "-q", str(cq_fa),
-                       "-o", str(dmnd_out), "--outfmt", "6", "qseqid", "sseqid", "pident",
-                       "--max-target-seqs", "1", "--evalue", "1e-5", "--threads", "4",
-                       "--fast"], capture_output=True, check=False)
-        if dmnd_out.is_file() and dmnd_out.stat().st_size > 0:
-            n_hits = 0
-            for line in open(dmnd_out):
-                parts = line.strip().split('\t')
-                if len(parts) >= 3:
-                    cid, pident = parts[0], float(parts[2])
-                    for label, thresh in [("Known",95),("NewSp",78),("NewGe",65)]:
-                        if pident >= thresh:
-                            novel_by_sim[cid] = label; break
-                    else: novel_by_sim[cid] = "NewFa"
-                    n_hits += 1
-            print(f"  DIAMOND 命中: {n_hits}/{len(plant_records)} 条")
-        # 无命中/未比对上的
-        for rec in plant_records:
-            if rec.id not in novel_by_sim:
-                novel_by_sim[rec.id] = "NewFa"
-        for _tf in [cq_fa, dmnd_out]:
-            try: _tf.unlink()
-            except: pass
-    else:
-        print("  [SKIP] DIAMOND 蛋白相似度分类: 未找到 .dmnd 数据库")
+    if tax_data:
+        for cid in plant_data:
+            tx = tax_data.get(cid, {})
+            sp, ge, fa = tx.get("Species",""), tx.get("Genus",""), tx.get("Family","")
+            if sp and sp not in ("NA","-",""): novel_by_sim[cid] = "Known"
+            elif ge and ge not in ("NA","-",""): novel_by_sim[cid] = "NewSp"
+            elif fa and fa not in ("NA","-",""): novel_by_sim[cid] = "NewGe"
+            else: novel_by_sim[cid] = "NewFa"
 
     # 写入 plant_virus_summary.tsv
     cols = ["contig_id","length","source","aai_completeness","aai_confidence",
-            "viral_length","aai_expected_length","kmer_freq",
-            "Realm","Kingdom","Phylum","Class","Order","Family","Genus","Species",
-            "novelty_tool","novelty_similarity"]
+            "viral_length","aai_expected_length","kmer_freq","novelty",
+            "Realm","Kingdom","Phylum","Class","Order","Family","Genus","Species"]
     with open(report_dir / "plant_virus_summary.tsv", "w") as pvf:
         pvf.write("\t".join(cols) + "\n")
         for cid in sorted(plant_data):
             d = plant_data[cid]; cv = cv_data.get(cid, {}); tx = tax_data.get(cid, {})
-            # tool-based novelty
-            sp, ge, fa = tx.get("Species",""), tx.get("Genus",""), tx.get("Family","")
-            nt = "Known" if (sp and sp not in ("NA","-")) else "NewSp" if (ge and ge not in ("NA","-")) else "NewGe" if (fa and fa not in ("NA","-")) else "NewFa"
-            ns = novel_by_sim.get(cid, "NA")
+            nl = novel_by_sim.get(cid, "NewFa")
             vals = [cid, d["length"], d["source"],
                     cv.get("aai_completeness","NA"), cv.get("aai_confidence","NA"),
-                    cv.get("viral_length","NA"), cv.get("aai_expected_length","NA"), cv.get("kmer_freq","NA")]
+                    cv.get("viral_length","NA"), cv.get("aai_expected_length","NA"), cv.get("kmer_freq","NA"),
+                    nl]
             vals += [tx.get(rk,"") for rk in ["Realm","Kingdom","Phylum","Class","Order","Family","Genus","Species"]]
-            vals += [nt, ns]
             pvf.write("\t".join(str(v) for v in vals) + "\n")
 
-    # 按 BLAST 相似度分类更新环形图数据
-    if novel_by_sim:
-        p_counts = {"Known":0,"Novel_Species":0,"Novel_Genus":0,"Novel_Family":0}
-        for cid, label in novel_by_sim.items():
-            if label in ("Known",): p_counts["Known"] += 1
-            elif label in ("NewSp",): p_counts["Novel_Species"] += 1
-            elif label in ("NewGe",): p_counts["Novel_Genus"] += 1
-            else: p_counts["Novel_Family"] += 1
+    # 更新环形图数据 (基于 taxonomy 共识)
+    p_counts = {"Known":0,"Novel_Species":0,"Novel_Genus":0,"Novel_Family":0}
+    for cid, label in novel_by_sim.items():
+        if label == "Known": p_counts["Known"] += 1
+        elif label == "NewSp": p_counts["Novel_Species"] += 1
+        elif label == "NewGe": p_counts["Novel_Genus"] += 1
+        else: p_counts["Novel_Family"] += 1
+    if sum(p_counts.values()) > 0:
         with open(report_dir / "plant_virus_taxonomy.tsv", "w") as pvf:
             pvf.write("Category\tCount\n")
             for k, v in p_counts.items(): pvf.write(f"{k}\t{v}\n")
