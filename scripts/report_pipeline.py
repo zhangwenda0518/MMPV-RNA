@@ -1034,6 +1034,49 @@ def write_html_report(report_dir, stage_stats):
     for title, value, icon in kpi_items:
         kpi_cards += f'<div class="kpi-card"><div class="kpi-icon">{icon}</div><div class="kpi-value">{value}</div><div class="kpi-label">{title}</div></div>'
 
+    # ── Pipeline Flow 图: 展示从 raw reads → HQ vOTUs 的逐级筛选 ──
+    def _intv(s):
+        try: return int(s.replace(',',''))
+        except: return None
+    flow_stages = []
+    r_raw = _intv(kpis.get('raw_reads',''))
+    r_clean = _intv(kpis.get('clean_reads',''))
+    r_contig = _intv(kpis.get('total_contigs',''))
+    r_virus = _intv(kpis.get('virus_seqs',''))
+    r_votu = _intv(kpis.get('n_clusters',''))
+    r_hq = _intv(kpis.get('hq_votus',''))
+    # host-free reads: 从 hostdep_summary 汇总 After_Host
+    r_hostfree = None
+    hds = _read_tsv(report_dir / "hostdep_summary.tsv")
+    if hds:
+        s = sum(int(r.get("After_Host",0)) for r in hds)
+        if s > 0: r_hostfree = s
+    if r_raw: flow_stages.append(("Raw Reads",r_raw,"#0d1b3e"))
+    if r_clean: flow_stages.append(("Clean Reads",r_clean,"#1565c0"))
+    if r_hostfree: flow_stages.append(("Host-free Reads",r_hostfree,"#546e7a"))
+    if r_contig: flow_stages.append(("Contigs",r_contig,"#00897b"))
+    if r_virus: flow_stages.append(("Viral Seqs",r_virus,"#ef6c00"))
+    if r_votu: flow_stages.append(("vOTU Clusters",r_votu,"#6a1b9a"))
+    if r_hq: flow_stages.append(("HQ vOTUs",r_hq,"#2e7d32"))
+
+    flow_html = ""
+    if len(flow_stages) >= 3:
+        f_labels = [s[0] for s in flow_stages]
+        f_values = [s[1] for s in flow_stages]
+        f_colors = [s[2] for s in flow_stages]
+        flow_chart_id = "chart_pipeline_flow"
+        chart_scripts += _chart(flow_chart_id, 'bar', {
+            "labels": f_labels,
+            "datasets": [{"label":"Count","data":f_values,"backgroundColor":f_colors,
+                          "borderColor":f_colors,"borderWidth":0}]},
+            {"indexAxis":"y","responsive":True,
+             "plugins":{"title":{"display":True,"text":"Pipeline Flow — Reads → HQ vOTUs","font":{"size":14}},
+                        "legend":{"display":False},
+                        "tooltip":{"callbacks":{"label":"function(ctx){var v=ctx.raw;if(v>=1e6)return (v/1e6).toFixed(1)+' M';if(v>=1e3)return (v/1e3).toFixed(1)+' K';return v}"}}},
+             "scales":{"x":{"type":"logarithmic","title":{"text":"Count (log scale)","display":True}}}}
+        )
+        flow_html = f'<div class="flow-section"><div class="chart-box" style="max-width:800px;margin:0 auto"><canvas id="{flow_chart_id}" style="max-height:380px"></canvas></div></div>'
+
     html = f'''<!DOCTYPE html>
 <html lang="zh">
 <head>
@@ -1058,7 +1101,8 @@ body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans SC',san
 .hero h1{{font-size:26px;font-weight:700;margin-bottom:6px;position:relative;z-index:1}}
 .hero .subtitle{{font-size:13px;opacity:.8;position:relative;z-index:1}}
 .hero .gen-time{{font-size:12px;opacity:.65;margin-top:6px;position:relative;z-index:1}}
-.kpi-row{{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin-bottom:28px}}
+.kpi-row{{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin-bottom:20px}}
+.flow-section{{background:var(--card-bg);border-radius:var(--radius);box-shadow:var(--shadow);padding:16px 22px;margin-bottom:28px}}
 .kpi-card{{background:var(--card-bg);border-radius:var(--radius);padding:18px 20px;box-shadow:var(--shadow);text-align:center;transition:transform .15s}}
 .kpi-card:hover{{transform:translateY(-2px);box-shadow:var(--shadow-lg)}}
 .kpi-icon{{font-size:24px;margin-bottom:6px}}
@@ -1139,6 +1183,7 @@ td{{padding:9px 16px;border-bottom:1px solid #f0f0f0}}
   <div class="gen-time">Generated: {gen_time} &nbsp;|&nbsp; {n_pass}/{n_total} stages completed ({pct}%)</div>
 </div>
 <div class="kpi-row">{kpi_cards}</div>
+{flow_html}
 {sections_html}
 <div class="table-wrap">
   <div style="display:flex;justify-content:space-between;align-items:center;padding-right:16px">
