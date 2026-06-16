@@ -41,6 +41,9 @@ profiles:
       virus_mode: filter
       blast_mode: both
 
+    cobra:
+      cobra_jobs: 0               # 0=自动 (jobs//2), >0 显式指定
+
     cluster:
       min_length: 500
       ani: 0.95
@@ -49,7 +52,11 @@ profiles:
         - /home/zhangwenda/plant_virus_db/3.final-ref-virus.db/final.complete_ref.fasta
         - /home/zhangwenda/database/virus-db/ncbi-virus_ref/viral.1.1.genomic.fna
 
+    taxonomy:
+      tax_sample_name: WVDB_votus  # 分类输出样本名
+
     host:
+      host_mode: all               # all / ICTV / RNAVirHost / PhaBOX2
       host_filter:
         - Plant
 

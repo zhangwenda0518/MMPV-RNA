@@ -1649,8 +1649,20 @@ def _load_config(args):
     if 'ref_genomes' in cl_cfg and not getattr(args, 'ref_genomes', None):
         setattr(args, 'ref_genomes', cl_cfg['ref_genomes'])
 
+    # cobra
+    cobra_cfg = profile.get('cobra', {})
+    if 'cobra_jobs' in cobra_cfg and getattr(args, 'cobra_jobs', 0) == 0:
+        setattr(args, 'cobra_jobs', int(cobra_cfg['cobra_jobs']))
+
+    # taxonomy
+    tax_cfg = profile.get('taxonomy', {})
+    if 'tax_sample_name' in tax_cfg and getattr(args, 'tax_sample_name', 'WVDB_votus') == 'WVDB_votus':
+        setattr(args, 'tax_sample_name', tax_cfg['tax_sample_name'])
+
     # host
     host_cfg = profile.get('host', {})
+    if 'host_mode' in host_cfg and getattr(args, 'host_mode', 'all') == 'all':
+        setattr(args, 'host_mode', host_cfg['host_mode'])
     if 'host_filter' in host_cfg and getattr(args, 'host_filter', 'Plant') == 'Plant':
         setattr(args, 'host_filter', host_cfg['host_filter'])
 
