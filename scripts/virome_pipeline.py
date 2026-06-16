@@ -607,7 +607,7 @@ class ViromePipeline:
             f"--output-dir {self.d['cobra']}",
             f"--assembly-tools {','.join(asm_tools)}",
             f"--virus-mode {self.args.virus_mode}",
-            f"--jobs {max(1, self.args.jobs // 2)}",
+            f"--jobs {self.args.cobra_jobs or max(1, self.args.jobs // 2)}",
             f"--threads {self.args.threads}",
             f"--mink {self.args.cobra_mink}",
             f"--maxk {self.args.cobra_maxk}",
@@ -917,7 +917,7 @@ class ViromePipeline:
         parts += [f"--salmon-bin {self.args.salmon_bin}"]
         parts += [f"--max-vsi-samples {self.args.max_vsi_samples}"]
         parts += [f"--min-vsi-len {self.args.min_vsi_len}"]
-        if hasattr(self.args, 'checkv_threshold'):
+        if getattr(self.args, 'checkv_threshold', 90.0) != 90.0:
             parts += [f"--checkv-threshold {self.args.checkv_threshold}"]
         if not self.args.force:
             parts.append("--resume")
@@ -1147,7 +1147,7 @@ class ViromePipeline:
             return
 
         tax_dir = self.d['taxonomy']
-        sample = "WVDB_votus"
+        sample = getattr(self.args, 'tax_sample_name', None) or "WVDB_votus"
         out_subdir = tax_dir / f"{sample}.virus_classed"
         combined_tsv = out_subdir / f"{sample}_combined_taxonomy.tsv"
         int_dir = tax_dir / "integrated"
@@ -1242,7 +1242,7 @@ class ViromePipeline:
             f"--tax {tax_tsv}",
             f"-o {self.d['host_pred']}",
             f"-t {self.args.threads}",
-            f"--mode all",
+            f"--mode {self.args.host_mode}",
         ]
         if self.args.phabox_db:
             parts.append(f"--phabox-db {self.args.phabox_db}")
@@ -1466,6 +1466,7 @@ def _build_parser(add_help=True):
     g = p.add_argument_group('COBRA 阶段 (cobra_pipeline.py)')
     g.add_argument('--cobra_mink', type=int, default=21, help='COBRA 最小 kmer (默认: 21)')
     g.add_argument('--cobra_maxk', type=int, default=141, help='COBRA 最大 kmer (默认: 141)')
+    g.add_argument('--cobra_jobs', type=int, default=0, help='COBRA 并行数 (默认: jobs//2, 即主 jobs 的一半)')
     g.add_argument('--cobra_linkage_mismatch', type=int, default=2, help='COBRA 链接识别不匹配数 (默认: 2)')
     g.add_argument('--cobra_verbose', action='store_true', help='cobra_pipeline.py 详细日志')
 
@@ -1477,6 +1478,7 @@ def _build_parser(add_help=True):
     g.add_argument('--tax_tools', default='all', help='分类工具: genomad,metabuli,diamond_lca,VITAP,mmseqs,ACVirus,vcontact3,PhaGCN3,all (默认: all)')
     g.add_argument('--tax_jobs', type=int, default=1, help='分类并行任务数 (默认: 1)')
     g.add_argument('--tax_ext', default='.fasta', help='分类输入文件扩展名 (默认: .fasta)')
+    g.add_argument('--tax_sample_name', default='WVDB_votus', help='分类样本名 (输出目录前缀, 默认: WVDB_votus)')
     g.add_argument('--tax_remove_suffix', help='分类输入文件去后缀名')
 
     g = p.add_argument_group('Host 阶段 (run_host_prediction.py)')
@@ -1520,6 +1522,7 @@ def _build_parser(add_help=True):
     g.add_argument('--blast_evalue', default='1e-5', help='Blast e-value (默认 1e-5)')
     g.add_argument('--blast_top_n', default='5', help='Blast top N (默认 5)')
     g.add_argument('--phabox-db', help='PhaBOX2 数据库路径 (host 阶段)')
+    g.add_argument('--host-mode', default='all', choices=['all','ICTV','RNAVirHost','PhaBOX2'], help='宿主预测模式 (默认: all)')
     g.add_argument('--prob-dir', help='ICTV 宿主概率表目录 (host 阶段, 默认: cross_analysis/)')
     g.add_argument('--ref-genomes', nargs='*', help='ICTV/NCBI 参考基因组 FASTA (可多个, CD-HIT 参考引导预聚类)')
     g.add_argument('--blast-db', help='BLAST 参考数据库 (rescue 阶段分支 D, ref.fasta)')
