@@ -1615,14 +1615,14 @@ def _load_config(args):
         if ak and getattr(args, ak, None) is None and key in tools:
             setattr(args, ak, os.path.expanduser(tools[key]))
 
-    # 运行参数
+    # 运行参数 (CLI 默认值与 YAML 值比较, 取较大的)
     rt = profile.get('runtime', {})
+    _defaults = {'threads': 20, 'jobs': 2, 'tax_jobs': 1}
     for key in ['threads','jobs','tax_jobs']:
-        arg_key = {'tax_jobs': 'tax_jobs'}.get(key, key)
-        val = getattr(args, arg_key, None)
-        default_val = _build_parser(add_help=False).get_default(arg_key) if hasattr(_build_parser, 'get_default') else None
-        if (val is None or val == default_val) and key in rt:
-            setattr(args, arg_key, int(rt[key]))
+        if key in rt:
+            current = getattr(args, key, _defaults[key])
+            if current == _defaults[key]:  # CLI 未修改, 用 profile 值
+                setattr(args, key, int(rt[key]))
 
     # assembly
     asm_cfg = profile.get('assembly', {})
@@ -1668,13 +1668,18 @@ def _validate_config(args, logger):
     import json
     checks = []
 
-    # 数据库检查
+    # 数据库检查 (BLAST DB 查 .nin 文件, 其余查目录存在)
     db_keys = ['checkv_db','genomad_db','mmseqs_db','virus_db','host_db','blast_db','nr_db']
     for key in db_keys:
         val = getattr(args, key, None)
         if val:
             p = Path(os.path.expanduser(str(val)))
-            status = '✓' if p.exists() else '✗ MISSING'
+            ok = False
+            if key == 'blast_db':
+                ok = (p.name + '.nin') in set(os.listdir(str(p.parent))) if p.parent.is_dir() else False
+            else:
+                ok = p.exists()
+            status = '✓' if ok else '✗ MISSING'
             checks.append(('DB', key, str(p), status))
 
     # 工具检查

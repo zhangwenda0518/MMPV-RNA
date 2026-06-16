@@ -11,7 +11,7 @@
 profiles:
 
   # ── 默认配置 (通用) ──
-  default:
+  default: &default
     databases:
       checkv_db:    /home/zhangwenda/database/virus-db/checkv-db-v1.7
       genomad_db:   /home/zhangwenda/database/virus-db/genomad_db/
