@@ -1,0 +1,117 @@
+# ==============================================================================
+# MMPV-RNA v2.3 管道配置文件
+# ==============================================================================
+# 用法:
+#   python virome_pipeline.py --profile default --output_dir out/
+#   python virome_pipeline.py --config my_config.yaml --profile plant
+#   python virome_pipeline.py --profile default --output_dir out/ --threads 120
+#     (CLI 参数覆盖配置文件, 优先级: CLI > profile > default)
+# ==============================================================================
+
+profiles:
+
+  # ── 默认配置 (通用) ──
+  default:
+    databases:
+      checkv_db:    /home/zhangwenda/database/virus-db/checkv-db-v1.7
+      genomad_db:   /home/zhangwenda/database/virus-db/genomad_db/
+      mmseqs_db:    /home/zhangwenda/database/virus-db/RVDB-30/RVDB.mmseqs
+      virus_db:     /home/zhangwenda/database/virus-db/
+      uniprot_db:   /home/zhangwenda/database/virus-db/RVDB-30/U-RVDBv30_prot.dmnd
+      host_db:      /home/zhangwenda/database/host_db/
+      blast_db:     /home/zhangwenda/database/virus-db/ncbi-virus_ref/ncbi-virus_ref.blast.db
+      nr_db:        /home/zhangwenda/database/nr_diamond/nr.dmnd
+      db_dir:       /home/zhangwenda/database/virus-db/
+      checkv_threshold: 90
+
+    tools:
+      salmon:   ~/mambaforge/envs/Virseqimprover/bin/salmon
+      diamond:  /home/zhangwenda/biosoft/binary/diamond
+      ragtag:   ~/mambaforge/bin/ragtag.py
+
+    runtime:
+      threads:  60
+      jobs:     10
+      tax_jobs: 4
+
+    assembly:
+      assembler: megahit
+
+    identification:
+      virus_mode: filter
+      blast_mode: both
+
+    cluster:
+      min_length: 500
+      ani: 0.95
+      qcov: 0.85
+      ref_genomes:
+        - /home/zhangwenda/plant_virus_db/3.final-ref-virus.db/final.complete_ref.fasta
+        - /home/zhangwenda/database/virus-db/ncbi-virus_ref/viral.1.1.genomic.fna
+
+    host:
+      host_filter:
+        - Plant
+
+    rescue:
+      checkv_threshold: 90
+      max_vsi_samples: 10
+      min_vsi_len:     2000
+
+  # ── 仅下游阶段 (已有 clusters, 跳过 00-03) ──
+  downstream:
+    <<: *default  # 继承 default 配置 (需 PyYAML merge, 也可直接复制)
+
+    cleanup:
+      skip_clean:    true
+      skip_depletion: true
+
+    assembly:
+      skip_assembly: true
+
+    identification:
+      skip_identification: true
+
+  # ── 植物病毒专用 (高灵敏度) ──
+  plant:
+    databases:
+      checkv_db:  /home/zhangwenda/database/virus-db/checkv-db-v1.7
+      genomad_db: /home/zhangwenda/database/virus-db/genomad_db/
+      mmseqs_db:  /home/zhangwenda/database/virus-db/RVDB-30/RVDB.mmseqs
+      virus_db:   /home/zhangwenda/database/virus-db/
+      host_db:    /home/zhangwenda/database/host_db/
+      blast_db:   /home/zhangwenda/database/virus-db/ncbi-virus_ref/ncbi-virus_ref.blast.db
+      nr_db:      /home/zhangwenda/database/nr_diamond/nr.dmnd
+      db_dir:     /home/zhangwenda/database/virus-db/
+
+    tools:
+      salmon:  ~/mambaforge/envs/Virseqimprover/bin/salmon
+      diamond: /home/zhangwenda/biosoft/binary/diamond
+
+    runtime:
+      threads:  60
+      jobs:     10
+      tax_jobs: 8
+
+    assembly:
+      assembler: rnaviralspades
+
+    identification:
+      virus_mode: filter
+      blast_mode: both
+
+    cluster:
+      min_length: 300
+      ani: 0.95
+      qcov: 0.80
+      ref_genomes:
+        - /home/zhangwenda/plant_virus_db/3.final-ref-virus.db/final.complete_ref.fasta
+
+    host:
+      host_filter:
+        - Plant
+
+    rescue:
+      checkv_threshold: 90
+      max_vsi_samples: 20
+      min_vsi_len:     2000

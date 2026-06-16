@@ -1412,6 +1412,9 @@ def _build_parser(add_help=True):
     g.add_argument('--input_assembly', help='组装结果目录 (identification 阶段, 默认 01_Assembly/)')
 
     g = p.add_argument_group('流程控制')
+    g.add_argument('--config', default=None, help='YAML 配置文件路径 (默认: 自动查找 pipeline_config.yaml)')
+    g.add_argument('--profile', default='default', help='配置预设 (默认: default, 可选: downstream/plant)')
+    g.add_argument('--dump-config', action='store_true', help='仅打印配置摘要并退出 (不运行)')
     g.add_argument('--stage', default=['all'], nargs='+',
                    choices=['all', 'clean', 'deplete', 'assembly', 'identification', 'cobra', 'cluster', 'taxonomy', 'host', 'checkv', 'rescue', 'report'],
                    help='运行阶段 (可多个, 如: --stage clean deplete)')
@@ -1569,9 +1572,163 @@ def parse_args():
         print_help_and_exit()
 
     return _build_parser(add_help=False).parse_args()
+
+
+def _load_config(args):
+    """加载 YAML 配置, CLI 参数覆盖配置文件值。返回更新后的 args。"""
+    config_path = args.config
+    if not config_path:
+        for p in [SCRIPT_DIR.parent / "pipeline_config.yaml",
+                  SCRIPT_DIR / "pipeline_config.yaml",
+                  Path.cwd() / "pipeline_config.yaml"]:
+            if p.is_file(): config_path = str(p); break
+    if not config_path:
+        return args  # 无配置文件, 纯 CLI 模式
+
+    try:
+        import yaml
+    except ImportError:
+        print("[WARN] PyYAML 未安装, 跳过配置文件加载 (pip install pyyaml)")
+        return args
+
+    with open(config_path, encoding='utf-8') as cf:
+        config = yaml.safe_load(cf)
+
+    profiles = config.get('profiles', {})
+    profile = profiles.get(args.profile, profiles.get('default', {}))
+    if not profile:
+        print(f"[WARN] 配置 profile '{args.profile}' 未找到, 使用 CLI 参数")
+        return args
+
+    # 数据库路径
+    db = profile.get('databases', {})
+    for key in ['checkv_db','genomad_db','mmseqs_db','virus_db','uniprot_db',
+                'host_db','blast_db','nr_db','db_dir']:
+        if getattr(args, key, None) is None and key in db:
+            setattr(args, key, db[key])
+
+    # 工具路径
+    tools = profile.get('tools', {})
+    for key in ['salmon','diamond','ragtag']:
+        attr_map = {'salmon': 'salmon_bin', 'diamond': None, 'ragtag': None}
+        ak = attr_map.get(key, key)
+        if ak and getattr(args, ak, None) is None and key in tools:
+            setattr(args, ak, os.path.expanduser(tools[key]))
+
+    # 运行参数
+    rt = profile.get('runtime', {})
+    for key in ['threads','jobs','tax_jobs']:
+        arg_key = {'tax_jobs': 'tax_jobs'}.get(key, key)
+        val = getattr(args, arg_key, None)
+        default_val = _build_parser(add_help=False).get_default(arg_key) if hasattr(_build_parser, 'get_default') else None
+        if (val is None or val == default_val) and key in rt:
+            setattr(args, arg_key, int(rt[key]))
+
+    # assembly
+    asm_cfg = profile.get('assembly', {})
+    if hasattr(args, 'assembler') and 'assembler' in asm_cfg:
+        if getattr(args, 'assembler', 'megahit') == 'megahit':
+            setattr(args, 'assembler', asm_cfg['assembler'])
+
+    # identification
+    id_cfg = profile.get('identification', {})
+    for key in ['virus_mode','blast_mode']:
+        if getattr(args, key, None) is None and key in id_cfg:
+            setattr(args, key, id_cfg[key])
+
+    # cluster
+    cl_cfg = profile.get('cluster', {})
+    for key in ['min_length','ani','qcov']:
+        if key in cl_cfg:
+            current = getattr(args, key, None)
+            if current is None:
+                setattr(args, key, cl_cfg[key])
+    if 'ref_genomes' in cl_cfg and not getattr(args, 'ref_genomes', None):
+        setattr(args, 'ref_genomes', cl_cfg['ref_genomes'])
+
+    # host
+    host_cfg = profile.get('host', {})
+    if 'host_filter' in host_cfg and getattr(args, 'host_filter', 'Plant') == 'Plant':
+        setattr(args, 'host_filter', host_cfg['host_filter'])
+
+    # rescue
+    res_cfg = profile.get('rescue', {})
+    for key in ['checkv_threshold','max_vsi_samples','min_vsi_len']:
+        if key in res_cfg:
+            current = getattr(args, key, None)
+            default_map = {'checkv_threshold': 90.0, 'max_vsi_samples': 10, 'min_vsi_len': 2000}
+            if current is None or current == default_map.get(key):
+                setattr(args, key, res_cfg[key])
+
+    return args
+
+
+def _validate_config(args, logger):
+    """验证数据库和工具是否存在, 打印配置摘要, 保存 run_config.json"""
+    import json
+    checks = []
+
+    # 数据库检查
+    db_keys = ['checkv_db','genomad_db','mmseqs_db','virus_db','host_db','blast_db','nr_db']
+    for key in db_keys:
+        val = getattr(args, key, None)
+        if val:
+            p = Path(os.path.expanduser(str(val)))
+            status = '✓' if p.exists() else '✗ MISSING'
+            checks.append(('DB', key, str(p), status))
+
+    # 工具检查
+    tool_checks = [('salmon', getattr(args, 'salmon_bin', None)),
+                   ('diamond', getattr(args, 'virseqimprover_path', None))]
+    for name, path in tool_checks:
+        if path:
+            p = Path(os.path.expanduser(str(path)))
+            status = '✓' if p.exists() else '✗ MISSING'
+            checks.append(('TOOL', name, str(p), status))
+
+    # 打印摘要
+    logger.info("=" * 60)
+    logger.info("Configuration Summary")
+    logger.info("  Profile: %s", getattr(args, 'profile', 'default'))
+    logger.info("  " + "-" * 40)
+    for cat, name, val, status in checks:
+        logger.info("  [%s] %-20s %s  %s", cat, name, status, val)
+    logger.info("  " + "-" * 40)
+    missing = [c for c in checks if 'MISSING' in c[3]]
+    if missing:
+        logger.warning("  %d 个资源未找到 (阶段运行时会报错)", len(missing))
+    else:
+        logger.info("  所有资源验证通过 ✓")
+    logger.info("=" * 60)
+
+    # 保存 run_config.json
+    run_cfg = {
+        "profile": getattr(args, 'profile', 'default'),
+        "stage": getattr(args, 'stage', ['all']),
+        "output_dir": str(getattr(args, 'output_dir', '')),
+        "threads": getattr(args, 'threads', 20),
+        "jobs": getattr(args, 'jobs', 2),
+    }
+    for key in db_keys:
+        run_cfg[key] = str(getattr(args, key, None))
+    cfg_path = Path(args.output_dir) / "run_config.json"
+    try:
+        cfg_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(cfg_path, 'w') as cf:
+            json.dump(run_cfg, cf, indent=2, ensure_ascii=False)
+        logger.info("  run_config.json → %s", cfg_path)
+    except: pass
+
+
 def main():
     args = parse_args()
+    args = _load_config(args)
     logger = setup_logger(args.output_dir, level=args.log_level)
+    _validate_config(args, logger)
+
+    if getattr(args, 'dump_config', False):
+        logger.info("  --dump-config 模式, 仅打印配置摘要")
+        return
 
     stages = set(args.stage)  # 支持多阶段: --stage clean deplete
 
