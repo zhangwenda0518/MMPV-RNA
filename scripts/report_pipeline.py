@@ -388,10 +388,6 @@ def _collect_taxonomy(root, report_dir, _add):
         if n_plant > 0:
             _add("  └ Plant Virus Taxonomy", "✓",
                  key_metric=f"{n_plant} 条, Known={counts_p['Known']} NewSp={counts_p['Novel_Species']} NewGe={counts_p['Novel_Genus']} NewFa={counts_p['Novel_Family']}")
-            # 写入 plant_virus_taxonomy.tsv 供 HTML 图表使用
-            with open(report_dir / "plant_virus_taxonomy.tsv", "w") as pvf:
-                pvf.write("Category\tCount\n")
-                for k, v in counts_p.items(): pvf.write(f"{k}\t{v}\n")
 
 
 def _collect_hostprediction(root, report_dir, _add):
@@ -572,107 +568,26 @@ def _generate_plant_virus_summary(root, report_dir, _add, blast_db=None):
                     tax_data[cid] = {rk: row.get(rk, row.get(rk.lower(),"")) for rk in
                                      ["Realm","Kingdom","Phylum","Class","Order","Family","Genus","Species"]}
 
-    # 4. Novelty 分类: Known vs New virus
-    #    有合法种名(双名法) → Known; 否则 → New virus
-    def _sp_is_valid(sp):
-        if not sp or sp in ("NA","-",""): return False
-        sp = sp.strip()
-        if len(sp)<5: return False
-        if sp.endswith("inae") or sp.endswith("idae") or sp.endswith("ales"): return False
-        if any(w in sp.lower() for w in ("sp.","cf.","aff.","unclassified","incertae")): return False
-        return " " in sp and sp.split()[1] not in ("sp.","sp","cf.","cf")
-
-    # 5. BLASTX 蛋白相似度分类 (参考 VIGA: ≥95% Known)
-    blastx_pident = {}  # {cid: (best_pident, best_ref, best_virus)}
-    ident_dir = root / "02_Identification"
-    if ident_dir.is_dir():
-        vclust_tsv = root / "04_CLUSTER" / "3_vclust" / "vclust_clusters.tsv"
-        centroid_members = {}  # {centroid: [member_contigs]}
-        if vclust_tsv.is_file():
-            with open(vclust_tsv) as vf:
-                vf.readline()
-                for line in vf:
-                    p = line.strip().split('\t')
-                    if len(p) >= 2:
-                        centroid_members.setdefault(p[1], []).append(p[0])
-        # 扫描所有 blast_output/*.vp.txt, 构建 contig→best hit
-        contig_blast = {}
-        for vp_file in ident_dir.rglob("blast_output/*.vp.txt"):
-            try:
-                for line in open(vp_file):
-                    p = line.strip().split('\t')
-                    if len(p) < 3: continue
-                    cid_raw, pident = p[0], float(p[2])
-                    ref_virus = p[14] if len(p) > 14 else p[13] if len(p) > 13 else ""
-                    if cid_raw not in contig_blast or pident > contig_blast[cid_raw][0]:
-                        contig_blast[cid_raw] = (pident, p[1], ref_virus)
-            except: pass
-        for cid in plant_data:
-            members = centroid_members.get(cid, [cid])
-            best = (0, "", "")
-            for m in members:
-                if m in contig_blast:
-                    if contig_blast[m][0] > best[0]:
-                        best = contig_blast[m]
-            if best[0] > 0:
-                blastx_pident[cid] = best
-
-    # 6. Novelty 分类: 综合 taxonomy 共识 + BLASTX 蛋白相似度
-    novel_by_sim = {}
-    evidence_info = {}
-    ID_KNOWN = 95.0  # VIGA species threshold
-    for cid in plant_data:
-        tx = tax_data.get(cid, {})
-        sp = tx.get("Species","")
-        bx = blastx_pident.get(cid)
-        if _sp_is_valid(sp):
-            novel_by_sim[cid] = "Known"
-            evidence_info[cid] = (sp, 1)
-        elif bx and bx[0] >= ID_KNOWN:
-            novel_by_sim[cid] = "Known"
-            virus_name = bx[2].split('[')[0].strip() if '[' in bx[2] else bx[2][:50]
-            evidence_info[cid] = (f"BLASTX {bx[0]:.1f}% → {virus_name}", 0)
-        else:
-            novel_by_sim[cid] = "New virus"
-            bx_info = f"BLASTX {bx[0]:.1f}% → {bx[1]}" if bx else ""
-            evidence_info[cid] = (bx_info, 0)
-
-    # 写入 plant_virus_summary.tsv
+    # 写入 plant_virus_summary.tsv (全部作为新病毒 vOTU)
     cols = ["contig_id","length","source","aai_completeness","aai_confidence",
-            "viral_length","aai_expected_length","kmer_freq","novelty","evidence",
-            "blastx_pident","blastx_ref",
+            "viral_length","aai_expected_length","kmer_freq",
             "Realm","Kingdom","Phylum","Class","Order","Family","Genus","Species"]
     with open(report_dir / "plant_virus_summary.tsv", "w") as pvf:
         pvf.write("\t".join(cols) + "\n")
         for cid in sorted(plant_data):
             d = plant_data[cid]; cv = cv_data.get(cid, {}); tx = tax_data.get(cid, {})
-            nl = novel_by_sim.get(cid, "New virus")
-            ev = evidence_info.get(cid, ("", 0))
-            bx = blastx_pident.get(cid, (0, "", ""))
             vals = [cid, d["length"], d["source"],
                     cv.get("aai_completeness","NA"), cv.get("aai_confidence","NA"),
-                    cv.get("viral_length","NA"), cv.get("aai_expected_length","NA"), cv.get("kmer_freq","NA"),
-                    nl, ev[0],
-                    f"{bx[0]:.1f}" if bx[0] > 0 else "NA", bx[1] if bx[1] else "NA"]
+                    cv.get("viral_length","NA"), cv.get("aai_expected_length","NA"), cv.get("kmer_freq","NA")]
             vals += [tx.get(rk,"") for rk in ["Realm","Kingdom","Phylum","Class","Order","Family","Genus","Species"]]
             pvf.write("\t".join(str(v) for v in vals) + "\n")
-
-    # 更新环形图数据 (基于 taxonomy 共识)
-    p_counts = {"Known":0,"New virus":0}
-    for cid, label in novel_by_sim.items():
-        p_counts[label] = p_counts.get(label, 0) + 1
-    if sum(p_counts.values()) > 0:
-        with open(report_dir / "plant_virus_taxonomy.tsv", "w") as pvf:
-            pvf.write("Category\tCount\n")
-            for k, v in p_counts.items(): pvf.write(f"{k}\t{v}\n")
 
     n = len(plant_data)
     n_no_rescue = sum(1 for v in plant_data.values() if v["source"]=="免拯救")
     n_rescued = n - n_no_rescue
-    cls_info = f"Known={p_counts.get('Known',0)} New={p_counts.get('New virus',0)}"
     _add("09_Plant_virus", "✓",
-         key_metric=f"{n} 条 (免拯救={n_no_rescue} + rescued={n_rescued}) | {cls_info}",
-         details=f"分类: 05_Taxonomy 9工具共识 (mmseqs/BLAST/CAT等蛋白级比对) | {report_dir / 'plant_virus_summary.tsv'}")
+         key_metric=f"{n} 条 (免拯救={n_no_rescue} + rescued={n_rescued})",
+         details=f"全部作为新病毒 vOTU | {report_dir / 'plant_virus_summary.tsv'}")
 
     # 5. 旭日图 (Plotly Sunburst)
     if not tax_data: return
@@ -939,19 +854,6 @@ def write_html_report(report_dir, stage_stats):
             {"responsive":True,"plugins":{"title":{"display":True,"text":"Taxonomy Novelty"},"legend":{"display":False}},
              "scales":{"y":{"beginAtZero":True,"title":{"text":"序列数"}}}})
 
-    # S05b — 最终植物病毒分类 (all_plant_viruses.fasta × taxonomy)
-    plant_tax_rows = _read_tsv(report_dir / "plant_virus_taxonomy.tsv")
-    if plant_tax_rows:
-        pt_kv = {r["Category"]: int(r["Count"]) for r in plant_tax_rows if int(r.get("Count",0)) > 0}
-        if pt_kv:
-            stage_has_chart['s05b'] = True
-            pt_colors = ["#2e7d32","#1565c0"]
-            _pt_label_map = {"Known":"Known","New virus":"New virus"}
-            chart_scripts += _chart('chart_s05b', 'doughnut', {
-                "labels": [_pt_label_map.get(k,k) for k in pt_kv.keys()],
-                "datasets": [{"data":list(pt_kv.values()),"backgroundColor":pt_colors[:len(pt_kv)]}]},
-                {"responsive":True,"plugins":{"title":{"display":True,"text":"Plant Virus Taxonomy (05_Taxonomy 9-tool consensus)"},"legend":{"position":"bottom"}}})
-
     # S06 — Host distribution
     host_kv = {}
     for s in stage_stats:
@@ -1124,7 +1026,6 @@ def write_html_report(report_dir, stage_stats):
         's02':  [('chart_s02','UniProt Filter')],
         's03':  [('chart_s03','COBRA Rates')],
         's05':  [('chart_s05a','Taxonomy Novelty')],
-        's09':  [('chart_s05b','Plant Virus Taxonomy')],
         's06':  [('chart_s06a','Host Distribution')],
         's07':  [('chart_s07a','CheckV Quality'),('chart_s07b','CheckV Confidence')],
         's08':  [('chart_s08','Rescue Branches')],
@@ -1167,8 +1068,6 @@ def write_html_report(report_dir, stage_stats):
                     if stage_has_chart.get('s02'): active.append(cid)
                 elif sk == 's05':
                     if cid == 'chart_s05a' and stage_has_chart.get('s05'): active.append(cid)
-                elif sk == 's09':
-                    if cid == 'chart_s05b' and stage_has_chart.get('s05b'): active.append(cid)
                 elif sk == 's07':
                     if cid == 'chart_s07a' and stage_has_chart.get('s07a'): active.append(cid)
                     if cid == 'chart_s07b' and stage_has_chart.get('s07b'): active.append(cid)
@@ -1193,13 +1092,6 @@ def write_html_report(report_dir, stage_stats):
 
         if sk in sankey_by_stage:
             chart_html += f'<div class="sankey-section">{sankey_by_stage[sk]}</div>'
-
-        # S09 分类方法说明
-        if sk == 's09' and stage_has_chart.get('s05b'):
-            chart_html += '<div style="padding:4px 22px 12px;font-size:11px;color:var(--muted);line-height:1.6">' \
-                'Classification: 05_Taxonomy 9-tool consensus (genomad/metabuli/CAT/diamond_lca/mmseqs/VITAP/' \
-                'ACVirus/vcontact3/PhaGCN3) — incorporates protein-level alignments (mmseqs RVDB, DIAMOND, CAT).' \
-                '<br>Novelty: Known = has Species annotation | NewSp = has Genus | NewGe = has Family | NewFa = above-family novel.</div>'
 
         # 在卡片内嵌入对应 TSV 数据表
         table_html = ""
