@@ -459,16 +459,25 @@ if (length(common_ids)>0) {
   generate_grouped_consistent_files(all_data, common_ids, opt$output)
 }
 
-# 最终整合 (priority-based)
+# 最终整合 (priority-based, Species 优先)
 log_msg("INFO", "最终整合...")
 long_dt <- rbindlist(lapply(names(all_data), function(n) {
   d <- copy(all_data[[n]]); d[, Tool:=n]; d
 }), use.names=TRUE, fill=TRUE)
 long_dt[, Completeness := rowSums(!is.na(.SD) & .SD!=""), .SDcols=TAX_LEVELS]
+# 有效种名判定: 非空 + 非 -inae/-idae 结尾 + 非 sp./cf./aff.
+valid_sp <- function(x) {
+  if (is.na(x) || x=="") return(FALSE)
+  if (grepl("inae$|idae$|ales$|icetes$", x, ignore.case=TRUE)) return(FALSE)
+  if (grepl("\\bsp\\.?\\b|\\bcf\\.?\\b|\\baff\\.?\\b", x, ignore.case=TRUE)) return(FALSE)
+  return(TRUE)
+}
+long_dt[, HasSpecies := valid_sp(Species)]
 prio_map <- c("vcontact3"=1,"vitap"=2,"acvirus"=3,"phagcn3"=4,"mmseqs"=5,
               "genomad"=6,"CAT"=7,"metabuli"=8,"diamond_lca"=9,"contigtax"=10,"BASTA"=11)
 long_dt[, Priority := prio_map[Tool]]; long_dt[is.na(Priority), Priority := 99]
-setorder(long_dt, contig_id, -Completeness, Priority)
+# 排序: 有合法种名的优先, 其次填满度高, 再其次工具优先级
+setorder(long_dt, contig_id, -HasSpecies, -Completeness, Priority)
 final_result <- unique(long_dt, by="contig_id")
 tools_agg <- long_dt[, .(All_Tools=paste(sort(unique(Tool)), collapse=",")), by=contig_id]
 final_result <- merge(final_result, tools_agg, by="contig_id", sort=FALSE)
