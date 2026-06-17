@@ -18,10 +18,11 @@ profiles:
       mmseqs_db:    /home/zhangwenda/database/virus-db/RVDB-30/RVDB.mmseqs
       virus_db:     /home/zhangwenda/database/virus-db/
       uniprot_db:   /home/zhangwenda/database/virus-db/RVDB-30/U-RVDBv30_prot.dmnd
-      host_db:      /home/zhangwenda/database/host_db/
-      blast_db:     /home/zhangwenda/database/virus-db/ncbi-virus_ref/ncbi-virus_ref.blast.db
-      nr_db:        /home/zhangwenda/database/nr_diamond/nr.dmnd
-      db_dir:       /home/zhangwenda/database/virus-db/
+      host_db:           /home/zhangwenda/database/host_db/
+      blast_db:          /home/zhangwenda/database/virus-db/ncbi-virus_ref/ncbi-virus_ref.blast.db
+      nr_db:             /home/zhangwenda/database/nr_diamond/nr.dmnd
+      db_dir:            /home/zhangwenda/database/virus-db/
+      viralverify_hmm:   /home/zhangwenda/database/virus-db/viralverify_db/nbc_hmms.hmm
       checkv_threshold: 90
 
     tools:

@@ -1605,7 +1605,8 @@ def _load_config(args):
     # 数据库路径
     db = profile.get('databases', {})
     for key in ['checkv_db','genomad_db','mmseqs_db','virus_db','uniprot_db',
-                'host_db','blast_db','nr_db','db_dir']:
+                'host_db','blast_db','nr_db','db_dir',
+                'viralverify_hmm','virsorter_db','metabuli_db','virus_taxid']:
         if getattr(args, key, None) is None and key in db:
             setattr(args, key, db[key])
 
