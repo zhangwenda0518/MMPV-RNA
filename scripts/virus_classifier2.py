@@ -287,8 +287,10 @@ def postproc_vitap(inp, s, out):
             if len(ps)<2: continue
             sid, lin = ps[0], ps[1]
             if sid in seen: continue; seen.add(sid)
-            lps = [p for p in reversed(lin.split(";")) if p and p!="-"]
-            fo.write(sid + "\t\t" + ("Viruses;"+";".join(lps) if lps else "Viruses") + "\n")
+            # VITAP lineage: root→leaf (与 ICTV 同向), 不应 reversed
+            lps = [p for p in lin.split(";") if p and p != "-"]
+            prefix = "" if any(lps and lps[0] == "Viruses") else "Viruses;"
+            fo.write(sid + "\t\t" + prefix + ";".join(lps) + "\n")
     return r
 
 def postproc_acvirus(inp, s, out):
