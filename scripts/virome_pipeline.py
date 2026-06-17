@@ -1479,7 +1479,7 @@ def _build_parser(add_help=True):
     g.add_argument('--tax_tools', default='all', help='分类工具: genomad,metabuli,diamond_lca,VITAP,mmseqs,ACVirus,vcontact3,PhaGCN3,all (默认: all)')
     g.add_argument('--tax_jobs', type=int, default=1, help='分类并行任务数 (默认: 1)')
     g.add_argument('--tax_ext', default='.fasta', help='分类输入文件扩展名 (默认: .fasta)')
-    g.add_argument('--tax_sample_name', default='WVDB_votus', help='分类样本名 (输出目录前缀, 默认: WVDB_votus)')
+    g.add_argument('--tax_sample_name', default='Votus', help='分类样本名 (输出目录前缀, 默认: Votus)')
     g.add_argument('--tax_remove_suffix', help='分类输入文件去后缀名')
 
     g = p.add_argument_group('Host 阶段 (run_host_prediction.py)')
@@ -1658,7 +1658,7 @@ def _load_config(args):
 
     # taxonomy
     tax_cfg = profile.get('taxonomy', {})
-    if 'tax_sample_name' in tax_cfg and getattr(args, 'tax_sample_name', 'WVDB_votus') == 'WVDB_votus':
+    if 'tax_sample_name' in tax_cfg and getattr(args, 'tax_sample_name', 'Votus') == 'Votus':
         setattr(args, 'tax_sample_name', tax_cfg['tax_sample_name'])
 
     # host

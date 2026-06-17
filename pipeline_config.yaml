@@ -54,7 +54,7 @@ profiles:
         - /home/zhangwenda/database/virus-db/ncbi-virus_ref/viral.1.1.genomic.fna
 
     taxonomy:
-      tax_sample_name: WVDB_votus  # 分类输出样本名
+      tax_sample_name: Votus  # 分类输出样本名
 
     host:
       host_mode: all               # all / ICTV / RNAVirHost / PhaBOX2
