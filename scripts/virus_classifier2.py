@@ -108,29 +108,37 @@ def lineage_to_ranks(lineage_str):
             ix = anchor + (o - rp)
             if 0 <= ix < len(parts) and parts[ix]!="NA":
                 ranks[rn] = parts[ix]
-        # 修复 mmseqs 10+ 层 lineage: 锚点固定偏移把亚科名塞入了 species/genus
-        # → 若残留段超过 8 级, 从尾部取真实 species/genus
-        sp_idx = RANK_NAMES.index("species")
-        last_mapped = anchor + (sp_idx - rp)
-        if last_mapped + 1 < len(parts):
-            remainder = [p for p in parts[last_mapped:] if p != "NA"
-                         and not any(p.endswith(s) for s in SUBRANKS)]
-            # 最后一段 → species, 倒数第二 → genus
-            if len(remainder) >= 1:
-                ranks["species"] = remainder[-1]
-            if len(remainder) >= 2:
-                ranks["genus"] = remainder[-2]
-            # 如果当前 genus 仍是亚科/科名(-inae/-idae), 清掉用 remainder 的
-            if ranks["genus"] != "NA" and any(ranks["genus"].endswith(s) for s in SUBRANKS):
-                if len(remainder) >= 2:
-                    ranks["genus"] = remainder[-2]
-                else:
-                    ranks["genus"] = "NA"
     else:
         sub = parts[-6:] if len(parts)>=6 else parts
         tr = RANK_NAMES[-len(sub):]
         for i, p in enumerate(sub):
             if i < len(tr) and p!="NA": ranks[tr[i]] = p
+
+    # ── 统一修复: genus/species 含亚科/科名 或 genus 含 sp./cf. 种级标注 ──
+    _valid_non_subrank = [p for p in parts if p != "NA"
+                          and not any(p.endswith(s) for s in SUBRANKS)]
+    # 1) genus 或 species 中有 subrank 名 (-virinae/-viricotina) → 从有效尾部重建
+    if any(ranks.get(rn,"NA") != "NA" and any(ranks[rn].endswith(s) for s in SUBRANKS)
+           for rn in ("genus","species")):
+        if len(_valid_non_subrank) >= 1:
+            ranks["species"] = _valid_non_subrank[-1]
+        if len(_valid_non_subrank) >= 2:
+            ranks["genus"] = _valid_non_subrank[-2]
+        else:
+            ranks["genus"] = "NA"
+    # 2) species 为 NA 且 genus 看起来像种名 (含 sp. / 双名法) → 上移到 species
+    if ranks["species"] == "NA" and ranks["genus"] != "NA":
+        ge = ranks["genus"]
+        looks_like_species = (" sp." in ge or " sp" == ge[-3:] or " cf." in ge or
+                              " aff." in ge or len(ge.split()) >= 2)
+        if looks_like_species:
+            ranks["species"] = ge
+            # genus 回退到倒数第二有效非 subrank
+            if len(_valid_non_subrank) >= 2 and _valid_non_subrank[-2] != ge:
+                ranks["genus"] = _valid_non_subrank[-2]
+            else:
+                ranks["genus"] = "NA"
+
     return ranks
 
 # ==========================================================
@@ -515,20 +523,24 @@ def fill_taxonomy_na(tsv_path, output_path):
                 for o, rn in enumerate(rank_cols):
                     ix = pi + (o - rp)
                     if 0<=ix<len(lp): fill[rn]=lp[ix]
-                # 修复 10+ 层 lineage: 尾部剩余段回填 species/genus
-                last_mapped = pi + (len(rank_cols) - 1 - rp)
-                if last_mapped + 1 < len(lp):
-                    rem = [p for p in lp[last_mapped:] if p and p not in skip_vals
-                           and not any(p.endswith(s) for s in subranks)]
-                    if len(rem) >= 1: fill["species"] = rem[-1]
-                    if len(rem) >= 2: fill["genus"] = rem[-2]
-                    if fill.get("genus","") and any(fill["genus"].endswith(s) for s in subranks):
-                        fill["genus"] = rem[-2] if len(rem) >= 2 else ""
             else:
                 tail = lp[-6:] if len(lp)>=6 else lp
                 tr = ["phylum","class","order","family","genus","species"][-len(tail):]
                 for i, p in enumerate(tail):
                     if i<len(tr): fill[tr[i]]=p
+            # 统一修复 (同 lineage_to_ranks)
+            _vns = [p for p in lp if p and p not in skip_vals
+                    and not any(p.endswith(s) for s in subranks)]
+            if any(fill.get(rn,"") != "" and any(fill[rn].endswith(s) for s in subranks)
+                   for rn in ("genus","species")):
+                if len(_vns) >= 1: fill["species"] = _vns[-1]
+                if len(_vns) >= 2: fill["genus"] = _vns[-2]
+                else: fill["genus"] = ""
+            if fill.get("species","") == "" and fill.get("genus","") != "":
+                ge = fill["genus"]
+                if " sp." in ge or " sp" == ge[-3:] or " cf." in ge or " aff." in ge or len(ge.split()) >= 2:
+                    fill["species"] = ge
+                    fill["genus"] = _vns[-2] if len(_vns) >= 2 and _vns[-2] != ge else ""
         n2r[name]=fill
     fc = 0
     for row_idx, dn in to_fill:
