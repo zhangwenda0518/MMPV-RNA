@@ -13,6 +13,9 @@ import logging
 import argparse
 import subprocess
 
+if sys.platform == 'win32':
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+
 # ==========================================
 # 0. 终端颜色 UI 配置
 # ==========================================

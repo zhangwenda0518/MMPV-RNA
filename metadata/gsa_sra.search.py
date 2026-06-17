@@ -10,6 +10,10 @@
 4. 清洗了各种形式的 missing/not collected 等无效信息。
 """
 
+import sys
+if sys.platform == 'win32':
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+
 import os
 import re
 import time

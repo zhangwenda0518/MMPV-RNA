@@ -13,6 +13,9 @@ import os
 import sys
 import re
 import csv
+
+if sys.platform == 'win32':
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 import time
 import argparse
 import subprocess

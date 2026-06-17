@@ -9,6 +9,7 @@ Used by public_data_pipeline.py and build_host_pipeline.py.
 import os
 import sys
 import json
+import shutil
 import subprocess
 from datetime import datetime
 
@@ -131,14 +132,19 @@ def run_cmd(cmd, stage_name, log_dir, timeout=86400, secrets=None):
             if s:
                 log_cmd = log_cmd.replace(s, '***')
 
+    bash = shutil.which('bash') or '/bin/bash' if sys.platform != 'win32' else None
+    # Windows: shlex.quote produces POSIX single quotes; cmd.exe needs double quotes
+    if sys.platform == 'win32' and bash is None:
+        cmd = cmd.replace("'", '"')
     with open(log_file, 'w', encoding='utf-8') as lf:
         lf.write(f"# Stage: {stage_name}\n"
                  f"# Cmd: {log_cmd}\n"
                  f"# {datetime.now().isoformat()}\n"
                  f"{'=' * 60}\n\n")
-        proc = subprocess.Popen(cmd, shell=True, executable='/bin/bash',
+        proc = subprocess.Popen(cmd, shell=True, executable=bash,
                                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                text=True, bufsize=1)
+                                encoding='utf-8', errors='replace', bufsize=1,
+                                env={**os.environ, 'PYTHONIOENCODING': 'utf-8'})
         for line in iter(proc.stdout.readline, ''):
             line_out = line
             if secrets:

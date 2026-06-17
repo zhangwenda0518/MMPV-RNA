@@ -123,6 +123,8 @@ class PublicDataPipeline:
             return False
         UI.ok(f"extracted {n} runs -> {sra_list}")
         mode = 'both' if self.args.deepseek_api else 'local'
+        if mode == 'local':
+            UI.warn("未提供 --deepseek-api, 将跳过 AI 深度清洗 (mode=local)")
         cmd = (
             f'python {shlex.quote(self._bin("gsa_sra.info.py"))} '
             f'--input {shlex.quote(sra_list)} --mode {shlex.quote(mode)} --fill-date '
