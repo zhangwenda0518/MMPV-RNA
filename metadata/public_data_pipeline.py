@@ -173,14 +173,14 @@ class PublicDataPipeline:
         s = 'plot'
         UI.stage(self.STAGE_DESC[s], 'start')
         self.ckpt.mark_start(s)
-        merged = os.path.join(self.dirs['search'], 'SRA_GSA_Merged_Final.csv')
-        if not os.path.isfile(merged):
-            UI.err(f"missing search output: {merged}")
+        core13 = os.path.join(self.dirs['info'], 'Global_Unified_Metadata_Core13.csv')
+        if not os.path.isfile(core13):
+            UI.err(f"missing info output: {core13}")
             self.ckpt.mark_fail(s)
             return False
         cmd = (
             f'python {shlex.quote(self._bin("gsa_sra.plot.py"))} '
-            f'--input {shlex.quote(merged)} '
+            f'--input {shlex.quote(core13)} '
             f'--outdir {shlex.quote(self.dirs["plot"])}'
         )
         rc = run_cmd(cmd, s, self.log_dir)
