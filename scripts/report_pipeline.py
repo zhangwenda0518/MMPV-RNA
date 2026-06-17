@@ -572,31 +572,126 @@ def _generate_plant_virus_summary(root, report_dir, _add, blast_db=None):
                     tax_data[cid] = {rk: row.get(rk, row.get(rk.lower(),"")) for rk in
                                      ["Realm","Kingdom","Phylum","Class","Order","Family","Genus","Species"]}
 
-    # 4. Novelty 分类: 基于已有的 05_Taxonomy 多工具共识 (含蛋白级比对)
-    #    无需额外 DIAMOND — 02_Identification blast_output/*.vp.txt + mmseqs 已在分类中体现
-    novel_by_sim = {}
-    if tax_data:
+    # 4. Novelty 分类: 基于多工具 combined_taxonomy.tsv 的最佳证据
+    #    不只看共识 Species — 任何工具给出合法种名即算 Known
+    combined_tsv = root / "05_Taxonomy" / "WVDB_votus.virus_classed" / "WVDB_votus_combined_taxonomy.tsv"
+    per_tool = {}  # {contig_id: {tool: {Genus, Species, Family}}}
+    if combined_tsv.is_file():
+        with open(combined_tsv) as cf:
+            for row in csv.DictReader(cf, delimiter="\t"):
+                cid = row.get("seq_name","")
+                if cid in plant_data:
+                    if cid not in per_tool: per_tool[cid] = {}
+                    tool = row.get("tool","")
+                    per_tool[cid][tool] = {
+                        "Genus": row.get("Genus",""), "Species": row.get("Species",""),
+                        "Family": row.get("Family",""), "Order": row.get("Order",""),
+                        "Class": row.get("Class",""), "Phylum": row.get("Phylum",""),
+                        "Kingdom": row.get("Kingdom",""), "Realm": row.get("Realm",""),
+                    }
+
+    def _valid_species(sp):
+        """合法双名法: 两单词, 无 sp./cf./aff./-inae/-idae/-virinae 等非种名标记"""
+        if not sp or sp in ("NA","-",""): return False
+        sp = sp.strip().strip("'\"")
+        if len(sp)<5: return False
+        invalid = ["sp.","cf.","aff.","incertae","unclassified","environmental","uncultured",
+                   "virinae","viridae","virales","viricetes","viricota","virae","viria"]
+        low = sp.lower()
+        if any(w in low for w in invalid): return False
+        if sp.endswith("inae") or sp.endswith("idae") or sp.endswith("ales"): return False
+        parts = sp.split()
+        if len(parts) >= 2:
+            # 检查不是 "Genus sp." 格式
+            if parts[1] in ("sp.","sp","cf.","cf","aff.","aff"): return False
+            return True
+        return False
+
+    def _valid_genus(ge):
+        """合法属名: 非亚科/科/目名, 非 'sp.' 格式"""
+        if not ge or ge in ("NA","-",""): return False
+        ge = ge.strip()
+        if len(ge)<4: return False
+        if ge.endswith("inae") or ge.endswith("idae") or ge.endswith("ales"): return False
+        if "sp." in ge.lower() or "unclassified" in ge.lower(): return False
+        return True
+
+    def _valid_family(fa):
+        """合法科名: -idae 结尾"""
+        if not fa or fa in ("NA","-",""): return False
+        fa = fa.strip()
+        return fa.endswith("idae") or fa.endswith("viridae")
+
+    novel_by_sim = {}  # {cid: "Known"|"NewSp"|"NewGe"|"NewFa"}
+    evidence_info = {}  # {cid: (best_species, n_tools_supporting)}
+
+    if per_tool:
         for cid in plant_data:
-            tx = tax_data.get(cid, {})
-            sp, ge, fa = tx.get("Species",""), tx.get("Genus",""), tx.get("Family","")
-            if sp and sp not in ("NA","-",""): novel_by_sim[cid] = "Known"
-            elif ge and ge not in ("NA","-",""): novel_by_sim[cid] = "NewSp"
-            elif fa and fa not in ("NA","-",""): novel_by_sim[cid] = "NewGe"
-            else: novel_by_sim[cid] = "NewFa"
+            tools = per_tool.get(cid, {})
+            # 收集所有工具的 Species/Genus/Family
+            all_sp = set(); all_ge = set(); all_fa = set()
+            valid_sp = set(); valid_ge = set()
+            for tool, tx in tools.items():
+                sp = tx.get("Species","")
+                ge = tx.get("Genus","")
+                fa = tx.get("Family","")
+                if sp: all_sp.add(sp)
+                if ge: all_ge.add(ge)
+                if fa: all_fa.add(fa)
+                if _valid_species(sp):
+                    valid_sp.add(sp)
+                if _valid_genus(ge):
+                    valid_ge.add(ge)
+
+            # 判定 novelty
+            n_tools_with_sp = sum(1 for t in tools if _valid_species(tools[t].get("Species","")))
+            # 找最佳 species 名称和工具支持数
+            best_sp = ""; best_cnt = 0
+            for sp_name in valid_sp:
+                cnt = sum(1 for t in tools if tools[t].get("Species","") == sp_name)
+                if cnt > best_cnt: best_cnt = cnt; best_sp = sp_name
+            if not best_sp and valid_ge:
+                for ge_name in valid_ge:
+                    cnt = sum(1 for t in tools if _valid_genus(tools[t].get("Genus","")))
+                    if cnt > best_cnt: best_cnt = cnt; best_sp = ge_name + " (genus only)"
+
+            if valid_sp:
+                novel_by_sim[cid] = "Known"
+                evidence_info[cid] = (best_sp, best_cnt)
+            elif valid_ge:
+                novel_by_sim[cid] = "NewSp"
+                evidence_info[cid] = (best_sp, best_cnt) if best_sp else ("", 0)
+            elif any(_valid_family(f) for f in all_fa):
+                novel_by_sim[cid] = "NewGe"
+                evidence_info[cid] = ("", 0)
+            else:
+                novel_by_sim[cid] = "NewFa"
+                evidence_info[cid] = ("", 0)
+    else:
+        # 回退: 用 consensus taxonomy (旧逻辑)
+        if tax_data:
+            for cid in plant_data:
+                tx = tax_data.get(cid, {})
+                sp, ge, fa = tx.get("Species",""), tx.get("Genus",""), tx.get("Family","")
+                if _valid_species(sp): novel_by_sim[cid] = "Known"
+                elif _valid_genus(ge): novel_by_sim[cid] = "NewSp"
+                elif _valid_family(fa): novel_by_sim[cid] = "NewGe"
+                else: novel_by_sim[cid] = "NewFa"
 
     # 写入 plant_virus_summary.tsv
     cols = ["contig_id","length","source","aai_completeness","aai_confidence",
-            "viral_length","aai_expected_length","kmer_freq","novelty",
+            "viral_length","aai_expected_length","kmer_freq","novelty","best_species","n_tools",
             "Realm","Kingdom","Phylum","Class","Order","Family","Genus","Species"]
     with open(report_dir / "plant_virus_summary.tsv", "w") as pvf:
         pvf.write("\t".join(cols) + "\n")
         for cid in sorted(plant_data):
             d = plant_data[cid]; cv = cv_data.get(cid, {}); tx = tax_data.get(cid, {})
             nl = novel_by_sim.get(cid, "NewFa")
+            ev = evidence_info.get(cid, ("", 0))
             vals = [cid, d["length"], d["source"],
                     cv.get("aai_completeness","NA"), cv.get("aai_confidence","NA"),
                     cv.get("viral_length","NA"), cv.get("aai_expected_length","NA"), cv.get("kmer_freq","NA"),
-                    nl]
+                    nl, best_sp, n_sp_tools]
             vals += [tx.get(rk,"") for rk in ["Realm","Kingdom","Phylum","Class","Order","Family","Genus","Species"]]
             pvf.write("\t".join(str(v) for v in vals) + "\n")
 
