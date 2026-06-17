@@ -276,7 +276,7 @@ def postproc_vitap(inp, s, out):
             if sid in seen: continue; seen.add(sid)
             # VITAP lineage: root→leaf (与 ICTV 同向), 不应 reversed
             lps = [p for p in lin.split(";") if p and p != "-"]
-            prefix = "" if any(lps and lps[0] == "Viruses") else "Viruses;"
+            prefix = "" if (lps and lps[0].lower() == "viruses") else "Viruses;"
             fo.write(sid + "\t\t" + prefix + ";".join(lps) + "\n")
     return r
 
