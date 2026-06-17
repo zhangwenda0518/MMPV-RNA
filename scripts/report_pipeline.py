@@ -1655,7 +1655,7 @@ def generate_ai_summary(stage_stats, kpis, report_dir):
             "Content-Type": "application/json",
             "Authorization": f"Bearer {api_key}"
         })
-        with urllib.request.urlopen(req, timeout=90) as resp:
+        with urllib.request.urlopen(req, timeout=300) as resp:
             result = _json.loads(resp.read())
         raw = result["choices"][0]["message"]["content"].strip()
         print(f"  AI Summary generated ({len(raw)} chars)")

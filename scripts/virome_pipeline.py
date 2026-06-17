@@ -518,10 +518,9 @@ class ViromePipeline:
         self.log.info("=" * 50)
         self.log.info("[2] Genomad / Blast / VirSorter2 / ViralVerify / VirHunter / Metabuli")
 
+        asm_dir = Path(self.args.input_assembly) if self.args.input_assembly else self.d['asm']
         asm_map = getattr(self, 'asm_map', {})
         if not asm_map:
-            # 独立运行时: 优先 --input_assembly, 否则默认 01_Assembly/
-            asm_dir = Path(self.args.input_assembly) if self.args.input_assembly else self.d['asm']
             scan_tools = ['megahit', 'rnaviralspades', 'penguin']
             asm_map = scan_contig_files(asm_dir, scan_tools)
         if not asm_map:
@@ -1758,7 +1757,7 @@ def main():
     logger.info("  Output:   %s", args.output_dir)
 
     # 根据 stages 自动设置 skip 标志
-    needs_reads = bool(stages & {'clean','deplete','assembly','cobra','rescue'})
+    needs_reads = 'all' in stages or bool(stages & {'clean','deplete','assembly','cobra','rescue'})
     if stages == {'clean'}:
         args.skip_clean = False
         args.skip_depletion = True
@@ -1776,6 +1775,8 @@ def main():
         args.skip_depletion = 'deplete' not in stages
         logger.info("  Flow:     %s", ','.join(sorted(stages)))
     else:  # all
+        args.skip_clean = False
+        args.skip_depletion = False
         flow = []
         flow.append('SKIP' if args.skip_clean else 'Clean')
         flow.append('SKIP' if args.skip_depletion else 'Deplete')
@@ -1819,11 +1820,11 @@ def main():
 
     pipe = ViromePipeline(args, logger)
 
-    needs_reads = bool(stages & {'clean','deplete','assembly','cobra','rescue'})
+    needs_reads = 'all' in stages or bool(stages & {'clean','deplete','assembly','cobra','rescue'})
     if needs_reads:
         # 优先使用 --input_reads 指定的目录
         if args.input_reads and Path(args.input_reads).exists():
-            pipe.reads_dir = Path(args.input_reads)
+            pipe.reads_dir = Path(args.input_reads).absolute()
         elif 'deplete' in stages:
             # deplete: 自动使用 clean 输出 (优先 clumpify, 否则 fasta)
             cl = pipe.d['clean'] / '3.clumpify'
