@@ -1146,10 +1146,10 @@ class ViromePipeline:
             return
 
         tax_dir = self.d['taxonomy']
-        sample = getattr(self.args, 'tax_sample_name', None) or "WVDB_votus"
-        out_subdir = tax_dir / f"{sample}.virus_classed"
+        sample = getattr(self.args, 'tax_sample_name', None) or "Votus"
+        out_subdir = tax_dir / f"{sample}.classed"
         combined_tsv = out_subdir / f"{sample}_combined_taxonomy.tsv"
-        int_dir = tax_dir / "integrated"
+        int_dir = tax_dir / f"{sample}.integrated"
         final_tsv = int_dir / "final_integrated_classification.tsv"
 
         # virus_classifier2.py 完整参数:
@@ -1203,6 +1203,7 @@ class ViromePipeline:
         elif combined_tsv.is_file():
             int_dir.mkdir(parents=True, exist_ok=True)
             parts = [
+                f"cd {int_dir} &&",
                 "Rscript", str(self.sc['classifier_R']),
                 "--combined", str(combined_tsv),
                 "--output", str(int_dir),
@@ -1224,7 +1225,8 @@ class ViromePipeline:
         self.log.info("[6] 宿主预测 (RNAVirHost + PhaBOX2 + ICTV, ICTV > RVH > PB2)")
 
         centroids = self.d['cluster'] / "centroids" / "final_centroids.fasta"
-        tax_tsv = self.d['taxonomy'] / "integrated" / "final_integrated_classification.tsv"
+        sample = getattr(self.args, 'tax_sample_name', None) or "Votus"
+        tax_tsv = self.d['taxonomy'] / f"{sample}.integrated" / "final_integrated_classification.tsv"
         if not centroids.exists():
             self.log.warning("未找到 centroids, 跳过宿主预测")
             return
