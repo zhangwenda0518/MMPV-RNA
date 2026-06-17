@@ -108,6 +108,24 @@ def lineage_to_ranks(lineage_str):
             ix = anchor + (o - rp)
             if 0 <= ix < len(parts) and parts[ix]!="NA":
                 ranks[rn] = parts[ix]
+        # 修复 mmseqs 10+ 层 lineage: 锚点固定偏移把亚科名塞入了 species/genus
+        # → 若残留段超过 8 级, 从尾部取真实 species/genus
+        sp_idx = RANK_NAMES.index("species")
+        last_mapped = anchor + (sp_idx - rp)
+        if last_mapped + 1 < len(parts):
+            remainder = [p for p in parts[last_mapped:] if p != "NA"
+                         and not any(p.endswith(s) for s in SUBRANKS)]
+            # 最后一段 → species, 倒数第二 → genus
+            if len(remainder) >= 1:
+                ranks["species"] = remainder[-1]
+            if len(remainder) >= 2:
+                ranks["genus"] = remainder[-2]
+            # 如果当前 genus 仍是亚科/科名(-inae/-idae), 清掉用 remainder 的
+            if ranks["genus"] != "NA" and any(ranks["genus"].endswith(s) for s in SUBRANKS):
+                if len(remainder) >= 2:
+                    ranks["genus"] = remainder[-2]
+                else:
+                    ranks["genus"] = "NA"
     else:
         sub = parts[-6:] if len(parts)>=6 else parts
         tr = RANK_NAMES[-len(sub):]
