@@ -515,6 +515,15 @@ def fill_taxonomy_na(tsv_path, output_path):
                 for o, rn in enumerate(rank_cols):
                     ix = pi + (o - rp)
                     if 0<=ix<len(lp): fill[rn]=lp[ix]
+                # 修复 10+ 层 lineage: 尾部剩余段回填 species/genus
+                last_mapped = pi + (len(rank_cols) - 1 - rp)
+                if last_mapped + 1 < len(lp):
+                    rem = [p for p in lp[last_mapped:] if p and p not in skip_vals
+                           and not any(p.endswith(s) for s in subranks)]
+                    if len(rem) >= 1: fill["species"] = rem[-1]
+                    if len(rem) >= 2: fill["genus"] = rem[-2]
+                    if fill.get("genus","") and any(fill["genus"].endswith(s) for s in subranks):
+                        fill["genus"] = rem[-2] if len(rem) >= 2 else ""
             else:
                 tail = lp[-6:] if len(lp)>=6 else lp
                 tr = ["phylum","class","order","family","genus","species"][-len(tail):]
