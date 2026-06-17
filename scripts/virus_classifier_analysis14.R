@@ -466,13 +466,9 @@ long_dt <- rbindlist(lapply(names(all_data), function(n) {
 }), use.names=TRUE, fill=TRUE)
 long_dt[, Completeness := rowSums(!is.na(.SD) & .SD!=""), .SDcols=TAX_LEVELS]
 # 有效种名判定: 非空 + 非 -inae/-idae 结尾 + 非 sp./cf./aff.
-valid_sp <- function(x) {
-  if (is.na(x) || x=="") return(FALSE)
-  if (grepl("inae$|idae$|ales$|icetes$", x, ignore.case=TRUE)) return(FALSE)
-  if (grepl("\\bsp\\.?\\b|\\bcf\\.?\\b|\\baff\\.?\\b", x, ignore.case=TRUE)) return(FALSE)
-  return(TRUE)
-}
-long_dt[, HasSpecies := valid_sp(Species)]
+long_dt[, HasSpecies := !is.na(Species) & Species!=""
+         & !grepl("inae$|idae$|ales$|icetes$", Species, ignore.case=TRUE)
+         & !grepl("\\bsp\\.?\\b|\\bcf\\.?\\b|\\baff\\.?\\b", Species, ignore.case=TRUE, perl=TRUE)]
 prio_map <- c("vcontact3"=1,"vitap"=2,"acvirus"=3,"phagcn3"=4,"mmseqs"=5,
               "genomad"=6,"CAT"=7,"metabuli"=8,"diamond_lca"=9,"contigtax"=10,"BASTA"=11)
 long_dt[, Priority := prio_map[Tool]]; long_dt[is.na(Priority), Priority := 99]
