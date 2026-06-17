@@ -572,37 +572,31 @@ def _generate_plant_virus_summary(root, report_dir, _add, blast_db=None):
                     tax_data[cid] = {rk: row.get(rk, row.get(rk.lower(),"")) for rk in
                                      ["Realm","Kingdom","Phylum","Class","Order","Family","Genus","Species"]}
 
-    # 4. Novelty 分类: 基于 R 共识 final_integrated_classification.tsv
-    #    (已修复 lineage_to_ranks + R 共识 HasSpecies 优先级)
+    # 4. Novelty 分类: Known vs New virus
+    #    有合法种名(双名法) → Known; 否则 → New virus
     def _sp_is_valid(sp):
         if not sp or sp in ("NA","-",""): return False
         sp = sp.strip()
         if len(sp)<5: return False
         if sp.endswith("inae") or sp.endswith("idae") or sp.endswith("ales"): return False
         if any(w in sp.lower() for w in ("sp.","cf.","aff.","unclassified","incertae")): return False
-        return " " in sp and not sp.split()[1] in ("sp.","sp","cf.","cf")
+        return " " in sp and sp.split()[1] not in ("sp.","sp","cf.","cf")
 
     novel_by_sim = {}
     evidence_info = {}
     if tax_data:
         for cid in plant_data:
             tx = tax_data.get(cid, {})
-            sp, ge, fa = tx.get("Species",""), tx.get("Genus",""), tx.get("Family","")
+            sp = tx.get("Species","")
             if _sp_is_valid(sp):
                 novel_by_sim[cid] = "Known"
                 evidence_info[cid] = (sp, 1)
-            elif ge and ge not in ("NA","-","") and not ge.endswith("inae") and "sp." not in ge.lower():
-                novel_by_sim[cid] = "NewSp"
-                evidence_info[cid] = (ge + " (genus)", 0)
-            elif fa and fa not in ("NA","-",""):
-                novel_by_sim[cid] = "NewGe"
-                evidence_info[cid] = ("", 0)
             else:
-                novel_by_sim[cid] = "NewFa"
+                novel_by_sim[cid] = "New virus"
                 evidence_info[cid] = ("", 0)
     else:
         for cid in plant_data:
-            novel_by_sim[cid] = "NewFa"
+            novel_by_sim[cid] = "New virus"
             evidence_info[cid] = ("", 0)
 
     # 写入 plant_virus_summary.tsv
@@ -623,12 +617,9 @@ def _generate_plant_virus_summary(root, report_dir, _add, blast_db=None):
             pvf.write("\t".join(str(v) for v in vals) + "\n")
 
     # 更新环形图数据 (基于 taxonomy 共识)
-    p_counts = {"Known":0,"Novel_Species":0,"Novel_Genus":0,"Novel_Family":0}
+    p_counts = {"Known":0,"New virus":0}
     for cid, label in novel_by_sim.items():
-        if label == "Known": p_counts["Known"] += 1
-        elif label == "NewSp": p_counts["Novel_Species"] += 1
-        elif label == "NewGe": p_counts["Novel_Genus"] += 1
-        else: p_counts["Novel_Family"] += 1
+        p_counts[label] = p_counts.get(label, 0) + 1
     if sum(p_counts.values()) > 0:
         with open(report_dir / "plant_virus_taxonomy.tsv", "w") as pvf:
             pvf.write("Category\tCount\n")
@@ -637,7 +628,7 @@ def _generate_plant_virus_summary(root, report_dir, _add, blast_db=None):
     n = len(plant_data)
     n_no_rescue = sum(1 for v in plant_data.values() if v["source"]=="免拯救")
     n_rescued = n - n_no_rescue
-    cls_info = f"Known={p_counts.get('Known',0)} NewSp={p_counts.get('Novel_Species',0)} NewGe={p_counts.get('Novel_Genus',0)} NewFa={p_counts.get('Novel_Family',0)}"
+    cls_info = f"Known={p_counts.get('Known',0)} New={p_counts.get('New virus',0)}"
     _add("09_Plant_virus", "✓",
          key_metric=f"{n} 条 (免拯救={n_no_rescue} + rescued={n_rescued}) | {cls_info}",
          details=f"分类: 05_Taxonomy 9工具共识 (mmseqs/BLAST/CAT等蛋白级比对) | {report_dir / 'plant_virus_summary.tsv'}")
@@ -913,8 +904,8 @@ def write_html_report(report_dir, stage_stats):
         pt_kv = {r["Category"]: int(r["Count"]) for r in plant_tax_rows if int(r.get("Count",0)) > 0}
         if pt_kv:
             stage_has_chart['s05b'] = True
-            pt_colors = ["#2e7d32","#1565c0","#ef6c00","#c62828"]
-            _pt_label_map = {"Known":"已知","Novel_Species":"新种","Novel_Genus":"新属","Novel_Family":"新科"}
+            pt_colors = ["#2e7d32","#1565c0"]
+            _pt_label_map = {"Known":"Known","New virus":"New virus"}
             chart_scripts += _chart('chart_s05b', 'doughnut', {
                 "labels": [_pt_label_map.get(k,k) for k in pt_kv.keys()],
                 "datasets": [{"data":list(pt_kv.values()),"backgroundColor":pt_colors[:len(pt_kv)]}]},
