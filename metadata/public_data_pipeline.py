@@ -173,22 +173,40 @@ class PublicDataPipeline:
         s = 'plot'
         UI.stage(self.STAGE_DESC[s], 'start')
         self.ckpt.mark_start(s)
-        core13 = os.path.join(self.dirs['info'], 'Global_Unified_Metadata_Core13.csv')
-        if not os.path.isfile(core13):
-            UI.err(f"missing info output: {core13}")
+
+        # 收集可用数据源: (标签, csv路径, 输出子目录)
+        sources = []
+        search_csv = os.path.join(self.dirs['search'], 'SRA_GSA_Merged_Final.csv')
+        info_csv = os.path.join(self.dirs['info'], 'Global_Unified_Metadata_Core13.csv')
+        if os.path.isfile(search_csv):
+            sources.append(('search', search_csv, 'from_search'))
+        if os.path.isfile(info_csv):
+            sources.append(('info', info_csv, 'from_info'))
+        if not sources:
+            UI.err(f"missing both search and info output")
             self.ckpt.mark_fail(s)
             return False
-        cmd = (
-            f'python {shlex.quote(self._bin("gsa_sra.plot.py"))} '
-            f'--input {shlex.quote(core13)} '
-            f'--outdir {shlex.quote(self.dirs["plot"])}'
-        )
-        rc = run_cmd(cmd, s, self.log_dir)
-        if rc == 0:
-            UI.ok(f"output: {self.dirs['plot']}/Combined_Landscape_Full.pdf")
+
+        all_ok = True
+        for label, csv_path, subdir in sources:
+            outdir = os.path.join(self.dirs['plot'], subdir)
+            os.makedirs(outdir, exist_ok=True)
+            UI.info(f"绘制 [{label}] → {outdir}")
+            cmd = (
+                f'python {shlex.quote(self._bin("gsa_sra.plot.py"))} '
+                f'--input {shlex.quote(csv_path)} '
+                f'--outdir {shlex.quote(outdir)}'
+            )
+            rc = run_cmd(cmd, s, self.log_dir)
+            if rc != 0:
+                UI.err(f"plot [{label}] failed")
+                all_ok = False
+
+        if all_ok:
+            UI.ok(f"output: {self.dirs['plot']}/from_search/ + from_info/")
             self.ckpt.mark_done(s)
             return True
-        self.ckpt.mark_fail(s, f"exit={rc}")
+        self.ckpt.mark_fail(s, "one or more plot sources failed")
         return False
 
 

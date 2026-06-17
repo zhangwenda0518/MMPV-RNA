@@ -19,6 +19,8 @@ import math
 import argparse
 import textwrap
 import pandas as pd
+import matplotlib
+matplotlib.use('Agg')  # non-interactive backend, avoids Tk memory issues
 import matplotlib.pyplot as plt
 import seaborn as sns
 import matplotlib as mpl
@@ -49,13 +51,6 @@ def add_bar_labels(ax, values, is_horizontal=True):
             ax.text(v + offset, i, str(v), va='center', ha='left', fontsize=12, color='black')
         else:
             ax.text(i, v + offset, str(v), va='bottom', ha='center', fontsize=12, color='black')
-
-def generate_individual_plot(fig, ax, output_dir, name):
-    extent = ax.get_window_extent().transformed(fig.dpi_scale_trans.inverted())
-    pdf_path = os.path.join(output_dir, f"{name}.pdf")
-    png_path = os.path.join(output_dir, f"{name}.png")
-    fig.savefig(pdf_path, format='pdf', bbox_inches=extent.expanded(1.2, 1.3))
-    fig.savefig(png_path, format='png', dpi=300, bbox_inches=extent.expanded(1.2, 1.3))
 
 def plot_sci_landscape(csv_path, output_dir="SCI_Figures_Output"):
     os.makedirs(output_dir, exist_ok=True)
@@ -103,7 +98,7 @@ def plot_sci_landscape(csv_path, output_dir="SCI_Figures_Output"):
     # ==========================================
     # 2. 动态构建总画布 (3x2 完美布局)
     # ==========================================
-    fig, axes = plt.subplots(3, 2, figsize=(22, 24), dpi=300)
+    fig, axes = plt.subplots(3, 2, figsize=(14, 16), dpi=150)
     ax_list = axes.flatten()
     colors_db = {'SRA': '#4C72B0', 'GSA': '#C44E52'} 
     plot_idx = 0
@@ -131,7 +126,6 @@ def plot_sci_landscape(csv_path, output_dir="SCI_Figures_Output"):
     ax.set_ylabel('Number of Runs', fontsize=16)
     ax.tick_params(axis='x', rotation=45, labelsize=13)
     ax.set_xticks(year_counts.index)
-    generate_individual_plot(fig, ax, output_dir, "Panel_A_Temporal")
     plot_idx += 1
 
     # ------------------------------------------
@@ -170,7 +164,6 @@ def plot_sci_landscape(csv_path, output_dir="SCI_Figures_Output"):
                 fontsize=15, fontweight='bold', color='white')
 
     ax.set_title('B. Proportion of Data Origin', loc='left', fontsize=20, fontweight='bold', pad=40)
-    generate_individual_plot(fig, ax, output_dir, "Panel_B_Origin")
     plot_idx += 1
 
     # ------------------------------------------
@@ -188,7 +181,6 @@ def plot_sci_landscape(csv_path, output_dir="SCI_Figures_Output"):
     ax.set_title('C. Top 10 Contributing Organizations', loc='left', fontsize=20, fontweight='bold')
     ax.set_xlabel('Number of Runs', fontsize=16)
     ax.tick_params(axis='y', labelsize=12)
-    generate_individual_plot(fig, ax, output_dir, "Panel_C_Organizations")
     plot_idx += 1
 
     # ------------------------------------------
@@ -206,7 +198,6 @@ def plot_sci_landscape(csv_path, output_dir="SCI_Figures_Output"):
     ax.set_title('D. Top Investigated Biological Tissues', loc='left', fontsize=20, fontweight='bold')
     ax.set_xlabel('Number of Runs', fontsize=16)
     ax.tick_params(axis='y', labelsize=13)
-    generate_individual_plot(fig, ax, output_dir, "Panel_D_Tissues")
     plot_idx += 1
 
     # ------------------------------------------
@@ -225,7 +216,6 @@ def plot_sci_landscape(csv_path, output_dir="SCI_Figures_Output"):
     ax.set_title('E. Top Sample Collection Regions', loc='left', fontsize=20, fontweight='bold')
     ax.set_xlabel('Number of Runs', fontsize=16)
     ax.tick_params(axis='y', labelsize=13)
-    generate_individual_plot(fig, ax, output_dir, "Panel_E_Locations")
     plot_idx += 1
     
     # ------------------------------------------
@@ -243,7 +233,6 @@ def plot_sci_landscape(csv_path, output_dir="SCI_Figures_Output"):
     ax.set_title('F. Top Developmental Stages / Ages', loc='left', fontsize=20, fontweight='bold')
     ax.set_xlabel('Number of Runs', fontsize=16)
     ax.tick_params(axis='y', labelsize=12)
-    generate_individual_plot(fig, ax, output_dir, "Panel_F_Stages")
 
     # 整体排版调优
     plt.tight_layout(pad=4.0, h_pad=6.0, w_pad=4.0)
@@ -253,7 +242,7 @@ def plot_sci_landscape(csv_path, output_dir="SCI_Figures_Output"):
     out_png = os.path.join(output_dir, "Combined_Landscape_Full.png")
     
     fig.savefig(out_pdf, format='pdf', bbox_inches='tight')
-    fig.savefig(out_png, format='png', dpi=300, bbox_inches='tight')
+    fig.savefig(out_png, format='png', dpi=150, bbox_inches='tight')
     
     print(f"\n🎉 完美收工！所有图表已存放至文件夹: [ {output_dir}/ ]")
 
