@@ -680,7 +680,7 @@ def _generate_plant_virus_summary(root, report_dir, _add, blast_db=None):
 
     # 写入 plant_virus_summary.tsv
     cols = ["contig_id","length","source","aai_completeness","aai_confidence",
-            "viral_length","aai_expected_length","kmer_freq","novelty","best_species","n_tools",
+            "viral_length","aai_expected_length","kmer_freq","novelty","best_evidence","n_tools",
             "Realm","Kingdom","Phylum","Class","Order","Family","Genus","Species"]
     with open(report_dir / "plant_virus_summary.tsv", "w") as pvf:
         pvf.write("\t".join(cols) + "\n")
@@ -691,7 +691,7 @@ def _generate_plant_virus_summary(root, report_dir, _add, blast_db=None):
             vals = [cid, d["length"], d["source"],
                     cv.get("aai_completeness","NA"), cv.get("aai_confidence","NA"),
                     cv.get("viral_length","NA"), cv.get("aai_expected_length","NA"), cv.get("kmer_freq","NA"),
-                    nl, best_sp, n_sp_tools]
+                    nl, ev[0], ev[1]]
             vals += [tx.get(rk,"") for rk in ["Realm","Kingdom","Phylum","Class","Order","Family","Genus","Species"]]
             pvf.write("\t".join(str(v) for v in vals) + "\n")
 
