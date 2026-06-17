@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 # virus_classifier2.py — 病毒分类整合脚本 v4.2
-# 支持: genomad, metabuli, CAT, diamond_lca, VITAP, mmseqs, ACVirus, vcontact3, PhaGCN3
+# 支持: genomad, metabuli, CAT, diamond_lca, VITAP, mmseqs, ACVirus, vcontact3
 # 输出: 8 级 combined_taxonomy.tsv (Realm Kingdom Phylum Class Order Family Genus Species)
 
-import os, sys, argparse, subprocess, glob, time, copy, re
+import os, sys, argparse, subprocess, glob, time, copy, re, shutil
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 try: from tqdm import tqdm; HAS_TQDM = True
@@ -145,20 +145,7 @@ def lineage_to_ranks(lineage_str):
 # 分类工具
 # ==========================================================
 
-_DO = None
-def _ensure_diamond_blastx(inp, s, out, uniprot_db, th):
-    global _DO
-    if _DO and _DO[1]: return _DO[0]
-    d = os.path.join(out, "diamond_classify_output"); os.makedirs(d, exist_ok=True)
-    bo = os.path.join(d, f"{s}_classify_blast.tsv")
-    if is_file_valid(bo, 1000): _DO = (bo, True); return bo
-    safe_print("  [diamond] 共享 blastx...")
-    cmd = (f"diamond blastx -q '{inp}' --db '{uniprot_db}' --threads {th} "
-           f"--more-sensitive --top 10 -e 0.001 "
-           f"--outfmt 6 qseqid sseqid pident length mismatch gapopen "
-           f"qstart qend sstart send evalue bitscore staxids -o '{bo}'")
-    ok, _ = run_command(cmd, os.path.join(d, "diamond.log"))
-    _DO = (bo, ok); return bo if ok else None
+# 注: _ensure_diamond_blastx 为 VITAP 提供共享 diamond 结果, 当前保留以供兼容
 
 def classify_genomad(inp, s, out, db, th):
     d = os.path.join(out, "genomad_annotate_output"); os.makedirs(d, exist_ok=True)
@@ -246,7 +233,7 @@ def classify_diamond_lca(inp, s, out, uniprot_db, th):
     return r
 
 # ==========================================================
-# 后处理: VITAP/mmseqs/ACVirus/vContact3/PhaGCN3 → standard
+# 后处理: VITAP/mmseqs/ACVirus/vContact3 → standard
 # ==========================================================
 
 def postproc_mmseqs(inp, s, out):
@@ -389,7 +376,6 @@ def merge_taxonomy_results(sample, output_dir, tools_ran):
         "VITAP": os.path.join(output_dir, f"{sample}_VITAP_taxonomy.tsv"),
         "ACVirus": os.path.join(output_dir, f"{sample}_ACVirus_taxonomy.tsv"),
         "vcontact3": os.path.join(output_dir, f"{sample}_vcontact3_taxonomy.tsv"),
-        "PhaGCN3": os.path.join(output_dir, f"{sample}_PhaGCN3_taxonomy.tsv"),
     }
     for tool in tools_ran:
         tf = tf_map.get(tool)
@@ -443,6 +429,9 @@ def save_resource_summary(out_dir, sample, metrics):
 
 def fill_taxonomy_na(tsv_path, output_path):
     if not is_file_valid(tsv_path, 100): return
+    if not shutil.which("taxonkit"):
+        safe_print("  [fill] 跳过 — taxonkit 未安装")
+        return
     with open(tsv_path) as f:
         lines = [l.rstrip('\r\n') for l in f.readlines()]
     hdr = lines[0].strip().split('\t')
@@ -681,10 +670,6 @@ class VirusClassifier:
              os.path.join(out, f"{s}_vcontact3_taxonomy.tsv"),
              lambda: [os.system(f"vcontact3 run --nucleotide {inp} --output {Path(out,'vcontact3_results')} --db-version 232 --db-path {cdb} --threads {self.threads} --pyrodigal-gv --db-domain eukaryotes --export-all --keep-fna --keep-temp --exports cytoscape graphml profiles completeness centroids > /dev/null 2>&1"),
                       postproc_vcontact3(inp, s, out)][-1]),
-            ("PhaGCN3", None,
-             os.path.join(out, f"{s}_PhaGCN3_taxonomy.tsv"),
-             lambda: [Path(out,"PhaGCN3_results").mkdir(exist_ok=True),
-                      postproc_phagcn3(inp, s, out) if is_file_valid(os.path.join(out,"PhaGCN3_results",f"{s}.phagcn3.csv"),10) else None][-1]),
         ]
 
         # 只运行用户指定的工具
@@ -752,7 +737,7 @@ def main():
     if not args.input_dir and (not args.genomes or not args.sample):
         p.error("需要 -i 或 -g + -s")
 
-    all_tools = ["genomad","metabuli","CAT","diamond_lca","VITAP","mmseqs","ACVirus","vcontact3","PhaGCN3"]
+    all_tools = ["genomad","metabuli","CAT","diamond_lca","VITAP","mmseqs","ACVirus","vcontact3"]
     args.tools = all_tools if args.tools.lower()=='all' else [t.strip() for t in args.tools.split(',') if t.strip() in all_tools]
 
     db_paths = {
