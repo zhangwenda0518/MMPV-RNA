@@ -582,37 +582,78 @@ def _generate_plant_virus_summary(root, report_dir, _add, blast_db=None):
         if any(w in sp.lower() for w in ("sp.","cf.","aff.","unclassified","incertae")): return False
         return " " in sp and sp.split()[1] not in ("sp.","sp","cf.","cf")
 
+    # 5. BLASTX 蛋白相似度分类 (参考 VIGA: ≥95% Known)
+    blastx_pident = {}  # {cid: (best_pident, best_ref, best_virus)}
+    ident_dir = root / "02_Identification"
+    if ident_dir.is_dir():
+        vclust_tsv = root / "04_CLUSTER" / "3_vclust" / "vclust_clusters.tsv"
+        centroid_members = {}  # {centroid: [member_contigs]}
+        if vclust_tsv.is_file():
+            with open(vclust_tsv) as vf:
+                vf.readline()
+                for line in vf:
+                    p = line.strip().split('\t')
+                    if len(p) >= 2:
+                        centroid_members.setdefault(p[1], []).append(p[0])
+        # 扫描所有 blast_output/*.vp.txt, 构建 contig→best hit
+        contig_blast = {}
+        for vp_file in ident_dir.rglob("blast_output/*.vp.txt"):
+            try:
+                for line in open(vp_file):
+                    p = line.strip().split('\t')
+                    if len(p) < 3: continue
+                    cid_raw, pident = p[0], float(p[2])
+                    ref_virus = p[14] if len(p) > 14 else p[13] if len(p) > 13 else ""
+                    if cid_raw not in contig_blast or pident > contig_blast[cid_raw][0]:
+                        contig_blast[cid_raw] = (pident, p[1], ref_virus)
+            except: pass
+        for cid in plant_data:
+            members = centroid_members.get(cid, [cid])
+            best = (0, "", "")
+            for m in members:
+                if m in contig_blast:
+                    if contig_blast[m][0] > best[0]:
+                        best = contig_blast[m]
+            if best[0] > 0:
+                blastx_pident[cid] = best
+
+    # 6. Novelty 分类: 综合 taxonomy 共识 + BLASTX 蛋白相似度
     novel_by_sim = {}
     evidence_info = {}
-    if tax_data:
-        for cid in plant_data:
-            tx = tax_data.get(cid, {})
-            sp = tx.get("Species","")
-            if _sp_is_valid(sp):
-                novel_by_sim[cid] = "Known"
-                evidence_info[cid] = (sp, 1)
-            else:
-                novel_by_sim[cid] = "New virus"
-                evidence_info[cid] = ("", 0)
-    else:
-        for cid in plant_data:
+    ID_KNOWN = 95.0  # VIGA species threshold
+    for cid in plant_data:
+        tx = tax_data.get(cid, {})
+        sp = tx.get("Species","")
+        bx = blastx_pident.get(cid)
+        if _sp_is_valid(sp):
+            novel_by_sim[cid] = "Known"
+            evidence_info[cid] = (sp, 1)
+        elif bx and bx[0] >= ID_KNOWN:
+            novel_by_sim[cid] = "Known"
+            virus_name = bx[2].split('[')[0].strip() if '[' in bx[2] else bx[2][:50]
+            evidence_info[cid] = (f"BLASTX {bx[0]:.1f}% → {virus_name}", 0)
+        else:
             novel_by_sim[cid] = "New virus"
-            evidence_info[cid] = ("", 0)
+            bx_info = f"BLASTX {bx[0]:.1f}% → {bx[1]}" if bx else ""
+            evidence_info[cid] = (bx_info, 0)
 
     # 写入 plant_virus_summary.tsv
     cols = ["contig_id","length","source","aai_completeness","aai_confidence",
-            "viral_length","aai_expected_length","kmer_freq","novelty","best_evidence","n_tools",
+            "viral_length","aai_expected_length","kmer_freq","novelty","evidence",
+            "blastx_pident","blastx_ref",
             "Realm","Kingdom","Phylum","Class","Order","Family","Genus","Species"]
     with open(report_dir / "plant_virus_summary.tsv", "w") as pvf:
         pvf.write("\t".join(cols) + "\n")
         for cid in sorted(plant_data):
             d = plant_data[cid]; cv = cv_data.get(cid, {}); tx = tax_data.get(cid, {})
-            nl = novel_by_sim.get(cid, "NewFa")
+            nl = novel_by_sim.get(cid, "New virus")
             ev = evidence_info.get(cid, ("", 0))
+            bx = blastx_pident.get(cid, (0, "", ""))
             vals = [cid, d["length"], d["source"],
                     cv.get("aai_completeness","NA"), cv.get("aai_confidence","NA"),
                     cv.get("viral_length","NA"), cv.get("aai_expected_length","NA"), cv.get("kmer_freq","NA"),
-                    nl, ev[0], ev[1]]
+                    nl, ev[0],
+                    f"{bx[0]:.1f}" if bx[0] > 0 else "NA", bx[1] if bx[1] else "NA"]
             vals += [tx.get(rk,"") for rk in ["Realm","Kingdom","Phylum","Class","Order","Family","Genus","Species"]]
             pvf.write("\t".join(str(v) for v in vals) + "\n")
 
