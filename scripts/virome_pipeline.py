@@ -82,7 +82,7 @@ def run_cmd(cmd, logger, step_name, log_file=None):
         if lf:
             lf.write(f"=== {step_name} ===\nCMD: {cmd}\n\n")
         with subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                              text=True, bufsize=1) as proc:
+                              text=True, bufsize=1, env={**os.environ, 'PYTHONUNBUFFERED':'1'}) as proc:
             for line in proc.stdout:
                 line = line.rstrip('\n\r')
                 print(line, flush=True)
