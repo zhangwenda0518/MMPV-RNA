@@ -160,15 +160,14 @@ def _find_reads(fastq_dir, sample):
             r2 = os.path.join(fastq_dir, f"{sample}{suffix}.R2{ext}")
             if os.path.isfile(r1) and os.path.isfile(r2):
                 return r1, r2
-    # 3. Glob 模糊匹配: Illumina 格式 {sample}_S*_L*_R1_*.fastq.gz
-    for ext in ['.fastq.gz', '.fq.gz', '.fa.gz', '.fasta.gz', '.fastq.gz']:
-        r1_files = sorted(_glob.glob(os.path.join(fastq_dir, f"{sample}_*_R1*{ext}")))
-        r2_files = sorted(_glob.glob(os.path.join(fastq_dir, f"{sample}_*_R2*{ext}")))
-        if r1_files and r2_files and len(r1_files) == len(r2_files):
+    # 3. Glob 模糊匹配: Illumina 格式 {sample}_S*_L*_R1*.fastq.gz 等
+    for ext in ['.fastq.gz', '.fq.gz', '.fa.gz', '.fasta.gz', '.fastq.gz', '.gz']:
+        r1_files = sorted(_glob.glob(os.path.join(fastq_dir, f"{sample}*_R1*{ext}")))
+        r2_files = sorted(_glob.glob(os.path.join(fastq_dir, f"{sample}*_R2*{ext}")))
+        if r1_files and r2_files:
             return r1_files[0], r2_files[0]
-        # 也尝试 _1*.ext _2*.ext 模式
-        r1_files = sorted(_glob.glob(os.path.join(fastq_dir, f"{sample}_*1*{ext}")))
-        r2_files = sorted(_glob.glob(os.path.join(fastq_dir, f"{sample}_*2*{ext}")))
+        r1_files = sorted(_glob.glob(os.path.join(fastq_dir, f"{sample}*_1*{ext}")))
+        r2_files = sorted(_glob.glob(os.path.join(fastq_dir, f"{sample}*_2*{ext}")))
         if r1_files and r2_files:
             return r1_files[0], r2_files[0]
     # 4. SE fallback
