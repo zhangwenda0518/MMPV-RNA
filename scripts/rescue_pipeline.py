@@ -545,7 +545,22 @@ def branch_c(fail_fa, fastq_dir, work_dir,
                 result = subprocess.run([blastdbcmd_bin, "-db", str(blast_db), "-entry", top_acc,
                                       "-out", str(ref_fa)], capture_output=True, text=True)
                 if result.returncode != 0:
-                    print(f"  [WARN] blastdbcmd 失败: {top_acc} — {result.stderr[:100]}", flush=True)
+                    err = result.stderr[:200] if result.stderr else ""
+                    # 自动重建 BLAST DB (缺少 -parse_seqids → blastdbcmd 无法提取序列)
+                    if "no accession" in err.lower() or "no alias" in err.lower() or "no index" in err.lower():
+                        db_dir = Path(blast_db).parent
+                        src_fna = list(db_dir.glob("*.fna")) + list(db_dir.glob("*.fasta"))
+                        if src_fna:
+                            print(f"  [AUTO-FIX] 重建 BLAST DB (加 -parse_seqids): {src_fna[0].name}", flush=True)
+                            subprocess.run(["makeblastdb", "-in", str(src_fna[0]), "-dbtype", "nucl",
+                                          "-parse_seqids", "-out", str(blast_db)],
+                                         capture_output=True, check=False)
+                            result = subprocess.run([blastdbcmd_bin, "-db", str(blast_db), "-entry", top_acc,
+                                                   "-out", str(ref_fa)], capture_output=True, text=True)
+                        else:
+                            print(f"  [WARN] 无法自动重建 BLAST DB: 找不到源 FASTA", flush=True)
+                    if result.returncode != 0:
+                        print(f"  [WARN] blastdbcmd 失败: {top_acc} — {result.stderr[:100]}", flush=True)
             ref_len = ref_fa.stat().st_size if ref_fa.is_file() else 0
             if ref_len > 100:
                 ragtag_out = sub_dir / "ragtag_out"
