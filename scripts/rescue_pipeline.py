@@ -144,27 +144,39 @@ def run_vsi(ref_fa, r1, r2, out_dir, threads, vsi_path, salmon_bin, checkv_db=No
 # ══════════════════════════════════════════════════════════════
 
 def _find_reads(fastq_dir, sample):
-    """自动匹配 reads: _1/_2 或 .R1./.R2. 格式 + 多种扩展名 + 单端回退"""
-    # PE: _1 / _2
+    """自动匹配 reads: 标准命名 + glob 模糊匹配 (兼容 S2_L001_R1 等 Illumina 格式)"""
+    import glob as _glob
+    # 1. 标准 PE: _1 / _2
     for suffix in ['', '_clean']:
         for ext in ['.fastq.gz', '.fq.gz', '.fa.gz', '.fasta.gz', '.fastq', '.fq', '.fa', '.fasta']:
             r1 = os.path.join(fastq_dir, f"{sample}{suffix}_1{ext}")
             r2 = os.path.join(fastq_dir, f"{sample}{suffix}_2{ext}")
             if os.path.isfile(r1) and os.path.isfile(r2):
                 return r1, r2
-    # PE: .R1. / .R2.
+    # 2. PE: .R1. / .R2.
     for suffix in ['', '_clean']:
         for ext in ['.fastq.gz', '.fq.gz', '.fa.gz', '.fasta.gz']:
             r1 = os.path.join(fastq_dir, f"{sample}{suffix}.R1{ext}")
             r2 = os.path.join(fastq_dir, f"{sample}{suffix}.R2{ext}")
             if os.path.isfile(r1) and os.path.isfile(r2):
                 return r1, r2
-    # SE fallback
+    # 3. Glob 模糊匹配: Illumina 格式 {sample}_S*_L*_R1_*.fastq.gz
+    for ext in ['.fastq.gz', '.fq.gz', '.fa.gz', '.fasta.gz', '.fastq.gz']:
+        r1_files = sorted(_glob.glob(os.path.join(fastq_dir, f"{sample}_*_R1*{ext}")))
+        r2_files = sorted(_glob.glob(os.path.join(fastq_dir, f"{sample}_*_R2*{ext}")))
+        if r1_files and r2_files and len(r1_files) == len(r2_files):
+            return r1_files[0], r2_files[0]
+        # 也尝试 _1*.ext _2*.ext 模式
+        r1_files = sorted(_glob.glob(os.path.join(fastq_dir, f"{sample}_*1*{ext}")))
+        r2_files = sorted(_glob.glob(os.path.join(fastq_dir, f"{sample}_*2*{ext}")))
+        if r1_files and r2_files:
+            return r1_files[0], r2_files[0]
+    # 4. SE fallback
     for suffix in ['', '_clean']:
         for ext in ['.fastq.gz', '.fq.gz', '.fa.gz', '.fasta.gz', '.fastq', '.fq', '.fa', '.fasta']:
             r1 = os.path.join(fastq_dir, f"{sample}{suffix}{ext}")
             if os.path.isfile(r1):
-                return r1, None  # SE: R2=None
+                return r1, None
     return None, None
 
 
