@@ -1826,9 +1826,12 @@ def main():
 
     needs_reads = 'all' in stages or bool(stages & {'clean','deplete','assembly','cobra','rescue'})
     if needs_reads:
-        # 优先使用 --input_reads 指定的目录
+        # 优先使用 --input_reads 指定的目录, 但 rescue 阶段推荐 00b_HostDepletion
         if args.input_reads and Path(args.input_reads).exists():
             pipe.reads_dir = Path(args.input_reads).absolute()
+            hostdep_dir = Path(args.output_dir) / "00b_HostDepletion"
+            if 'rescue' in stages and hostdep_dir.is_dir() and '00b' not in str(pipe.reads_dir):
+                logger.warning("  ⚠ rescue 阶段建议 --input_reads out/00b_HostDepletion/ (当前: %s)", pipe.reads_dir)
         elif 'deplete' in stages:
             # deplete: 自动使用 clean 输出 (优先 clumpify, 否则 fasta)
             cl = pipe.d['clean'] / '3.clumpify'
