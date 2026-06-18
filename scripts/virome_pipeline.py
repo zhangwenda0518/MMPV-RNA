@@ -1160,6 +1160,7 @@ class ViromePipeline:
         if not self.args.force and combined_tsv.is_file() and combined_tsv.stat().st_size > 100:
             self.log.info("  [SKIP] virus_classifier2 — 已有结果")
         else:
+            out_subdir.mkdir(parents=True, exist_ok=True)
             parts = [
                 f"python {self.sc['classifier']}",
                 f"-g {centroids}",
