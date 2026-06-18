@@ -1165,7 +1165,7 @@ class ViromePipeline:
                 f"-g {centroids}",
                 f"-s {sample}",
                 f"-t {self.args.tax_tools}",
-                f"-o {tax_dir}",
+                f"-o {out_subdir}",
                 f"-p {self.args.threads}",
                 f"-j {self.args.tax_jobs}",
                 f"--db-dir {self.args.virus_db}",
