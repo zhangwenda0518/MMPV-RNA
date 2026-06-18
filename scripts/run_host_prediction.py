@@ -51,9 +51,10 @@ def run_tools(args):
             print(f"[SKIP] RNAVirHost — exists: {rvh_csv}")
         else:
             rvh_dir = os.path.join(args.output_dir, "RVH_result"); os.makedirs(rvh_dir, exist_ok=True)
-            cmd1 = ["rnavirhost", "classify_order", "-i", args.input, "-o", os.path.join(rvh_dir, "RVH_taxa.csv")]
+            rvh_taxa = os.path.join(rvh_dir, "RVH_taxa.csv")
+            cmd1 = ["rnavirhost", "classify_order", "-i", args.input, "-o", rvh_taxa]
             run_step(cmd1, "RNAVirHost Classify Order")
-            cmd2 = ["rnavirhost", "predict", "-i", args.input, "-o", rvh_dir]
+            cmd2 = ["rnavirhost", "predict", "-i", args.input, "--taxa", rvh_taxa, "-o", rvh_dir]
             run_step(cmd2, "RNAVirHost Predict")
 
     # 2. PhaBOX2 CHERRY
