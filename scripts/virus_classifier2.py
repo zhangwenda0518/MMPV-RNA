@@ -74,11 +74,6 @@ def lineage_to_ranks(lineage_str):
                       and not any(p.endswith(s) for s in SUBRANKS)]
     ranks = {r:"NA" for r in RANK_NAMES}
     if not parts_filtered: return ranks
-    # vcontact3: raw 有 8 段 (含 "-" 占位), 用 raw 按位置直接映射
-    if len(raw) == 8:
-        for i, rn in enumerate(RANK_NAMES):
-            if raw[i] != "-": ranks[rn] = raw[i]
-        return ranks
     parts = parts_filtered
     # 寻找 anchor: 已知realm/kingdom > -viricota(phylum) > -viricetes(class) > -idae(family) > -ales(order) > -virus(genus)
     anchor = None; rp = None
@@ -133,11 +128,27 @@ def lineage_to_ranks(lineage_str):
                               " aff." in ge or len(ge.split()) >= 2)
         if looks_like_species:
             ranks["species"] = ge
-            # genus 回退到倒数第二有效非 subrank
-            if len(_valid_non_subrank) >= 2 and _valid_non_subrank[-2] != ge:
-                ranks["genus"] = _valid_non_subrank[-2]
+            # 从 species 字符串中提取 genus: "Xxxvirus sp. Y" → "Xxxvirus"
+            genus_candidate = ge.split()[0]
+            if genus_candidate != ge \
+               and genus_candidate.endswith("virus") \
+               and not genus_candidate.endswith("viridae") \
+               and not any(genus_candidate.endswith(s) for s in SUBRANKS):
+                ranks["genus"] = genus_candidate
             else:
                 ranks["genus"] = "NA"
+    # 3) family 槽中误放入物种级名称 (subrank 过滤后段数不足, species 填入 family 位置)
+    #    例: "Cytorhabdovirus sp. 'lycii'" 不应在 family slot
+    fam_val = ranks.get("family", "NA")
+    if fam_val != "NA" and not fam_val.endswith("viridae") \
+       and (" sp." in fam_val or " cf." in fam_val or " aff." in fam_val or len(fam_val.split()) >= 2):
+        if ranks["species"] == "NA":
+            ranks["species"] = fam_val
+            gc = fam_val.split()[0]
+            if gc.endswith("virus") and not gc.endswith("viridae") \
+               and not any(gc.endswith(s) for s in SUBRANKS):
+                ranks["genus"] = gc
+        ranks["family"] = "NA"
 
     return ranks
 
@@ -274,8 +285,9 @@ def postproc_vitap(inp, s, out):
             if len(ps)<2: continue
             sid, lin = ps[0], ps[1]
             if sid in seen: continue; seen.add(sid)
-            # VITAP lineage: root→leaf (与 ICTV 同向), 不应 reversed
+            # VITAP lineage 是 leaf→root (倒序: Species→Genus→...→Realm), 需反转为 root→leaf
             lps = [p for p in lin.split(";") if p and p != "-"]
+            lps.reverse()
             prefix = "" if (lps and lps[0].lower() == "viruses") else "Viruses;"
             fo.write(sid + "\t\t" + prefix + ";".join(lps) + "\n")
     return r
@@ -427,6 +439,76 @@ def save_resource_summary(out_dir, sample, metrics):
     safe_print(f"  资源消耗: {os.path.basename(usage_file)}")
 
 
+def validate_results(output_dir, sample, tools_ran=None, verbose=False):
+    """对比 combined_taxonomy.tsv 与用当前 lineage_to_ranks 重算的结果"""
+    combined = os.path.join(output_dir, f"{sample}_combined_taxonomy.tsv")
+    if not os.path.exists(combined):
+        safe_print("  [validate] 无合并结果, 跳过")
+        return
+
+    combined_rows = {}
+    with open(combined) as f:
+        f.readline()
+        for line in f:
+            ps = line.strip().split('\t')
+            if len(ps) >= 10:
+                combined_rows[(ps[0], ps[1])] = dict(zip(RANK_NAMES, ps[2:10]))
+
+    tools = tools_ran or ["genomad","metabuli","CAT","diamond_lca","VITAP","mmseqs","ACVirus","vcontact3"]
+    TOOL_COLS = {"genomad":5,"metabuli":5,"diamond_lca":3,"CAT":3,"VITAP":3,"mmseqs":3,"ACVirus":3,"vcontact3":3}
+
+    reparse = {}
+    for tool in tools:
+        nc = TOOL_COLS.get(tool, 3)
+        tf = os.path.join(output_dir, f"{sample}_{tool}_taxonomy.tsv")
+        if not os.path.exists(tf): continue
+        with open(tf) as f:
+            has_hdr = f.readline().startswith("seq_name")
+            if not has_hdr: f.seek(0)
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith('#'): continue
+                ps = line.split('\t')
+                if nc == 5 and len(ps) >= 5:
+                    r = lineage_to_ranks(ps[4])
+                elif nc == 3 and len(ps) >= 3:
+                    r = lineage_to_ranks(ps[2])
+                else: continue
+                reparse[(ps[0], tool)] = r
+
+    total = changed = 0
+    bt = {}; br = {rn:0 for rn in RANK_NAMES}
+    for key, cr in combined_rows.items():
+        total += 1
+        rr = reparse.get(key)
+        if not rr: continue
+        diffs = []
+        for rn in RANK_NAMES:
+            if cr[rn] != rr[rn]:
+                diffs.append(f"{rn}: {cr[rn]} -> {rr[rn]}")
+                br[rn] += 1
+        if diffs:
+            changed += 1
+            t = key[1]
+            bt[t] = bt.get(t, 0) + 1
+            if verbose:
+                safe_print(f"  [{t}] {key[0]}: {'; '.join(diffs)}")
+
+    if changed == 0:
+        safe_print(f"  [validate] OK — {total} 行全部一致")
+        return
+
+    safe_print(f"  [validate] 不一致! {changed}/{total} 行有差异 ({100*changed/max(total,1):.1f}%)")
+    for t, c in sorted(bt.items(), key=lambda x: -x[1]):
+        tt = sum(1 for k in combined_rows if k[1] == t)
+        safe_print(f"    {t}: {c}/{tt}")
+    safe_print(f"  按 rank:")
+    for rn, c in sorted(br.items(), key=lambda x: -x[1]):
+        if c > 0: safe_print(f"    {rn}: {c}")
+    if not verbose:
+        safe_print(f"  (用 --validate-only 查看逐行差异)")
+
+
 def fill_taxonomy_na(tsv_path, output_path):
     if not is_file_valid(tsv_path, 100): return
     if not shutil.which("taxonkit"):
@@ -531,7 +613,14 @@ def fill_taxonomy_na(tsv_path, output_path):
                 ge = fill["genus"]
                 if " sp." in ge or " sp" == ge[-3:] or " cf." in ge or " aff." in ge or len(ge.split()) >= 2:
                     fill["species"] = ge
-                    fill["genus"] = _vns[-2] if len(_vns) >= 2 and _vns[-2] != ge else ""
+                    genus_candidate = ge.split()[0]
+                    if genus_candidate != ge \
+                       and genus_candidate.endswith("virus") \
+                       and not genus_candidate.endswith("viridae") \
+                       and not any(genus_candidate.endswith(s) for s in subranks):
+                        fill["genus"] = genus_candidate
+                    else:
+                        fill["genus"] = ""
         n2r[name]=fill
     fc = 0
     for row_idx, dn in to_fill:
@@ -726,6 +815,7 @@ def main():
     p.add_argument('-o','--output-dir', default='./classify_output')
     p.add_argument('-p','--threads', type=int, default=20, help='线程')
     p.add_argument('-f','--force', action='store_true')
+    p.add_argument('--validate-only', action='store_true', help='只验证已有结果 (对比旧combined与重算)')
     p.add_argument('--db-dir', default=os.path.expanduser('~/database/virus-db'))
     p.add_argument('--genomad-db'); p.add_argument('--metabuli-db')
     p.add_argument('--cat-db'); p.add_argument('--cat-tax')
@@ -734,11 +824,33 @@ def main():
     p.add_argument('--acvirus-db'); p.add_argument('--vcontact3-db')
     args = p.parse_args()
 
-    if not args.input_dir and (not args.genomes or not args.sample):
-        p.error("需要 -i 或 -g + -s")
-
     all_tools = ["genomad","metabuli","CAT","diamond_lca","VITAP","mmseqs","ACVirus","vcontact3"]
     args.tools = all_tools if args.tools.lower()=='all' else [t.strip() for t in args.tools.split(',') if t.strip() in all_tools]
+
+    # ── validate-only 模式: 不运行分类, 只对比已有结果 ──
+    if getattr(args, 'validate_only', False):
+        if not args.input_dir and args.sample:
+            od = os.path.join(args.output_dir, f"{args.sample}.classed")
+            validate_results(od, args.sample, args.tools, verbose=True)
+        elif args.input_dir:
+            ip = Path(args.input_dir)
+            if not ip.exists(): sys.exit(f"目录不存在: {ip}")
+            files = list(ip.glob(f"*{args.ext}"))
+            bo = Path(args.output_dir)
+            for f in files:
+                sn = f.name
+                if args.remove_suffix: sn = sn.replace(args.remove_suffix, '')
+                elif args.ext: sn = sn.replace(args.ext, '')
+                od = str(bo / f"{sn}.classed")
+                if os.path.exists(od):
+                    safe_print(f"\n[{sn}]")
+                    validate_results(od, sn, args.tools, verbose=True)
+        else:
+            p.error("--validate-only 需要 -s + -o 或 -i")
+        sys.exit(0)
+
+    if not args.input_dir and (not args.genomes or not args.sample):
+        p.error("需要 -i 或 -g + -s")
 
     db_paths = {
         "genomad": args.genomad_db or os.path.join(args.db_dir,"genomad_db"),
@@ -763,7 +875,7 @@ def main():
             sn = f.name
             if args.remove_suffix: sn = sn.replace(args.remove_suffix,'')
             elif args.ext: sn = sn.replace(args.ext,'')
-            sf = bo / f"{sn}.virus_classed" / f"{sn}_combined_taxonomy.tsv"
+            sf = bo / f"{sn}.classed" / f"{sn}_combined_taxonomy.tsv"
             if sf.exists() and not args.force: skipped.append(sn)
             else: tasks.append((f, sn))
         print(f"批量: {len(files)} 文件, 跳过 {len(skipped)}, 需处理 {len(tasks)}")
@@ -774,7 +886,7 @@ def main():
                 la = copy.copy(args)
                 la.genomes = str(f.absolute())
                 la.sample = sn
-                la.output_dir = str(bo / f"{sn}.virus_classed")
+                la.output_dir = str(bo / f"{sn}.classed")
                 futures[ex.submit(process_single_wrapper, (la, db_paths))] = sn
             it = as_completed(futures)
             if HAS_TQDM: it = tqdm(it, total=len(tasks), desc="进度", unit="样本")
@@ -784,7 +896,7 @@ def main():
         print(f"\n完成: {success}/{len(files)}")
     else:
         la = copy.copy(args)
-        la.output_dir = os.path.join(args.output_dir, f"{args.sample}.virus_classed")
+        la.output_dir = os.path.join(args.output_dir, f"{args.sample}.classed")
         VirusClassifier(la, quiet_console=False, db_paths=db_paths).run_vc_analysis()
 
 if __name__ == "__main__":
