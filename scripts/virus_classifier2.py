@@ -896,7 +896,7 @@ def main():
         print(f"\n完成: {success}/{len(files)}")
     else:
         la = copy.copy(args)
-        la.output_dir = os.path.join(args.output_dir, f"{args.sample}.classed")
+        la.output_dir = args.output_dir
         VirusClassifier(la, quiet_console=False, db_paths=db_paths).run_vc_analysis()
 
 if __name__ == "__main__":
