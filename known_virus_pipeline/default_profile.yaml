@@ -1,0 +1,75 @@
+# Known Virus Pipeline — Default Profile
+# Usage: python auto_known_virus.py --profile default_profile.yaml
+# Override any param: python auto_known_virus.py --profile default_profile.yaml --threads 120
+
+# === I/O ===
+reads_dir: out/00b_HostDepletion/
+output_dir: ./virus_analysis/
+ref_info: ~/plant_virus_db/3.final-ref-virus.db/final.cluster.ref_info.tsv
+reference: ~/plant_virus_db/3.final-ref-virus.db/final.cluster.ref.fasta
+
+# === Stage Control ===
+stage: all
+resume: true
+log_level: INFO
+
+# === Concurrency ===
+threads: 60
+align_threads: 8
+jobs: 4
+
+# === Stage 1: Detect ===
+tool: salmon
+batch_size: 20
+coverage: 10.0
+ratio: 0.3
+meandepth: 0.0
+min_tpm: 0.0
+min_uniq_reads: 1
+sp_thresh: 95.0
+genes_cov: ~/plant_virus_db/3.final-ref-virus.db/virus_genes_cov.tsv
+min_gene_total_cov: 80.0
+min_gene_avr_cov: 5.0
+
+# === Stage 2: Filter ===
+filter: true
+filter_cov: 50.0
+filter_depth: 5.0
+filter_reads: 100.0
+
+# === Stage 3: Variants ===
+variant_caller: freebayes
+snpeff: true
+snpgenie: true
+snpeff_jar: ~/biosoft/snpEff/snpEff.jar
+snpeff_config: ~/biosoft/snpEff/snpEff.config
+snpeff_mem: 12g
+vc_qual: 20
+vc_depth: 5
+vc_freq: 0.5
+vc_ambig: N
+
+# === Stage 4: Full Assembly ===
+assembly_tools: all
+min_covered: 10.0
+extra_args: --iter 3 --vc-min-depth 1
+
+# === Stage 7: Capheine ===
+capheine_code: "1"
+
+# === Stage 8: Similarity ===
+sim_ref: OR489165.1
+sim_mode: filter
+
+# === Stage 9: DVG ===
+virema_script: ~/biosoft/virus/ViReMa_0.29/ViReMa.py
+# dvg_reads: raw/           # uncomment and set path to raw FASTQ
+dvg_seed: 25
+dvg_mindel: 15
+dvg_min_cov: 80
+dvg_shm: true
+
+# === Stage 10: Report ===
+report_ai: true
+ai_api_key: sk-e2a13362b507451e8f3b87dac1375a8b
+ai_model: deepseek-chat
