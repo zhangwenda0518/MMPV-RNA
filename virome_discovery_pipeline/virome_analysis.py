@@ -57,7 +57,8 @@ def run(cmd, log, step_name):
 # Stage 0: Cenote-Taker3 (病毒 hallmark 基因 + 功能注释 + 分类)
 # ══════════════════════════════════════════════════════════════
 
-def run_cenote(fasta, out_dir, threads, log, molecule_type="RNA", seqtech="Illumina"):
+def run_cenote(fasta, out_dir, threads, log, molecule_type="RNA", seqtech="Illumina",
+               isolation_source=None, collection_date=None, assembler_info=None):
     """Cenote-Taker3: virus-specific annotation pipeline"""
     cenote_bin = which("cenotetaker3") or which("cenote-taker3")
     if not cenote_bin:
@@ -86,7 +87,8 @@ def run_cenote(fasta, out_dir, threads, log, molecule_type="RNA", seqtech="Illum
     wt.mkdir(exist_ok=True)
 
     n_seqs = sum(1 for _ in open(fasta) if _.startswith('>'))
-    log.info("[0/5] Cenote-Taker3: %d 病毒序列, DB=%s" % (n_seqs, cenote_dbs))
+    msg = "[0/5] Cenote-Taker3: {} 病毒序列, DB={}".format(n_seqs, cenote_dbs)
+    log.info(msg)
 
     cmd = (f"{cenote_bin} -c {fasta} -r plant_virus_analysis "
            f"-p False -t {threads} -am True "
@@ -95,12 +97,12 @@ def run_cenote(fasta, out_dir, threads, log, molecule_type="RNA", seqtech="Illum
            f"--molecule_type {molecule_type} --seqtech {seqtech} "
            f"--caller prodigal-gv --taxdb hallmark "
            f"--circ_minimum_hallmark_genes 0 --lin_minimum_hallmark_genes 1")
-    if args.isolation_source:
-        cmd += f" --isolation_source {args.isolation_source}"
-    if args.collection_date:
-        cmd += f" --collection_date {args.collection_date}"
-    if args.assembler_info:
-        cmd += f" --assembler {args.assembler_info}"
+    if isolation_source:
+        cmd += f" --isolation_source {isolation_source}"
+    if collection_date:
+        cmd += f" --collection_date {collection_date}"
+    if assembler_info:
+        cmd += f" --assembler {assembler_info}"
     ok = run(cmd, log, "Cenote-Taker3")
     if ok:
         # Collect output
@@ -272,7 +274,8 @@ def main():
 
     # 0. Cenote-Taker3 (病毒 hallmark 基因检测)
     if not args.skip_cenote:
-        cenote_out = run_cenote(inp, out, args.threads, log, args.molecule_type, args.seqtech)
+        cenote_out = run_cenote(inp, out, args.threads, log, args.molecule_type, args.seqtech,
+                                 args.isolation_source, args.collection_date, args.assembler_info)
     else:
         log.info("[0/5] Cenote-Taker3 — 跳过")
         cenote_out = None
