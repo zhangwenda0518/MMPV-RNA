@@ -499,6 +499,60 @@ def _collect_rescue(root, report_dir, _add):
     _add("08_Rescue", "✓", key_metric=f"{n_rescued:,} HQ vOTU ({' | '.join(branch_info) if branch_info else '0 pas'})", details=str(rescue))
 
 
+def _collect_analysis(root, report_dir, _add):
+    """09_Virome_Analysis 阶段: Cenote-Taker3 + suvtk 分析摘要"""
+    analysis = root / "09_Virome_Analysis"
+    if not analysis.is_dir():
+        _add("09_Virome_Analysis", "○", details="未运行"); return
+
+    parts = []
+
+    # Cenote-Taker3
+    ct3_summary = analysis / "cenote_taker3" / "run_summary.tsv"
+    if ct3_summary.is_file():
+        try:
+            rows = _read_tsv(ct3_summary)
+            n_virus = len(rows)
+            n_circular = sum(1 for r in rows if str(r.get("circular","")).lower() in ("true","1","yes"))
+            n_linear = n_virus - n_circular
+            hallmarks = [int(r.get("hallmark_count", r.get("hallmark gene count",0)) or 0) for r in rows]
+            avg_hall = round(sum(hallmarks)/max(len(hallmarks),1), 1)
+            parts.append(f"Cenote-Taker3: {n_virus} 序列 (环状={n_circular} 线状={n_linear}) avg hallmark={avg_hall}")
+            # 保存摘要
+            with open(report_dir / "analysis_cenote_summary.tsv", "w") as acf:
+                acf.write("Metric\tValue\n")
+                acf.write(f"Total\t{n_virus}\nCircular\t{n_circular}\nLinear\t{n_linear}\nAvg_Hallmark\t{avg_hall}\n")
+        except: pass
+    else:
+        parts.append("Cenote-Taker3: 未运行")
+
+    # suvtk taxonomy
+    suvtk_tax = analysis / "suvtk_taxonomy" / "taxonomy.tsv"
+    if suvtk_tax.is_file():
+        try:
+            n_lines = sum(1 for _ in open(suvtk_tax)) - 1
+            parts.append(f"suvtk taxonomy: {n_lines} 条分类注释")
+        except: pass
+
+    # suvtk features
+    suvtk_feat = analysis / "suvtk_features" / "featuretable.tbl"
+    if suvtk_feat.is_file():
+        try:
+            n_cds = 0
+            for line in open(suvtk_feat):
+                if "CDS" in line: n_cds += 1
+            parts.append(f"suvtk features: ~{n_cds} CDS 注释")
+        except: pass
+
+    # submission
+    sub_sqn = analysis / "submission" / "submission.sqn"
+    if sub_sqn.is_file():
+        parts.append("GenBank submission: ✓ 已生成 (.sqn)")
+
+    key_metric = " | ".join(parts)[:200] if parts else "已运行"
+    _add("09_Virome_Analysis", "✓", key_metric=key_metric, details=str(analysis))
+
+
 def collect_data(output_dir, report_dir, blast_db=None):
     """收集所有阶段数据 → 生成 TSV + 返回 stage_stats"""
     root = Path(output_dir).resolve()
@@ -517,6 +571,7 @@ def collect_data(output_dir, report_dir, blast_db=None):
     _collect_hostprediction(root, report_dir, _add)
     _collect_checkv(root, report_dir, _add)
     _collect_rescue(root, report_dir, _add)
+    _collect_analysis(root, report_dir, _add)
 
     # 最终植物病毒汇总表 + 旭日图
     _generate_plant_virus_summary(root, report_dir, _add, blast_db)
@@ -1005,10 +1060,11 @@ def write_html_report(report_dir, stage_stats):
         ("s07","CheckV","07 CheckV Quality","CV","#2e7d32"),
         ("s08","Rescue","08 Rescue","RESCUE","#37474f"),
         ("s09","PlantVirus","09 Plant Virus Collection","PV","#00838f"),
+        ("s10","Analysis","09 Virome Analysis","AN","#8e24aa"),
     ]
 
     _skey_to_num = {'s00a':'00a','s00b':'00b','s01':'01','s02':'02','s03':'03',
-                    's04':'04','s05':'05','s06':'06','s07':'07','s08':'08','s09':'09'}
+                    's04':'04','s05':'05','s06':'06','s07':'07','s08':'08','s09':'09','s10':'10'}
     stage_status = {}; stage_metric = {}
     for s in stage_stats:
         sn = s['Stage']
@@ -1043,6 +1099,7 @@ def write_html_report(report_dir, stage_stats):
         's07':  ['checkv_summary.tsv', 'checkv_confidence.tsv'],
         's08':  [],
         's09':  ['plant_virus_summary.tsv'],
+        's10':  ['analysis_cenote_summary.tsv'],
     }
 
     sections_html = ""
