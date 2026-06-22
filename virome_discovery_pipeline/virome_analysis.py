@@ -1,24 +1,27 @@
 #!/usr/bin/env python3
 """
-virome_analysis.py — 病毒基因组下游分析 + GenBank 提交准备 v1.0
+virome_analysis.py — 病毒基因组下游分析 + GenBank 提交准备 v2.0
 ============================================================
 输入: all_plant_viruses.fasta (来自 08_Rescue)
 输出: 09_Virome_Analysis/
 
 阶段:
-  1. suvtk taxonomy     — ICTV 分类学注释
-  2. suvtk features     — CDS/tRNA/结构蛋白注释 (生成 .tbl)
-  3. hypothetical       — DIAMOND/HMM 假想蛋白深度注释
-  4. submission (Sequin) — .fsa + .tbl + .cmt → .sqn (tbl2asn)
-  5. summary report     — 分析总结
+  1. Cenote-Taker3      — 病毒 hallmark 基因检测 + 功能注释 + 分类
+  2. suvtk taxonomy     — ICTV 分类学注释
+  3. suvtk features     — CDS/tRNA/结构蛋白注释 (生成 .tbl)
+  4. hypothetical       — DIAMOND/HMM 假想蛋白深度注释
+  5. submission (Sequin) — .fsa + .tbl + .cmt → .sqn (tbl2asn)
+  6. summary report     — 分析总结
 
 用法:
   python virome_analysis.py -i out/08_Rescue/all_plant_viruses.fasta -o out/09_Virome_Analysis/ -t 40
+  python virome_analysis.py -i out/08_Rescue/all_plant_viruses.fasta -o out/09_Virome_Analysis/ -t 40 --skip-cenote
 """
 
-import argparse, os, sys, subprocess, logging, time
+import argparse, os, sys, subprocess, logging, time, shutil
 from pathlib import Path
 from datetime import datetime
+from shutil import which
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 
@@ -48,6 +51,45 @@ def run(cmd, log, step_name):
     except subprocess.CalledProcessError as e:
         log.error("[%s] ✗ (exit=%d): %s", step_name, e.returncode, e.stderr[:200])
         return False
+
+
+# ══════════════════════════════════════════════════════════════
+# Stage 0: Cenote-Taker3 (病毒 hallmark 基因 + 功能注释 + 分类)
+# ══════════════════════════════════════════════════════════════
+
+def run_cenote(fasta, out_dir, threads, log):
+    """Cenote-Taker3: virus-specific annotation pipeline"""
+    cenote_bin = "cenote-taker3"
+    if not which(cenote_bin):
+        log.warning("[0/5] Cenote-Taker3 未安装, 跳过")
+        return None
+
+    ct3_out = out_dir / "cenote_taker3"
+    summary_file = ct3_out / "run_summary.tsv"
+    if summary_file.is_file() and summary_file.stat().st_size > 100:
+        log.info("[0/5] Cenote-Taker3 — 跳过 (已存在)")
+        return ct3_out
+
+    ct3_out.mkdir(parents=True, exist_ok=True)
+    wt = Path(ct3_out) / "cenote_workdir"
+    wt.mkdir(exist_ok=True)
+
+    n_seqs = sum(1 for _ in open(fasta) if _.startswith('>'))
+    log.info("[0/5] Cenote-Taker3: %d 病毒序列, annotation mode", n_seqs)
+
+    cmd = (f"{cenote_bin} -c {fasta} -r plant_virus_analysis "
+           f"-p False -t {threads} -am True "
+           f"-wd {wt} --minimum_length_circular 500 --minimum_length_linear 500")
+    ok = run(cmd, log, "Cenote-Taker3")
+    if ok:
+        # Collect output
+        for f in wt.glob("*.tsv"):
+            import shutil
+            shutil.copy(f, ct3_out / f.name)
+        for f in wt.glob("*.gbf"):
+            import shutil
+            shutil.copy(f, ct3_out / f.name)
+    return ct3_out if ok else None
 
 
 # ══════════════════════════════════════════════════════════════
@@ -181,8 +223,8 @@ def main():
     p.add_argument("-t", "--threads", type=int, default=40)
     p.add_argument("--suvtk-db", default=os.path.expanduser("~/database/virus-db/suvtk_db/"))
     p.add_argument("--rvdb-dir", default=os.path.expanduser("~/database/virus-db/RVDB-v31/"))
-    p.add_argument("--mode", choices=['all','taxonomy','features','hypothetical','submission'],
-                   default='all', help="运行模式")
+    p.add_argument("--skip-cenote", action="store_true", help="跳过 Cenote-Taker3")
+    p.add_argument("--skip-suvtk", action="store_true", help="跳过 suvtk 步骤")
     args = p.parse_args()
 
     inp = Path(args.input)
@@ -200,34 +242,38 @@ def main():
     log.info("=" * 60)
 
     t0 = time.time()
-    mode = args.mode
 
-    # 1. Taxonomy
-    tax_dir = None
-    if mode in ('all', 'taxonomy'):
+    # 0. Cenote-Taker3 (病毒 hallmark 基因检测)
+    if not args.skip_cenote:
+        cenote_out = run_cenote(inp, out, args.threads, log)
+    else:
+        log.info("[0/5] Cenote-Taker3 — 跳过")
+        cenote_out = None
+
+    # 1-4. suvtk pipeline
+    if not args.skip_suvtk:
+        # 1. Taxonomy
         tax_dir = run_taxonomy(inp, out, args.suvtk_db, args.threads, log)
-
-    # 2. Features
-    feat_dir = None
-    if mode in ('all', 'features'):
+        # 2. Features
         feat_dir = run_features(inp, out, tax_dir, args.suvtk_db, args.threads, log)
-
-    # 3. Hypothetical
-    hypo_dir = None
-    if mode in ('all', 'hypothetical') and feat_dir:
-        hypo_dir = run_hypothetical(out, feat_dir, args.rvdb_dir, args.threads, log)
-
-    # 4. Submission
-    if mode in ('all', 'submission') and feat_dir:
-        sub_dir = run_submission(inp, out, feat_dir, tax_dir, hypo_dir, log)
+        # 3. Hypothetical
+        hypo_dir = None
+        if feat_dir:
+            hypo_dir = run_hypothetical(out, feat_dir, args.rvdb_dir, args.threads, log)
+        # 4. Submission
+        if feat_dir:
+            sub_dir = run_submission(inp, out, feat_dir, tax_dir, hypo_dir, log)
+    else:
+        log.info("[1-4/5] suvtk pipeline — 跳过")
 
     elapsed = time.time() - t0
     log.info("=" * 60)
     log.info("完成! 耗时 %.0fs → %s", elapsed, out)
-    log.info("  suvtk_taxonomy/      ICTV 分类注释")
-    log.info("  suvtk_features/      基因注释 (CDS/tRNA)")
-    log.info("  hypothetical/         假想蛋白深度注释")
-    log.info("  submission/           GenBank 提交文件 (.sqn)")
+    log.info("  cenote_taker3/       病毒 hallmark 基因 + 功能注释 + 分类")
+    log.info("  suvtk_taxonomy/       ICTV 分类注释")
+    log.info("  suvtk_features/       基因注释 (CDS/tRNA)")
+    log.info("  hypothetical/          假想蛋白深度注释")
+    log.info("  submission/            GenBank 提交文件 (.sqn)")
     log.info("=" * 60)
 
 
