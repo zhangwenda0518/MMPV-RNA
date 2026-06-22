@@ -255,6 +255,7 @@ class ViromePipeline:
             'host_pred':  out / '06_HostPrediction',
             'checkv_dir': out / '07_Checkv',
             'rescue_dir': out / '08_Rescue',
+            'analysis':  out / '09_Virome_Analysis',
             'reports':    out / '10_Reports',
         }
         # 仅创建根目录, 各阶段按需创建自己的子目录
@@ -1429,6 +1430,34 @@ class ViromePipeline:
         r1000 = round(c1000/max(len(lens),1)*100, 1)
         return (len(lens), total, lens[0], n50, n90, c500, r500, c1000, r1000)
 
+    # ── Step 09: 病毒基因组下游分析 + GenBank 提交 ──
+    def run_analysis(self):
+        self.d['analysis'].mkdir(parents=True, exist_ok=True)
+        self.log.info("=" * 50)
+        self.log.info("[9] Virome Analysis — 病毒基因组下游分析")
+
+        all_plant = self.d['rescue_dir'] / "all_plant_viruses.fasta"
+        if not all_plant.is_file():
+            self.log.warning("  all_plant_viruses.fasta 不存在, 跳过")
+            return
+
+        n = sum(1 for _ in open(all_plant) if _.startswith('>'))
+        self.log.info("  输入: %d 条植物病毒", n)
+
+        analysis_script = SCRIPT_DIR / "virome_analysis.py"
+        cmd = [
+            f"python {analysis_script}",
+            f"-i {all_plant}",
+            f"-o {self.d['analysis']}",
+            f"-t {self.args.threads}",
+        ]
+        ok, _ = run_cmd(' '.join(cmd), self.log, "Virome Analysis",
+                        str(self.d['analysis'] / "analysis.log"))
+        if ok:
+            self.log.info("  分析完成 → %s", self.d['analysis'])
+        else:
+            self.log.warning("  分析部分失败, 检查日志")
+
     def run_reports(self):
         """调用独立报告生成脚本 report_pipeline.py"""
         self.log.info("=" * 50)
@@ -1472,7 +1501,7 @@ def _build_parser(add_help=True):
     g.add_argument('--profile', default='default', help='配置预设 (默认: default, 可选: downstream/plant)')
     g.add_argument('--dump-config', action='store_true', help='仅打印配置摘要并退出 (不运行)')
     g.add_argument('--stage', default=['all'], nargs='+',
-                   choices=['all', 'clean', 'deplete', 'bbnorm', 'assembly', 'identification', 'cobra', 'cluster', 'taxonomy', 'host', 'checkv', 'rescue', 'report'],
+                   choices=['all', 'clean', 'deplete', 'bbnorm', 'assembly', 'identification', 'cobra', 'cluster', 'taxonomy', 'host', 'checkv', 'rescue', 'analysis', 'report'],
                    help='运行阶段 (可多个, 如: --stage clean deplete)')
     g.add_argument('--host-filter', default='Plant',
                    help='目标宿主 (逗号分隔, rescue 阶段使用, 默认: Plant. Unknown 默认跳过并输出到 unknown_votus.fasta)')
@@ -1918,11 +1947,12 @@ def main():
         'assembly': pipe.run_assembly, 'identification': pipe.run_identification,
         'cobra': pipe.run_cobra, 'cluster': pipe.run_cluster,
         'taxonomy': pipe.run_taxonomy, 'host': pipe.run_host,
-        'checkv': pipe.run_checkv_stage, 'rescue': pipe.run_rescue, 'report': pipe.run_reports,
+        'checkv': pipe.run_checkv_stage, 'rescue': pipe.run_rescue,
+        'analysis': pipe.run_analysis, 'report': pipe.run_reports,
     }
     # 按流水线顺序排列
     stage_order = ['clean','deplete','bbnorm','assembly','identification','cobra','cluster',
-                   'taxonomy','host','checkv','rescue','report']
+                   'taxonomy','host','checkv','rescue','analysis','report']
     stages_to_run = [(s, stage_map[s]) for s in stage_order if _all or s in stages]
 
     # 准备阶段日志目录
