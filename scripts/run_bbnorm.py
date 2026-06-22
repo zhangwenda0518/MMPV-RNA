@@ -16,8 +16,11 @@ run_bbnorm.py — 独立 BBNorm 覆盖度归一化脚本
   prefilter=t  — 内存优化模式
 """
 
-import argparse, os, sys, subprocess, glob
+import argparse, os, sys, subprocess, glob, threading
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor, as_completed
+try: from tqdm import tqdm
+except ImportError: tqdm = None
 
 def find_reads(input_dir):
     """自动检测 PE/SE reads, 返回 (pe_pairs, se_files)"""
@@ -84,7 +87,8 @@ def main():
     p = argparse.ArgumentParser(description="BBNorm 覆盖度归一化 (自动 PE/SE 识别)")
     p.add_argument("-i", "--input", required=True, help="输入 reads 目录")
     p.add_argument("-o", "--output", required=True, help="输出目录")
-    p.add_argument("-t", "--threads", type=int, default=16, help="线程 (默认 16)")
+    p.add_argument("-t", "--threads", type=int, default=16, help="每个 bbnorm 线程 (默认 16)")
+    p.add_argument("-j", "--jobs", type=int, default=1, help="并行样本数 (默认 1, 多样本同时归一化)")
     p.add_argument("--target", type=int, default=70, help="目标覆盖度 (默认 70)")
     p.add_argument("--mindepth", type=int, default=2, help="最低 k-mer 深度 (默认 2)")
     p.add_argument("--keep-se-as-pe", action="store_true", help="SE 文件也按 PE 强制配对 (默认: 单独处理)")
@@ -102,26 +106,45 @@ def main():
     n_se = len([p for p in pe_pairs if p[1] is None]) + len(se_files)
 
     print(f"检测: {n_pe} PE 对, {n_se} SE 文件")
-    print(f"参数: target={args.target}, mindepth={args.mindepth}, prefilter=t, threads={args.threads}")
+    print(f"参数: target={args.target}, mindepth={args.mindepth}, prefilter=t")
+    print(f"线程: {args.threads}/task, 并行: {args.jobs} 样本")
     print(f"输入: {inp}")
     print(f"输出: {out}")
 
-    # PE pairs
-    done, total = 0, 0
+    # 构建任务列表
+    tasks = []
+    lock = threading.Lock()
+    stats = {"done": 0, "total": 0, "ok": 0, "fail": 0}
+
+    def _stem(r1, tag):
+        name = Path(r1).name
+        for t in tag:
+            if t in name: return name.split(t)[0]
+        return name.rsplit(".", 1)[0]
+
     for r1, r2 in pe_pairs:
-        stem = Path(r1).name
-        for t in ["_R1", "_1"]:
-            if t in stem:
-                stem = stem.split(t)[0]
-                break
+        stem = _stem(r1, ["_R1", "_1"])
         nr1 = out / f"{stem}_norm_R1.fq.gz"
         nr2 = out / f"{stem}_norm_R2.fq.gz"
         if nr1.is_file() and nr1.stat().st_size > 0:
-            done += 1; total += 1
+            stats["done"] += 1; stats["total"] += 1; stats["ok"] += 1
             continue
-        total += 1
-        status = "PE" if r2 else "SE"
-        print(f"  [{total}/{n_pe+n_se}] {status} {stem} ...", end=" ", flush=True)
+        tasks.append(("PE", r1, r2, nr1, nr2, stem))
+        stats["total"] += 1
+
+    for se in se_files:
+        stem = se.name.rsplit(".", 1)[0]
+        nr1 = out / f"{stem}_norm_SE.fq.gz"
+        if nr1.is_file() and nr1.stat().st_size > 0:
+            stats["done"] += 1; stats["total"] += 1; stats["ok"] += 1
+            continue
+        tasks.append(("SE", se, None, nr1, None, stem))
+        stats["total"] += 1
+
+    print(f"  [resume] 已完成 {stats['done']}/{stats['total']}, 剩余 {len(tasks)}")
+
+    def _run(task):
+        stype, r1, r2, nr1, nr2, stem = task
         cmd = [f"bbnorm.sh", f"in1={r1}", f"out1={nr1}",
                f"target={args.target}", f"mindepth={args.mindepth}",
                f"prefilter=t", f"threads={args.threads}"]
@@ -130,31 +153,30 @@ def main():
             cmd.insert(4, f"out2={nr2}")
         try:
             subprocess.run(" ".join(cmd), shell=True, capture_output=True, check=False)
-            if nr1.is_file() and nr1.stat().st_size > 0:
-                print("OK")
-            else:
-                print("EMPTY")
-        except: print("FAILED")
+            ok = nr1.is_file() and nr1.stat().st_size > 0
+        except: ok = False
+        with lock:
+            stats["ok" if ok else "fail"] += 1
+        return (stem, stype, ok)
 
-    # SE files
-    for se in se_files:
-        stem = se.name.rsplit(".", 1)[0]
-        nr1 = out / f"{stem}_norm_SE.fq.gz"
-        if nr1.is_file() and nr1.stat().st_size > 0:
-            done += 1; total += 1
-            continue
-        total += 1
-        print(f"  [{total}/{n_pe+n_se}] SE {stem} ...", end=" ", flush=True)
-        cmd = [f"bbnorm.sh", f"in={se}", f"out={nr1}",
-               f"target={args.target}", f"mindepth={args.mindepth}",
-               f"prefilter=t", f"threads={args.threads}"]
-        try:
-            subprocess.run(" ".join(cmd), shell=True, capture_output=True, check=False)
-            print("OK" if nr1.is_file() else "EMPTY")
-        except: print("FAILED")
+    pbar = tqdm(total=len(tasks), desc="  bbnorm", unit="task") if tqdm else None
+    if args.jobs > 1 and len(tasks) > 1:
+        with ThreadPoolExecutor(max_workers=min(args.jobs, len(tasks))) as ex:
+            futures = {ex.submit(_run, t): t for t in tasks}
+            for fu in as_completed(futures):
+                stem, stype, ok = fu.result()
+                tag = "✓" if ok else "✗"
+                if tqdm: tqdm.write(f"  [{tag}] {stype} {stem}")
+                if pbar: pbar.update(1)
+    else:
+        for t in tasks:
+            stem, stype, ok = _run(t)
+            print(f"  [{'✓' if ok else '✗'}] {stype} {stem}", flush=True)
+            if pbar: pbar.update(1)
+    if pbar: pbar.close()
 
     output_files = list(out.glob("*_norm_*.fq.gz"))
-    print(f"\n完成: {len(output_files)} 个归一化文件 → {out}")
+    print(f"\n完成: {stats['ok']}/{stats['total']} 成功, {len(output_files)} 个文件 → {out}")
 
 if __name__ == "__main__":
     main()

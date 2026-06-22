@@ -479,6 +479,7 @@ class ViromePipeline:
             f"-i {self.reads_dir}",
             f"-o {self.d['bbnorm']}",
             f"-t {self.args.threads}",
+            f"-j {getattr(self.args, 'jobs', 4)}",
         ]
         ok, _ = run_cmd(' '.join(parts), self.log, "BBNorm", str(self.d['bbnorm'] / "bbnorm.log"))
         if ok:
