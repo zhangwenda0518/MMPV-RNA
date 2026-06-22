@@ -1,3 +1,7 @@
 __pycache__/
 public_metadata_pipeline/public_data_pipeline_output/
 public_metadata_pipeline/build_host_pipeline_output/
+database/
+*.jar
+*.joblib
+*.h5
