@@ -137,6 +137,26 @@ python public_metadata_pipeline/build_host_pipeline.py \
 
 ---
 
+## 公共数据管线阶段 / Public Metadata Pipeline Stages
+
+### SRA/GSA 公共数据获取
+
+| # | 阶段 | 脚本 | 功能 |
+|---|------|------|------|
+| 1 | `search` | gsa_sra.search.py | NCBI SRA + CNCB GSA 双引擎物种检索 → SRA_GSA_Merged_Final.csv |
+| 2 | `info` | gsa_sra.info.py | SRA XML解析 + GSA爬虫 + AI元数据清洗 → Global_Unified_Metadata_Core13.csv (13列) |
+| 3 | `down` | gsa_sra.down.py | aria2c/wget/prefetch 双协议下载 → 原始 FASTQ/SRA |
+| 4 | `plot` | gsa_sra.plot.py | 时间/组织/地区/机构 SCI级6面板可视化 |
+
+### 宿主参考数据库构建
+
+| # | 阶段 | 脚本 | 功能 |
+|---|------|------|------|
+| 1 | `genome-down` | download_host_genome.py | NCBI datasets 下载参考基因组 + GFF3 + 细胞器基因组 |
+| 2 | `hostdb` | build_hostbase.py | Kraken2 + Bowtie2 + HISAT2 + Minimap2 四种索引构建 |
+
+---
+
 ## 目录结构 / Directory Structure
 
 ```
