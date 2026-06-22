@@ -472,6 +472,34 @@ class ViromePipeline:
         self.log.info("=" * 50)
         self.log.info("[1] MEGAHIT / rnaviralSPAdes / Penguin")
 
+        # Co-assembly 模式: 合并所有样本 reads → 单次组装
+        asm_input = str(self.reads_dir)
+        if getattr(self.args, 'coassembly', False):
+            self.log.info("  [co-assembly] 合并所有样本 reads → 单次组装")
+            merged_dir = self.d['asm'] / "coassembly_merged"
+            merged_dir.mkdir(exist_ok=True)
+            r1_files = sorted(Path(asm_input).glob("*_R1*.fastq.gz")) + \
+                       sorted(Path(asm_input).glob("*_R1*.fq.gz")) + \
+                       sorted(Path(asm_input).glob("*_1.fastq.gz")) + \
+                       sorted(Path(asm_input).glob("*_1.fq.gz")) + \
+                       sorted(Path(asm_input).glob("*_1.fa.gz"))
+            r2_files = sorted(Path(asm_input).glob("*_R2*.fastq.gz")) + \
+                       sorted(Path(asm_input).glob("*_R2*.fq.gz")) + \
+                       sorted(Path(asm_input).glob("*_2.fastq.gz")) + \
+                       sorted(Path(asm_input).glob("*_2.fq.gz")) + \
+                       sorted(Path(asm_input).glob("*_2.fa.gz"))
+            if r1_files:
+                self.log.info("  合并 %d 个 R1 文件", len(r1_files))
+                with open(merged_dir / "ALL_merged_R1.fq.gz", "wb") as out:
+                    for f in r1_files:
+                        with open(f, "rb") as inf: out.write(inf.read())
+            if r2_files:
+                self.log.info("  合并 %d 个 R2 文件", len(r2_files))
+                with open(merged_dir / "ALL_merged_R2.fq.gz", "wb") as out:
+                    for f in r2_files:
+                        with open(f, "rb") as inf: out.write(inf.read())
+            asm_input = str(merged_dir)
+
         # assembly_pipeline.py 完整参数:
         #   --tool, --input, --length, --threads, --memory, --jobs,
         #   --output-dir, --log_dirs, --refineC_split, --refineC_merge,
@@ -480,7 +508,7 @@ class ViromePipeline:
         parts = [
             f"python {self.sc['assembly']}",
             f"--tool {self.args.assembler}",
-            f"--input {self.reads_dir}",
+            f"--input {asm_input}",
             f"--output-dir {self.d['asm']}",
             f"--threads {self.args.threads}",
             f"--length {self.args.contig_length}",
@@ -1502,6 +1530,7 @@ def _build_parser(add_help=True):
     g.add_argument('--rrna_tool', default='ribodetector', choices=['ribodetector', 'silva'],
                    help='rRNA 剔除工具: ribodetector (默认) / silva (Bowtie2+SILVA)')
     g.add_argument('--silva_index', help='SILVA Bowtie2 索引前缀 (--rrna_tool silva 时必需)')
+    g.add_argument('--coassembly', action='store_true', help='Co-assembly 模式: 合并所有样本 reads 进行单次组装')
     g.add_argument('--assembler', default='penguin', choices=['megahit', 'rnaviralspades', 'penguin', 'all'])
     g.add_argument('--contig-length', '-l', type=int, default=200, help='contig 最小长度 bp (默认 200)')
     g.add_argument('--identify_tools', default='all', help='病毒鉴定工具')
