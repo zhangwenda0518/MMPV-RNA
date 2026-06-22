@@ -474,6 +474,7 @@ class ViromePipeline:
 
         # Co-assembly 模式: 合并所有样本 reads → 单次组装
         asm_input = str(self.reads_dir)
+        use_bbnorm = getattr(self.args, 'bbnorm', False)
         if getattr(self.args, 'coassembly', False):
             self.log.info("  [co-assembly] 合并所有样本 reads → 单次组装")
             merged_dir = self.d['asm'] / "coassembly_merged"
@@ -488,6 +489,28 @@ class ViromePipeline:
                        sorted(Path(asm_input).glob("*_2.fastq.gz")) + \
                        sorted(Path(asm_input).glob("*_2.fq.gz")) + \
                        sorted(Path(asm_input).glob("*_2.fa.gz"))
+
+            # BBNorm 归一化: 平抑覆盖度, 显著加速组装提升低丰度物种质量
+            if use_bbnorm:
+                norm_dir = self.d['asm'] / "bbnorm_normalized"
+                norm_dir.mkdir(exist_ok=True)
+                self.log.info("  [bbnorm] 覆盖度归一化 (target=70 mindepth=2)...")
+                n_pairs = min(len(r1_files), len(r2_files)) if r1_files and r2_files else 0
+                for i in range(n_pairs):
+                    r1, r2 = r1_files[i], r2_files[i]
+                    stem = Path(r1).name.split("_R1")[0].split("_1.")[0][:30]
+                    nr1 = norm_dir / f"{stem}_norm_R1.fq.gz"
+                    nr2 = norm_dir / f"{stem}_norm_R2.fq.gz"
+                    if nr1.is_file() and nr1.stat().st_size > 0:
+                        continue  # 跳过已归一化的
+                    cmd = (f"bbnorm.sh in1={r1} in2={r2} out1={nr1} out2={nr2} "
+                           f"target=70 mindepth=2 prefilter=t threads={self.args.threads}")
+                    self.log.debug("  %s", cmd)
+                    subprocess.run(cmd, shell=True, capture_output=True, check=False)
+                r1_files = sorted(norm_dir.glob("*_norm_R1.fq.gz"))
+                r2_files = sorted(norm_dir.glob("*_norm_R2.fq.gz"))
+                self.log.info("  [bbnorm] 归一化完成: %d PE 对", len(r1_files))
+
             if r1_files:
                 self.log.info("  合并 %d 个 R1 文件", len(r1_files))
                 with open(merged_dir / "ALL_merged_R1.fq.gz", "wb") as out:
@@ -1533,6 +1556,7 @@ def _build_parser(add_help=True):
                    help='rRNA 剔除工具: ribodetector (默认) / silva (Bowtie2+SILVA)')
     g.add_argument('--silva_index', help='SILVA Bowtie2 索引前缀 (--rrna_tool silva 时必需)')
     g.add_argument('--coassembly', action='store_true', help='Co-assembly 模式: 合并所有样本 reads 进行单次组装')
+    g.add_argument('--bbnorm', action='store_true', help='co-assembly 前 BBNorm 归一化 (target=70 mindepth=2)')
     g.add_argument('--assembler', default='penguin', choices=['megahit', 'rnaviralspades', 'penguin', 'all'])
     g.add_argument('--contig-length', '-l', type=int, default=200, help='contig 最小长度 bp (默认 200)')
     g.add_argument('--identify_tools', default='all', help='病毒鉴定工具')
