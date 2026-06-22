@@ -246,6 +246,7 @@ class ViromePipeline:
             'root':      out,
             'clean':     out / '00a_CleanData',
             'hostdep':   out / '00b_HostDepletion',
+            'bbnorm':    out / '00c_BBnorm',
             'asm':       out / '01_Assembly',
             'ident':     out / '02_Identification',
             'cobra':     out / '03_COBRA',
@@ -466,6 +467,41 @@ class ViromePipeline:
         self.reads_dir = self.d['hostdep']
         self.log.info("  Reads → %s", self.reads_dir)
 
+    # ── Step 0c: BBNorm 覆盖度归一化 ──
+    def run_bbnorm(self):
+        self.d['bbnorm'].mkdir(parents=True, exist_ok=True)
+        self.log.info("=" * 50)
+        self.log.info("[0c] BBNorm — 覆盖度归一化 (target=70 mindepth=2)")
+        reads_in = str(self.reads_dir)
+        r1_files = sorted(Path(reads_in).glob("*_R1*.fastq.gz")) + \
+                   sorted(Path(reads_in).glob("*_R1*.fq.gz")) + \
+                   sorted(Path(reads_in).glob("*_1.fastq.gz")) + \
+                   sorted(Path(reads_in).glob("*_1.fq.gz")) + \
+                   sorted(Path(reads_in).glob("*_1.fa.gz"))
+        r2_files = sorted(Path(reads_in).glob("*_R2*.fastq.gz")) + \
+                   sorted(Path(reads_in).glob("*_R2*.fq.gz")) + \
+                   sorted(Path(reads_in).glob("*_2.fastq.gz")) + \
+                   sorted(Path(reads_in).glob("*_2.fq.gz")) + \
+                   sorted(Path(reads_in).glob("*_2.fa.gz"))
+        if not r1_files:
+            self.log.info("  无 PE reads, 跳过 BBNorm")
+            return
+        self.log.info("  发现 %d PE 对, 逐对归一化...", min(len(r1_files), len(r2_files)))
+        n_pairs = min(len(r1_files), len(r2_files))
+        for i in range(n_pairs):
+            r1, r2 = r1_files[i], r2_files[i]
+            stem = Path(r1).name.split("_R1")[0].split("_1.")[0][:30]
+            nr1 = self.d['bbnorm'] / f"{stem}_norm_R1.fq.gz"
+            nr2 = self.d['bbnorm'] / f"{stem}_norm_R2.fq.gz"
+            if nr1.is_file() and nr1.stat().st_size > 0:
+                continue
+            cmd = (f"bbnorm.sh in1={r1} in2={r2} out1={nr1} out2={nr2} "
+                   f"target=70 mindepth=2 prefilter=t threads={self.args.threads}")
+            self.log.debug("  %s", cmd)
+            subprocess.run(cmd, shell=True, capture_output=True, check=False)
+        self.log.info("  BBNorm 完成 → %s", self.d['bbnorm'])
+        self.reads_dir = self.d['bbnorm']
+
     # ── Step 1: 组装 ──
     def run_assembly(self):
         self.d['asm'].mkdir(parents=True, exist_ok=True)
@@ -473,8 +509,8 @@ class ViromePipeline:
         self.log.info("[1] MEGAHIT / rnaviralSPAdes / Penguin")
 
         # Co-assembly 模式: 合并所有样本 reads → 单次组装
+        # (如有 BBNorm, 应在 --stage bbnorm 阶段先运行, reads 已归一化至此)
         asm_input = str(self.reads_dir)
-        use_bbnorm = getattr(self.args, 'bbnorm', False)
         if getattr(self.args, 'coassembly', False):
             self.log.info("  [co-assembly] 合并所有样本 reads → 单次组装")
             merged_dir = self.d['asm'] / "coassembly_merged"
@@ -489,27 +525,6 @@ class ViromePipeline:
                        sorted(Path(asm_input).glob("*_2.fastq.gz")) + \
                        sorted(Path(asm_input).glob("*_2.fq.gz")) + \
                        sorted(Path(asm_input).glob("*_2.fa.gz"))
-
-            # BBNorm 归一化: 平抑覆盖度, 显著加速组装提升低丰度物种质量
-            if use_bbnorm:
-                norm_dir = self.d['asm'] / "bbnorm_normalized"
-                norm_dir.mkdir(exist_ok=True)
-                self.log.info("  [bbnorm] 覆盖度归一化 (target=70 mindepth=2)...")
-                n_pairs = min(len(r1_files), len(r2_files)) if r1_files and r2_files else 0
-                for i in range(n_pairs):
-                    r1, r2 = r1_files[i], r2_files[i]
-                    stem = Path(r1).name.split("_R1")[0].split("_1.")[0][:30]
-                    nr1 = norm_dir / f"{stem}_norm_R1.fq.gz"
-                    nr2 = norm_dir / f"{stem}_norm_R2.fq.gz"
-                    if nr1.is_file() and nr1.stat().st_size > 0:
-                        continue  # 跳过已归一化的
-                    cmd = (f"bbnorm.sh in1={r1} in2={r2} out1={nr1} out2={nr2} "
-                           f"target=70 mindepth=2 prefilter=t threads={self.args.threads}")
-                    self.log.debug("  %s", cmd)
-                    subprocess.run(cmd, shell=True, capture_output=True, check=False)
-                r1_files = sorted(norm_dir.glob("*_norm_R1.fq.gz"))
-                r2_files = sorted(norm_dir.glob("*_norm_R2.fq.gz"))
-                self.log.info("  [bbnorm] 归一化完成: %d PE 对", len(r1_files))
 
             if r1_files:
                 self.log.info("  合并 %d 个 R1 文件", len(r1_files))
@@ -1471,7 +1486,7 @@ def _build_parser(add_help=True):
     g.add_argument('--profile', default='default', help='配置预设 (默认: default, 可选: downstream/plant)')
     g.add_argument('--dump-config', action='store_true', help='仅打印配置摘要并退出 (不运行)')
     g.add_argument('--stage', default=['all'], nargs='+',
-                   choices=['all', 'clean', 'deplete', 'assembly', 'identification', 'cobra', 'cluster', 'taxonomy', 'host', 'checkv', 'rescue', 'report'],
+                   choices=['all', 'clean', 'deplete', 'bbnorm', 'assembly', 'identification', 'cobra', 'cluster', 'taxonomy', 'host', 'checkv', 'rescue', 'report'],
                    help='运行阶段 (可多个, 如: --stage clean deplete)')
     g.add_argument('--host-filter', default='Plant',
                    help='目标宿主 (逗号分隔, rescue 阶段使用, 默认: Plant. Unknown 默认跳过并输出到 unknown_votus.fasta)')
@@ -1913,13 +1928,14 @@ def main():
     _all = 'all' in stages
     stage_map = {
         'clean': pipe.run_clean, 'deplete': pipe.run_depletion,
+        'bbnorm': pipe.run_bbnorm,
         'assembly': pipe.run_assembly, 'identification': pipe.run_identification,
         'cobra': pipe.run_cobra, 'cluster': pipe.run_cluster,
         'taxonomy': pipe.run_taxonomy, 'host': pipe.run_host,
         'checkv': pipe.run_checkv_stage, 'rescue': pipe.run_rescue, 'report': pipe.run_reports,
     }
     # 按流水线顺序排列
-    stage_order = ['clean','deplete','assembly','identification','cobra','cluster',
+    stage_order = ['clean','deplete','bbnorm','assembly','identification','cobra','cluster',
                    'taxonomy','host','checkv','rescue','report']
     stages_to_run = [(s, stage_map[s]) for s in stage_order if _all or s in stages]
 
