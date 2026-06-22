@@ -216,6 +216,14 @@ def main():
     else:
         log.info("[1-4/5] suvtk pipeline — 跳过")
 
+    # 5. 生成 ref_info.tsv (供 virome_analysis_pipeline/auto_known_virus.py 使用)
+    ref_info = out / "ref_info.tsv"
+    if not ref_info.is_file():
+        ref_builder = SCRIPT_DIR / "build_ref_info.py"
+        if ref_builder.is_file():
+            pipeline_root = Path(args.output).parent if Path(args.output).name == "09_Virome_Analysis" else Path(args.output)
+            run(f"python {ref_builder} -o {pipeline_root}", log, "build ref_info.tsv")
+
     elapsed = time.time() - t0
     log.info("=" * 60)
     log.info("完成! 耗时 %.0fs → %s", elapsed, out)
@@ -223,6 +231,7 @@ def main():
     log.info("  suvtk_features/       基因注释 (CDS/tRNA)")
     log.info("  hypothetical/          假想蛋白深度注释")
     log.info("  submission/            GenBank 提交文件 (.sqn)")
+    log.info("  ref_info.tsv           已知病毒分析 info 文件")
     log.info("=" * 60)
 
 
