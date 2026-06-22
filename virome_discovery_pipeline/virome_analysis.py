@@ -79,7 +79,17 @@ def run_cenote(fasta, out_dir, threads, log):
 
     cmd = (f"{cenote_bin} -c {fasta} -r plant_virus_analysis "
            f"-p False -t {threads} -am True "
-           f"-wd {wt} --minimum_length_circular 500 --minimum_length_linear 500")
+           f"-wd {wt} "
+           f"--minimum_length_circular 500 --minimum_length_linear 500 "
+           f"--molecule_type {args.molecule_type} --seqtech {args.seqtech} "
+           f"--caller prodigal-gv --taxdb hallmark "
+           f"--circ_minimum_hallmark_genes 0 --lin_minimum_hallmark_genes 1")
+    if args.isolation_source:
+        cmd += f" --isolation_source {args.isolation_source}"
+    if args.collection_date:
+        cmd += f" --collection_date {args.collection_date}"
+    if args.assembler_info:
+        cmd += f" --assembler {args.assembler_info}"
     ok = run(cmd, log, "Cenote-Taker3")
     if ok:
         # Collect output
@@ -225,6 +235,12 @@ def main():
     p.add_argument("--rvdb-dir", default=os.path.expanduser("~/database/virus-db/RVDB-v31/"))
     p.add_argument("--skip-cenote", action="store_true", help="跳过 Cenote-Taker3")
     p.add_argument("--skip-suvtk", action="store_true", help="跳过 suvtk 步骤")
+    # Cenote-Taker3 / GenBank 元数据
+    p.add_argument("--molecule-type", default="RNA", choices=["DNA","RNA"], help="分子类型 (默认: RNA)")
+    p.add_argument("--seqtech", default="Illumina", help="测序平台 (默认: Illumina)")
+    p.add_argument("--isolation-source", help="样本地理来源")
+    p.add_argument("--collection-date", help="采集日期 (DD-Mmm-YYYY)")
+    p.add_argument("--assembler-info", help="组装工具及版本")
     args = p.parse_args()
 
     inp = Path(args.input)
