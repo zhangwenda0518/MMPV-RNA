@@ -64,6 +64,17 @@ def run_cenote(fasta, out_dir, threads, log):
         log.warning("[0/5] Cenote-Taker3 未安装, 跳过")
         return None
 
+    # 自动检测数据库
+    cenote_dbs = os.environ.get("CENOTE_DBS", "")
+    if not cenote_dbs:
+        for p in [os.path.expanduser("~/database/virus-db/ct3_DBs"),
+                  os.path.expanduser("~/database/virus-db/ct3_DB")]:
+            if os.path.isdir(p):
+                cenote_dbs = p; break
+    if not cenote_dbs:
+        log.warning("[0/5] Cenote-Taker3 DB 未找到, 跳过 (设置 CENOTE_DBS 或安装到 ~/database/virus-db/ct3_DBs)")
+        return None
+
     ct3_out = out_dir / "cenote_taker3"
     summary_file = ct3_out / "run_summary.tsv"
     if summary_file.is_file() and summary_file.stat().st_size > 100:
@@ -75,11 +86,11 @@ def run_cenote(fasta, out_dir, threads, log):
     wt.mkdir(exist_ok=True)
 
     n_seqs = sum(1 for _ in open(fasta) if _.startswith('>'))
-    log.info("[0/5] Cenote-Taker3: %d 病毒序列, annotation mode", n_seqs)
+    log.info("[0/5] Cenote-Taker3: %d 病毒序列, DB=%s", n_seqs, cenote_dbs)
 
     cmd = (f"{cenote_bin} -c {fasta} -r plant_virus_analysis "
            f"-p False -t {threads} -am True "
-           f"-wd {wt} "
+           f"-wd {wt} --cenote-dbs {cenote_dbs} "
            f"--minimum_length_circular 500 --minimum_length_linear 500 "
            f"--molecule_type {args.molecule_type} --seqtech {args.seqtech} "
            f"--caller prodigal-gv --taxdb hallmark "
