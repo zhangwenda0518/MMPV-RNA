@@ -59,8 +59,8 @@ def run(cmd, log, step_name):
 
 def run_cenote(fasta, out_dir, threads, log):
     """Cenote-Taker3: virus-specific annotation pipeline"""
-    cenote_bin = "cenote-taker3"
-    if not which(cenote_bin):
+    cenote_bin = which("cenotetaker3") or which("cenote-taker3")
+    if not cenote_bin:
         log.warning("[0/5] Cenote-Taker3 未安装, 跳过")
         return None
 
