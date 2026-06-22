@@ -176,6 +176,13 @@ def _find_reads(fastq_dir, sample):
             r1 = os.path.join(fastq_dir, f"{sample}{suffix}{ext}")
             if os.path.isfile(r1):
                 return r1, None
+    # 5. Co-assembly fallback: 找不到样本 reads → 用 ALL_merged 文件
+    merged_r1 = os.path.join(fastq_dir, "ALL_merged_R1.fq.gz")
+    merged_r2 = os.path.join(fastq_dir, "ALL_merged_R2.fq.gz")
+    if os.path.isfile(merged_r1) and os.path.isfile(merged_r2):
+        return merged_r1, merged_r2
+    if os.path.isfile(merged_r1):
+        return merged_r1, None
     return None, None
 
 

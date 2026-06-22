@@ -499,6 +499,8 @@ class ViromePipeline:
                     for f in r2_files:
                         with open(f, "rb") as inf: out.write(inf.read())
             asm_input = str(merged_dir)
+            # 更新 reads_dir → rescue 阶段使用合并后的 reads
+            self.coassembly_merged_dir = str(merged_dir)
 
         # assembly_pipeline.py 完整参数:
         #   --tool, --input, --length, --threads, --memory, --jobs,
@@ -930,7 +932,7 @@ class ViromePipeline:
             f"--clusters-tsv {clusters_tsv}",
             f"--split-dir {split_dir}",
             f"-o {rescue_out}",
-            f"-fq {self.reads_dir}",
+            f"-fq {getattr(self, 'coassembly_merged_dir', None) or self.reads_dir}",
             f"-cv {self.args.checkv_db}",
             f"-t {self.args.threads}",
             f"-j {self.args.jobs}",
