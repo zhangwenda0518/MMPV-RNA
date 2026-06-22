@@ -499,7 +499,7 @@ Centroids FASTA + clusters.tsv + split_fastas/ + reads 目录
 | `data_preprocessing.py` | 清洗+去宿主可配置版 | 独立运行 |
 | `viroid_circular_detect.py` | 类病毒环状检测 (self-BLASTN) | 独立运行 |
 | `Virseqimprover.py` | reads 级别迭代延伸病毒基因组 | 被 rescue 调用 |
-| `suvtk_submission.py` | GenBank 提交准备 | 独立运行 |
+| `../suvtk_submission/suvtk_submission.py` | GenBank 提交准备 | 独立运行 |
 | `utils/classify_contigs.py` | ICTV 参考分类查找 | 被 run_host_prediction 调用 |
 | `utils/discovery2analysis.py` | centroids → analysis 格式转换 | 桥接脚本 |
 | `utils/validate_novel_viruses.py` | 基于分类层级判断新病毒 | 独立运行 |
