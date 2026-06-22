@@ -1,16 +1,14 @@
 #!/usr/bin/env python3
 """
-integrated_summary.py — 三源交叉验证整合报告
-============================================
+integrated_summary.py — 双源交叉验证整合报告 (R共识 + suvtk)
+============================================================
 输入:
   05_Taxonomy/Votus.integrated/final_integrated_classification.tsv  (R 共识)
-  09_Virome_Analysis/cenote_taker3/run_summary.tsv                  (Cenote-T3)
   09_Virome_Analysis/suvtk_taxonomy/taxonomy.tsv                     (suvtk)
   09_Virome_Analysis/suvtk_features/featuretable.tbl                 (CDS)
   08_Rescue/all_plant_viruses.fasta                                  (序列)
 输出:
   09_Virome_Analysis/integrated_summary.tsv
-  09_Virome_Analysis/integrated_taxonomy_comparison.tsv
 """
 
 import argparse, os, sys
@@ -56,26 +54,6 @@ def load_r_consensus(path):
         }
     return data
 
-def load_cenote_summary(path):
-    """Cenote-T3 run_summary.tsv"""
-    data = {}
-    if not Path(path).is_file(): return data
-    rows = _read_tsv(path)
-    for r in rows:
-        cid = r.get("contig_name", r.get("Contig",""))
-        if not cid: continue
-        # 标准化 contig_id: 取第一个空格前的部分
-        cid = cid.split()[0]
-        data[cid] = {
-            "hallmark_count": int(r.get("hallmark_count", r.get("hallmark gene count",0)) or 0),
-            "circular": str(r.get("circular", "")).lower() in ("true","1","yes"),
-            "dtr": str(r.get("dtr", r.get("DTR", "")).strip()),
-            "ct3_family": r.get("family", r.get("hallmark_family", "")),
-            "ct3_genus": r.get("genus", r.get("hallmark_genus", "")),
-            "ct3_taxonomy": r.get("taxonomy", r.get("hallmark_taxonomy", "")),
-        }
-    return data
-
 def load_suvtk_taxonomy(path):
     """suvtk taxonomy.tsv: contig_id → {rank: value}"""
     data = {}
@@ -117,55 +95,34 @@ def load_suvtk_features(path):
             data[current_contig]["trna_count"] += 1
     return data
 
-def compare_taxonomy(r_cons, cenote, suvtk, cid):
-    """三源分类比较: 取最佳"""
+def compare_taxonomy(r_cons, suvtk, cid):
+    """双源分类比较 (R共识 + suvtk): 取最佳"""
     result = {
-        "tax_source": "R_consensus",  # 默认 R 共识
+        "tax_source": "R_consensus",
         "best_species": "", "best_genus": "", "best_family": "",
-        "r_species": "", "ct3_species": "", "suvtk_species": "",
-        "r_genus": "", "ct3_genus": "", "suvtk_genus": "",
-        "tax_consensus": 0,  # 0-3 sources agree
+        "r_species": "", "suvtk_species": "",
+        "r_genus": "", "suvtk_genus": "",
+        "tax_consensus": 0,
     }
     r = r_cons.get(cid, {})
-    ct = cenote.get(cid, {})
     sv = suvtk.get(cid, {})
 
-    # R 共识 (最高优先级)
-    r_sp = r.get("Species","")
-    r_ge = r.get("Genus","")
-    r_fa = r.get("Family","")
-    result["r_species"] = r_sp
-    result["r_genus"] = r_ge
-    result["r_family"] = r_fa
+    r_sp = r.get("Species",""); r_ge = r.get("Genus",""); r_fa = r.get("Family","")
+    result["r_species"] = r_sp; result["r_genus"] = r_ge; result["r_family"] = r_fa
 
-    # Cenote-T3
-    ct_sp = ct.get("ct3_taxonomy","").split(";")[-1] if ct.get("ct3_taxonomy") else ""
-    ct_ge = ct.get("ct3_genus","")
-    ct_fa = ct.get("ct3_family","")
-    result["ct3_species"] = ct_sp
-    result["ct3_genus"] = ct_ge
+    sv_sp = sv.get("suvtk_species",""); sv_ge = sv.get("suvtk_genus",""); sv_fa = sv.get("suvtk_family","")
+    result["suvtk_species"] = sv_sp; result["suvtk_genus"] = sv_ge
 
-    # suvtk
-    sv_sp = sv.get("suvtk_species","")
-    sv_ge = sv.get("suvtk_genus","")
-    sv_fa = sv.get("suvtk_family","")
-    result["suvtk_species"] = sv_sp
-    result["suvtk_genus"] = sv_ge
+    species_set = {x for x in [r_sp, sv_sp] if x and x != "NA"}
+    genus_set = {x for x in [r_ge, sv_ge] if x and x != "NA"}
+    result["tax_consensus"] = 2 if len(species_set) == 1 else (1 if len(genus_set) == 1 else 0)
 
-    # 一致性计数
-    species_set = {x for x in [r_sp, ct_sp, sv_sp] if x and x != "NA"}
-    genus_set = {x for x in [r_ge, ct_ge, sv_ge] if x and x != "NA"}
-    result["tax_consensus"] = 1 if len(species_set) == 1 else (2 if len(genus_set) == 1 else 0)
+    result["best_family"] = r_fa or sv_fa or ""
+    result["best_genus"] = r_ge or sv_ge or ""
+    result["best_species"] = r_sp or sv_sp or ""
 
-    # 选择最佳: R 共识 > suvtk > Cenote
-    result["best_family"] = r_fa or sv_fa or ct_fa or ""
-    result["best_genus"] = r_ge or sv_ge or ct_ge or ""
-    result["best_species"] = r_sp or sv_sp or ct_sp or ""
-
-    # 补充所有缺失的 key (避免 KeyError)
-    for key in ["ct3_family","ct3_genus","ct3_species","suvtk_family","suvtk_genus","suvtk_species"]:
-        if key not in result:
-            result[key] = ""
+    for key in ["suvtk_family","suvtk_genus","suvtk_species"]:
+        if key not in result: result[key] = ""
     return result
 
 
@@ -180,32 +137,26 @@ def main():
 
     # 输入
     r_tsv = root / "05_Taxonomy" / "Votus.integrated" / "final_integrated_classification.tsv"
-    ct3_tsv = analysis_dir / "cenote_taker3" / "run_summary.tsv"
     sv_tax = analysis_dir / "suvtk_taxonomy" / "taxonomy.tsv"
     sv_feat = analysis_dir / "suvtk_features" / "featuretable.tbl"
     all_fa = root / "08_Rescue" / "all_plant_viruses.fasta"
 
-    print("=== 三源交叉验证整合 ===\n")
+    print("=== 双源交叉验证整合 (R共识 + suvtk) ===\n")
 
-    # 加载数据
     print(f"[1] 05_Taxonomy R 共识: {r_tsv}")
     r_cons = load_r_consensus(r_tsv)
     print(f"    {len(r_cons)} 条分类记录")
 
-    print(f"[2] Cenote-Taker3: {ct3_tsv}")
-    cenote = load_cenote_summary(ct3_tsv)
-    print(f"    {len(cenote)} 条注释记录")
-
-    print(f"[3] suvtk taxonomy: {sv_tax}")
+    print(f"[2] suvtk taxonomy: {sv_tax}")
     suvtk_tax = load_suvtk_taxonomy(sv_tax)
     print(f"    {len(suvtk_tax)} 条分类记录")
 
-    print(f"[4] suvtk features: {sv_feat}")
+    print(f"[3] suvtk features: {sv_feat}")
     features = load_suvtk_features(sv_feat)
     print(f"    {len(features)} 条 CDS 特征")
 
     n_plant = _count_fasta(all_fa)
-    print(f"[5] 植物病毒序列: {all_fa}")
+    print(f"[4] 植物病毒序列: {all_fa}")
     print(f"    {n_plant} 条序列\n")
 
     # 整合
@@ -217,12 +168,10 @@ def main():
 
     cols = [
         "contig_id", "length",
-        "hallmark_count", "circular", "dtr",
         "cds_count", "trna_count",
-        "tax_source", "tax_consensus",
+        "tax_consensus",
         "best_family", "best_genus", "best_species",
         "r_family", "r_genus", "r_species",
-        "ct3_family", "ct3_genus", "ct3_species",
         "suvtk_family", "suvtk_genus", "suvtk_species",
     ]
 
@@ -232,27 +181,21 @@ def main():
         of.write("\t".join(cols) + "\n")
         for cid in sorted(plant_ids):
             r = r_cons.get(cid, {})
-            ct = cenote.get(cid, {})
             sv = suvtk_tax.get(cid, {})
             ft = features.get(cid, {})
 
-            tax = compare_taxonomy(r_cons, cenote, suvtk_tax, cid)
+            tax = compare_taxonomy(r_cons, suvtk_tax, cid)
 
             # 从 FASTA 获取长度
             seq_len = ""
             # (长度可选, 暂不读)
             vals = [
                 cid, seq_len,
-                ct.get("hallmark_count", 0),
-                "Y" if ct.get("circular") else "N",
-                ct.get("dtr", ""),
                 ft.get("cds_count", 0),
                 ft.get("trna_count", 0),
                 tax["tax_consensus"],
-                "R_consensus" if tax["best_species"] else ("suvtk" if tax["suvtk_species"] else "Cenote-T3"),
                 tax["best_family"], tax["best_genus"], tax["best_species"],
                 tax["r_family"], tax["r_genus"], tax["r_species"],
-                tax["ct3_family"], tax["ct3_genus"], tax["ct3_species"],
                 tax["suvtk_family"], tax["suvtk_genus"], tax["suvtk_species"],
             ]
             of.write("\t".join(str(v) for v in vals) + "\n")
@@ -261,9 +204,8 @@ def main():
     print(f"  共 {len(plant_ids)} 条植物病毒")
 
     # 统计
-    n_with_hallmark = sum(1 for v in cenote.values() if v.get("hallmark_count",0) > 0)
-    n_circular = sum(1 for v in cenote.values() if v.get("circular"))
     n_cds_total = sum(v.get("cds_count",0) for v in features.values())
+    print(f"  共 {len(plant_ids)} 条植物病毒, {n_cds_total} CDS")
 
 
 if __name__ == "__main__":
