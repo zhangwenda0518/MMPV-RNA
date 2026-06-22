@@ -57,7 +57,7 @@ def run(cmd, log, step_name):
 # Stage 0: Cenote-Taker3 (病毒 hallmark 基因 + 功能注释 + 分类)
 # ══════════════════════════════════════════════════════════════
 
-def run_cenote(fasta, out_dir, threads, log):
+def run_cenote(fasta, out_dir, threads, log, molecule_type="RNA", seqtech="Illumina"):
     """Cenote-Taker3: virus-specific annotation pipeline"""
     cenote_bin = which("cenotetaker3") or which("cenote-taker3")
     if not cenote_bin:
@@ -86,13 +86,13 @@ def run_cenote(fasta, out_dir, threads, log):
     wt.mkdir(exist_ok=True)
 
     n_seqs = sum(1 for _ in open(fasta) if _.startswith('>'))
-    log.info("[0/5] Cenote-Taker3: %d 病毒序列, DB=%s", n_seqs, cenote_dbs)
+    log.info("[0/5] Cenote-Taker3: %d 病毒序列, DB=%s" % (n_seqs, cenote_dbs))
 
     cmd = (f"{cenote_bin} -c {fasta} -r plant_virus_analysis "
            f"-p False -t {threads} -am True "
            f"-wd {wt} --cenote-dbs {cenote_dbs} "
            f"--minimum_length_circular 500 --minimum_length_linear 500 "
-           f"--molecule_type {args.molecule_type} --seqtech {args.seqtech} "
+           f"--molecule_type {molecule_type} --seqtech {seqtech} "
            f"--caller prodigal-gv --taxdb hallmark "
            f"--circ_minimum_hallmark_genes 0 --lin_minimum_hallmark_genes 1")
     if args.isolation_source:
@@ -272,7 +272,7 @@ def main():
 
     # 0. Cenote-Taker3 (病毒 hallmark 基因检测)
     if not args.skip_cenote:
-        cenote_out = run_cenote(inp, out, args.threads, log)
+        cenote_out = run_cenote(inp, out, args.threads, log, args.molecule_type, args.seqtech)
     else:
         log.info("[0/5] Cenote-Taker3 — 跳过")
         cenote_out = None
