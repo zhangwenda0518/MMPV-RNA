@@ -1454,6 +1454,12 @@ class ViromePipeline:
         ok, _ = run_cmd(' '.join(cmd), self.log, "Virome Analysis",
                         str(self.d['analysis'] / "analysis.log"))
         if ok:
+            # 三源交叉验证整合
+            integ_script = SCRIPT_DIR / "integrated_summary.py"
+            if integ_script.is_file():
+                run_cmd(f"python {integ_script} -o {self.d['root']}",
+                        self.log, "Integrated Summary",
+                        str(self.d['analysis'] / "integrated_summary.log"))
             self.log.info("  分析完成 → %s", self.d['analysis'])
         else:
             self.log.warning("  分析部分失败, 检查日志")

@@ -301,6 +301,8 @@ def main():
     log.info("  suvtk_features/       基因注释 (CDS/tRNA)")
     log.info("  hypothetical/          假想蛋白深度注释")
     log.info("  submission/            GenBank 提交文件 (.sqn)")
+    log.info("")
+    log.info("  整合输出: integrated_summary.tsv (三源交叉验证)")
     log.info("=" * 60)
 
 
