@@ -273,6 +273,7 @@ class ViromePipeline:
             'classifier': script_dir / 'virus_classifier2.py',
             'classifier_R': script_dir / 'virus_classifier_analysis14.R',
             'c9': script_dir / 'C9_classify_contigs.py',
+            'bbnorm_script': script_dir / 'run_bbnorm.py',
         }
 
         # 数据流指针
@@ -472,35 +473,19 @@ class ViromePipeline:
         self.d['bbnorm'].mkdir(parents=True, exist_ok=True)
         self.log.info("=" * 50)
         self.log.info("[0c] BBNorm — 覆盖度归一化 (target=70 mindepth=2)")
-        reads_in = str(self.reads_dir)
-        r1_files = sorted(Path(reads_in).glob("*_R1*.fastq.gz")) + \
-                   sorted(Path(reads_in).glob("*_R1*.fq.gz")) + \
-                   sorted(Path(reads_in).glob("*_1.fastq.gz")) + \
-                   sorted(Path(reads_in).glob("*_1.fq.gz")) + \
-                   sorted(Path(reads_in).glob("*_1.fa.gz"))
-        r2_files = sorted(Path(reads_in).glob("*_R2*.fastq.gz")) + \
-                   sorted(Path(reads_in).glob("*_R2*.fq.gz")) + \
-                   sorted(Path(reads_in).glob("*_2.fastq.gz")) + \
-                   sorted(Path(reads_in).glob("*_2.fq.gz")) + \
-                   sorted(Path(reads_in).glob("*_2.fa.gz"))
-        if not r1_files:
-            self.log.info("  无 PE reads, 跳过 BBNorm")
-            return
-        self.log.info("  发现 %d PE 对, 逐对归一化...", min(len(r1_files), len(r2_files)))
-        n_pairs = min(len(r1_files), len(r2_files))
-        for i in range(n_pairs):
-            r1, r2 = r1_files[i], r2_files[i]
-            stem = Path(r1).name.split("_R1")[0].split("_1.")[0][:30]
-            nr1 = self.d['bbnorm'] / f"{stem}_norm_R1.fq.gz"
-            nr2 = self.d['bbnorm'] / f"{stem}_norm_R2.fq.gz"
-            if nr1.is_file() and nr1.stat().st_size > 0:
-                continue
-            cmd = (f"bbnorm.sh in1={r1} in2={r2} out1={nr1} out2={nr2} "
-                   f"target=70 mindepth=2 prefilter=t threads={self.args.threads}")
-            self.log.debug("  %s", cmd)
-            subprocess.run(cmd, shell=True, capture_output=True, check=False)
-        self.log.info("  BBNorm 完成 → %s", self.d['bbnorm'])
-        self.reads_dir = self.d['bbnorm']
+        bbnorm_script = self.sc.get('bbnorm_script', SCRIPT_DIR / "run_bbnorm.py")
+        parts = [
+            f"python {bbnorm_script}",
+            f"-i {self.reads_dir}",
+            f"-o {self.d['bbnorm']}",
+            f"-t {self.args.threads}",
+        ]
+        ok, _ = run_cmd(' '.join(parts), self.log, "BBNorm", str(self.d['bbnorm'] / "bbnorm.log"))
+        if ok:
+            self.reads_dir = self.d['bbnorm']
+            self.log.info("  Reads → %s", self.reads_dir)
+        else:
+            self.log.warning("  BBNorm 部分失败, 继续使用未归一化 reads")
 
     # ── Step 1: 组装 ──
     def run_assembly(self):
