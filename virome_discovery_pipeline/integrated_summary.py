@@ -55,22 +55,26 @@ def load_r_consensus(path):
     return data
 
 def load_suvtk_taxonomy(path):
-    """suvtk taxonomy.tsv: contig_id → {rank: value}"""
+    """suvtk taxonomy.tsv: 实际格式为 contig\ttaxonomy (最低可定级别 '<Taxon> sp.')"""
     data = {}
     if not Path(path).is_file(): return data
     rows = _read_tsv(path)
     for r in rows:
-        cid = r.get("contig_id", r.get("seq_name", ""))
+        cid = r.get("contig", r.get("contig_id", r.get("seq_name", "")))
         if not cid: continue
+        taxonomy = r.get("taxonomy", "").strip()
+        first = taxonomy.split()[0] if taxonomy else ""
+        sv_ge = sv_fa = ""
+        if first.endswith("idae"):        # 科
+            sv_fa = first
+        elif first.endswith("virinae"):   # 亚科
+            pass
+        elif first.endswith("virus"):     # 属
+            sv_ge = first
         data[cid] = {
-            "suvtk_realm": r.get("Realm", r.get("realm", "")),
-            "suvtk_kingdom": r.get("Kingdom", r.get("kingdom", "")),
-            "suvtk_phylum": r.get("Phylum", r.get("phylum", "")),
-            "suvtk_class": r.get("Class", r.get("class", "")),
-            "suvtk_order": r.get("Order", r.get("order", "")),
-            "suvtk_family": r.get("Family", r.get("family", "")),
-            "suvtk_genus": r.get("Genus", r.get("genus", "")),
-            "suvtk_species": r.get("Species", r.get("species", "")),
+            "suvtk_family": sv_fa,
+            "suvtk_genus": sv_ge,
+            "suvtk_species": taxonomy,
         }
     return data
 

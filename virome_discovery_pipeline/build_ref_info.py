@@ -39,18 +39,30 @@ def main():
     analysis = root / "09_Virome_Analysis"
 
     # ── 1. 读取多源数据 ──
-    # suvtk taxonomy
+    # suvtk taxonomy (多路径查找, 格式: contig\ttaxonomy)
     suvtk_data = {}
     sv_tax = analysis / "suvtk_taxonomy" / "taxonomy.tsv"
+    if not sv_tax.is_file():
+        sv_tax = root / "08_Rescue" / "suvtk.taxonomy_output" / "taxonomy.tsv"
     if sv_tax.is_file():
         for r in _read_tsv(sv_tax):
-            cid = r.get("contig_id", r.get("seq_name",""))
+            cid = r.get("contig_id", r.get("contig", r.get("seq_name","")))
+            taxonomy = r.get("taxonomy","").strip()
+            # suvtk 输出最低可定级别为 "<Taxon> sp.", 按后缀推断 rank
+            first = taxonomy.split()[0] if taxonomy else ""
+            sv_ge = sv_fa = ""
+            if first.endswith("idae"):        # 科
+                sv_fa = first
+            elif first.endswith("virinae"):   # 亚科 (无干净科/属)
+                pass
+            elif first.endswith("virus"):     # 属
+                sv_ge = first
+            # suvtk_species 保留完整 taxonomy 字符串供双源比对
             if cid:
                 suvtk_data[cid] = {
-                    "suvtk_species": r.get("Species", r.get("species","")),
-                    "suvtk_genus": r.get("Genus", r.get("genus","")),
-                    "suvtk_family": r.get("Family", r.get("family","")),
-                    "suvtk_taxid": r.get("taxid", r.get("TaxID","")),
+                    "suvtk_species": taxonomy,
+                    "suvtk_genus": sv_ge,
+                    "suvtk_family": sv_fa,
                 }
 
     # R 共识 (05_Taxonomy)
@@ -83,9 +95,11 @@ def main():
                 seq += line.strip()
         if seq: seq_lens[cid] = len(seq)
 
-    # suvtk features (CDS 统计)
+    # suvtk features (多路径)
     feat_data = {}
     sv_feat = analysis / "suvtk_features" / "featuretable.tbl"
+    if not sv_feat.is_file():
+        sv_feat = root / "08_Rescue" / "suvtk.features_output" / "featuretable.tbl"
     if sv_feat.is_file():
         cur = None
         for line in open(sv_feat):
