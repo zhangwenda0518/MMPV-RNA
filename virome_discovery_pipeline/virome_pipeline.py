@@ -103,12 +103,12 @@ def run_cmd(cmd, logger, step_name, log_file=None):
         if lf:
             lf.write(f"\n=== {step_name} 完成 ===\n\n")
             lf.close()
-            # 复制到 09_Reports/logs/ (从 output_dir/orchestrator.log 反推)
+            # 复制到 10_Reports/logs/ (从 output_dir/orchestrator.log 反推)
             try:
                 import shutil
                 for h in logger.handlers:
                     if isinstance(h, logging.FileHandler):
-                        reports_log = Path(h.baseFilename).resolve().parent / "09_Reports" / "logs"
+                        reports_log = Path(h.baseFilename).resolve().parent / "10_Reports" / "logs"
                         reports_log.mkdir(parents=True, exist_ok=True)
                         shutil.copy2(log_file, str(reports_log / Path(log_file).name))
                         break
@@ -255,7 +255,7 @@ class ViromePipeline:
             'host_pred':  out / '06_HostPrediction',
             'checkv_dir': out / '07_Checkv',
             'rescue_dir': out / '08_Rescue',
-            'reports':    out / '09_Reports',
+            'reports':    out / '10_Reports',
         }
         # 仅创建根目录, 各阶段按需创建自己的子目录
         self.d['root'].mkdir(parents=True, exist_ok=True)
@@ -1926,7 +1926,7 @@ def main():
     stages_to_run = [(s, stage_map[s]) for s in stage_order if _all or s in stages]
 
     # 准备阶段日志目录
-    stage_log_dir = Path(args.output_dir) / "09_Reports" / "logs"
+    stage_log_dir = Path(args.output_dir) / "10_Reports" / "logs"
     stage_log_dir.mkdir(parents=True, exist_ok=True)
 
     failed_stages = []

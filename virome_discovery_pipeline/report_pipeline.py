@@ -1664,7 +1664,7 @@ def generate_ai_summary(stage_stats, kpis, report_dir):
 
 def main():
     p = argparse.ArgumentParser(description="MMPV-RNA v2.3 — 独立报告生成器")
-    p.add_argument("-o", "--output-dir", required=True, help="流水线输出根目录 (包含 00a_CleanData/ ... 09_Reports/)")
+    p.add_argument("-o", "--output-dir", required=True, help="流水线输出根目录 (包含 00a_CleanData/ ... 10_Reports/)")
     p.add_argument("--skip-sankey", action="store_true", help="跳过 Sankey 图生成")
     p.add_argument("--skip-html", action="store_true", help="仅生成 TSV, 不生成 HTML")
     p.add_argument("--blast-db", help="BLAST 参考数据库路径 (用于序列相似度分类)")
@@ -1679,7 +1679,7 @@ def main():
     if not root.is_dir():
         sys.exit(f"ERROR: 目录不存在: {root}")
 
-    report_dir = root / "09_Reports"
+    report_dir = root / "10_Reports"
     report_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"{'='*60}")
