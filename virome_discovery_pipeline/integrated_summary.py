@@ -162,6 +162,10 @@ def compare_taxonomy(r_cons, cenote, suvtk, cid):
     result["best_genus"] = r_ge or sv_ge or ct_ge or ""
     result["best_species"] = r_sp or sv_sp or ct_sp or ""
 
+    # 补充所有缺失的 key (避免 KeyError)
+    for key in ["ct3_family","ct3_genus","ct3_species","suvtk_family","suvtk_genus","suvtk_species"]:
+        if key not in result:
+            result[key] = ""
     return result
 
 
@@ -222,6 +226,7 @@ def main():
         "suvtk_family", "suvtk_genus", "suvtk_species",
     ]
 
+    analysis_dir.mkdir(parents=True, exist_ok=True)
     out_tsv = analysis_dir / "integrated_summary.tsv"
     with open(out_tsv, "w") as of:
         of.write("\t".join(cols) + "\n")
