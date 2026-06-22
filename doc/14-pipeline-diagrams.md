@@ -22,13 +22,13 @@ flowchart TB
 
     subgraph Core["核心分析层"]
         AS["3. Assembly<br/>assembly_pipeline.py<br/>MEGAHIT<br/>-t 20 -j 20 -m 256"]
-        ID["4. Identification<br/>virus_identification16.py<br/>6工具并行鉴定<br/>--virus_db + 全DB路径<br/>-t 30 -j 10"]
+        ID["4. Identification<br/>virus_identification.py<br/>6工具并行鉴定<br/>--virus_db + 全DB路径<br/>-t 30 -j 10"]
         CO["5. COBRA<br/>cobra_pipeline.py<br/>BWA-MEM2→CoverM→COBRA<br/>auto detect 组装工具<br/>-t 30 -j 10"]
         CLU["6. Cluster<br/>cluster_pipeline.py<br/>CD-HIT ref-guide + vclust Leiden<br/>--ref-genomes ×2<br/>-t 60"]
     end
 
     subgraph Postprocess["后处理层"]
-        TX["7. Taxonomy<br/>virus_classifier2.py + R<br/>9工具分类 → R共识<br/>--virus_db + 全DB路径<br/>-t 60"]
+        TX["7. Taxonomy<br/>virus_classifier.py + R<br/>9工具分类 → R共识<br/>--virus_db + 全DB路径<br/>-t 60"]
         HO["8. Host<br/>run_host_prediction.py<br/>ICTV > RNAVirHost > PhaBOX2<br/>-t 120"]
         CV["9. CheckV<br/>checkv completeness<br/>按宿主预评估<br/>--checkv_db checkv-db-v1.7<br/>-t 120"]
         RE["10. Rescue<br/>rescue_pipeline.py<br/>三支路A→C→D级联拯救<br/>--host-filter Plant<br/>-t 20 -j 10"]
@@ -87,7 +87,7 @@ flowchart LR
     subgraph S4["16:48 — Stage: identification"]
         direction TB
         c4["python virome_pipeline.py --stage identification<br/>--output_dir $OUT/ --virus_db ~/database/virus-db<br/>--virus_protein_db ... --uniprot_db ... --viroids_db ...<br/>--virsorter_db ... --viralverify_hmm ... --virhunter_path ...<br/>--virhunter_weights ... --metabuli_db ... --virbot_path ...<br/>--viralm_path ... --virus_taxid ...<br/>--blast_mode both --blast_evalue 1e-5 --blast_top_n 5<br/>-t 30 -j 10"]
-        c4_sub["→ virus_identification16.py<br/>6工具并行 + Venn图"]
+        c4_sub["→ virus_identification.py<br/>6工具并行 + Venn图"]
         c4 --> c4_sub
     end
 
@@ -108,7 +108,7 @@ flowchart LR
     subgraph S7["20:31 — Stage: taxonomy"]
         direction TB
         c7["python virome_pipeline.py --stage taxonomy<br/>--output_dir $OUT/ --virus_db ~/database/virus-db/<br/>--uniprot_db ... --genomad_db ... --metabuli_db ...<br/>--cat_db ... --cat_tax ... --mmseqs_db ...<br/>--vitap_db ... --acvirus_db ... --vcontact3_db ...<br/>-t 60"]
-        c7_sub["→ virus_classifier2.py + R consensus<br/>9工具并行 → 8级taxonomy"]
+        c7_sub["→ virus_classifier.py + R consensus<br/>9工具并行 → 8级taxonomy"]
         c7 --> c7_sub
     end
 
@@ -184,10 +184,10 @@ flowchart TB
         R1["run_clean() → clean-data.py"]
         R2["run_depletion() → host_depletion.py"]
         R3["run_assembly() → assembly_pipeline.py"]
-        R4["run_identification() → virus_identification16.py"]
+        R4["run_identification() → virus_identification.py"]
         R5["run_cobra() → cobra_pipeline.py"]
         R6["run_cluster() → cluster_pipeline.py"]
-        R7["run_taxonomy() → virus_classifier2.py + R"]
+        R7["run_taxonomy() → virus_classifier.py + R"]
         R8["run_host() → run_host_prediction.py"]
         R9["run_checkv_stage() → checkv completeness"]
         R10["run_rescue() → rescue_pipeline.py"]
@@ -306,7 +306,7 @@ flowchart TB
 ```mermaid
 flowchart LR
     accTitle: Identification 阶段内部流程
-    accDescr: virus_identification16.py 6工具并行鉴定 + UniProt/NR 后置过滤
+    accDescr: virus_identification.py 6工具并行鉴定 + UniProt/NR 后置过滤
 
     subgraph Identify["run_identification()"]
         direction TB
@@ -445,7 +445,7 @@ flowchart TB
 
     subgraph Stage1["1. detect — 快速检测"]
         direction TB
-        D1["batch_virus_depth40.py<br/>双引擎: Salmon/Kallisto vs Bowtie2/BWA<br/>Poisson_Ratio 去假阳性<br/>双轨过滤: A轨(全基因组) + B轨(基因区)"]
+        D1["batch_virus_depth.py<br/>双引擎: Salmon/Kallisto vs Bowtie2/BWA<br/>Poisson_Ratio 去假阳性<br/>双轨过滤: A轨(全基因组) + B轨(基因区)"]
         D1_OUT["输出: 1_FastViromeExplorer/<br/>summary/summary.tsv<br/>summary/best.summary.tsv"]
         D1 --> D1_OUT
     end
@@ -488,14 +488,14 @@ flowchart TB
 ```mermaid
 flowchart TB
     accTitle: auto_known_virus.py 参数传递
-    accDescr: 编排器收集三阶段专用参数并分发到 batch_virus_depth40 / batch_virus_variants / batch_virus_full
+    accDescr: 编排器收集三阶段专用参数并分发到 batch_virus_depth / batch_virus_variants / batch_virus_full
 
     subgraph AutoOrch["auto_known_virus.py"]
         AP["argparse<br/>★★★ 必需: reads_dir output_dir ref_info reference<br/>★★☆ 可选: 40+ 参数覆盖三阶段"]
         AM["main()<br/>--dry-run → 仅显示概览<br/>--force → 覆盖 --resume<br/>--stage → 选择阶段"]
     end
 
-    subgraph DetectParams["Step1: batch_virus_depth40.py"]
+    subgraph DetectParams["Step1: batch_virus_depth.py"]
         direction LR
         DP1["--tool bowtie2/salmon/...<br/>--coverage 10.0 --ratio 0.3<br/>--sp_thresh 95.0<br/>--genes_cov (双轨B轨)<br/>--use_coverm (CoverM清洗)<br/>--single_end --keep_tmp<br/>--verbose"]
     end

@@ -1,25 +1,28 @@
 # taxonomy + host — 分类注释与宿主预测 / Taxonomy & Host Prediction
 
-> 9-tool classification + R consensus → 8-rank taxonomy. ICTV > RNAVirHost > PhaBOX2 decision tree for host assignment.
+> 8-tool parallel classification + weighted-vote consensus → 8-rank taxonomy with per-rank agreement tracking.
 
-## virus_classifier2.py — 9工具分类 / 9-Tool Classification
+## virus_classifier.py — 8工具并行分类
 
-### 5 个分类工具
+### 8 个分类工具
 
 | 工具 | 原理 |
 |------|------|
 | genomad | 深度学习病毒分类 |
-| mmseqs | 蛋白序列比对分类 |
+| metabuli | k-mer 分类 |
+| CAT | 蛋白比对分类 |
+| diamond_lca | LCA 分类 |
 | VITAP | 病毒蛋白分类 |
+| mmseqs | 蛋白比对分类 |
 | ACVirus | 古菌病毒分类 |
 | vcontact3 | 蛋白簇网络分类 |
 
 ### 用法
 
 ```bash
-python virus_classifier2.py \
+python virus_classifier.py \
     -g centroids.fasta -s sample_name \
-    -t genomad,mmseqs,VITAP,ACVirus,vcontact3 \
+    -t all \
     -o out/ -p 64 --db-dir /db/virus_db/ [-f]
 ```
 
@@ -34,28 +37,38 @@ python virus_classifier2.py \
 | `-p, --threads` | 20 | 线程数 |
 | `--db-dir` | ~/database/virus-db | 数据库目录 |
 | `-f, --force` | — | 强制重跑 |
+| `--validate-only` | — | 仅验证已有结果 (对比 combined 与重算) |
 
-### R 共识整合
+### 共识整合 (Python 或 R)
 
 ```bash
-Rscript virus_classifier_analysis14.R \
-    --combined combined_taxonomy.tsv --output out/
+# Python
+python virus_classifier_analysis.py --combined combined_taxonomy.tsv -o out/
+
+# R
+Rscript virus_classifier_analysis.R --combined combined_taxonomy.tsv -o out/
 ```
 
-优先级: vcontact3 > vitap > acvirus > mmseqs > genomad
-共识: 最多非 NA 层级的工具获胜
+共识算法: 逐 rank 加权投票 (深度权重 Species×128 > Genus×64 > ... > Realm×1)
++ ICTV 后缀校验 + subrank 清除 + genus-species 一致性修复
 
 ### 输出
 
 ```
 {out}/
-├── {sample}.virus_classed/
-│   ├── {sample}_{tool}_taxonomy.tsv    各工具单独输出
-│   └── {sample}_combined_taxonomy.tsv  5工具合并
-└── integrated/
-    └── final_integrated_classification.tsv ★ 最终分类
-        列: contig_id, Realm, Kingdom, Phylum, Class,
-             Order, Family, Genus, Species, Determination_Method
+├── {sample}.classed/
+│   ├── {sample}_{tool}_taxonomy.tsv         各工具标准化输出
+│   └── {sample}_combined_taxonomy.tsv       8工具合并 (virus_classifier.py)
+└── {sample}.integrated/
+    ├── final_integrated_classification.tsv  ★ 最终分类 + 工具一致信息
+    │   列: contig_id, primary_tool, completeness, confidence,
+    │        Realm..Species, Realm_agree..Species_agree
+    │   agree 格式: "5/7: tool1,tool2,..." (同意数/总数: 工具列表)
+    ├── intersection_upset.pdf                UpSet 交集图
+    ├── agreement_rates.pdf                   各工具各 rank 一致率
+    ├── consensus_summary.pdf                 完备度分布 + rank 填充率
+    ├── standardized_{tool}.tsv              各工具标准化结果
+    └── comparison_{level}.tsv               逐 contig 逐 rank 详细对比
 ```
 
 ---

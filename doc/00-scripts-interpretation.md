@@ -32,7 +32,7 @@ Raw FASTQ → clean → deplete → assembly → identification → COBRA → cl
 
 ```
 HostDepletion → auto_known_virus
-                  ├─ detect (batch_virus_depth40)
+                  ├─ detect (batch_virus_depth)
                   ├─ variants (batch_virus_variants)
                   └─ full (batch_virus_full)
 ```
@@ -63,10 +63,10 @@ HostDepletion → auto_known_virus
 | clean | `run_clean()` | clean-data.py |
 | deplete | `run_depletion()` | host_depletion.py |
 | assembly | `run_assembly()` | assembly_pipeline.py |
-| identification | `run_identification()` | virus_identification16.py |
+| identification | `run_identification()` | virus_identification.py |
 | cobra | `run_cobra()` | cobra_pipeline.py |
 | cluster | `run_cluster()` | cluster_pipeline.py |
-| taxonomy | `run_taxonomy()` | virus_classifier2.py + R |
+| taxonomy | `run_taxonomy()` | virus_classifier.py + R |
 | host | `run_host()` | run_host_prediction.py |
 | checkv | `run_checkv_stage()` | checkv completeness |
 | rescue | `run_rescue()` | rescue_pipeline.py |
@@ -151,7 +151,7 @@ align → samtools view -f 12 -F 256 → samtools sort -n → samtools fastq -n
 
 ---
 
-### 5. `virus_identification16.py` — 病毒序列鉴定 (约 2000+ 行)
+### 5. `virus_identification.py` — 病毒序列鉴定 (约 2000+ 行)
 
 **角色**: 6 工具并行病毒鉴定 + Venn/Upset 图可视化。
 
@@ -237,7 +237,7 @@ align → samtools view -f 12 -F 256 → samtools sort -n → samtools fastq -n
 
 ---
 
-### 8. `virus_classifier2.py` — 病毒分类 (约 1000+ 行)
+### 8. `virus_classifier.py` — 病毒分类 (约 1000+ 行)
 
 **角色**: 9 工具并行分类 + 8 级 taxonomy 整合。
 
@@ -251,7 +251,7 @@ align → samtools view -f 12 -F 256 → samtools sort -n → samtools fastq -n
 
 ---
 
-### 9. `virus_classifier_analysis14.R` — R 共识整合
+### 9. `virus_classifier_analysis.R` — R 共识整合
 
 **角色**: 多工具投票共识，优先级 `vcontact3 > vitap > acvirus > mmseqs > genomad`。
 
@@ -273,7 +273,7 @@ align → samtools view -f 12 -F 256 → samtools sort -n → samtools fastq -n
 
 ---
 
-### 11. `C9_classify_contigs.py` — ICTV 宿主分类
+### 11. `classify_contigs.py` — ICTV 宿主分类
 
 **角色**: 基于概率查找表的级联宿主分类。
 
@@ -344,13 +344,13 @@ Order/Class ≠ NA          → ★★★ novel_family/order (新科/目)
 **角色**: 已知病毒的检测 → 变异 → 全长组装三阶段。
 
 **三阶段**:
-1. **detect** (batch_virus_depth40): 快速检测 (Salmon/Kallisto/Bowtie2)
+1. **detect** (batch_virus_depth): 快速检测 (Salmon/Kallisto/Bowtie2)
 2. **variants** (batch_virus_variants): 变异分析 (FreeBayes/iVar/LoFreq + SnpEff + SnpGenie)
 3. **full** (batch_virus_full): 全长组装 (SPAdes/IVA 等)
 
 ---
 
-### 16. `batch_virus_depth40.py` — 已知病毒快速检测 (849 行)
+### 16. `batch_virus_depth.py` — 已知病毒快速检测 (849 行)
 
 **角色**: 伪比对/传统比对 + Poisson Ratio 去假阳性 + 双轨过滤。
 

@@ -112,10 +112,10 @@ python virome_pipeline.py --stage all \
 | 1 | `clean` | clean-data.py | Fastp QC + Seqkit stats + Clumpify dedup |
 | 2 | `deplete` | host_depletion.py | Kraken2 + Bowtie2/HISAT2 host depletion + rRNA removal |
 | 3 | `assembly` | assembly_pipeline.py | 3-tool assembly (Penguin/MEGAHIT/rnaviralSPAdes) |
-| 4 | `identification` | virus_identification16.py | 6-tool parallel virus identification |
+| 4 | `identification` | virus_identification.py | 6-tool parallel virus identification |
 | 5 | `cobra` | cobra_pipeline.py | COBRA batch extension |
 | 6 | `cluster` | cluster_pipeline.py | CD-HIT ref-guided + vclust Leiden clustering |
-| 7 | `taxonomy` | virus_classifier2.py + R | 9-tool classification + R consensus |
+| 7 | `taxonomy` | virus_classifier.py + R | 9-tool classification + R consensus |
 | 8 | `host` | run_host_prediction.py | ICTV > RNAVirHost > PhaBOX2 host prediction |
 | 9 | `checkv` | (built-in) | Per-host CheckV completeness pre-evaluation |
 | 10 | `rescue` | rescue_pipeline.py + Virseqimprover.py | 3-branch cascade rescue (A:CheckV → C:VSI → D:BLASTN+VSI) |
@@ -311,7 +311,7 @@ out/
 | [doc/02-clean-data.md](doc/02-clean-data.md) | Clean stage / 数据清洗 |
 | [doc/03-host_depletion.md](doc/03-host_depletion.md) | Deplete stage / 去宿主 |
 | [doc/04-assembly_pipeline.md](doc/04-assembly_pipeline.md) | Assembly stage / 组装 |
-| [doc/05-virus_identification16.md](doc/05-virus_identification16.md) | Identification stage / 病毒鉴定 |
+| [doc/05-virus_identification.md](doc/05-virus_identification.md) | Identification stage / 病毒鉴定 |
 | [doc/06-cobra_pipeline.md](doc/06-cobra_pipeline.md) | COBRA stage / 延伸 |
 | [doc/07-cluster_pipeline.md](doc/07-cluster_pipeline.md) | Cluster stage / 聚类 |
 | [doc/08-rescue_pipeline.md](doc/08-rescue_pipeline.md) | Rescue stage / 拯救 |

@@ -5,7 +5,7 @@
 ## 三个独立阶段 / Three Independent Stages
 
 ```
---stage detect    batch_virus_depth40.py   Salmon/Bowtie2 快速检测
+--stage detect    batch_virus_depth.py   Salmon/Bowtie2 快速检测
 --stage variants  batch_virus_variants.py  FreeBayes + SnpEff + SnpGenie
 --stage full      batch_virus_full.py      virus-full 全长组装
 ```
@@ -40,7 +40,7 @@ python auto_known_virus.py --stage full      [参数]
 | `--threads` | 40 | 线程数 |
 | `--jobs` | 4 | 并行数 |
 
-### detect (batch_virus_depth40.py)
+### detect (batch_virus_depth.py)
 
 | 参数 | 默认 | 说明 |
 |------|------|------|

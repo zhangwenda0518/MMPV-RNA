@@ -1,3 +1,3 @@
 __pycache__/
-metadata/public_data_pipeline_output/
-metadata/build_host_pipeline_output/
+public_metadata_pipeline/public_data_pipeline_output/
+public_metadata_pipeline/build_host_pipeline_output/

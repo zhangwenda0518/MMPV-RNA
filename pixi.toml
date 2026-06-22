@@ -1,0 +1,342 @@
+# ==============================================================================
+# MMPV-RNA v2.3 — pixi 环境配置
+# ==============================================================================
+# 安装: pixi install
+# 激活: pixi shell
+# 运行: pixi run <task>
+#
+# 手动安装的工具见下方 [tool.manual] 章节
+# ==============================================================================
+
+[project]
+name = "MMPV-RNA"
+version = "2.3.0"
+description = "Macro-metagenomic Plant Virome RNA pipeline — discovery + analysis + public data"
+authors = ["zhangwenda"]
+channels = ["conda-forge", "bioconda", "nodefaults"]
+platforms = ["linux-64"]
+
+# ==============================================================================
+# 核心依赖 — 所有流程共用
+# ==============================================================================
+[dependencies]
+# --- 语言运行时 ---
+python = ">=3.10,<3.13"
+R = ">=4.2,<4.5"
+r-base = ">=4.2,<4.5"
+perl = ">=5.32"
+java-openjdk = ">=11"                         # SnpEff 运行需要
+
+# --- Python 核心库 ---
+biopython = ">=1.83"
+pandas = ">=2.0"
+numpy = ">=1.24"
+matplotlib = ">=3.7"
+seaborn = ">=0.12"
+polars = ">=0.20"
+pysam = ">=0.22"
+plotly = ">=5.14"
+scipy = ">=1.10"
+requests = ">=2.28"
+tqdm = ">=4.65"
+psutil = ">=5.9"
+colorlog = ">=6.7"
+xmltodict = ">=0.13"
+openai = ">=1.0"
+urllib3 = ">=2.0"
+upsetplot = ">=0.8"
+
+# --- R 核心包 (CRAN) ---
+r-optparse = ">=1.7"
+r-data.table = ">=1.14"
+r-ggplot2 = ">=3.4"
+r-venndiagram = ">=1.7"
+r-ggvenndiagram = ">=1.5"
+r-stringr = ">=1.5"
+r-rcolorbrewer = ">=1.1"
+r-scales = ">=1.2"
+r-cowplot = ">=1.1"
+r-patchwork = ">=1.1"
+r-parallelly = ">=1.36"
+r-ggrepel = ">=0.9"
+r-dplyr = ">=1.1"
+r-tidyr = ">=1.3"
+r-circlize = ">=0.4"
+r-httr = ">=1.4"
+r-viridis = ">=0.6"
+r-upsetr = ">=1.4"
+r-gridextra = ">=2.3"
+
+# --- R Bioconductor ---
+bioconductor-maftools = ">=2.18"
+
+# ==============================================================================
+# 数据清洗 & 宿主去除 (Stage 0a-0c)
+# ==============================================================================
+fastp = ">=0.23"                              # QC + trimming
+seqkit = ">=2.6"                              # FASTA/Q 操作
+bbmap = ">=39.0"                              # BBNorm, clumpify, bbmap
+bowtie2 = ">=2.5"                             # 宿主比对
+hisat2 = ">=2.2"                              # 宿主比对 (splice-aware)
+minimap2 = ">=2.24"                           # 长读段比对
+kraken2 = ">=2.1"                             # 宿主分类去除
+ribodetector = ">=0.3"                        # rRNA 检测去除
+
+# ==============================================================================
+# 组装 (Stage 1: Assembly)
+# ==============================================================================
+megahit = ">=1.2"                             # 宏基因组组装
+spades = ">=3.15"                             # (含 rnaviralspades.py)
+penguin = ">=1.0"                             # 引导组装
+refinec = ">=1.0"                             # 组装优化
+
+# ==============================================================================
+# 病毒鉴定 (Stage 2: Identification — 11 工具)
+# ==============================================================================
+diamond = ">=2.1"                             # BLASTX 蛋白搜索
+blast = ">=2.15"                              # BLASTN 核酸搜索
+genomad = ">=1.7"                             # 病毒鉴定 (geNomad)
+virsorter = ">=2"                             # 病毒分类 (VirSorter2)
+viralverify = ">=1.0"                         # 病毒序列验证
+metabuli = ">=1.0"                            # 宏基因组分类
+virhunter = ">=1.0"                           # DL 病毒检测
+virbot = ">=1.0"                              # 病毒检测
+viralm = ">=1.0"                              # 病毒检测 (ViralM)
+rdrpcatch = ">=1.0"                           # RdRp 检测
+
+# ==============================================================================
+# 病毒分类 (Stage 5: Taxonomy — 6 工具)
+# ==============================================================================
+mmseqs2 = ">=14"                              # 快速分类搜索
+taxonkit = ">=0.15"                           # NCBI TaxID 转换
+vcontact3 = ">=3.0"                           # 基因共享聚类
+vitap = ">=1.0"                               # 病毒分类
+acvirus = ">=1.0"                             # 病毒分类 (ACVirus)
+
+# ==============================================================================
+# 病毒聚类 (Stage 4: Cluster)
+# ==============================================================================
+vclust = ">=1.0"                              # 病毒聚类去冗余
+
+# ==============================================================================
+# COBRA 延伸 (Stage 3)
+# ==============================================================================
+samtools = ">=1.18"                           # BAM 处理
+coverm = ">=0.6"                              # 覆盖度计算
+
+# ==============================================================================
+# 宿主预测 (Stage 6)
+# ==============================================================================
+rnavirhost = ">=1.0"                          # RNA 病毒宿主预测
+phabox2 = ">=1.0"                             # 噬菌体宿主预测
+cherry = ">=1.0"                              # CHERRY 宿主预测
+
+# ==============================================================================
+# 变异检测 & 注释 (Virome Analysis)
+# ==============================================================================
+bcftools = ">=1.18"                           # VCF 处理
+freebayes = ">=1.3"                           # 变异检测
+ivar = ">=1.4"                                # 病毒变异检测
+lofreq = ">=2.1"                              # 低频变异检测
+snpeff = ">=5.1"                              # 变异注释
+snpgenie = ">=1.0"                            # 群体遗传 (dN/dS)
+viral_consensus = ">=1.0"                     # 共识序列
+bgzip = ">=1.18"                              # (含 tabix) VCF 压缩索引
+tabix = ">=1.18"
+
+# ==============================================================================
+# 系统发育 & 选择压力
+# ==============================================================================
+mafft = ">=7.5"                               # 多序列比对
+iqtree = ">=2.3"                              # 系统发育树
+hyphy = ">=2.5"                               # 正选择分析
+cawlign = ">=1.0"                             # 密码子感知比对
+ragtag = ">=2.1"                              # 参考引导 scaffolding
+
+# ==============================================================================
+# 定量 & 比对引擎
+# ==============================================================================
+salmon = ">=1.10"                             # 转录本定量
+kallisto = ">=0.48"                           # 伪比对定量
+bwa = ">=0.7"                                 # 短读段比对
+bwa-mem2 = ">=2.2"
+strobealign = ">=0.12"                        # 快速比对
+pandepth = ">=1.0"                            # 位点深度
+virema = ">=1.0"                              # DVG/重组检测
+
+# ==============================================================================
+# SRA 公共数据获取
+# ==============================================================================
+sra-tools = ">=3.0"                           # prefetch, fasterq-dump
+ncbi-datasets-cli = ">=16.0"                  # datasets 下载基因组
+entrez-direct = ">=22.0"                      # esearch, efetch
+aria2 = ">=1.36"                              # 并行下载
+wget = ">=1.21"
+curl = ">=8.0"
+datavzrd = ">=2.0"                            # 交互式数据报告
+multiqc = ">=1.20"                            # 汇总报告
+
+# ==============================================================================
+# 工具集
+# ==============================================================================
+pigz = ">=2.8"                                # 并行 gzip
+gffread = ">=0.12"                            # GFF → GTF 转换
+
+# ==============================================================================
+# [feature] — 可选功能分组
+# ==============================================================================
+
+# --- 仅核心流程 (discovery) ---
+[feature.discovery.dependencies]
+fastp = ">=0.23"
+seqkit = ">=2.6"
+bbmap = ">=39.0"
+bowtie2 = ">=2.5"
+hisat2 = ">=2.2"
+minimap2 = ">=2.24"
+kraken2 = ">=2.1"
+ribodetector = ">=0.3"
+megahit = ">=1.2"
+spades = ">=3.15"
+penguin = ">=1.0"
+refinec = ">=1.0"
+diamond = ">=2.1"
+blast = ">=2.15"
+mmseqs2 = ">=14"
+checkv = ">=1.0"
+genomad = ">=1.7"
+virsorter = ">=2"
+viralverify = ">=1.0"
+virhunter = ">=1.0"
+virbot = ">=1.0"
+viralm = ">=1.0"
+rdrpcatch = ">=1.0"
+vcontact3 = ">=3.0"
+vitap = ">=1.0"
+acvirus = ">=1.0"
+taxonkit = ">=0.15"
+vclust = ">=1.0"
+samtools = ">=1.18"
+coverm = ">=0.6"
+ragtag = ">=2.1"
+salmon = ">=1.10"
+kallisto = ">=0.48"
+bwa = ">=0.7"
+rnavirhost = ">=1.0"
+phabox2 = ">=1.0"
+cherry = ">=1.0"
+
+# --- 仅分析流程 (analysis) ---
+[feature.analysis.dependencies]
+bcftools = ">=1.18"
+freebayes = ">=1.3"
+ivar = ">=1.4"
+lofreq = ">=2.1"
+snpeff = ">=5.1"
+snpgenie = ">=1.0"
+viral_consensus = ">=1.0"
+bgzip = ">=1.18"
+tabix = ">=1.18"
+mafft = ">=7.5"
+iqtree = ">=2.3"
+hyphy = ">=2.5"
+cawlign = ">=1.0"
+strobealign = ">=0.12"
+samtools = ">=1.18"
+bowtie2 = ">=2.5"
+minimap2 = ">=2.24"
+bwa = ">=0.7"
+pandepth = ">=1.0"
+virema = ">=1.0"
+
+# --- 仅公共数据 (public data) ---
+[feature.publicdata.dependencies]
+sra-tools = ">=3.0"
+ncbi-datasets-cli = ">=16.0"
+entrez-direct = ">=22.0"
+aria2 = ">=1.36"
+wget = ">=1.21"
+curl = ">=8.0"
+datavzrd = ">=2.0"
+multiqc = ">=1.20"
+kraken2 = ">=2.1"
+bowtie2 = ">=2.5"
+hisat2 = ">=2.2"
+minimap2 = ">=2.24"
+openai = ">=1.0"
+urllib3 = ">=2.0"
+xmltodict = ">=0.13"
+
+# --- GPU 加速 (可选) ---
+[feature.gpu.dependencies]
+cuda-version = ">=12.0"
+# diamond 和 mmseqs2 在 conda 中通常已含 GPU 支持
+
+# ==============================================================================
+# Task shortcuts
+# ==============================================================================
+[tasks]
+
+# 快速运行发现流程 (从 assembly 开始, 跳过 clean+deplete)
+discovery-downstream = { cmd = "python virome_discovery_pipeline/virome_pipeline.py --stage assembly identification cobra cluster taxonomy host checkv rescue report", description = "Run discovery pipeline downstream (skip clean+deplete)" }
+
+# 运行已知病毒分析
+analysis-detect = { cmd = "python virome_analysis_pipeline/auto_known_virus.py --stage detect", description = "Known virus rapid detection" }
+
+# 转换 discovery → analysis
+discovery2analysis = { cmd = "python virome_discovery_pipeline/discovery2analysis.py", description = "Convert discovery centroids to analysis reference format" }
+
+# 搜索公共 SRA 数据
+public-search = { cmd = "python public_metadata_pipeline/public_data_pipeline.py --stage search", description = "Search SRA/GSA for a species" }
+
+# 构建宿主数据库
+build-hostdb = { cmd = "python public_metadata_pipeline/build_host_pipeline.py --stage hostdb", description = "Build Kraken2/Bowtie2/HISAT2/Minimap2 host DB" }
+
+# R 交互环境
+R-shell = { cmd = "R --no-save", description = "Start R interactive session" }
+
+# 批量运行 (需要配置 sample list)
+batch-all = { cmd = "bash run_all_species.sh", description = "Batch run all species through discovery pipeline" }
+
+# ==============================================================================
+# 手动安装 (不在 bioconda/conda-forge 中)
+# ==============================================================================
+# VCF2Dis — 遗传距离矩阵
+#   git clone https://github.com/hewm2008/VCF2Dis.git
+#   cd VCF2Dis && make && chmod +x VCF2Dis && sudo cp VCF2Dis /usr/local/bin/
+#
+# VCF2PCACluster — PCA 聚类
+#   git clone https://github.com/hewm2008/VCF2PCACluster.git
+#   cd VCF2PCACluster && make && chmod +x VCF2PCACluster && sudo cp VCF2PCACluster /usr/local/bin/
+
+# ==============================================================================
+# 数据库 (运行时必需, 需预下载并配置路径, 见 pipeline_config.yaml)
+# ==============================================================================
+#   checkv-db         — https://bitbucket.org/berkeleylab/checkv/src/master/
+#   genomad_db        — https://zenodo.org/records/14828026
+#   RVDB              — https://fzer.github.io/rvdbtools/
+#   nr (diamond)      — NCBI nr diamond 格式
+#   ncbi-virus_ref    — NCBI virus reference genomes
+#   host_db           — 宿主参考基因组索引
+#   viralverify_hmm   — ViralVerify HMM models
+#   virsorter_db      — VirSorter2 数据库
+#   metabuli_db       — Metabuli 数据库
+#   vcontact3_db      — vConTACT3 参考数据库
+# ==============================================================================
+
+# ==============================================================================
+# 独立 conda 环境 (非 pixi 管理, 需手动创建)
+# ==============================================================================
+# ViraLM (PyTorch + CUDA 11.8, DNABERT-2 模型)
+#   conda env create -f envs/viralm.yaml -n viralm
+#   模型下载: gdown https://drive.google.com/uc?id=1EQVPmFbpLGrBLU0xCtZBpwvXrtrRxic1
+#   解压模型到 viralm_db 目录
+
+# ==============================================================================
+# 部署步骤:
+#   1. pixi install                    # 安装全部依赖
+#   2. pixi install --feature gpu      # (可选) 加 GPU 支持
+#   3. 下载并配置数据库 (见上方列表)
+#   4. pixi shell                       # 进入环境
+#   5. pixi run discovery-downstream    # 运行流程
+# ==============================================================================

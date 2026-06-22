@@ -1,0 +1,241 @@
+# ==============================================================================
+# MMPV-RNA Third-Party Software Versions
+# ==============================================================================
+# Updated: 2026-06-22
+#
+# Sources:
+#   - biosoft/         : manual copies from server (202.119.189.246)
+#   - pixi.toml        : conda-forge / bioconda
+#   - *_pipeline/utils/ : manual copies from server
+# ==============================================================================
+
+## biosoft/ — 第三方工具 (无独立编译器/解释器即可运行)
+## =============================================================================
+
+### ViReMa (Virus Recombination Mapper)
+#   版本: 0.29
+#   仓库: https://github.com/rouskinlab/ViReMa
+#   位置: biosoft/ViReMa/ViReMa.py
+#   类型: Python — 无需编译
+#   用途: DVG 检测 / 病毒重组分析
+ViReMa    = "0.29"
+
+### VirBot
+#   仓库: https://github.com/WajidHusain/VirBot
+#   位置: biosoft/VirBot/VirBot.py
+#   类型: Python — 无需编译
+#   用途: 深度学习病毒鉴定
+#   备注: 无版本号标记, 以服务器副本日期为准 (2024-03)
+VirBot    = "server-2024-03"
+
+### VirHunter (CPU)
+#   仓库: https://github.com/cbib/virhunter
+#   位置: biosoft/virhunter/predict_cpu.py
+#   权重: biosoft/virhunter/weights/generalistic/
+#   类型: Python — 无需编译 (需 keras/tensorflow)
+#   用途: 深度学习病毒鉴定 (CPU 版本)
+VirHunter = "server-cpu"
+
+### snpEff
+#   仓库: https://github.com/pcingola/SnpEff
+#   位置: biosoft/snpEff/
+#   类型: Java JAR — 无需编译 (需 JRE >= 21)
+#   用途: 变异注释
+snpEff    = ">=5.1"
+SnpSift   = ">=5.1"
+
+## virome_discovery_pipeline/utils/ — 用户自定义脚本
+## =============================================================================
+
+### ViraLM (CPU modified)
+#   原版仓库: https://github.com/ChengPENG-wolf/ViraLM
+#   位置: virome_discovery_pipeline/utils/viralm_cpu.py
+#   类型: Python — 无需编译 (需 PyTorch + transformers)
+#   用途: DNABERT-2 病毒鉴定 (CPU 版本)
+#   备注: 由用户修改移除 CUDA 依赖, 使用 conda env viralm
+ViraLM    = "server-cpu-modified"
+
+### classify_contigs.py
+#   位置: virome_discovery_pipeline/utils/classify_contigs.py
+#   类型: Python — 无需编译
+#   用途: ICTV 分类参考查找
+
+### discovery2analysis.py
+#   位置: virome_discovery_pipeline/utils/discovery2analysis.py
+#   类型: Python — 无需编译
+#   用途: discovery → analysis 格式转换
+
+### validate_novel_viruses.py
+#   位置: virome_discovery_pipeline/utils/validate_novel_viruses.py
+#   类型: Python — 无需编译
+#   用途: 基于分类层级鉴定新病毒
+
+## virome_analysis_pipeline/utils/ — 用户自定义脚本
+## =============================================================================
+
+### genome_rmDuplicates.pl
+#   位置: virome_analysis_pipeline/utils/genome_rmDuplicates.pl
+#   类型: Perl — 无需编译
+#   用途: 组装 contig 去重
+
+### filter_summary.py / extract_full_fasta.py / gbk_extractor.py
+### consensus_extract.py / snpeff_analyze.py / snpeff_build.py
+### visual_codon_miner.py / consensus_to_proteins.py
+### generate_oncoprint_mat.py / virus_metadata_plot.py / virus_frequency_plot.R
+#   位置: virome_analysis_pipeline/utils/
+#   类型: Python / R — 无需编译
+#   用途: 辅助分析工具
+
+## pixi.toml — conda 安装的生物信息学工具 (版本范围)
+## =============================================================================
+#   部署: pixi install
+
+# 语言运行时
+python        = ">=3.10,<3.13"
+R             = ">=4.2,<4.5"
+perl          = ">=5.32"
+java-openjdk  = ">=11"
+
+# Python 核心
+biopython     = ">=1.83"
+pandas        = ">=2.0"
+numpy         = ">=1.24"
+matplotlib    = ">=3.7"
+seaborn       = ">=0.12"
+polars        = ">=0.20"
+pysam         = ">=0.22"
+plotly        = ">=5.14"
+scipy         = ">=1.10"
+requests      = ">=2.28"
+tqdm          = ">=4.65"
+psutil        = ">=5.9"
+colorlog      = ">=6.7"
+xmltodict     = ">=0.13"
+openai        = ">=1.0"
+urllib3       = ">=2.0"
+upsetplot     = ">=0.8"
+
+# R 包 (CRAN + Bioconductor)
+r-optparse    = ">=1.7"
+r-data.table  = ">=1.14"
+r-ggplot2     = ">=3.4"
+r-dplyr       = ">=1.1"
+r-tidyr       = ">=1.3"
+r-stringr     = ">=1.5"
+r-circlize    = ">=0.4"
+r-httr        = ">=1.4"
+r-viridis     = ">=0.6"
+r-upsetr      = ">=1.4"
+r-patchwork   = ">=1.1"
+r-cowplot     = ">=1.1"
+r-ggrepel     = ">=0.9"
+r-scales      = ">=1.2"
+r-gridExtra   = ">=2.3"
+r-RColorBrewer= ">=1.1"
+r-parallelly  = ">=1.36"
+bioconductor-maftools = ">=2.18"
+
+# 数据清洗 & 宿主去除
+fastp         = ">=0.23"
+seqkit        = ">=2.6"
+bbmap         = ">=39.0"
+bowtie2       = ">=2.5"
+hisat2        = ">=2.2"
+minimap2      = ">=2.24"
+kraken2       = ">=2.1"
+ribodetector  = ">=0.3"
+
+# 组装
+megahit       = ">=1.2"
+spades        = ">=3.15"
+penguin       = ">=1.0"
+refinec       = ">=1.0"
+
+# 病毒鉴定
+diamond       = ">=2.1"
+blast         = ">=2.15"
+genomad       = ">=1.7"
+virsorter     = ">=2"
+viralverify   = ">=1.0"
+metabuli      = ">=1.0"
+virhunter     = ">=1.0"
+virbot        = ">=1.0"
+viralm        = ">=1.0"
+rdrpcatch     = ">=1.0"
+
+# 病毒分类
+mmseqs2       = ">=14"
+taxonkit      = ">=0.15"
+vcontact3     = ">=3.0"
+vitap         = ">=1.0"
+acvirus       = ">=1.0"
+
+# 聚类
+vclust        = ">=1.0"
+
+# BAM / VCF
+samtools      = ">=1.18"
+bcftools      = ">=1.18"
+freebayes     = ">=1.3"
+ivar          = ">=1.4"
+lofreq        = ">=2.1"
+snpgenie      = ">=1.0"
+viral_consensus = ">=1.0"
+bgzip         = ">=1.18"
+tabix         = ">=1.18"
+
+# 覆盖度 / 深度
+coverm        = ">=0.6"
+pandepth      = ">=1.0"
+
+# 比对 / 定量
+salmon        = ">=1.10"
+kallisto      = ">=0.48"
+bwa           = ">=0.7"
+bwa-mem2      = ">=2.2"
+strobealign   = ">=0.12"
+
+# 多序列比对 / 系统发育
+mafft         = ">=7.5"
+iqtree        = ">=2.3"
+hyphy         = ">=2.5"
+cawlign       = ">=1.0"
+ragtag        = ">=2.1"
+
+# DVG / 重组
+virema        = ">=1.0"
+
+# 宿主预测
+rnavirhost    = ">=1.0"
+phabox2       = ">=1.0"
+cherry        = ">=1.0"
+
+# SRA 公共数据
+sra-tools     = ">=3.0"
+ncbi-datasets-cli = ">=16.0"
+entrez-direct = ">=22.0"
+aria2         = ">=1.36"
+wget          = ">=1.21"
+curl          = ">=8.0"
+datavzrd      = ">=2.0"
+multiqc       = ">=1.20"
+
+# 其他
+pigz          = ">=2.8"
+gffread       = ">=0.12"
+snpeff        = ">=5.1"
+
+# ==============================================================================
+# 独立 conda 环境 (非 pixi 管理)
+# ==============================================================================
+# ViraLM 环境
+#   conda env create -f envs/viralm.yaml -n viralm
+#   Python 3.8, PyTorch 2.0.1, CUDA 11.8
+#   transformers 4.29.2, tokenizers 0.13.3, datasets 2.16.1
+
+# ==============================================================================
+# 总结
+# ==============================================================================
+# pixi 可安装:  100 个包 (pixi install)
+# 手动拷贝:      7 个脚本 (biosoft/ + utils/)
+# 独立 conda:    1 个 (viralm)

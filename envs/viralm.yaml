@@ -1,0 +1,25 @@
+name: viralm
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.8
+  - pytorch=2.0.1=py3.8_cuda11.8_cudnn8.7.0_0
+  - pytorch-cuda=11.8
+  - transformers=4.29.2
+  - tokenizers=0.13.3
+  - datasets=2.16.1
+  - accelerate=0.26.1
+  - peft=0.7.1
+  - biopython=1.83
+  - numpy=1.24.4
+  - pandas=2.0.3
+  - tqdm
+  - huggingface_hub
+  - safetensors
+  - gdown
+  - pyarrow
+  - requests
+  - scikit-learn

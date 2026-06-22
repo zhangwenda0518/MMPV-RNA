@@ -22,12 +22,12 @@ python viroid_circular_detect.py -i <fasta> -o out/ [-t 8]
 
 ---
 
-## C9_classify_contigs.py — ICTV 参考宿主查找
+## classify_contigs.py — ICTV 参考宿主查找
 
 由 run_host_prediction.py 内部调用, 查找 ICTV 官方分类库中的宿主信息。
 
 ```bash
-python C9_classify_contigs.py \
+python classify_contigs.py \
     -i taxonomy.tsv -o out/ --prob_dir cross_analysis/
 ```
 
