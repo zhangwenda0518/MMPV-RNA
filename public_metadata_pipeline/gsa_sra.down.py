@@ -312,7 +312,24 @@ def main():
     parser.add_argument("--prefetch-concurrency", type=int, default=DEFAULT_PREFETCH_CONCURRENCY)
     parser.add_argument("-o", "--output", default=DEFAULT_OUTPUT, help="基础输出目录")
     parser.add_argument("--no-fallback", action="store_true", help="禁用prefetch回退")
+    parser.add_argument("--links", help="download_links.csv 路径 (search 阶段输出, 优先使用预提取的下载链接)")
     args = parser.parse_args()
+
+    # 加载预提取的下载链接
+    link_map = {}  # {acc: {url_1, md5_1, url_2, md5_2, db}}
+    if args.links and os.path.isfile(args.links):
+        with open(args.links, 'r', encoding='utf-8') as f:
+            for row in csv.DictReader(f):
+                acc = row['Run'].strip().upper()
+                if acc:
+                    link_map[acc] = {
+                        'url_1': row.get('url_1', '').strip(),
+                        'url_2': row.get('url_2', '').strip(),
+                        'md5_1': row.get('md5_1', '').strip(),
+                        'md5_2': row.get('md5_2', '').strip(),
+                        'db': row.get('Database', '').strip(),
+                    }
+        print(f"📎 已加载预提取下载链接: {len(link_map)} 条")
 
     skip_set = set()
     if args.skip_list and os.path.exists(args.skip_list):
@@ -384,11 +401,55 @@ def main():
     print(f"\n🚀 实际需要下载的样本数: {len(to_download)}")
 
     os.makedirs(args.output, exist_ok=True)
-    
+
+    # 阶段 0: 优先使用预提取链接
+    link_success = []
+    need_ngdc = list(to_download)  # 需要走正常流程的
+    if link_map:
+        with_link = [a for a in to_download if a in link_map]
+        need_ngdc = [a for a in to_download if a not in link_map]
+        if with_link:
+            print("\n" + "="*60)
+            print(f"🔰 阶段零：使用预提取下载链接 ({len(with_link)} 条)")
+            print("="*60)
+            for acc in with_link:
+                info = link_map[acc]
+                sample = acc_to_sample.get(acc, "Uncategorized")
+                out_dir = os.path.join(args.output, sample)
+                os.makedirs(out_dir, exist_ok=True)
+                success = False
+                for url_key in ('url_1', 'url_2'):
+                    url = info.get(url_key, '')
+                    if not url or not url.startswith(('ftp://', 'http://', 'https://')):
+                        continue
+                    filename = url.split('/')[-1]
+                    out_path = os.path.join(out_dir, filename)
+                    # 已存在则跳过
+                    if os.path.exists(out_path):
+                        success = True
+                        break
+                    print(f"  📥 [{acc}] {filename}")
+                    if args.ngdc_method == 'aria2c' and shutil.which('aria2c'):
+                        success = download_with_aria2c(url, out_dir)
+                    elif args.ngdc_method == 'wget' and shutil.which('wget'):
+                        success = download_with_wget(url, out_dir)
+                    else:
+                        success = download_with_requests(url, out_path)
+                    if success: break
+                if success:
+                    link_success.append(acc)
+                    print(f"  ✅ [link] 成功: {acc}")
+                else:
+                    need_ngdc.append(acc)
+                    print(f"  ⚠️ [link] 失败, 回退NGDC: {acc}")
+            print(f"  link 下载完成: {len(link_success)}/{len(with_link)}")
+        if need_ngdc:
+            print(f"\n  剩余 {len(need_ngdc)} 条走正常 NGDC+prefetch 流程")
+
     print("\n" + "="*60)
     print(f"🔰 阶段一：NGDC并发下载 ({args.ngdc_method})")
     print("="*60)
-    ngdc_results = download_batch_ngdc(to_download, acc_to_sample, args.ngdc_method, args.output, args.ngdc_concurrency)
+    ngdc_results = download_batch_ngdc(need_ngdc, acc_to_sample, args.ngdc_method, args.output, args.ngdc_concurrency) if need_ngdc else {}
     ngdc_success = [acc for acc, ok in ngdc_results.items() if ok]
     ngdc_failed = [acc for acc, ok in ngdc_results.items() if not ok]
 
@@ -416,6 +477,8 @@ def main():
         sample = acc_to_sample.get(acc, "Unknown")
         if acc in skipped_accessions:
             status, method = "Skipped", "Pre-downloaded"
+        elif acc in link_success:
+            status, method = "Success", "Pre-extracted URL"
         elif acc in ngdc_success:
             status, method = "Success", f"NGDC ({args.ngdc_method})"
         elif acc in prefetch_success:
@@ -435,7 +498,7 @@ def main():
 
     print("\n" + "="*60)
     print("🎯 下载流水线执行完毕")
-    print(f"   ✓ 本次下载成功: {len(ngdc_success) + len(prefetch_success)} (NGDC:{len(ngdc_success)}, Prefetch:{len(prefetch_success)})")
+    print(f"   ✓ 本次下载成功: {len(link_success) + len(ngdc_success) + len(prefetch_success)} (Link:{len(link_success)}, NGDC:{len(ngdc_success)}, Prefetch:{len(prefetch_success)})")
     print(f"   ⏭️ 跳过已下载数: {len(skipped_accessions)}")
     print(f"   ✗ 最终失败任务: {len(final_failed)}")
     print(f"   📁 数据归档目录: {os.path.abspath(args.output)}")

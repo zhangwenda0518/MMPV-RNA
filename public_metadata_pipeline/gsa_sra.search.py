@@ -265,6 +265,44 @@ class GSAEngine:
                 except: pass
         return meta_dict
 
+    def fetch_download_urls(self):
+        """从已缓存的 Run Excel 表提取下载链接和 MD5，返回 {Run: {url_1, md5_1, url_2, md5_2}}"""
+        url_dict = {}
+        if not os.path.isdir(self.d_xls): return url_dict
+        xls_files = [f for f in os.listdir(self.d_xls) if f.endswith('.xlsx')]
+        if not xls_files: return url_dict
+        print(f"\n📎 [详细模式] 正在从 {len(xls_files)} 个 Run Excel 提取下载链接...")
+        for fname in tqdm(xls_files, desc="提取下载链接"):
+            xls_path = os.path.join(self.d_xls, fname)
+            try:
+                xls = pd.ExcelFile(xls_path, engine='openpyxl')
+                if 'Run' not in xls.sheet_names: continue
+                df_run = pd.read_excel(xls, sheet_name='Run')
+                for _, row in df_run.iterrows():
+                    acc = row.get('Accession')
+                    if pd.isna(acc): continue
+                    acc = str(acc).strip()
+                    entry = {}
+                    for col in df_run.columns:
+                        cl = col.strip().lower()
+                        if 'download read file1' in cl or 'download  read file1' in cl:
+                            v = row.get(col)
+                            entry['url_1'] = str(v).strip() if pd.notna(v) and str(v).strip() else None
+                        elif 'read file1 md5' in cl:
+                            v = row.get(col)
+                            entry['md5_1'] = str(v).strip() if pd.notna(v) and str(v).strip() else None
+                        elif 'download read file2' in cl or 'download  read file2' in cl:
+                            v = row.get(col)
+                            entry['url_2'] = str(v).strip() if pd.notna(v) and str(v).strip() else None
+                        elif 'read file2 md5' in cl:
+                            v = row.get(col)
+                            entry['md5_2'] = str(v).strip() if pd.notna(v) and str(v).strip() else None
+                    if entry.get('url_1'):
+                        url_dict[acc] = entry
+            except: pass
+        print(f"  ✓ 提取到 {len(url_dict)} 条下载链接")
+        return url_dict
+
     def fetch_gsa(self):
         print("\n" + "="*65)
         mode_str = "详细模式 (含Excel解析)" if self.detailed else "极速模式 (基础信息)"
@@ -417,3 +455,30 @@ if __name__ == "__main__":
         df_gsa = gsa_engine.fetch_gsa()
 
     merge_results(df_sra, df_gsa, args.outdir, args.detailed, args.deepseek_api, "https://api.deepseek.com", args.deepseek_model)
+
+    # 生成下载链接文件
+    import csv as csv_mod
+    links = []
+    # SRA: RunInfo download_path 列
+    if not df_sra.empty and 'download_path' in df_sra.columns:
+        for _, row in df_sra.iterrows():
+            url = row.get('download_path')
+            if pd.notna(url) and str(url).strip():
+                links.append({'Run': row['Run'], 'Database': 'SRA',
+                              'url_1': str(url).strip(), 'md5_1': '', 'url_2': '', 'md5_2': ''})
+    # GSA: Excel Run 表 (遍历所有已缓存 Excel)
+    if not df_gsa.empty and gsa_engine.detailed:
+        gsa_urls = gsa_engine.fetch_download_urls()
+        for _, row in df_gsa.iterrows():
+            info = gsa_urls.get(row['Run'], {})
+            if info:
+                links.append({'Run': row['Run'], 'Database': 'GSA',
+                              'url_1': info.get('url_1', ''), 'md5_1': info.get('md5_1', ''),
+                              'url_2': info.get('url_2', ''), 'md5_2': info.get('md5_2', '')})
+    if links:
+        link_file = os.path.join(args.outdir, "download_links.csv")
+        with open(link_file, 'w', newline='', encoding='utf-8') as f:
+            w = csv_mod.DictWriter(f, fieldnames=['Run', 'Database', 'url_1', 'md5_1', 'url_2', 'md5_2'])
+            w.writeheader()
+            w.writerows(links)
+        print(f"📎 下载链接已保存: {link_file} ({len(links)} 条)")

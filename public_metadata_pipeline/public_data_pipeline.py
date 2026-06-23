@@ -152,6 +152,8 @@ class PublicDataPipeline:
             self.ckpt.mark_fail(s)
             return False
         skip_arg = f'--skip-list {shlex.quote(self.args.skip_list)}' if self.args.skip_list else ''
+        links_file = os.path.join(self.dirs['search'], 'download_links.csv')
+        links_arg = f'--links {shlex.quote(links_file)}' if os.path.isfile(links_file) else ''
         cmd = (
             f'python {shlex.quote(self._bin("gsa_sra.down.py"))} '
             f'--list {shlex.quote(sra_list)} '
@@ -159,6 +161,7 @@ class PublicDataPipeline:
             f'--ngdc-concurrency {self.args.ngdc_concurrency} '
             f'--prefetch-concurrency {self.args.prefetch_concurrency} '
             f'{skip_arg} '
+            f'{links_arg} '
             f'--output {shlex.quote(self.dirs["down"])}'
         )
         UI.warn("data download may take hours to days")
