@@ -106,10 +106,16 @@ def main():
     print("\n================ [步骤 2] 合并并严格过滤 VCF (使用 -0 修复缺失率) ================")
     raw_merged_vcf = os.path.join(work_dir, "raw_merged.vcf.gz")
     merged_vcf = os.path.join(out_dir, f"{prefix}.vcf.gz")
-    
-    vcf_list_str = " ".join([f"'{v}'" for v in ready_vcfs])
-    # -0 参数解决缺失率过高，视为参考基因型
-    run_command(f"bcftools merge -0 {vcf_list_str} -O z -o '{raw_merged_vcf}'")
+
+    if len(ready_vcfs) == 1:
+        # 单样本无需合并，直接使用
+        import shutil
+        shutil.copy(ready_vcfs[0], raw_merged_vcf)
+        print(f"[信息] 仅 1 个样本，跳过合并步骤，直接使用 {os.path.basename(ready_vcfs[0])}")
+    else:
+        vcf_list_str = " ".join([f"'{v}'" for v in ready_vcfs])
+        # -0 参数解决缺失率过高，视为参考基因型
+        run_command(f"bcftools merge -0 {vcf_list_str} -O z -o '{raw_merged_vcf}'")
     
     # 只保留双等位 SNP (VCF2PCACluster 内部也会跳过 INDEL)
     run_command(f"bcftools view -m2 -M2 -v snps '{raw_merged_vcf}' -O z -o '{merged_vcf}'")
