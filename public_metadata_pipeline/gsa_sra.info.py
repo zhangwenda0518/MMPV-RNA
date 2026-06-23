@@ -56,7 +56,7 @@ DESC_COLS = ['Study_title', 'Study_abstract']
 GSA_AI_10 = ['Run', 'CollectionDate', 'Location', 'Source', 'Tissue', 'Age_GrowthStage', 'ScientificName', 'LibrarySource', 'CenterName', 'BioProject']
 
 # 大一统输出 13 列
-FINAL_13 = ['Run', 'ReleaseDate', 'CollectionDate', 'Location', 'Source', 'Tissue', 'Age_GrowthStage', 'ScientificName', 'TaxID', 'LibrarySource', 'CenterName', 'BioProject', 'PMID']
+FINAL_13 = ['Run', 'ReleaseDate', 'CollectionDate', 'Location', 'Source', 'Tissue', 'Age_GrowthStage', 'ScientificName', 'TaxID', 'LibrarySource', 'CenterName', 'BioProject', 'BioSample', 'PMID']
 
 # ----------------- 【SRA 专用推断提示词（全域信息综合推断版）】 -----------------
 PROMPT_SRA_INFER = """你是一个专业的生物信息学数据分析专家。我将提供一段来自NCBI SRA数据库的元数据记录（植物测序实验）。
@@ -1218,7 +1218,7 @@ def merge_global_results(df_sra, df_gsa, out_dir, fill_date, mode, api_client, a
     
     # === 找到 merge_global_results 函数的末尾，确保调用方式如下 ===
     # 保存 Core13 (由于我们加入了新字段，列名需对齐实际情况，这里使用你最终确定的列)
-    core_cols = [c for c in['Run', 'ReleaseDate', 'CollectionDate', 'Location', 'Source', 'Tissue', 'Age_GrowthStage', 'ScientificName', 'TaxID', 'LibrarySource', 'CenterName', 'BioProject', 'PMID'] if c in df_global.columns]
+    core_cols = [c for c in['Run', 'ReleaseDate', 'CollectionDate', 'Location', 'Source', 'Tissue', 'Age_GrowthStage', 'ScientificName', 'TaxID', 'LibrarySource', 'CenterName', 'BioProject', 'BioSample', 'PMID'] if c in df_global.columns]
     df_core = df_global[core_cols].copy().replace(["Not_Provided", "not_provided", "None", ""], pd.NA)
     # 强制同时保存 CSV 和 TSV，并返回 CSV 路径
     core_f = save_dual_format(df_core, os.path.join(out_dir, "Global_Unified_Metadata_Core13"))
