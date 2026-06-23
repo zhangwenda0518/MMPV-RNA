@@ -296,8 +296,9 @@ class GSAEngine:
                     all_records.append({
                         "Run": r["Run"], "ReleaseDate": wf.get("ReleaseDate", pd.NA),
                         "LibraryStrategy": wf.get("LibraryStrategy"), "LibrarySource": wf.get("LibrarySource"),
-                        "BioProject": wf.get("PRJ", pd.NA), "BioSample": wf.get("SAMC", pd.NA), 
-                        "Platform": wf.get("Platform", pd.NA), "Organization": wf.get("Organization", pd.NA)
+                        "BioProject": wf.get("PRJ", pd.NA), "BioSample": wf.get("SAMC", pd.NA),
+                        "Platform": wf.get("Platform", pd.NA), "CenterName": wf.get("Organization", pd.NA),
+                        "ScientificName": wf.get("ScientificName", pd.NA),
                     })
             except Exception as e: pass
 
@@ -358,12 +359,10 @@ def run_ai_sanitizer(df, api_key, api_base, model):
 # ==========================================
 def merge_results(df_sra, df_gsa, out_dir, detailed, api_key, api_base, model):
     if not df_sra.empty:
-        df_sra = df_sra.rename(columns={'CenterName': 'Organization_CenterName'})
         df_sra['Database'] = 'SRA'
     else: df_sra = pd.DataFrame()
 
     if not df_gsa.empty:
-        df_gsa = df_gsa.rename(columns={'Organization': 'Organization_CenterName'})
         df_gsa['Database'] = 'GSA'
     else: df_gsa = pd.DataFrame()
 
@@ -373,10 +372,10 @@ def merge_results(df_sra, df_gsa, out_dir, detailed, api_key, api_base, model):
     if detailed and api_key:
         df_merged = run_ai_sanitizer(df_merged, api_key, api_base, model)
 
-    target_cols = ['Database', 'Run', 'BioProject', 'BioSample']
+    target_cols = ['Database', 'Run', 'BioProject', 'BioSample', 'ScientificName']
     if detailed:
         target_cols.extend(['Tissue', 'Age_GrowthStage', 'Location'])
-    target_cols.extend(['LibraryStrategy', 'LibrarySource', 'Platform', 'Organization_CenterName', 'ReleaseDate'])
+    target_cols.extend(['LibraryStrategy', 'LibrarySource', 'Platform', 'CenterName', 'ReleaseDate'])
     
     final_cols = [c for c in target_cols if c in df_merged.columns]
     
@@ -394,6 +393,8 @@ if __name__ == "__main__":
     parser.add_argument("-s", "--source", help="限制测序类型 (如 'TRANSCRIPTOMIC')")
     parser.add_argument("-o", "--outdir", default="./Global_Species_Results", help="输出根目录")
     
+    parser.add_argument("--db", default="both", choices=["sra", "gsa", "both"],
+                        help="目标数据库: sra (仅NCBI), gsa (仅CNCB), both (默认, 两者)")
     parser.add_argument("--detailed", action="store_true", help="开启详细模式，抓取并解析 Tissue/Stage/Location 等深层特征")
     parser.add_argument("--ncbi-api", help="NCBI E-utilities API Key (提升速率)")
     parser.add_argument("--deepseek-api", help="DeepSeek API Key (AI 智能清洗)")
@@ -404,10 +405,15 @@ if __name__ == "__main__":
     args = parser.parse_args()
     os.makedirs(args.outdir, exist_ok=True)
 
-    sra_engine = SRAEngine(args.query, args.source, args.outdir, detailed=args.detailed, ncbi_api=args.ncbi_api)
-    df_sra = sra_engine.fetch_runinfo()
+    df_sra = pd.DataFrame()
+    df_gsa = pd.DataFrame()
 
-    gsa_engine = GSAEngine(args.query, args.source, args.outdir, detailed=args.detailed)
-    df_gsa = gsa_engine.fetch_gsa()
+    if args.db in ("sra", "both"):
+        sra_engine = SRAEngine(args.query, args.source, args.outdir, detailed=args.detailed, ncbi_api=args.ncbi_api)
+        df_sra = sra_engine.fetch_runinfo()
+
+    if args.db in ("gsa", "both"):
+        gsa_engine = GSAEngine(args.query, args.source, args.outdir, detailed=args.detailed)
+        df_gsa = gsa_engine.fetch_gsa()
 
     merge_results(df_sra, df_gsa, args.outdir, args.detailed, args.deepseek_api, "https://api.deepseek.com", args.deepseek_model)

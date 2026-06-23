@@ -57,12 +57,14 @@ def plot_sci_landscape(csv_path, output_dir="SCI_Figures_Output"):
     print(f"📥 正在读取数据: {csv_path}")
     df = pd.read_csv(csv_path)
 
-    # 兼容 info Core13 输出 (CenterName / 无 Database)
+    # 兼容不同来源的列名 (info Core13 / search 旧版 / search 新版)
     if 'Database' not in df.columns and 'Run' in df.columns:
         df['Database'] = df['Run'].astype(str).str.extract(r'^([A-Za-z]+)')[0].map(
             {'SRR': 'SRA', 'ERR': 'SRA', 'DRR': 'SRA'}).fillna('GSA')
-    if 'CenterName' in df.columns and 'Organization_CenterName' not in df.columns:
+    if 'CenterName' in df.columns:
         df['Organization_CenterName'] = df['CenterName']
+    elif 'Organization_CenterName' not in df.columns:
+        df['Organization_CenterName'] = pd.NA
 
     # 1. 深度数据聚合与纠错清洗
     df['ReleaseDate'] = pd.to_datetime(df['ReleaseDate'], errors='coerce')
