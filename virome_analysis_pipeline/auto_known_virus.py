@@ -59,23 +59,20 @@ def setup_logger(out_dir, level="INFO"):
 
 
 def run(cmd, log, name):
-    """Execute a shell command with error handling."""
+    """Execute a shell command with error handling.
+
+    stdout 和 stderr 均继承父进程（由 shell 重定向到日志文件），
+    确保 tqdm 进度条等 stderr 输出可见。
+    """
     log.info("[%s] %s", name, cmd)
     try:
         subprocess.run(
-            cmd, shell=True, check=True, stdout=None, stderr=subprocess.PIPE
+            cmd, shell=True, check=True, stdout=None, stderr=None
         )
         log.info("[%s] OK", name)
         return True
     except subprocess.CalledProcessError as e:
         log.error("[%s] FAILED (exit=%d)", name, e.returncode)
-        if e.stderr:
-            tail = (
-                e.stderr.decode()[-500:]
-                if isinstance(e.stderr, bytes)
-                else e.stderr[-500:]
-            )
-            log.error("  %s", tail)
         return False
 
 
