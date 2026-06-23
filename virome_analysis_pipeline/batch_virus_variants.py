@@ -831,16 +831,17 @@ class PostProcessPipeline:
             total_len = group['contig_length'].sum()
             
             agg_rows.append({
-                'Sample': sample, 
-                'Accession': ",".join(group['Virus'].unique()), 
-                'Taxonomy': taxonomy, 
-                'Taxid': ",".join(group['Taxid'].unique()), 
+                'Sample': sample,
+                'Accession': ",".join(group['Virus'].unique()),
+                'Taxonomy': taxonomy,
+                'Taxid': ",".join(group['Taxid'].unique()),
                 'Segment': ",".join(group['Segment'].unique()),
-                'Length': int(total_len), 
-                'CoveredBases': int(group['covered_bases'].sum()), 
+                'Length': int(total_len),
+                'CoveredBases': int(group['covered_bases'].sum()),
                 'Reads': int(reads),
-                'Sites_0X': int(group['Sites_0X'].sum()), 
-                'Sites_LowCov': int(group['Sites_LowCov'].sum()), 
+                'Sites_0X': int(group['Sites_0X'].sum()),
+                'Sites_LowCov': int(group['Sites_LowCov'].sum()),
+                'MeanDepth': round(np.average(group['mean_coverage'], weights=group['read_count']), 2) if reads > 0 else 0.0,
                 'Avg_Read_ANI(%)': np.average(group['ANI'], weights=group['read_count']) * 100 if reads > 0 else 0.0,
                 'Pi_avr': np.average(group['Pi'], weights=group['read_count']) if reads > 0 else 0.0,
                 'Shannon_avr': np.average(group['Shannon'], weights=group['read_count']) if reads > 0 else 0.0
@@ -854,27 +855,48 @@ class PostProcessPipeline:
         
         def _calc_metrics(r):
             tr = r['Total_Reads']
-            trpk = r['Total_RPK'] 
+            trpk = r['Total_RPK']
             rpm = (r['Reads'] / tr * 1e6) if tr > 0 else 0.0
             rpkm = (r['RPK'] / (tr / 1e6)) if tr > 0 else 0.0
             tpm = (r['RPK'] / trpk * 1e6) if trpk > 0 else 0.0
             cov = (r['CoveredBases'] / r['Length'] * 100) if r['Length'] > 0 else 0.0
+            # 丰度: 相对丰度 (%)
+            rel_abund = (r['Reads'] / tr * 100.0) if tr > 0 else 0.0
+            # Poisson: 期望覆盖 vs 实际覆盖比率
+            read_len = 150.0  # 默认读长
+            exp_cov = (r['Reads'] * read_len / r['Length']) if r['Length'] > 0 else 0.01
+            actual_cov = r.get('MeanDepth', 0)
+            poisson_ratio = round(actual_cov / exp_cov, 4) if exp_cov > 0.01 else 1.0
+            # 预测支持度: 基于 Poisson 分布 P(X > 0)
+            pred_support = round(1.0 - np.exp(-exp_cov * 0.1), 4) if exp_cov > 0 else 0.0
             return pd.Series({
-                'Covered%': round(cov, 2), 
-                'Sites_0X': r['Sites_0X'], 
+                'Covered%': round(cov, 2),
+                'Sites_0X': r['Sites_0X'],
                 'Sites_LowCov(1-9X)': r['Sites_LowCov'],
-                'CPM': round(rpm, 2), 
-                'RPM': round(rpm, 2), 
-                'FPKM': round(rpkm, 2), 
-                'RPKM': round(rpkm, 2), 
-                'TPM': round(tpm, 2), 
-                'Avg_Read_ANI(%)': round(r['Avg_Read_ANI(%)'], 2), 
-                'Pi_avr': round(r['Pi_avr'], 4), 
-                'Shannon_avr': round(r['Shannon_avr'], 4)
+                'Rep_MeanDepth': round(r.get('MeanDepth', 0), 2),
+                'Asm_EM_Reads': int(r['Reads']),
+                'CPM': round(rpm, 2),
+                'RPM': round(rpm, 2),
+                'FPKM': round(rpkm, 2),
+                'RPKM': round(rpkm, 2),
+                'TPM': round(tpm, 2),
+                'Asm_Rel_Abund(%)': round(rel_abund, 4),
+                'Predicted_Support': pred_support,
+                'Poisson_Ratio': poisson_ratio,
+                'Avg_Read_ANI(%)': round(r['Avg_Read_ANI(%)'], 2),
+                'Pi_avr': round(r['Pi_avr'], 4),
+                'Shannon_avr': round(r['Shannon_avr'], 4),
+                'Sample_Total_Mapped': int(r['Total_Reads']),
             })
 
         final_df = pd.concat([agg_df[['Sample', 'Accession', 'Taxonomy', 'Taxid', 'Length', 'Reads', 'Segment']], agg_df.apply(_calc_metrics, axis=1)], axis=1)
-        final_df = final_df[['Sample', 'Accession', 'Taxonomy', 'Taxid', 'Length', 'Covered%', 'Sites_0X', 'Sites_LowCov(1-9X)', 'Reads', 'CPM', 'RPM', 'FPKM', 'RPKM', 'TPM', 'Avg_Read_ANI(%)', 'Pi_avr', 'Shannon_avr', 'Segment']]
+        final_df = final_df[['Sample', 'Accession', 'Taxonomy', 'Taxid', 'Length', 'Covered%',
+                              'Sites_0X', 'Sites_LowCov(1-9X)', 'Rep_MeanDepth',
+                              'Asm_EM_Reads', 'Reads',
+                              'CPM', 'RPM', 'FPKM', 'RPKM', 'TPM', 'Asm_Rel_Abund(%)',
+                              'Predicted_Support', 'Poisson_Ratio',
+                              'Avg_Read_ANI(%)', 'Pi_avr', 'Shannon_avr',
+                              'Sample_Total_Mapped', 'Segment']]
 
         final_df.to_csv(self.d_summary / "all_summary.tsv", sep='\t', index=False)
         for _, r in final_df.iterrows(): 

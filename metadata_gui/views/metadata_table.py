@@ -1,0 +1,506 @@
+"""Editable metadata table with search/filter and missing-value highlighting."""
+
+from typing import Optional, List
+
+from PySide6.QtWidgets import (
+    QWidget, QVBoxLayout, QHBoxLayout, QLineEdit, QPushButton,
+    QTableView, QHeaderView, QAbstractItemView, QLabel,
+    QComboBox, QMessageBox,
+)
+from PySide6.QtCore import (
+    Qt, QAbstractTableModel, QModelIndex, Signal,
+    QSortFilterProxyModel, QUrl,
+)
+from PySide6.QtGui import QColor, QBrush, QFont, QAction, QDesktopServices
+
+from models.data_store import MetadataStore
+
+
+LINK_COLUMNS = {"Run", "BioProject", "PMID", "BioSample", "TaxID"}
+
+
+def _build_url(col_name: str, val: str) -> str:
+    """Build external URL for a given column + value."""
+    v = val.strip()
+    if not v:
+        return ""
+    col_lower = col_name.lower()
+
+    if col_lower == "run":
+        if v.startswith(("SRR", "ERR", "DRR", "SRX", "ERX", "DRX")):
+            return f"https://www.ncbi.nlm.nih.gov/sra/{v}"
+        elif v.startswith("CRR"):
+            return f"https://ngdc.cncb.ac.cn/gsa/search?searchTerm={v}"
+        return f"https://www.ncbi.nlm.nih.gov/sra/?term={v}"
+
+    if col_lower == "bioproject":
+        if v.startswith("PRJNA"):
+            return f"https://www.ncbi.nlm.nih.gov/bioproject/{v}"
+        elif v.startswith("PRJCA") or v.startswith("PRJEB"):
+            return f"https://ngdc.cncb.ac.cn/bioproject/browse/{v}"
+        return f"https://www.ncbi.nlm.nih.gov/bioproject/?term={v}"
+
+    if col_lower == "pmid":
+        if v.isdigit():
+            return f"https://pubmed.ncbi.nlm.nih.gov/{v}/"
+        return f"https://pubmed.ncbi.nlm.nih.gov/?term={v}"
+
+    if col_lower == "biosample":
+        if v.startswith("SAMN") or v.startswith("SAME"):
+            return f"https://www.ncbi.nlm.nih.gov/biosample/{v}"
+        return f"https://ngdc.cncb.ac.cn/biosample/{v}"
+
+    if col_lower == "taxid":
+        if v.isdigit():
+            return f"https://www.ncbi.nlm.nih.gov/taxonomy/{v}"
+        return ""
+
+    return ""
+
+
+class MetadataTableModel(QAbstractTableModel):
+    """Qt model adapter for MetadataStore DataFrame, with link support."""
+
+    data_changed = Signal()
+
+    def __init__(self, store: MetadataStore):
+        super().__init__()
+        self._store = store
+
+    def rowCount(self, parent=QModelIndex()) -> int:
+        return self._store.row_count
+
+    def columnCount(self, parent=QModelIndex()) -> int:
+        return self._store.column_count
+
+    def _get_col_name(self, col: int) -> str:
+        cols = self._store.columns
+        return cols[col] if col < len(cols) else ""
+
+    def _is_link_col(self, col: int) -> bool:
+        return self._get_col_name(col) in LINK_COLUMNS
+
+    def data(self, index, role=Qt.DisplayRole):
+        if not index.isValid():
+            return None
+        row, col = index.row(), index.column()
+        if row >= self._store.row_count or col >= self._store.column_count:
+            return None
+        val = self._store.get_cell(row, col)
+        col_name = self._get_col_name(col)
+
+        if role == Qt.DisplayRole:
+            return val if val != "" else ""
+        elif role == Qt.EditRole:
+            return val
+        elif role == Qt.BackgroundRole:
+            if self._store.is_ai_filled(row, col_name):
+                return QBrush(QColor(220, 255, 220))  # light green: AI filled
+            if self._store.is_imported(row):
+                return QBrush(QColor(230, 240, 255))  # light blue: imported
+            if self._store.is_missing(val):
+                return QBrush(QColor(255, 255, 200))  # light yellow: missing
+            return None
+        elif role == Qt.ForegroundRole:
+            if self._store.is_missing(val):
+                return QBrush(QColor(180, 50, 50))
+            if self._is_link_col(col) and val.strip():
+                return QBrush(QColor(0, 100, 200))  # blue link
+            return None
+        elif role == Qt.FontRole:
+            if self._is_link_col(col) and val.strip():
+                font = QFont()
+                font.setUnderline(True)
+                return font
+            return None
+        elif role == Qt.ToolTipRole:
+            url = _build_url(col_name, val)
+            if url:
+                return f"[{col_name}] {val}\n\nClick to open in browser: {url}"
+            return f"[{col_name}] {val}" if val else f"[{col_name}] <empty>"
+        return None
+
+    def headerData(self, section, orientation, role=Qt.DisplayRole):
+        if role == Qt.DisplayRole:
+            if orientation == Qt.Horizontal:
+                cols = self._store.columns
+                return cols[section] if section < len(cols) else str(section)
+            else:
+                return str(section + 1)  # 1-based row numbers
+        return None
+
+    def flags(self, index):
+        default = Qt.ItemIsEnabled | Qt.ItemIsSelectable
+        if index.isValid():
+            default |= Qt.ItemIsEditable
+        return default
+
+    def setData(self, index, value, role=Qt.EditRole):
+        if role == Qt.EditRole and index.isValid():
+            self._store.set_cell(index.row(), index.column(), str(value))
+            self.dataChanged.emit(index, index, [Qt.DisplayRole, Qt.BackgroundRole])
+            self.data_changed.emit()
+            return True
+        return False
+
+    def refresh(self):
+        """Full model reset."""
+        self.beginResetModel()
+        self.endResetModel()
+
+
+class StableSortProxy(QSortFilterProxyModel):
+    """Proxy that preserves original row numbers in vertical header."""
+
+    def headerData(self, section, orientation, role=Qt.DisplayRole):
+        if role == Qt.DisplayRole and orientation == Qt.Vertical:
+            src_idx = self.mapToSource(self.index(section, 0))
+            return str(src_idx.row() + 1) if src_idx.isValid() else str(section + 1)
+        return super().headerData(section, orientation, role)
+
+
+class MetadataTableView(QWidget):
+    """Browse tab — sortable, filterable, editable table."""
+
+    row_selected = Signal(int)   # emits row index
+
+    def __init__(self, store: MetadataStore):
+        super().__init__()
+        self._store = store
+        self._filtered_df = None
+        self._setup_ui()
+        self.refresh()
+
+    def _setup_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(4, 4, 4, 4)
+
+        # ── Top bar: filter ─────────────────────────
+        top = QHBoxLayout()
+
+        self._filter_input = QLineEdit()
+        self._filter_input.setPlaceholderText("Search all fields... (Enter to filter, Esc to clear)")
+        self._filter_input.setClearButtonEnabled(True)
+        self._filter_input.returnPressed.connect(self._apply_filter)
+        top.addWidget(self._filter_input, 1)
+
+        self._col_combo = QComboBox()
+        self._col_combo.addItem("All Columns")
+        for c in self._store.columns:
+            self._col_combo.addItem(c)
+        self._col_combo.currentIndexChanged.connect(self._apply_filter)
+        top.addWidget(self._col_combo)
+
+        clear_btn = QPushButton("Clear")
+        clear_btn.clicked.connect(self._clear_filter)
+        top.addWidget(clear_btn)
+
+        top.addStretch()
+        self._fill_btn = QPushButton("Fill from Cache")
+        self._fill_btn.clicked.connect(self._fill_missing)
+        self._fill_btn.setToolTip("Auto-fill missing values from local JSON web cache")
+        top.addWidget(self._fill_btn)
+
+        self._ai_btn = QPushButton("AI Fill Missing")
+        self._ai_btn.clicked.connect(self._ai_fill)
+        self._ai_btn.setToolTip("Use DeepSeek AI to clean and complete missing metadata")
+        self._ai_btn.setStyleSheet(
+            "QPushButton { font-weight: bold; color: #0072B2; }")
+        top.addWidget(self._ai_btn)
+
+        layout.addLayout(top)
+
+        # ── Stats bar ───────────────────────────────
+        self._stats_label = QLabel()
+        layout.addWidget(self._stats_label)
+
+        # ── Table ───────────────────────────────────
+        self._model = MetadataTableModel(self._store)
+        self._proxy = StableSortProxy()
+        self._proxy.setSourceModel(self._model)
+
+        self._table = QTableView()
+        self._table.setModel(self._proxy)
+        self._table.setSortingEnabled(True)
+        self._table.setAlternatingRowColors(True)
+        self._table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self._table.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self._table.horizontalHeader().setStretchLastSection(True)
+        self._table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
+        self._table.verticalHeader().setVisible(True)
+        self._table.setEditTriggers(
+            QAbstractItemView.DoubleClicked | QAbstractItemView.EditKeyPressed)
+        self._table.setContextMenuPolicy(Qt.ActionsContextMenu)
+
+        # Context menu actions
+        copy_act = QAction("Copy Cell", self._table)
+        copy_act.setShortcut("Ctrl+C")
+        copy_act.triggered.connect(self._copy_cell)
+        self._table.addAction(copy_act)
+
+        delete_act = QAction("Delete Selected Rows", self._table)
+        delete_act.setShortcut("Delete")
+        delete_act.triggered.connect(self._delete_selected)
+        self._table.addAction(delete_act)
+
+        self._table.selectionModel().selectionChanged.connect(self._on_selection)
+        self._table.clicked.connect(self._on_cell_clicked)
+
+        self._model.data_changed.connect(self._update_stats)
+        layout.addWidget(self._table, 1)
+
+    # ── Filter ─────────────────────────────────────
+    def _apply_filter(self):
+        kw = self._filter_input.text().strip()
+        if not kw:
+            self._filtered_df = None
+            self._model.refresh()
+            self._update_stats()
+            return
+
+        col_idx = self._col_combo.currentIndex()
+        if col_idx == 0:
+            self._filtered_df = self._store.search(kw)
+        else:
+            col_name = self._col_combo.currentText()
+            self._filtered_df = self._store.filter_by(col_name, kw)
+
+        self._model.refresh()
+        self._update_stats()
+
+    def _clear_filter(self):
+        self._filter_input.clear()
+        self._filtered_df = None
+        self._model.refresh()
+        self._update_stats()
+
+    def _update_stats(self):
+        total = self._store.row_count
+        if total == 0:
+            self._stats_label.setText("No data loaded. Use File > Open to load a metadata TSV.")
+            return
+        missing_count = 0
+        for col in self._store.columns:
+            if col in self._store.dataframe.columns:
+                try:
+                    cnt = int(self._store.dataframe[col].apply(
+                        lambda x: self._store.is_missing(x)).sum())
+                except (ValueError, TypeError):
+                    cnt = 0
+                missing_count += cnt
+        pct = (missing_count / (total * self._store.column_count) * 100) if total > 0 else 0
+        self._stats_label.setText(
+            f"Total: {total} rows  |  {self._store.column_count} columns  |  "
+            f"Missing cells: {missing_count} ({pct:.1f}%)  |  "
+            f"Double-click to edit"
+        )
+
+    # ── Selection ──────────────────────────────────
+    def _on_selection(self):
+        indexes = self._table.selectionModel().selectedRows()
+        if indexes:
+            source_idx = self._proxy.mapToSource(indexes[0])
+            self.row_selected.emit(source_idx.row())
+
+    def _on_cell_clicked(self, index):
+        """Open browser for link columns (Run, BioProject, PMID, etc.)."""
+        source_idx = self._proxy.mapToSource(index)
+        col = source_idx.column()
+        cols = self._store.columns
+        col_name = cols[col] if col < len(cols) else ""
+        if col_name not in LINK_COLUMNS:
+            return
+        val = self._store.get_cell(source_idx.row(), col).strip()
+        if not val:
+            return
+        url = _build_url(col_name, val)
+        if url:
+            QDesktopServices.openUrl(QUrl(url))
+
+    @property
+    def selected_rows(self) -> List[int]:
+        rows = set()
+        for idx in self._table.selectionModel().selectedRows():
+            rows.add(self._proxy.mapToSource(idx).row())
+        return sorted(rows)
+
+    def get_selected_row(self) -> int:
+        rows = self.selected_rows
+        return rows[0] if rows else -1
+
+    # ── Actions ────────────────────────────────────
+    def _copy_cell(self):
+        idx = self._table.currentIndex()
+        if idx.isValid():
+            from PySide6.QtWidgets import QApplication
+            val = str(self._proxy.data(idx, Qt.DisplayRole))
+            QApplication.clipboard().setText(val)
+
+    def _delete_selected(self):
+        rows = self.selected_rows
+        if not rows:
+            return
+        r = QMessageBox.question(
+            self, "Delete Rows",
+            f"Delete {len(rows)} selected row(s)? This can be undone by reloading.",
+            QMessageBox.Yes | QMessageBox.No)
+        if r == QMessageBox.Yes:
+            self._store.delete_rows(rows)
+            self._model.refresh()
+
+    def _fill_missing(self):
+        """Auto-fill missing metadata from JSON web cache."""
+        from controllers.metadata_controller import MetadataController
+        import os
+
+        ctrl = MetadataController(self._store)
+        # Find cache directory
+        gui_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        project_dir = os.path.dirname(gui_dir)
+        cache_dir = os.path.join(
+            project_dir, "public_metadata_pipeline",
+            "public_data_pipeline_output", "info",
+            "GSA_Results", "0_web_cache")
+
+        if not os.path.isdir(cache_dir):
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.information(self, "Fill Missing",
+                                    "JSON cache directory not found.\n"
+                                    "Run gsa_sra.info.py first to populate cache.")
+            return
+
+        filled = ctrl.fill_missing_from_cache(cache_dir)
+        self._model.refresh()
+        self._update_stats()
+
+        from PySide6.QtWidgets import QMessageBox
+        if filled > 0:
+            QMessageBox.information(self, "Fill Missing",
+                                    f"Filled {filled} missing values from JSON cache.")
+        else:
+            QMessageBox.information(self, "Fill Missing",
+                                    "No missing values could be filled from cache.")
+
+    def _ai_fill(self):
+        """Use DeepSeek AI to complete missing metadata fields."""
+        from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout,
+                                        QLineEdit, QComboBox, QDialogButtonBox,
+                                        QProgressBar, QLabel, QMessageBox)
+        import os
+
+        # ── API key dialog ────────────────
+        dlg = QDialog(self)
+        dlg.setWindowTitle("AI Fill — DeepSeek Configuration")
+        dlg.setMinimumWidth(420)
+        dl = QVBoxLayout(dlg)
+
+        dl.addWidget(QLabel("DeepSeek API Key:"))
+        key_edit = QLineEdit()
+        key_edit.setEchoMode(QLineEdit.Password)
+        key_edit.setPlaceholderText("sk-... or set DEEPSEEK_API_KEY env var")
+        # Try env var first
+        env_key = os.environ.get("DEEPSEEK_API_KEY", "")
+        if env_key:
+            key_edit.setText(env_key)
+            key_edit.setEnabled(False)
+            dl.addWidget(QLabel("(using DEEPSEEK_API_KEY from environment)"))
+        dl.addWidget(key_edit)
+
+        dl.addWidget(QLabel("API Base URL:"))
+        base_edit = QLineEdit("https://api.deepseek.com")
+        dl.addWidget(base_edit)
+
+        dl.addWidget(QLabel("Model:"))
+        model_combo = QComboBox()
+        model_combo.addItems([
+            "deepseek-chat", "deepseek-v4-flash",
+            "deepseek-v4-pro", "deepseek-reasoner"])
+        dl.addWidget(model_combo)
+
+        dl.addWidget(QLabel(
+            "AI will clean and fill missing: Location, Tissue, Source, "
+            "Age_GrowthStage, ScientificName, LibrarySource."))
+
+        btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        btns.accepted.connect(dlg.accept)
+        btns.rejected.connect(dlg.reject)
+        dl.addWidget(btns)
+
+        if dlg.exec() != QDialog.Accepted:
+            return
+
+        api_key = key_edit.text().strip()
+        api_base = base_edit.text().strip()
+        model = model_combo.currentText()
+
+        if not api_key:
+            QMessageBox.warning(self, "AI Fill",
+                                "Please provide a DeepSeek API key.\n"
+                                "Or set DEEPSEEK_API_KEY environment variable.")
+            return
+
+        # ── Collect all records with any fillable-column data ──
+        from controllers.ai_completer import AICompleteWorker, FILLABLE_COLS, EMPTY_VALS
+
+        records = []
+        store_cols = set(self._store.columns)
+        for idx in range(self._store.row_count):
+            row = self._store.get_row(idx)
+            # Send to AI if any fillable column has some data (to clean or fill)
+            has_data = any(
+                c in store_cols and str(row.get(c, "")).strip()
+                for c in FILLABLE_COLS
+            )
+            if has_data:
+                records.append((idx, row))
+
+        if not records:
+            QMessageBox.information(self, "AI Fill",
+                                    "No records to process.")
+            return
+
+        # ── Progress dialog ────────────────
+        pdlg = QDialog(self)
+        pdlg.setWindowTitle("AI Fill — Processing...")
+        pdlg.setMinimumWidth(380)
+        pl = QVBoxLayout(pdlg)
+        pl.addWidget(QLabel(
+            f"Sending {len(records)} records to AI for cleaning & completion..."))
+        progress_bar = QProgressBar()
+        progress_bar.setRange(0, len(records))
+        progress_bar.setTextVisible(False)
+        pl.addWidget(progress_bar)
+        status_label = QLabel("")
+        pl.addWidget(status_label)
+        pdlg.show()
+
+        self._ai_worker = AICompleteWorker(
+            records, api_key, api_base, model)
+        self._ai_worker.progress.connect(
+            lambda cur, tot: (
+                progress_bar.setValue(cur),
+                status_label.setText(f"Processing {cur}/{tot}...")
+            ))
+        self._ai_worker.error.connect(
+            lambda e: status_label.setText(f"Error: {e}"))
+
+        def on_done(filled_count):
+            for row_idx, applied in self._ai_worker.results:
+                self._store.set_row(row_idx, applied)
+                for col_name in applied:
+                    self._store.mark_ai_filled(row_idx, col_name)
+            self._model.refresh()
+            self._update_stats()
+            pdlg.accept()
+            QMessageBox.information(
+                self, "AI Complete",
+                f"AI cleaned/filled {filled_count} fields across "
+                f"{len(self._ai_worker.results)} records.\n"
+                f"Green cells = AI modified.")
+
+        self._ai_worker.finished.connect(on_done)
+        self._ai_worker.start()
+
+    def refresh(self):
+        self._model.refresh()
+        self._update_stats()

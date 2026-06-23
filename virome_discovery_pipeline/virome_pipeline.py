@@ -1464,6 +1464,256 @@ class ViromePipeline:
         else:
             self.log.warning("  分析部分失败, 检查日志")
 
+    def run_suvtk_annotate(self):
+        """[suvtk] 对救援产出的 all_plant_viruses 运行分类+特征+假想蛋白注释
+
+        产出到 09_Virome_Analysis/ 目录:
+          suvtk.taxonomy_output/   → ICTV 分类
+          suvtk.features_output/   → ORF 预测 + BFVD 注释
+          analyze_hypothetical/    → 假想蛋白 diamond+HMM 注释
+          topology.tsv            → 环形/线性判断
+        """
+        self.d['analysis'].mkdir(parents=True, exist_ok=True)
+        self.log.info("=" * 50)
+        self.log.info("[suvtk] 运行 suvtk taxonomy + features + hypothetical + topology")
+
+        # 输入 FASTA
+        all_plant = self.d['rescue_dir'] / "all_plant_viruses.fasta"
+        if not all_plant.is_file():
+            self.log.warning("  all_plant_viruses.fasta 不存在, 跳过 suvtk 注释")
+            return
+
+        # 复制/链接到 analysis 目录
+        import shutil
+        dest_fasta = self.d['analysis'] / "all_plant_viruses.fasta"
+        if not dest_fasta.exists():
+            shutil.copy(all_plant, dest_fasta)
+
+        n = sum(1 for _ in open(all_plant) if _.startswith('>'))
+        self.log.info("  输入: %d 条植物病毒", n)
+
+        # 线程数
+        t = getattr(self.args, 'threads', 40)
+        suvtk_db = getattr(self.args, 'suvtk_db', None) or os.path.expanduser('~/database/virus-db/suvtk_db')
+        rvdb = getattr(self.args, 'rvdb_db', None) or os.path.expanduser('~/database/virus-db/RVDB-v31')
+
+        # --- 1. suvtk taxonomy ---
+        tax_out = self.d['analysis'] / "suvtk.taxonomy_output"
+        tax_tsv = tax_out / "taxonomy.tsv"
+        if not tax_tsv.exists() or tax_tsv.stat().st_size < 100:
+            cmd = f"suvtk taxonomy -i {dest_fasta} -o {tax_out} -d {suvtk_db} -s 0.7 -t {t}"
+            run_cmd(cmd, self.log, "suvtk taxonomy", str(self.d['analysis'] / "suvtk_taxonomy.log"))
+        else:
+            self.log.info("  suvtk taxonomy — 已存在, 跳过")
+
+        # --- 2. suvtk features ---
+        feat_out = self.d['analysis'] / "suvtk.features_output"
+        tbl = feat_out / "featuretable.tbl"
+        if not tbl.exists() or tbl.stat().st_size < 100:
+            cmd = f"suvtk features -i {dest_fasta} -o {feat_out} -d {suvtk_db} --coding-complete"
+            if tax_tsv.exists():
+                cmd += f" --taxonomy {tax_tsv}"
+            cmd += f" -t {t}"
+            run_cmd(cmd, self.log, "suvtk features", str(self.d['analysis'] / "suvtk_features.log"))
+        else:
+            self.log.info("  suvtk features — 已存在, 跳过")
+
+        # --- 3. analyze_hypothetical ---
+        hypo_out = self.d['analysis'] / "analyze_hypothetical"
+        updated_tbl = hypo_out / "featuretable_updated.tbl"
+        hypo_script = SCRIPT_DIR.parent / "virome_submission_pipeline" / "analyze_hypothetical.py"
+        if not hypo_script.exists():
+            hypo_script = SCRIPT_DIR.parent / "virome_submission_pipeline" / "analyze_hypothetical.py"
+
+        if tbl.exists() and (feat_out / "proteins.faa").exists():
+            if not updated_tbl.exists() or updated_tbl.stat().st_size < 100:
+                rvdb_fasta = Path(rvdb) / "U-RVDBv31.0-prot.EX.acc.fasta"
+                rvdb_hmm = Path(rvdb) / "U-RVDBv31.0-prot.hmm"
+                rvdb_annot = Path(rvdb) / "U-RVDBv31.0-prot.info.tab"
+                cmd = (
+                    f"python {hypo_script} "
+                    f"-t {tbl} -f {feat_out / 'proteins.faa'} "
+                    f"-o {hypo_out} "
+                    f"--blast {hypo_out / 'merged_blast.txt'} "
+                    f"--diamond -d {rvdb_fasta} "
+                    f"--hmmer --hmmer-db {rvdb_hmm} "
+                    f"--annot {rvdb_annot} "
+                    f"--threads {t}"
+                )
+                run_cmd(cmd, self.log, "analyze_hypothetical",
+                        str(self.d['analysis'] / "hypothetical.log"))
+            else:
+                self.log.info("  analyze_hypothetical — 已存在, 跳过")
+
+        # --- 4. viral_topology ---
+        topo_out = self.d['analysis'] / "topology.tsv"
+        if not topo_out.exists() or topo_out.stat().st_size < 50:
+            topo_script = SCRIPT_DIR.parent / "virome_submission_pipeline" / "viral_topology.py"
+            cmd = f"python {topo_script} --taxonomy {tax_tsv} --fasta {dest_fasta} -o {topo_out}"
+            run_cmd(cmd, self.log, "viral_topology", str(self.d['analysis'] / "topology.log"))
+
+        # --- 5. 整合 05_Taxonomy + suvtk → 补充 miuvig_taxonomy / ref_info / topology ---
+        self._integrate_taxonomy_suvtk(dest_fasta, tax_tsv, hypo_out)
+
+        self.log.info("  suvtk 注释完成 → %s", self.d['analysis'])
+
+    def _integrate_taxonomy_suvtk(self, fasta_path, tax_tsv, hypo_dir):
+        """整合 05_Taxonomy 共识分类 + suvtk → 丰富化输出
+
+        产出:
+          miuvig_taxonomy_enriched.tsv  — pred_genome_type/structure 用 consensus 修正
+          integrated_summary.tsv        — 两源对比表
+          topology.tsv (enriched)       — 增加 taxonomy 列
+        """
+        import pandas as pd
+        from Bio import SeqIO
+
+        # ── 加载数据 ──
+        # 05_Taxonomy 共识
+        consensus_path = self.d['taxonomy'] / "Votus.integrated" / "final_integrated_classification.tsv"
+        consensus = {}
+        if consensus_path.exists():
+            try:
+                cdf = pd.read_csv(consensus_path, sep='\t', quotechar='"')
+                for _, row in cdf.iterrows():
+                    cid = str(row.get('contig_id', row.iloc[0]))
+                    consensus[cid] = {
+                        'Realm': str(row.get('Realm', '')), 'Kingdom': str(row.get('Kingdom', '')),
+                        'Phylum': str(row.get('Phylum', '')), 'Class': str(row.get('Class', '')),
+                        'Order': str(row.get('Order', '')), 'Family': str(row.get('Family', '')),
+                        'Genus': str(row.get('Genus', '')), 'Species': str(row.get('Species', '')),
+                        'confidence': str(row.get('confidence', '')),
+                        'primary_tool': str(row.get('primary_tool', '')),
+                    }
+            except Exception:
+                pass
+
+        # suvtk taxonomy
+        suvtk = {}
+        if tax_tsv and tax_tsv.exists():
+            sdf = pd.read_csv(tax_tsv, sep='\t')
+            for _, row in sdf.iterrows():
+                suvtk[str(row.iloc[0])] = str(row.iloc[1])
+
+        # suvtk miuvig_taxonomy
+        miuvig_tax = {}
+        miuvig_path = self.d['analysis'] / "suvtk.taxonomy_output" / "miuvig_taxonomy.tsv"
+        if miuvig_path.exists():
+            mdf = pd.read_csv(miuvig_path, sep='\t')
+            for _, row in mdf.iterrows():
+                miuvig_tax[str(row.iloc[0])] = (
+                    str(row.get('pred_genome_type', '')), str(row.get('pred_genome_struc', ''))
+                )
+
+        # suvtk topology
+        topo_path = self.d['analysis'] / "topology.tsv"
+        topology = {}
+        if topo_path.exists():
+            tdf = pd.read_csv(topo_path, sep='\t')
+            for _, row in tdf.iterrows():
+                topology[str(row.iloc[0])] = {
+                    'final_topology': str(row.get('final_topology', '')),
+                    'evidence': str(row.get('evidence', '')),
+                }
+
+        # 序列长度 & CDS 数
+        seq_lens = {}
+        for rec in SeqIO.parse(str(fasta_path), 'fasta'):
+            seq_lens[rec.id] = len(rec.seq)
+
+        cds_counts = {}
+        tbl_path = hypo_dir / "featuretable_updated.tbl"
+        if not tbl_path.exists():
+            tbl_path = self.d['analysis'] / "suvtk.features_output" / "featuretable.tbl"
+        if tbl_path.exists():
+            cur = None
+            with open(tbl_path) as f:
+                for line in f:
+                    line = line.strip()
+                    if line.startswith('>Feature '):
+                        cur = line.split('>Feature ')[1].strip()
+                        cds_counts.setdefault(cur, 0)
+                    elif line and line.split()[-1:] == ['CDS'] and cur:
+                        cds_counts[cur] += 1
+
+        # ── hypothetical status (from analyze_hypothetical) ──
+        hypo_status = {}
+        updated_tbl = hypo_dir / "featuretable_updated.tbl"
+        if updated_tbl.exists():
+            cur_contig = None; hypo_n = 0; anno_n = 0
+            for line in open(updated_tbl):
+                line = line.strip()
+                if line.startswith('>Feature '):
+                    if cur_contig and (hypo_n + anno_n) > 0:
+                        hypo_status[cur_contig] = f'{anno_n} annotated, {hypo_n} hypothetical'
+                    cur_contig = line.split('>Feature ')[1].strip()
+                    hypo_n = 0; anno_n = 0
+                elif line.startswith('\t\t\tproduct\t') and cur_contig:
+                    if 'hypothetical' in line.lower():
+                        hypo_n += 1
+                    else:
+                        anno_n += 1
+            if cur_contig and (hypo_n + anno_n) > 0:
+                hypo_status[cur_contig] = f'{anno_n} annotated, {hypo_n} hypothetical'
+
+        # ── 生成 enriched miuvig_taxonomy ──
+        enriched_miuvig = self.d['analysis'] / "suvtk.taxonomy_output" / "miuvig_taxonomy_enriched.tsv"
+        with open(enriched_miuvig, 'w') as f:
+            f.write("contig\tpred_genome_type\tpred_genome_struc\t"
+                    "suvtk_taxonomy\tconsensus_Family\tconsensus_Genus\tconsensus_Species\t"
+                    "confidence\tprimary_tool\n")
+            for cid in seq_lens:
+                mt = miuvig_tax.get(cid, ('uncharacterized', 'undetermined'))
+                sv = suvtk.get(cid, '')
+                cs = consensus.get(cid, {})
+                f.write(f"{cid}\t{mt[0]}\t{mt[1]}\t"
+                        f"{sv}\t{cs.get('Family','')}\t{cs.get('Genus','')}\t{cs.get('Species','')}\t"
+                        f"{cs.get('confidence','')}\t{cs.get('primary_tool','')}\n")
+        self.log.info("  miuvig_taxonomy_enriched.tsv (%d 条)", len(seq_lens))
+
+        # ── 生成 integrated_summary (两源对比) ──
+        int_summary = self.d['analysis'] / "integrated_summary.tsv"
+        with open(int_summary, 'w') as f:
+            f.write("contig_id\tlength\tcds_count\t"
+                    "suvtk_taxonomy\tconsensus_Family\tconsensus_Genus\tconsensus_Species\t"
+                    "topology\tevidence\tconfidence\tprimary_tool\n")
+            for cid, slen in seq_lens.items():
+                sv = suvtk.get(cid, '')
+                cs = consensus.get(cid, {})
+                tp = topology.get(cid, {})
+                f.write(f"{cid}\t{slen}\t{cds_counts.get(cid, 0)}\t"
+                        f"{sv}\t{cs.get('Family','')}\t{cs.get('Genus','')}\t{cs.get('Species','')}\t"
+                        f"{tp.get('final_topology','')}\t{tp.get('evidence','')}\t"
+                        f"{cs.get('confidence','')}\t{cs.get('primary_tool','')}\n")
+        self.log.info("  integrated_summary.tsv (%d 条)", len(seq_lens))
+
+        # ── 生成 ref_info.tsv ──
+        ref_out = self.d['analysis'] / "ref_info.tsv"
+        with open(ref_out, 'w') as f:
+            f.write("Accession\tLength\tSpecies\tGenus\tFamily\tRealm\t"
+                    "Kingdom\tClass\tOrder\t"
+                    "suvtk_Species\tsuvtk_Genus\tsuvtk_Family\t"
+                    "CDS_Count\tPrimary_Tool\tConfidence\t"
+                    "Molecule_type\tMolecule_Type2\tSegment\t"
+                    "topology\ttopology_evidence\thypothetical_status\n")
+            for cid, slen in seq_lens.items():
+                cs = consensus.get(cid, {})
+                cds = cds_counts.get(cid, 0)
+                mt = miuvig_tax.get(cid, ('uncharacterized', 'undetermined'))
+                mol_type = mt[0]  # ssRNA(+)/ssRNA(-)/dsRNA
+                mol_type2 = 'RNA' if 'RNA' in mol_type else ('DNA' if 'DNA' in mol_type else '')
+                segment = 'Unsegmented' if mt[1] != 'segmented' else 'Segmented'
+                tp = topology.get(cid, {})
+                hypo = hypo_status.get(cid, '')
+                f.write(f"{cid}\t{slen}\t"
+                        f"{cs.get('Species','')}\t{cs.get('Genus','')}\t{cs.get('Family','')}\t{cs.get('Realm','')}\t"
+                        f"{cs.get('Kingdom','')}\t{cs.get('Class','')}\t{cs.get('Order','')}\t"
+                        f"{cs.get('Species','')}\t{cs.get('Genus','')}\t{cs.get('Family','')}\t"
+                        f"{cds}\t{cs.get('primary_tool','MMPV-RNA+suvtk')}\t{cs.get('confidence','')}\t"
+                        f"{mol_type}\t{mol_type2}\t{segment}\t"
+                        f"{tp.get('final_topology','')}\t{tp.get('evidence','')}\t{hypo}\n")
+        self.log.info("  ref_info.tsv (%d 条)", len(seq_lens))
+
     def run_reports(self):
         """调用独立报告生成脚本 report_pipeline.py"""
         self.log.info("=" * 50)
@@ -1954,11 +2204,11 @@ def main():
         'cobra': pipe.run_cobra, 'cluster': pipe.run_cluster,
         'taxonomy': pipe.run_taxonomy, 'host': pipe.run_host,
         'checkv': pipe.run_checkv_stage, 'rescue': pipe.run_rescue,
-        'analysis': pipe.run_analysis, 'report': pipe.run_reports,
+        'analysis': pipe.run_analysis, 'suvtk_annotate': pipe.run_suvtk_annotate, 'report': pipe.run_reports,
     }
     # 按流水线顺序排列
     stage_order = ['clean','deplete','bbnorm','assembly','identification','cobra','cluster',
-                   'taxonomy','host','checkv','rescue','analysis','report']
+                   'taxonomy','host','checkv','rescue','analysis','suvtk_annotate','report']
     stages_to_run = [(s, stage_map[s]) for s in stage_order if _all or s in stages]
 
     # 准备阶段日志目录

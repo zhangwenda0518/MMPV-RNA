@@ -500,37 +500,57 @@ def _collect_rescue(root, report_dir, _add):
 
 
 def _collect_analysis(root, report_dir, _add):
-    """09_Virome_Analysis 阶段: suvtk 分析摘要"""
+    """09_Virome_Analysis 阶段: suvtk 分析 + 整合结果摘要"""
     analysis = root / "09_Virome_Analysis"
     if not analysis.is_dir():
         _add("09_Virome_Analysis", "○", details="未运行"); return
 
-    parts = []
+    parts = []; n_seqs = 0
 
-    # suvtk taxonomy
-    suvtk_tax = analysis / "suvtk_taxonomy" / "taxonomy.tsv"
+    # ref_info.tsv (完整性)
+    ref_info = analysis / "ref_info.tsv"
+    if ref_info.is_file():
+        try:
+            rows = _read_tsv(ref_info)
+            n_seqs = len(rows)
+            n_with_species = sum(1 for r in rows if r.get('Species','').strip())
+            parts.append(f"ref_info: {n_seqs} 条, {n_with_species} 有种级分类")
+        except: pass
+
+    # integrated_summary.tsv (两源对比)
+    int_sum = analysis / "integrated_summary.tsv"
+    if int_sum.is_file():
+        try:
+            rows = _read_tsv(int_sum)
+            n_top = len([r for r in rows if r.get('topology','') == 'linear'])
+            n_hypo = len([r for r in rows if r.get('suvtk_taxonomy','')])
+            parts.append(f"topology: {n_top} linear | suvtk: {n_hypo} 分类")
+        except: pass
+
+    # suvtk taxonomy + features
+    suvtk_tax = analysis / "suvtk.taxonomy_output" / "taxonomy.tsv"
     if suvtk_tax.is_file():
-        try:
-            n_lines = sum(1 for _ in open(suvtk_tax)) - 1
-            parts.append(f"suvtk taxonomy: {n_lines} 条分类注释")
-        except: pass
+        parts.append(f"suvtk taxonomy: {_count_lines(suvtk_tax)-1} seqs")
 
-    # suvtk features
-    suvtk_feat = analysis / "suvtk_features" / "featuretable.tbl"
+    suvtk_feat = analysis / "suvtk.features_output" / "featuretable.tbl"
     if suvtk_feat.is_file():
-        try:
-            n_cds = 0
-            for line in open(suvtk_feat):
-                if "CDS" in line: n_cds += 1
-            parts.append(f"suvtk features: ~{n_cds} CDS 注释")
-        except: pass
+        n_cds = sum(1 for l in open(suvtk_feat) if l.strip().split()[-1:] == ['CDS'])
+        parts.append(f"{n_cds} CDS annotated")
 
-    # submission
-    sub_sqn = analysis / "submission" / "submission.sqn"
-    if sub_sqn.is_file():
-        parts.append("GenBank submission: ✓ 已生成 (.sqn)")
+    # hypothetical
+    hypo_tbl = analysis / "analyze_hypothetical" / "featuretable_updated.tbl"
+    if hypo_tbl.is_file():
+        n_hypo = sum(1 for l in open(hypo_tbl) if 'hypothetical' in l.lower())
+        n_anno = sum(1 for l in open(hypo_tbl) if 'inference\talignment' in l)
+        parts.append(f"hypothetical: {n_anno} annotated, {n_hypo} remaining")
 
-    key_metric = " | ".join(parts)[:200] if parts else "已运行"
+    # topology
+    topo = analysis / "topology.tsv"
+    if topo.is_file():
+        rows = _read_tsv(topo)
+        parts.append(f"topology: {len(rows)} seqs")
+
+    key_metric = " | ".join(parts)[:250] if parts else "已运行"
     _add("09_Virome_Analysis", "✓", key_metric=key_metric, details=str(analysis))
 
 

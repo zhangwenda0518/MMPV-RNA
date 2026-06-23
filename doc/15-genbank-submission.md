@@ -36,13 +36,13 @@ suvtk download-database -o ~/database/virus-db/suvtk_db/
 
 ## 三、自动化提交脚本 / Automated Submission Script
 
-`suvtk_submission/suvtk_submission.py` 将上述 5 步集成为一个命令。
+`virome_submission_pipeline/virome_submission.py` 将上述 5 步集成为一个命令。
 
 ### 3.1 新病毒 (Novel Viruses)
 
 ```bash
 # 一键运行 (步骤1-4)
-python suvtk_submission/suvtk_submission.py novel \
+python virome_submission_pipeline/virome_submission.py novel \
     --fasta $OUT/08_Rescue/Plant/centroids/final_centroids.fasta \
     --taxonomy $OUT/05_Taxonomy/integrated/final_integrated_classification.tsv \
     --host $OUT/06_HostPrediction/ensemble_host_summary.tsv \
@@ -52,7 +52,7 @@ python suvtk_submission/suvtk_submission.py novel \
     -t 40
 
 # 编辑 source.src 后, 分步运行 table2asn
-python suvtk_submission/suvtk_submission.py step \
+python virome_submission_pipeline/virome_submission.py step \
     --step table2asn \
     --work-dir ./genbank_submission/novel/ \
     --suvtk-db ~/database/virus-db/suvtk_db/
@@ -62,7 +62,7 @@ python suvtk_submission/suvtk_submission.py step \
 
 ```bash
 # 一键运行
-python suvtk_submission/suvtk_submission.py known \
+python virome_submission_pipeline/virome_submission.py known \
     --fasta $OUT/known_viruses/3_Virus_assemblies_final/ \
     --summary $OUT/known_viruses/1_FastViromeExplorer/summary/best.summary.tsv \
     --ref-info /db/ref_info.tsv \
@@ -74,11 +74,11 @@ python suvtk_submission/suvtk_submission.py known \
 ### 3.3 分步模式 (断点续传)
 
 ```bash
-python suvtk_submission/suvtk_submission.py step --step taxonomy    --fasta seqs.fasta --work-dir ./work/ --suvtk-db ~/db/ -t 40
-python suvtk_submission/suvtk_submission.py step --step features    --fasta seqs.fasta --work-dir ./work/ --suvtk-db ~/db/ -t 40
-python suvtk_submission/suvtk_submission.py step --step metadata    --work-dir ./work/
-python suvtk_submission/suvtk_submission.py step --step comments    --work-dir ./work/ --suvtk-db ~/db/
-python suvtk_submission/suvtk_submission.py step --step table2asn   --work-dir ./work/ --suvtk-db ~/db/
+python virome_submission_pipeline/virome_submission.py step --step taxonomy    --fasta seqs.fasta --work-dir ./work/ --suvtk-db ~/db/ -t 40
+python virome_submission_pipeline/virome_submission.py step --step features    --fasta seqs.fasta --work-dir ./work/ --suvtk-db ~/db/ -t 40
+python virome_submission_pipeline/virome_submission.py step --step metadata    --work-dir ./work/
+python virome_submission_pipeline/virome_submission.py step --step comments    --work-dir ./work/ --suvtk-db ~/db/
+python virome_submission_pipeline/virome_submission.py step --step table2asn   --work-dir ./work/ --suvtk-db ~/db/
 ```
 
 ---
@@ -295,7 +295,7 @@ OUT=/home/zhangwenda/data-test2/out
 SUVTK_DB=~/database/virus-db/suvtk_db
 
 # ═══ 新病毒提交 (novel) — 使用全部 centroids ═══
-python suvtk_submission/suvtk_submission.py novel \
+python virome_submission_pipeline/virome_submission.py novel \
     --fasta $OUT/04_CLUSTER/centroids/final_centroids.fasta \
     --taxonomy $OUT/05_Taxonomy/integrated/final_integrated_classification.tsv \
     --host $OUT/06_HostPrediction/ensemble_host_summary.tsv \
@@ -327,7 +327,7 @@ plant_ids.select('contig_id').write_csv('plant_virus_ids.txt', include_header=Fa
 
 # 然后用 seqkit 提取子集
 # seqkit grep -f plant_virus_ids.txt $OUT/04_CLUSTER/centroids/final_centroids.fasta > plant_novel.fasta
-# python suvtk_submission/suvtk_submission.py novel --fasta plant_novel.fasta ...
+# python virome_submission_pipeline/virome_submission.py novel --fasta plant_novel.fasta ...
 
 # ═══ 已知病毒提交 (known) — 需要先运行 full 阶段 ═══
 # (当前全长组装未完成, 需先执行):
@@ -338,7 +338,7 @@ plant_ids.select('contig_id').write_csv('plant_virus_ids.txt', include_header=Fa
 #     -t 40 -j 4
 
 # 完成后运行:
-# python suvtk_submission/suvtk_submission.py known \
+# python virome_submission_pipeline/virome_submission.py known \
 #     --fasta $OUT/known_viruses/3_Virus_assemblies_final/ \
 #     --summary $OUT/known_viruses/1_FastViromeExplorer/summary/best.summary.tsv \
 #     --suvtk-db $SUVTK_DB \
