@@ -1523,9 +1523,10 @@ class ViromePipeline:
         updated_tbl = hypo_out / "featuretable_updated.tbl"
         hypo_script = SCRIPT_DIR.parent / "virome_submission_pipeline" / "analyze_hypothetical.py"
         if not hypo_script.exists():
-            hypo_script = SCRIPT_DIR.parent / "virome_submission_pipeline" / "analyze_hypothetical.py"
+            self.log.error("  analyze_hypothetical.py 未找到: %s", hypo_script)
+            hypo_script = None
 
-        if tbl.exists() and (feat_out / "proteins.faa").exists():
+        if tbl.exists() and (feat_out / "proteins.faa").exists() and hypo_script:
             if not updated_tbl.exists() or updated_tbl.stat().st_size < 100:
                 rvdb_fasta = Path(rvdb) / "U-RVDBv31.0-prot.EX.acc.fasta"
                 rvdb_hmm = Path(rvdb) / "U-RVDBv31.0-prot.hmm"
@@ -1755,6 +1756,39 @@ class ViromePipeline:
                         self.log.error("  %s", line)
         except Exception as e:
             self.log.error("  Report generation error: %s", e)
+OVERVIEW = """\
+Virome Pipeline v2.3 — 宏病毒组端到端全自动主控流水线
+
+数据流:
+  Raw FASTQ → 00a_CleanData → 00b_HostDepletion → 01_Assembly
+                                                       │
+  10_Reports ← 08_Rescue ← 07_Checkv ← 06_HostPrediction ← 05_Taxonomy ← 04_CLUSTER ← 03_COBRA ← 02_Identification ←┘
+
+阶段:
+  clean deplete bbnorm assembly identification cobra cluster
+  taxonomy host checkv rescue suvtk_annotate reports all
+
+用法:
+  python virome_pipeline.py --input_reads <dir> --output_dir <dir> --stage all
+  python virome_pipeline.py --input_reads <dir> --output_dir <dir> --stage clean,deplete,assembly
+"""
+
+STAGE_HELP = {
+    'clean':         '00a: Fastp质控 + Seqkit转FASTA + Clumpify去冗余',
+    'deplete':       '00b: Kraken2 + Bowtie2/HISAT2/Minimap2 + rRNA去除',
+    'bbnorm':        '00c: BBNorm覆盖度均一化 (可选, co-assembly前)',
+    'assembly':      '01:  MEGAHIT / rnaviralSPAdes / Penguin 三工具组装',
+    'identification':'02:  10工具并行病毒鉴定 (Genomad/Diamond/VirSorter2/...)',
+    'cobra':         '03:  BWA-MEM2 + COBRA-Meta 重叠群延伸',
+    'cluster':       '04:  CD-HIT参考预聚类 + vclust Leiden聚类',
+    'taxonomy':      '05:  8工具分类 + R加权投票共识',
+    'host':          '06:  ICTV > RNAVirHost > PhaBOX2 宿主预测',
+    'checkv':        '07:  CheckV 完整性评估',
+    'rescue':        '08:  三支路级联拯救 (CheckV → Virseqimprover → BLASTN)',
+    'suvtk_annotate':'09:  suvtk分类+特征+假想蛋白注释 → GenBank准备',
+    'reports':       '10:  TSV汇总 + Sankey图 + 交互式HTML报告',
+}
+
 def print_help_and_exit():
     print(OVERVIEW)
     sys.exit(0)
@@ -1776,7 +1810,7 @@ def _build_parser(add_help=True):
     g.add_argument('--profile', default='default', help='配置预设 (默认: default, 可选: downstream/plant)')
     g.add_argument('--dump-config', action='store_true', help='仅打印配置摘要并退出 (不运行)')
     g.add_argument('--stage', default=['all'], nargs='+',
-                   choices=['all', 'clean', 'deplete', 'bbnorm', 'assembly', 'identification', 'cobra', 'cluster', 'taxonomy', 'host', 'checkv', 'rescue', 'analysis', 'report'],
+                   choices=['all', 'clean', 'deplete', 'bbnorm', 'assembly', 'identification', 'cobra', 'cluster', 'taxonomy', 'host', 'checkv', 'rescue', 'suvtk_annotate', 'analysis', 'reports', 'report'],
                    help='运行阶段 (可多个, 如: --stage clean deplete)')
     g.add_argument('--host-filter', default='Plant',
                    help='目标宿主 (逗号分隔, rescue 阶段使用, 默认: Plant. Unknown 默认跳过并输出到 unknown_votus.fasta)')
@@ -1992,9 +2026,8 @@ def _load_config(args):
 
     # assembly
     asm_cfg = profile.get('assembly', {})
-    if hasattr(args, 'assembler') and 'assembler' in asm_cfg:
-        if getattr(args, 'assembler', 'megahit') == 'megahit':
-            setattr(args, 'assembler', asm_cfg['assembler'])
+    if 'assembler' in asm_cfg:
+        setattr(args, 'assembler', asm_cfg['assembler'])
 
     # identification
     id_cfg = profile.get('identification', {})
@@ -2177,7 +2210,7 @@ def main():
                 logger.info("  [WARN] 输入目录无序列文件")
         else:
             logger.info("  输入目录: %s (不存在或未指定)", args.input_reads)
-        logger.info("  阶段:     %s", stage)
+        logger.info("  阶段:     %s", ','.join(sorted(stages)))
         logger.info("  输出目录: %s", args.output_dir)
         logger.info("═══ DRY-RUN 结束 ═══")
         return
@@ -2244,11 +2277,12 @@ def main():
         try:
             stage_func()
         except SystemExit as e:
+            _ec = e.code if e.code is not None else 1
             if args.stop_on_error:
-                logger.error("[%s] 阶段失败 (exit=%d), 终止", stage_name, e.code if e.code else 1)
-                sys.exit(e.code if e.code else 1)
+                logger.error("[%s] 阶段失败 (exit=%d), 终止", stage_name, _ec)
+                sys.exit(_ec)
             else:
-                logger.warning("[%s] 阶段失败 (exit=%d), 继续", stage_name, e.code if e.code else 1)
+                logger.warning("[%s] 阶段失败 (exit=%d), 继续", stage_name, _ec)
                 failed_stages.append(stage_name)
         except Exception as e:
             if args.stop_on_error:
