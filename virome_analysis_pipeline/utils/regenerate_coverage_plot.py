@@ -116,20 +116,28 @@ def parse_paf(paf_path):
 
 # ── 主绘图函数 ──
 
-def plot_coverage_compact(tool_data, ref_length, out_prefix, n_regions=None):
+def plot_coverage_compact(tool_data, ref_length, out_prefix, n_regions_map=None):
+    """n_regions_map: {step_name: [(start,end), ...]} 每个步骤各自的 N 区域"""
     colors = plt.cm.Set2.colors
     num_tools = len([t for t in tool_data.values() if t])
     fig, ax = plt.subplots(figsize=(16, max(5, num_tools * 1.8)))
+    # 参考灰条 + 长度标注
     ax.add_patch(patches.Rectangle((0, 0), ref_length, 0.4,
         facecolor='lightgray', edgecolor='black', lw=1, zorder=2))
     ax.text(ref_length + ref_length * 0.005, 0.2, f'{ref_length} bp',
             va='center', fontsize=10, color='gray', fontstyle='italic')
-    if n_regions:
-        draw_n_overlay(ax, n_regions, 0.4, 0, color='#222222', alpha=0.55)
+    # 参考条上的 N（来自最终结果）
+    ref_n = n_regions_map.get('__ref__', []) if n_regions_map else []
+    if ref_n:
+        draw_n_overlay(ax, ref_n, 0.4, 0, color='#222222', alpha=0.55)
     y_pos, yticks_pos, yticks_labels, tool_idx = 1.0, [0.2], ['Reference'], 0
-    for tool_name, alignments in tool_data.items():
+    for tool_name, data in tool_data.items():
+        alignments = data.get('alignments', data) if isinstance(data, dict) else data
         if not alignments: continue
         color = colors[tool_idx % len(colors)]; tool_idx += 1
+        # 该步骤的背景区
+        ax.add_patch(patches.Rectangle((-ref_length*0.05, y_pos - 0.1),
+            ref_length*1.1, 0.6, facecolor='whitesmoke', edgecolor='none', alpha=0.3, zorder=1))
         for aln in alignments:
             draw_alignment_block(ax, aln, y_pos, color)
             if aln['map_span'] > ref_length * 0.08:
@@ -138,17 +146,22 @@ def plot_coverage_compact(tool_data, ref_length, out_prefix, n_regions=None):
                         f"{short_name}\n{aln['q_len']}bp",
                         ha='center', va='center', fontsize=8,
                         color='black', fontweight='bold', zorder=5)
+        # 该步骤自己的 N 区域（如果有）
+        step_n = n_regions_map.get(tool_name, []) if n_regions_map else []
+        if step_n:
+            draw_n_overlay(ax, step_n, y_pos + 0.4, y_pos, color='#333333', alpha=0.5)
         yticks_pos.append(y_pos + 0.2); yticks_labels.append(tool_name); y_pos += 1.2
     ax.set_xlim(-ref_length * 0.15, ref_length * 1.08); ax.set_ylim(-0.5, y_pos)
     for s in ['top', 'right', 'left']: ax.spines[s].set_visible(False)
     ax.set_yticks(yticks_pos); ax.set_yticklabels(yticks_labels, fontsize=12, fontweight='bold')
-    ax.set_xlabel('Reference Genomic Coordinates (bp)', fontsize=14, fontweight='bold')
+    ax.set_xlabel('Genomic Coordinates (bp)', fontsize=14, fontweight='bold')
     ax.set_title('Genome Assembly Evolution (Compact View)', fontsize=18, fontweight='bold', pad=20)
     ax.grid(axis='x', linestyle='--', alpha=0.5, zorder=0)
+    has_any_n = any(n_regions_map.values()) if n_regions_map else False
     legend_elements = [patches.Patch(color='#ff9999', label='Gap (Deletion)')]
-    if n_regions:
-        legend_elements.append(patches.Patch(facecolor='#222222', alpha=0.55,
-            hatch='////', label=f'N-Regions ({len(n_regions)} sites)'))
+    if has_any_n:
+        legend_elements.append(patches.Patch(facecolor='#333333', alpha=0.5,
+            hatch='////', label='N-Regions'))
     ax.legend(handles=legend_elements, loc='upper right', frameon=True)
     plt.tight_layout()
     plt.savefig(f"{out_prefix}_Compact.png", dpi=300)
@@ -156,10 +169,11 @@ def plot_coverage_compact(tool_data, ref_length, out_prefix, n_regions=None):
     plt.close()
 
 
-def plot_coverage_stacked(tool_data, ref_length, out_prefix, n_regions=None):
+def plot_coverage_stacked(tool_data, ref_length, out_prefix, n_regions_map=None):
     colors = plt.cm.Set2.colors
     draw_info, y_cursor, yticks_pos, yticks_labels = {}, 1.0, [0.2], ['Reference']
-    for tool_name, alignments in tool_data.items():
+    for tool_name, data in tool_data.items():
+        alignments = data.get('alignments', data) if isinstance(data, dict) else data
         if not alignments: continue
         levels = []
         for aln in alignments:
@@ -169,7 +183,8 @@ def plot_coverage_stacked(tool_data, ref_length, out_prefix, n_regions=None):
                     aln['level'] = i; levels[i] = aln['end']; placed = True; break
             if not placed: aln['level'] = len(levels); levels.append(aln['end'])
         max_level = len(levels); tool_height = max_level * 0.6
-        draw_info[tool_name] = {'alignments': alignments, 'base_y': y_cursor, 'max_level': max_level}
+        draw_info[tool_name] = {'alignments': alignments, 'base_y': y_cursor, 'max_level': max_level,
+                                'height': tool_height}
         yticks_pos.append(y_cursor + (tool_height / 2) - 0.1)
         yticks_labels.append(tool_name)
         y_cursor += tool_height + 0.6
@@ -178,8 +193,9 @@ def plot_coverage_stacked(tool_data, ref_length, out_prefix, n_regions=None):
         facecolor='lightgray', edgecolor='black', lw=1, zorder=2))
     ax.text(ref_length + ref_length * 0.005, 0.2, f'{ref_length} bp',
             va='center', fontsize=10, color='gray', fontstyle='italic')
-    if n_regions:
-        draw_n_overlay(ax, n_regions, 0.4, 0, color='#222222', alpha=0.55)
+    ref_n = n_regions_map.get('__ref__', []) if n_regions_map else []
+    if ref_n:
+        draw_n_overlay(ax, ref_n, 0.4, 0, color='#222222', alpha=0.55)
     tool_idx = 0
     for tool_name, info in draw_info.items():
         color = colors[tool_idx % len(colors)]; tool_idx += 1; base_y = info['base_y']
@@ -195,16 +211,22 @@ def plot_coverage_stacked(tool_data, ref_length, out_prefix, n_regions=None):
                         f"{short_name}\n{aln['q_len']}bp",
                         ha='center', va='center', fontsize=8,
                         color='black', fontweight='bold', zorder=5)
+        # 每步骤自己的 N 区域
+        step_n = n_regions_map.get(tool_name, []) if n_regions_map else []
+        if step_n:
+            draw_n_overlay(ax, step_n, base_y + info['height'], base_y - 0.1,
+                           color='#333333', alpha=0.5)
     ax.set_xlim(-ref_length * 0.15, ref_length * 1.08); ax.set_ylim(-0.5, y_cursor)
     for s in ['top', 'right', 'left']: ax.spines[s].set_visible(False)
     ax.set_yticks(yticks_pos); ax.set_yticklabels(yticks_labels, fontsize=12, fontweight='bold')
-    ax.set_xlabel('Reference Genomic Coordinates (bp)', fontsize=14, fontweight='bold')
+    ax.set_xlabel('Genomic Coordinates (bp)', fontsize=14, fontweight='bold')
     ax.set_title('Genome Assembly Evolution (Stacked View)', fontsize=18, fontweight='bold', pad=20)
     ax.grid(axis='x', linestyle='--', alpha=0.5, zorder=0)
+    has_any_n = any(n_regions_map.values()) if n_regions_map else False
     legend_elements = [patches.Patch(color='#ff9999', label='Gap (Deletion)')]
-    if n_regions:
-        legend_elements.append(patches.Patch(facecolor='#222222', alpha=0.55,
-            hatch='////', label=f'N-Regions ({len(n_regions)} sites)'))
+    if has_any_n:
+        legend_elements.append(patches.Patch(facecolor='#333333', alpha=0.5,
+            hatch='////', label='N-Regions'))
     ax.legend(handles=legend_elements, loc='upper right', frameon=True)
     plt.tight_layout()
     plt.savefig(f"{out_prefix}_Stacked.png", dpi=300)
@@ -254,20 +276,27 @@ def main():
     for n, p in step_files.items():
         print(f"  {n}: {p.name}")
 
-    # 提取 N 区域（从最终结果）
-    n_regions = []
+    # 计算每步的 N 区域
+    n_regions_map = {}
+    for step_name, fa_path in step_files.items():
+        n_regs = find_n_regions(str(fa_path))
+        if n_regs:
+            n_regions_map[step_name] = n_regs
+            print(f"  N 区域 ({step_name}): {sum(e-s for s,e in n_regs)} bp")
+
+    # 参考条上的 N 取自最终结果
     for final_key in ['10.Ultimate_Result', '9.Gap_Filled', '8.Iterative_Consensus']:
-        if final_key in step_files:
-            n_regions = find_n_regions(str(step_files[final_key]))
-            if n_regions:
-                print(f"\nN 区域 (来自 {final_key}): {len(n_regions)} 处, 共 {sum(e-s for s,e in n_regions)} bp")
-                for s, e in n_regions:
-                    print(f"  [{s}-{e}) {e-s}bp")
-                break
+        if final_key in n_regions_map:
+            n_regions_map['__ref__'] = n_regions_map[final_key]
+            break
 
     # minimap2 比对各步骤 vs 参考
     tool_data = {}
     global_ref_len = 0
+    # 先用参考自身长度初始化
+    ref_seq_len = len(str(next(SeqIO.parse(str(ref_fasta), "fasta")).seq))
+    global_ref_len = ref_seq_len
+
     with tempfile.TemporaryDirectory() as tmpdir:
         for step_name, fa_path in step_files.items():
             paf_file = os.path.join(tmpdir, f"{step_name.replace('/', '_')}.paf")
@@ -275,8 +304,16 @@ def main():
             run_minimap2(str(ref_fasta), str(fa_path), paf_file, args.threads)
             aln, r_len = parse_paf(paf_file)
             global_ref_len = max(global_ref_len, r_len)
-            tool_data[step_name] = aln
-            print(f"  → {len(aln)} 条比对, 参考长度={r_len}")
+            # 如果比对未覆盖全参考(末端N被软剪切)，扩展最后的比对块到参考全长
+            if aln and aln[-1]['end'] < global_ref_len:
+                last = aln[-1]
+                extra = global_ref_len - last['end']
+                last['end'] = global_ref_len
+                last['map_span'] += extra
+                if last['match_segments'] is None:
+                    last['match_segments'] = [{'start': last['start'], 'len': last['map_span']}]
+            tool_data[step_name] = {'alignments': aln, 'q_len': sum(1 for _ in SeqIO.parse(str(fa_path), "fasta"))}
+            print(f"  → {len(aln)} 条比对, 参考长度={global_ref_len}")
 
     if global_ref_len == 0:
         print("错误: 无法确定参考长度")
@@ -286,8 +323,8 @@ def main():
     sample_name = sample_dir.name
     plot_prefix = str(out_dir / f"{sample_name}_Coverage")
     print(f"\n生成 Coverage Visualization...")
-    plot_coverage_compact(tool_data, global_ref_len, plot_prefix, n_regions=n_regions)
-    plot_coverage_stacked(tool_data, global_ref_len, plot_prefix, n_regions=n_regions)
+    plot_coverage_compact(tool_data, global_ref_len, plot_prefix, n_regions_map=n_regions_map)
+    plot_coverage_stacked(tool_data, global_ref_len, plot_prefix, n_regions_map=n_regions_map)
     print(f"完成 → {out_dir}/")
     print(f"  {plot_prefix}_Compact.png")
     print(f"  {plot_prefix}_Stacked.png")
