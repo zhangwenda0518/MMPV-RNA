@@ -659,7 +659,18 @@ def main():
             import pandas as _pd
             _df = _pd.read_csv(summary_in, sep="\t")
             _acc_col = next((c for c in ["Rep_Accession", "Accession"] if c in _df.columns), _df.columns[0])
+            _sp_col = next((c for c in ["Adjusted_Species", "Species", "Species_NCBI"] if c in _df.columns), None)
             _targets = _df[_acc_col].dropna().unique()
+
+            # Build virus name mapping {acc: Species_Acc}, same as post-hoc
+            _virus_map = {}
+            for _, row in _df.drop_duplicates(subset=[_acc_col]).iterrows():
+                _a = str(row[_acc_col])
+                if _sp_col:
+                    _sp = str(row[_sp_col]).replace(" ", "_").replace("/", "_").replace("'", "")
+                    _virus_map[_a] = f"{_sp}_{_a}"
+                else:
+                    _virus_map[_a] = _a
 
             for _acc in _targets:
                 _gb_file = gb_dir / f"{_acc}.gb"
@@ -668,7 +679,8 @@ def main():
                 if not _gb_file.exists():
                     continue
 
-                _vout = cap_input_dir / str(_acc)
+                _vname = _virus_map.get(str(_acc), str(_acc))
+                _vout = cap_input_dir / _vname
                 _vout.mkdir(parents=True, exist_ok=True)
                 # Extract CDS from GB
                 run(f"python {script_dir / 'utils/gbk_extractor.py'} "
@@ -698,11 +710,11 @@ def main():
 
                     # Skip non-coding viruses (e.g. viroids)
                     if _ref_cds.stat().st_size < 100:
-                        log.info("  %s: no CDS (likely non-coding virus), skipped", _acc)
+                        log.info("  %s: no CDS (likely non-coding virus), skipped", _vname)
                         continue
 
                     # Run capheine
-                    _cap_out = capheine_dir / str(_acc)
+                    _cap_out = capheine_dir / _vname
                     _cap_out.mkdir(parents=True, exist_ok=True)
                     _parts = [
                         f"python {script_dir / 'capheine_pipeline.py'}",
