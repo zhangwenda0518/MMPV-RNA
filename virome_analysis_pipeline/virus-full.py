@@ -344,22 +344,61 @@ def parse_paf_with_cigar(paf_file):
 def draw_alignment_block(ax, aln, rect_y, color):
     start, map_span = aln['start'], aln['map_span']
     ax.add_patch(patches.Rectangle((start, rect_y), map_span, 0.4, facecolor='#ff9999', edgecolor='none', alpha=0.9, zorder=2))
-    for seg in aln['match_segments']: 
+    for seg in aln['match_segments']:
         ax.add_patch(patches.Rectangle((seg['start'], rect_y), seg['len'], 0.4, facecolor=color, edgecolor='none', alpha=0.9, zorder=3))
     ax.add_patch(patches.Rectangle((start, rect_y), map_span, 0.4, facecolor='none', edgecolor='black', lw=1, zorder=4))
 
-def plot_coverage_compact(tool_data, ref_length, out_prefix):
+def find_n_regions(fasta_path, min_n_run=3):
+    """从 FASTA 中提取连续 N 区域 [(start, end), ...]"""
+    regions = []
+    try:
+        from Bio import SeqIO
+        for rec in SeqIO.parse(fasta_path, "fasta"):
+            seq = str(rec.seq).upper()
+            in_n = False; n_start = 0
+            for i, base in enumerate(seq):
+                if base == 'N':
+                    if not in_n:
+                        n_start = i; in_n = True
+                else:
+                    if in_n and (i - n_start) >= min_n_run:
+                        regions.append((n_start, i))
+                    in_n = False
+            if in_n and (len(seq) - n_start) >= min_n_run:
+                regions.append((n_start, len(seq)))
+            break  # 只处理第一条序列
+    except Exception:
+        pass
+    return regions
+
+def draw_n_overlay(ax, n_regions, y_top, y_bottom, color='#333333', alpha=0.45):
+    """在指定 y 范围叠加 N 区域标记"""
+    for n_start, n_end in n_regions:
+        ax.add_patch(patches.Rectangle(
+            (n_start, y_bottom), n_end - n_start, y_top - y_bottom,
+            facecolor=color, edgecolor='none', alpha=alpha, zorder=6, hatch='////'))
+    return len(n_regions)
+
+def plot_coverage_compact(tool_data, ref_length, out_prefix, n_regions=None):
     colors = plt.cm.Set2.colors
     num_tools = len([t for t in tool_data.values() if t])
     fig, ax = plt.subplots(figsize=(16, max(5, num_tools * 1.8)))
+
+    # 参考灰条 + 长度标注
     ax.add_patch(patches.Rectangle((0, 0), ref_length, 0.4, facecolor='lightgray', edgecolor='black', lw=1, zorder=2))
+    ax.text(ref_length + ref_length * 0.005, 0.2, f'{ref_length} bp', va='center', fontsize=10, color='gray', fontstyle='italic')
+
+    # 叠加 N 区域
+    if n_regions:
+        draw_n_overlay(ax, n_regions, 0.4, 0, color='#222222', alpha=0.55)
+
     y_pos, yticks_pos, yticks_labels, tool_idx = 1.0, [0.2], ['Reference'], 0
     for tool_name, alignments in tool_data.items():
         if not alignments: continue
         color = colors[tool_idx % len(colors)]; tool_idx += 1
         for aln in alignments:
             draw_alignment_block(ax, aln, y_pos, color)
-            if aln['map_span'] > ref_length * 0.08: 
+            if aln['map_span'] > ref_length * 0.08:
                 short_name = aln['q_name'][:14] + ".." if len(aln['q_name']) > 16 else aln['q_name']
                 ax.text(aln['start'] + aln['map_span']/2, y_pos + 0.2, f"{short_name}\n{aln['q_len']}bp", ha='center', va='center', fontsize=8, color='black', fontweight='bold', zorder=5)
         yticks_pos.append(y_pos + 0.2); yticks_labels.append(tool_name); y_pos += 1.2
@@ -369,11 +408,14 @@ def plot_coverage_compact(tool_data, ref_length, out_prefix):
     ax.set_xlabel('Reference Genomic Coordinates (bp)', fontsize=14, fontweight='bold')
     ax.set_title('Genome Assembly Evolution (Compact View)', fontsize=18, fontweight='bold', pad=20)
     ax.grid(axis='x', linestyle='--', alpha=0.5, zorder=0)
-    ax.legend(handles=[patches.Patch(color='#ff9999', label='Gap (Deletion)')], loc='upper right', frameon=True)
+    legend_elements = [patches.Patch(color='#ff9999', label='Gap (Deletion)')]
+    if n_regions:
+        legend_elements.append(patches.Patch(facecolor='#222222', alpha=0.55, hatch='////', label=f'N-Regions ({len(n_regions)} sites)'))
+    ax.legend(handles=legend_elements, loc='upper right', frameon=True)
     plt.tight_layout()
     plt.savefig(f"{out_prefix}_Compact.png", dpi=300); plt.savefig(f"{out_prefix}_Compact.pdf", dpi=300); plt.close()
 
-def plot_coverage_stacked(tool_data, ref_length, out_prefix):
+def plot_coverage_stacked(tool_data, ref_length, out_prefix, n_regions=None):
     colors = plt.cm.Set2.colors
     draw_info, y_cursor, yticks_pos, yticks_labels = {}, 1.0, [0.2], ['Reference']
     for tool_name, alignments in tool_data.items():
@@ -390,7 +432,13 @@ def plot_coverage_stacked(tool_data, ref_length, out_prefix):
         yticks_pos.append(y_cursor + (tool_height / 2) - 0.1); yticks_labels.append(tool_name); y_cursor += tool_height + 0.6 
   
     fig, ax = plt.subplots(figsize=(16, max(5, y_cursor * 0.8)))
+    # 参考灰条 + 长度标注
     ax.add_patch(patches.Rectangle((0, 0), ref_length, 0.4, facecolor='lightgray', edgecolor='black', lw=1, zorder=2))
+    ax.text(ref_length + ref_length * 0.005, 0.2, f'{ref_length} bp', va='center', fontsize=10, color='gray', fontstyle='italic')
+    # 叠加 N 区域
+    if n_regions:
+        draw_n_overlay(ax, n_regions, 0.4, 0, color='#222222', alpha=0.55)
+
     tool_idx = 0
     for tool_name, info in draw_info.items():
         color = colors[tool_idx % len(colors)]; tool_idx += 1; base_y = info['base_y']
@@ -407,7 +455,10 @@ def plot_coverage_stacked(tool_data, ref_length, out_prefix):
     ax.set_xlabel('Reference Genomic Coordinates (bp)', fontsize=14, fontweight='bold')
     ax.set_title('Genome Assembly Evolution (Stacked View)', fontsize=18, fontweight='bold', pad=20)
     ax.grid(axis='x', linestyle='--', alpha=0.5, zorder=0)
-    ax.legend(handles=[patches.Patch(color='#ff9999', label='Gap (Deletion)')], loc='upper right', frameon=True)
+    legend_elements = [patches.Patch(color='#ff9999', label='Gap (Deletion)')]
+    if n_regions:
+        legend_elements.append(patches.Patch(facecolor='#222222', alpha=0.55, hatch='////', label=f'N-Regions ({len(n_regions)} sites)'))
+    ax.legend(handles=legend_elements, loc='upper right', frameon=True)
     plt.tight_layout()
     plt.savefig(f"{out_prefix}_Stacked.png", dpi=300); plt.savefig(f"{out_prefix}_Stacked.pdf", dpi=300); plt.close()
 
@@ -752,10 +803,16 @@ def run_pipeline(sample, sample_data, orig_ref, ref_len, out_root, active_tools,
                         global_ref_len = max(global_ref_len, r_len)
                         tool_data[t_name] = aln
               
-                if global_ref_len > 0: 
+                if global_ref_len > 0:
+                    # 从最终结果提取 N 区域用于高亮
+                    n_regs = []
+                    for final_fa in [f11_circ, f10_gapf, f9_cons]:
+                        if final_fa.exists():
+                            n_regs = find_n_regions(str(final_fa))
+                            if n_regs: break
                     plot_prefix = str(d12_plot / f"{sample}_Coverage")
-                    plot_coverage_compact(tool_data, global_ref_len, plot_prefix)
-                    plot_coverage_stacked(tool_data, global_ref_len, plot_prefix)
+                    plot_coverage_compact(tool_data, global_ref_len, plot_prefix, n_regions=n_regs)
+                    plot_coverage_stacked(tool_data, global_ref_len, plot_prefix, n_regions=n_regs)
       
         if not getattr(args, 'keep_tmp', False):
             cleanup_temp_files(sample_dir, logger, sample)
