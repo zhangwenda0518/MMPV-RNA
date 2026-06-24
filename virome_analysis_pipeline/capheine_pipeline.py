@@ -443,6 +443,10 @@ def run_capheine(args):
 
     logger.info("4. Aggregating JSON results with DRHIP...")
     drhip_hyphy_dir = dirs["drhip"] / "hyphy"
+    total_files = sum(len(files) for files in analysis_files.values())
+    if total_files == 0:
+        logger.warning("No HyPhy results generated (all genes failed) — skipping DRHIP and MultiQC.")
+        return
     shutil.rmtree(drhip_hyphy_dir, ignore_errors=True)
     drhip_hyphy_dir.mkdir(parents=True)
     for tool, files in analysis_files.items():
