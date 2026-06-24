@@ -340,11 +340,12 @@ def main():
         _sh = add_stage_log(detect_dir, "1_detect")
         if not args.force and best_summary.exists():
             log.info("[1/10] Detection: checkpoint OK, skip")
-        log.info("-" * 40)
-        log.info("[1/10] Rapid Virus Detection")
-        # checkpoint check
-        parts = [
-        f"python {script_dir / 'batch_virus_depth.py'}",
+        else:
+            log.info("-" * 40)
+            log.info("[1/10] Rapid Virus Detection")
+            # checkpoint check
+            parts = [
+            f"python {script_dir / 'batch_virus_depth.py'}",
         f"--input_dir {reads}",
         f"--output_dir {detect_dir}",
         f"--ref_info {args.ref_info}",
@@ -400,24 +401,23 @@ def main():
                 log.info("[2/10] Filter: checkpoint exists, skipping -> %s", high_conf)
             else:
                 log.info("[2/10] High-Confidence Filtering")
-                # checkpoint check
-            filter_parts = [
-                f"python {script_dir / 'utils/filter_summary.py'}",
-                f"-i {best_summary}",
-                f"-o {high_conf}",
-                f"-c {args.filter_cov}",
-                f"-d {args.filter_depth}",
-                f"-r {args.filter_reads}",
-                f"--summary {detect_dir / 'summary' / 'filter_stats'}",
-            ]
-            if args.filter_keyword:
-                filter_parts.append(f"-k {args.filter_keyword}")
-            if args.filter_tpm > 0:
-                filter_parts.append(f"--min_tpm {args.filter_tpm}")
-            if args.filter_poisson > 0:
-                filter_parts.append(f"--min_poisson {args.filter_poisson}")
-            if run(" ".join(filter_parts), log, "filter_summary"):
-                log.info("  Filter complete -> %s", high_conf)
+                filter_parts = [
+                    f"python {script_dir / 'utils/filter_summary.py'}",
+                    f"-i {best_summary}",
+                    f"-o {high_conf}",
+                    f"-c {args.filter_cov}",
+                    f"-d {args.filter_depth}",
+                    f"-r {args.filter_reads}",
+                    f"--summary {detect_dir / 'summary' / 'filter_stats'}",
+                ]
+                if args.filter_keyword:
+                    filter_parts.append(f"-k {args.filter_keyword}")
+                if args.filter_tpm > 0:
+                    filter_parts.append(f"--min_tpm {args.filter_tpm}")
+                if args.filter_poisson > 0:
+                    filter_parts.append(f"--min_poisson {args.filter_poisson}")
+                if run(" ".join(filter_parts), log, "filter_summary"):
+                    log.info("  Filter complete -> %s", high_conf)
         else:
             log.warning("  best.summary not found, skipping filter")
 
