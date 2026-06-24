@@ -227,32 +227,24 @@ def main():
     out_dir.mkdir(parents=True, exist_ok=True)
     ref_fasta = Path(args.reference)
 
-    # 查找所有中间步骤 FASTA
+    # 查找所有中间步骤 FASTA (与 virus-full.py valid_plots 对齐)
     step_files = {}
     step_patterns = [
-        ('1.DeNovo_Cleaned',         sample_dir / '1.DeNovo_Assembly' / '2.refinec_merged_raw.fasta'),
-        ('2.PVGA_Extension',         sample_dir / '3.PVGA_Extension' / '3.pvga_merged.fasta'),
-        ('3.Pre_Fusion_Merge',       sample_dir / '5.Fusion' / '5.pre_fusion_merged.fasta'),
-        ('4.rmDup_Purification',     sample_dir / '6.rmDup' / '6.rmDup_cleaned.fasta'),
-        ('5.Fusion_Skeleton_Solid',  sample_dir / '5.Fusion' / '5.fusion_skeleton.fasta'),
-        ('6.Iterative_Consensus',    sample_dir / '9.Consensus_Polish' / '9.final_consensus.fasta'),
-        ('7.Gap_Filled',             sample_dir / '10.Gap_Filling' / '10.gap_filled_final.fasta'),
-        ('8.Ultimate_Result',        sample_dir / '11.Ultimate_Circular_Result.fasta'),
+        ('1.DeNovo_Cleaned',        sample_dir / '2.RefineC_Merge_Raw' / '2.refinec_merged_raw.fasta'),
+        ('2.Ref_Merged_1',          sample_dir / '4.Ref_Merged_1' / '4.ref_merged_1.fasta'),
+        ('3.Shiver_Cleanup',        sample_dir / '3.Shiver_Cleanup' / '3.cleaned_viral_contigs.fasta'),
+        ('4.PVGA_Extension',        sample_dir / '5.PVGA_Extension' / '5.pvga_evaluated_cut.fasta'),
+        ('5.Pre_Fusion_Merge',      sample_dir / '6.Pre_Fusion_Merge' / '6.pre_fusion_merged.fasta'),
+        ('6.rmDup_Purification',    sample_dir / '7.Final_rmDup' / '7.rmDup_cleaned.fasta'),
+        ('7.Ref_Merged_2',          sample_dir / '8.Ref_Merged_2' / '8.ref_merged_2.fasta'),
+        ('8.Iterative_Consensus',   sample_dir / '9.Consensus_Polish' / '9.final_consensus.fasta'),
+        ('9.Gap_Filled',            sample_dir / '10.Gap_Filling' / '10.gap_filled_final.fasta'),
+        ('10.Ultimate_Result',      sample_dir / '11.Ultimate_Circular_Result.fasta'),
     ]
 
-    # 回退扫描: 找任何存在的 .fasta
-    existing = set()
     for name, path in step_patterns:
         if path.exists() and path.stat().st_size > 0:
             step_files[name] = path
-            existing.add(name)
-
-    # 补充扫描: 如果上述路径不存在，搜索目录下所有 .fasta
-    if len(step_files) < 3:
-        for f in sorted(sample_dir.rglob('*.fasta')):
-            name = f.parent.name + '/' + f.name
-            if name not in step_files:
-                step_files[name] = f
 
     if not step_files:
         print(f"错误: 在 {sample_dir} 中未找到任何 FASTA 文件")
@@ -264,7 +256,7 @@ def main():
 
     # 提取 N 区域（从最终结果）
     n_regions = []
-    for final_key in ['8.Ultimate_Result', '7.Gap_Filled', '6.Iterative_Consensus']:
+    for final_key in ['10.Ultimate_Result', '9.Gap_Filled', '8.Iterative_Consensus']:
         if final_key in step_files:
             n_regions = find_n_regions(str(step_files[final_key]))
             if n_regions:
