@@ -495,7 +495,7 @@ def main():
         parts = [
             f"python {script_dir / 'batch_virus_full.py'}",
             f"--downstream_dir {variants_dir}",
-            f"--summary {var_summary}",
+            f"--summary {summary_in}",
             f"--clean_data {reads}",
             f"--virus_full_script {vsi}",
             f"--outdir {full_dir}",
