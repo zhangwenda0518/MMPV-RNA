@@ -79,43 +79,31 @@ def draw_n_overlay(ax, n_regions, y_top, y_bottom, color='#222222', alpha=0.55):
 # ── PAF 解析 ──
 
 def run_minimap2(ref_fasta, query_fasta, paf_output, threads=4):
-    cmd = f"minimap2 -t {threads} -c -x asm5 {ref_fasta} {query_fasta} > {paf_output}"
+    cmd = f"minimap2 -t {threads} -c -x asm10 {ref_fasta} {query_fasta} > {paf_output} 2>/dev/null"
     subprocess.run(cmd, shell=True, check=True)
 
 
 def parse_paf(paf_path):
-    alignments = []
-    ref_length = 0
+    """与 virus-full.py parse_paf_with_cigar 逻辑一致"""
+    alignments, ref_length = [], 0
+    if not os.path.exists(paf_path): return alignments, ref_length
     with open(paf_path) as f:
         for line in f:
             parts = line.strip().split('\t')
-            if len(parts) < 12: continue
-            q_name = parts[0]; q_len = int(parts[1])
-            q_start = int(parts[2]); q_end = int(parts[3])
-            strand = parts[4]
-            r_name = parts[5]; r_len = int(parts[6])
-            r_start = int(parts[7]); r_end = int(parts[8])
-            cigar_str = None
-            for tag in parts[12:]:
-                if tag.startswith('cg:Z:'):
-                    cigar_str = tag[5:]; break
+            if len(parts) < 11: continue
+            q_name, q_len, strand = parts[0], int(parts[1]), parts[4]
+            r_name, r_len, r_start, r_end = parts[5], int(parts[6]), int(parts[7]), int(parts[8])
             ref_length = max(ref_length, r_len)
+            cigar_str = next((tag[5:] for tag in parts[12:] if tag.startswith("cg:Z:")), "")
             match_segments = []
             if cigar_str:
-                pos = r_start
-                for m in re.finditer(r'(\d+)([MIDNSHX=])', cigar_str):
-                    length, op = int(m.group(1)), m.group(2)
-                    if op == 'M':
-                        match_segments.append({'start': pos, 'len': length})
-                        pos += length
-                    elif op == 'D':
-                        pos += length
-                    elif op in ('I', 'S'):
-                        pass
-                    elif op in ('=', 'X'):
-                        match_segments.append({'start': pos, 'len': length})
-                        pos += length
-            if not match_segments:
+                curr_r = r_start
+                for length_str, op in re.findall(r'(\d+)([MIDNSHP=X])', cigar_str):
+                    length = int(length_str)
+                    if op in ['M', '=', 'X']:
+                        match_segments.append({'start': curr_r, 'len': length}); curr_r += length
+                    elif op in ['D', 'N']: curr_r += length
+            else:
                 match_segments = [{'start': r_start, 'len': r_end - r_start}]
             alignments.append({
                 'q_name': q_name, 'q_len': q_len, 'strand': strand,
