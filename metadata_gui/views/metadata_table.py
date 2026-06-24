@@ -208,6 +208,18 @@ class MetadataTableView(QWidget):
             "QPushButton { font-weight: bold; color: #0072B2; }")
         top.addWidget(self._ai_btn)
 
+        self._export_btn = QPushButton("Export Table")
+        self._export_btn.clicked.connect(self._export_table)
+        self._export_btn.setToolTip("Export current table data to TSV/CSV/Excel")
+        top.addWidget(self._export_btn)
+
+        self._summary_btn = QPushButton("AI Summary")
+        self._summary_btn.clicked.connect(self._ai_summary)
+        self._summary_btn.setToolTip("Generate SCI writing summary from data statistics")
+        self._summary_btn.setStyleSheet(
+            "QPushButton { font-weight: bold; color: #0072B2; }")
+        top.addWidget(self._summary_btn)
+
         layout.addLayout(top)
 
         # ── Stats bar ───────────────────────────────
@@ -227,6 +239,7 @@ class MetadataTableView(QWidget):
         self._table.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self._table.horizontalHeader().setStretchLastSection(True)
         self._table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
+        self._table.horizontalHeader().setMinimumSectionSize(60)
         self._table.verticalHeader().setVisible(True)
         self._table.setEditTriggers(
             QAbstractItemView.DoubleClicked | QAbstractItemView.EditKeyPressed)
@@ -500,6 +513,165 @@ class MetadataTableView(QWidget):
 
         self._ai_worker.finished.connect(on_done)
         self._ai_worker.start()
+
+    def _export_table(self):
+        from PySide6.QtWidgets import QFileDialog
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export Table", "metadata_export.tsv",
+            "TSV (*.tsv);;CSV (*.csv);;Excel (*.xlsx)")
+        if not path:
+            return
+        try:
+            if path.endswith(".xlsx"):
+                self._store.export_excel(path)
+            else:
+                self._store.save(path)
+            QMessageBox.information(self, "Export", f"Exported to {path}")
+        except Exception as e:
+            QMessageBox.warning(self, "Export Failed", str(e))
+
+    def _ai_summary(self):
+        """Generate SCI writing summary using AI based on data statistics."""
+        from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout,
+                                        QLineEdit, QTextEdit, QPushButton,
+                                        QLabel, QDialogButtonBox)
+        import os, json
+        from collections import Counter
+
+        df = self._store.dataframe
+        if df is None or len(df) == 0:
+            QMessageBox.information(self, "AI Summary", "No data available.")
+            return
+
+        # ── Collect statistics ──
+        stats = {"total_runs": len(df)}
+        cols = {c.lower(): c for c in df.columns}
+
+        def col(name):
+            key = name.lower()
+            return cols.get(key)
+
+        def safe_col(name):
+            c = col(name)
+            if c and c in df.columns:
+                series = df[c].apply(lambda x: str(x).strip())
+                series = series[~series.apply(self._store.is_missing)]
+                return Counter(series)
+            return Counter()
+
+        db_counts = safe_col("Database") if "Database" in cols else Counter()
+        species_counts = safe_col("ScientificName")
+        tissue_counts = safe_col("Tissue")
+        source_counts = safe_col("Source")
+        location_counts = safe_col("Location")
+        center_counts = safe_col("CenterName")
+        age_counts = safe_col("Age_GrowthStage")
+
+        # Collection years
+        years = set()
+        date_col = col("ReleaseDate") or col("CollectionDate")
+        if date_col and date_col in df.columns:
+            for v in df[date_col]:
+                s = str(v).strip()
+                parts = s.replace("/","-").split("-")
+                if parts[0].isdigit() and len(parts[0])==4:
+                    years.add(parts[0])
+
+        stats_text = f"""Total records: {stats['total_runs']}
+Database sources: {', '.join(f'{k}({v})' for k,v in db_counts.most_common())}
+Species: {', '.join(f'{k}({v})' for k,v in species_counts.most_common())}
+Tissues: {', '.join(f'{k}({v})' for k,v in tissue_counts.most_common())}
+Source types: {', '.join(f'{k}({v})' for k,v in source_counts.most_common())}
+Locations: {', '.join(f'{k}({v})' for k,v in location_counts.most_common(10))}
+Institutions: {', '.join(f'{k}({v})' for k,v in center_counts.most_common(10))}
+Growth stages: {', '.join(f'{k}({v})' for k,v in age_counts.most_common(5))}
+Collection years: {', '.join(sorted(years)) if years else 'N/A'}"""
+
+        # ── API key dialog ──
+        dlg = QDialog(self)
+        dlg.setWindowTitle("AI Summary — DeepSeek API")
+        dlg.setMinimumWidth(500)
+        dl = QVBoxLayout(dlg)
+
+        dl.addWidget(QLabel("DeepSeek API Key:"))
+        key_edit = QLineEdit()
+        key_edit.setEchoMode(QLineEdit.Password)
+        key_edit.setPlaceholderText("sk-... or set DEEPSEEK_API_KEY env var")
+        env_key = os.environ.get("DEEPSEEK_API_KEY", "")
+        if env_key:
+            key_edit.setText(env_key); key_edit.setEnabled(False)
+            dl.addWidget(QLabel("(using DEEPSEEK_API_KEY from environment)"))
+        dl.addWidget(key_edit)
+
+        dl.addWidget(QLabel("Model:"))
+        from PySide6.QtWidgets import QComboBox
+        model_combo = QComboBox()
+        model_combo.addItems(["deepseek-chat", "deepseek-v4-flash"])
+        dl.addWidget(model_combo)
+
+        btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        btns.accepted.connect(dlg.accept); btns.rejected.connect(dlg.reject)
+        dl.addWidget(btns)
+
+        if dlg.exec() != QDialog.Accepted:
+            return
+
+        api_key = key_edit.text().strip()
+        if not api_key:
+            QMessageBox.warning(self, "AI Summary", "API key required.")
+            return
+
+        # ── Call AI ──
+        prompt = f"""You are a scientific writer preparing a manuscript for a virome/metagenomics study.
+Based on the following metadata statistics of public sequencing runs collected for analysis, write a concise paragraph (150-250 words) suitable for the "Data Collection" or "Sample Information" section of a scientific paper.
+
+{stats_text}
+
+Requirements:
+- Write in formal scientific English, past tense
+- Include total number of runs, database split (SRA/GSA), species covered, tissue types, geographic locations, and collection time span
+- Mention key institutions that contributed data
+- Note that the data was primarily transcriptomic (RNA-seq)
+- End with a note on data availability
+
+Output ONLY the paragraph, no markdown, no headings."""
+
+        try:
+            from openai import OpenAI
+            client = OpenAI(api_key=api_key, base_url="https://api.deepseek.com")
+            kwargs = {"model": model_combo.currentText(), "messages": [
+                {"role": "system", "content": "You are a scientific writer. Output only the requested paragraph."},
+                {"role": "user", "content": prompt}
+            ]}
+            if "v4" in model_combo.currentText().lower():
+                kwargs["temperature"] = 0.3
+            else:
+                kwargs["temperature"] = 0.3
+
+            response = client.chat.completions.create(**kwargs)
+            summary = response.choices[0].message.content or ""
+
+            # ── Show result ──
+            result_dlg = QDialog(self)
+            result_dlg.setWindowTitle("AI Summary")
+            result_dlg.setMinimumSize(600, 300)
+            rl = QVBoxLayout(result_dlg)
+            text_edit = QTextEdit()
+            text_edit.setPlainText(summary)
+            text_edit.setReadOnly(False)
+            rl.addWidget(text_edit)
+            rh = QHBoxLayout()
+            copy_btn = QPushButton("Copy")
+            def do_copy():
+                from PySide6.QtWidgets import QApplication as QA
+                QA.clipboard().setText(text_edit.toPlainText())
+            copy_btn.clicked.connect(do_copy)
+            rh.addStretch(); rh.addWidget(copy_btn)
+            close_btn = QPushButton("Close"); close_btn.clicked.connect(result_dlg.accept)
+            rh.addWidget(close_btn); rl.addLayout(rh)
+            result_dlg.exec()
+        except Exception as e:
+            QMessageBox.warning(self, "AI Summary Error", str(e))
 
     def refresh(self):
         self._model.refresh()

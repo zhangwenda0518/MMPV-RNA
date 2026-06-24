@@ -1,9 +1,10 @@
 """Central data store wrapping metadata TSV files with pandas."""
 
+from __future__ import annotations
 import os
 from typing import Optional, List, Set
 import numpy as np
-import pandas as pd
+# pandas imported lazily via _get_pd() to avoid import deadlock
 
 CORE13_COLS = [
     "Run", "ReleaseDate", "CollectionDate", "Location", "Source",
@@ -19,8 +20,8 @@ class MetadataStore:
     """In-memory store for metadata records with change tracking."""
 
     def __init__(self):
-        self._df: Optional[pd.DataFrame] = None
-        self._full_df: Optional[pd.DataFrame] = None
+        self._df = None   # type: ignore
+        self._full_df = None   # type: ignore
         self._filepath: Optional[str] = None
         self._full_filepath: Optional[str] = None
         self._modified = False
@@ -36,7 +37,8 @@ class MetadataStore:
         self._stats_cache = None
 
     @property
-    def dataframe(self) -> pd.DataFrame:
+    def dataframe(self):
+        import pandas as pd
         if self._df is None:
             self._df = pd.DataFrame(columns=CORE13_COLS)
         return self._df
@@ -66,6 +68,7 @@ class MetadataStore:
         return list(self._df.columns) if self._df is not None else CORE13_COLS
 
     def load(self, filepath: str) -> bool:
+        import pandas as pd
         if not os.path.exists(filepath):
             return False
         try:

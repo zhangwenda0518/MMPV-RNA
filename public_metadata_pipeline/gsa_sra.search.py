@@ -11,8 +11,11 @@
 """
 
 import sys
-if sys.platform == 'win32':
-    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+if sys.platform == 'win32' and sys.stdout is not None:
+    try:
+        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+    except Exception:
+        pass
 
 import os
 import re
@@ -428,12 +431,12 @@ def merge_results(df_sra, df_gsa, out_dir, detailed, api_key, api_base, model):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="SRA + GSA 双引擎物种检索与提纯工具 (双模式版)")
     parser.add_argument("-q", "--query", required=True, help="输入物种拉丁名 (如 'Lycium barbarum')")
-    parser.add_argument("-s", "--source", help="限制测序类型 (如 'TRANSCRIPTOMIC')")
+    parser.add_argument("-s", "--source", default="TRANSCRIPTOMIC", help="限制测序类型 (默认: TRANSCRIPTOMIC，'All' 则不限)")
     parser.add_argument("-o", "--outdir", default="./Global_Species_Results", help="输出根目录")
     
     parser.add_argument("--db", default="both", choices=["sra", "gsa", "both"],
                         help="目标数据库: sra (仅NCBI), gsa (仅CNCB), both (默认, 两者)")
-    parser.add_argument("--detailed", action="store_true", help="开启详细模式，抓取并解析 Tissue/Stage/Location 等深层特征")
+    parser.add_argument("--no-detailed", action="store_true", help="关闭详细模式 (默认开启)")
     parser.add_argument("--ncbi-api", help="NCBI E-utilities API Key (提升速率)")
     parser.add_argument("--deepseek-api", help="DeepSeek API Key (AI 智能清洗)")
     parser.add_argument("--deepseek-model", default="deepseek-v4-flash",
@@ -441,6 +444,10 @@ if __name__ == "__main__":
                         help="DeepSeek 模型")
 
     args = parser.parse_args()
+    args.detailed = not args.no_detailed  # default True, --no-detailed to disable
+    # Normalize "All" / "" source to None (no filter)
+    if args.source and args.source.strip().lower() in ("all", ""):
+        args.source = None
     os.makedirs(args.outdir, exist_ok=True)
 
     df_sra = pd.DataFrame()

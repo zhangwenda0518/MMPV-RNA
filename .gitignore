@@ -6,3 +6,23 @@ database/*
 *.jar
 *.joblib
 *.h5
+
+# Build artifacts
+build/
+dist/
+*.spec
+
+# Logs
+*.log
+
+# Test output
+test_output/
+
+# Search results cache
+search_results/GSA_Results/0_web_cache/
+search_results/GSA_Results/1_xls_cache/
+
+# PyInstaller
+metadata_gui/build/
+metadata_gui/dist/
+metadata_gui/*.spec

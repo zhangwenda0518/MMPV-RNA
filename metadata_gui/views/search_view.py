@@ -7,7 +7,7 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLineEdit, QPushButton,
     QTableView, QHeaderView, QAbstractItemView, QLabel,
     QComboBox, QGroupBox, QGridLayout, QProgressBar,
-    QMessageBox, QSplitter,
+    QMessageBox, QSplitter, QTextEdit,
 )
 from PySide6.QtCore import Qt, QThread, Signal, QAbstractTableModel, QModelIndex, QUrl
 from PySide6.QtGui import QAction, QColor, QBrush, QFont, QDesktopServices
@@ -36,16 +36,20 @@ class SearchWorker(QThread):
         os.makedirs(outdir, exist_ok=True)
         self.progress.emit(f"Searching {self._db.upper()} for '{self._query}'...")
         try:
+            if self._db in ("sra", "both"):
+                self.progress.emit("Querying NCBI SRA...")
+                r_sra = search_sra(self._query, self._source, outdir)
+                self.progress.emit(f"SRA found: {len(r_sra.get('df', pd.DataFrame()))} runs")
+            if self._db in ("gsa", "both"):
+                self.progress.emit("Querying CNCB GSA...")
+                r_gsa = search_gsa(self._query, self._source, outdir)
+                self.progress.emit(f"GSA found: {len(r_gsa.get('df', pd.DataFrame()))} runs")
             if self._db == "sra":
-                r = search_sra(self._query, self._source, outdir)
-                r["db"] = "sra"
+                r_sra["db"] = "sra"; self.finished.emit(r_sra)
             elif self._db == "gsa":
-                r = search_gsa(self._query, self._source, outdir)
-                r["db"] = "gsa"
+                r_gsa["db"] = "gsa"; self.finished.emit(r_gsa)
             else:
-                r = search_both(self._query, self._source, outdir)
-                r["db"] = "both"
-            self.finished.emit(r)
+                self.finished.emit({"sra": r_sra, "gsa": r_gsa, "ok": True, "db": "both"})
         except Exception as e:
             self.finished.emit({"ok": False, "error": str(e), "db": self._db})
 
@@ -173,7 +177,8 @@ class SearchPanel(QWidget):
         r1.addWidget(QLabel("Source:"))
         self._source_combo = QComboBox()
         self._source_combo.setEditable(True)
-        self._source_combo.addItems(["", "TRANSCRIPTOMIC", "GENOMIC", "METAGENOMIC", "OTHER"])
+        self._source_combo.addItems(["TRANSCRIPTOMIC", "All", "GENOMIC", "METAGENOMIC", "OTHER"])
+        self._source_combo.setCurrentText("TRANSCRIPTOMIC")
         r1.addWidget(self._source_combo, 1)
 
         r1.addWidget(QLabel("DB:"))
@@ -185,12 +190,27 @@ class SearchPanel(QWidget):
         self._search_btn.setDefault(True)
         self._search_btn.clicked.connect(self._start_online_search)
         r1.addWidget(self._search_btn)
+
+        self._stop_btn = QPushButton("Stop")
+        self._stop_btn.setVisible(False)
+        self._stop_btn.clicked.connect(self._stop_search)
+        self._stop_btn.setStyleSheet(
+            "QPushButton { color: #C44E52; font-weight: bold; }")
+        r1.addWidget(self._stop_btn)
         olay.addLayout(r1)
 
         self._progress = QProgressBar()
         self._progress.setVisible(False)
         self._progress.setTextVisible(False)
         olay.addWidget(self._progress)
+
+        # Search log output area
+        self._search_log = QTextEdit()
+        self._search_log.setReadOnly(True)
+        self._search_log.setMaximumHeight(80)
+        self._search_log.setPlaceholderText("Search progress will appear here...")
+        self._search_log.setStyleSheet("QTextEdit { font-family: Consolas; font-size: 11px; background: #f8f8f8; }")
+        olay.addWidget(self._search_log)
 
         # Import row
         ir = QHBoxLayout()
@@ -303,55 +323,78 @@ class SearchPanel(QWidget):
     def _start_online_search(self):
         species = self._species_input.text().strip()
         if not species:
-            self._result_count.setText("Please enter a species name.")
+            self._search_log.append("Please enter a species name.")
             return
         self._search_btn.setEnabled(False)
+        self._stop_btn.setVisible(True)
         self._import_btn.setVisible(False)
+        self._send_info_btn.setVisible(False)
         self._progress.setVisible(True)
         self._progress.setRange(0, 0)
-        self._result_count.setText("Searching...")
+        self._search_log.clear()
+        self._search_log.append(f"> Searching for: {species}")
+        self._result_count.setText("")
         self._search_result_df = pd.DataFrame()
         self._online_model.set_dataframe(pd.DataFrame())
 
         db = self._db_combo.currentText()
         src = self._source_combo.currentText().strip()
+        self._search_log.append(f"  DB: {db.upper()}, Source: {src or 'All'}")
         self._worker = SearchWorker(db, species, src)
         self._worker.progress.connect(self._on_search_progress)
         self._worker.finished.connect(self._on_search_done)
         self._worker.start()
 
     def _on_search_progress(self, msg: str):
-        self._result_count.setText(msg)
+        self._search_log.append(f"  {msg}")
+
+    def _stop_search(self):
+        if self._worker and self._worker.isRunning():
+            self._worker.terminate()
+            self._worker.wait(1000)
+        self._search_btn.setEnabled(True)
+        self._stop_btn.setVisible(False)
+        self._progress.setVisible(False)
+        self._search_log.append("  [STOPPED by user]")
 
     def _on_search_done(self, result: dict):
         self._search_btn.setEnabled(True)
+        self._stop_btn.setVisible(False)
         self._progress.setVisible(False)
 
         if not result.get("ok"):
-            self._result_count.setText(f"Search failed: {result.get('error', '')}")
+            err = result.get("error", "")
+            self._search_log.append(f"  FAILED: {err}")
+            self._result_count.setText(f"Search failed")
             return
 
         db = result.get("db", "")
         if db == "both":
-            sra_df = result.get("sra", {}).get("df", pd.DataFrame())
-            gsa_df = result.get("gsa", {}).get("df", pd.DataFrame())
-            dfs = [d for d in [sra_df, gsa_df] if not d.empty]
-            if dfs:
-                self._search_result_df = pd.concat(dfs, ignore_index=True)
-            else:
-                self._search_result_df = pd.DataFrame()
+            sra = result.get("sra", {})
+            gsa = result.get("gsa", {})
+            sra_n = len(sra.get("df", pd.DataFrame()))
+            gsa_n = len(gsa.get("df", pd.DataFrame()))
+            self._search_log.append(f"  SRA: {sra_n} runs, GSA: {gsa_n} runs")
+            dfs = [d for d in [sra.get("df", pd.DataFrame()), gsa.get("df", pd.DataFrame())] if not d.empty]
+            self._search_result_df = pd.concat(dfs, ignore_index=True) if dfs else pd.DataFrame()
         else:
             self._search_result_df = result.get("df", pd.DataFrame())
+            self._search_log.append(f"  {db.upper()}: {len(self._search_result_df)} runs")
+            if not self._search_result_df.empty:
+                cols = list(self._search_result_df.columns)
+                self._search_log.append(f"  Columns: {', '.join(cols[:6])}...")
 
         total = len(self._search_result_df)
         if total > 0:
             self._online_model.set_dataframe(self._search_result_df)
-            self._result_count.setText(f"SRA+GSA: {total} results")
+            self._search_log.append(f"  Done: {total} total results")
+            self._result_count.setText(f"{total} results")
             self._import_btn.setVisible(True)
             self._send_info_btn.setVisible(True)
         else:
             self._online_model.set_dataframe(pd.DataFrame())
-            self._result_count.setText(f"{db.upper()}: No results found.")
+            self._search_log.append(f"  No results found")
+            self._result_count.setText("No results")
             self._import_btn.setVisible(False)
             self._send_info_btn.setVisible(False)
 

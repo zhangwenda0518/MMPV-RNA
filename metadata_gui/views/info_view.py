@@ -56,6 +56,12 @@ class InfoPanel(QWidget):
             "QPushButton { color: #0072B2; }")
         btn_row.addWidget(self._from_search_btn)
 
+        self._load_file_btn = QPushButton("Load File")
+        self._load_file_btn.clicked.connect(self._load_file)
+        self._load_file_btn.setStyleSheet(
+            "QPushButton { color: #0072B2; }")
+        btn_row.addWidget(self._load_file_btn)
+
         btn_row.addStretch()
 
         self._extract_btn = QPushButton("Deep Extract (gsa_sra.info.py)")
@@ -104,6 +110,21 @@ class InfoPanel(QWidget):
         self._result_table.addAction(copy_act)
 
         layout.addWidget(self._result_table, 1)
+
+    def _load_file(self):
+        """Load Run IDs from a text file."""
+        from PySide6.QtWidgets import QFileDialog
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Open Run ID List", "",
+            "Text Files (*.txt *.list *.csv *.tsv);;All Files (*)")
+        if not path:
+            return
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                self._text_edit.setPlainText(f.read())
+            self._status_label.setText(f"Loaded: {os.path.basename(path)}")
+        except Exception as e:
+            self._status_label.setText(f"Error: {e}")
 
     def _pull_from_search(self):
         """Pull Run IDs from Search store."""

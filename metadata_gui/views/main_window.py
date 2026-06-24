@@ -11,10 +11,6 @@ from PySide6.QtCore import Qt, QSettings, QSize
 from PySide6.QtGui import QAction, QKeySequence, QIcon
 
 from models.data_store import MetadataStore
-from views.metadata_table import MetadataTableView
-from views.detail_panel import DetailEditPanel
-from views.viz_panel import VisualizationPanel
-from views.search_view import SearchPanel
 
 
 class MainWindow(QMainWindow):
@@ -23,10 +19,9 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("Metadata Manager - MMPV-RNA")
 
-        # Two independent data stores
         self.search_store = MetadataStore()
         self.info_store = MetadataStore()
-        self._active_store = self.search_store  # current active for file ops
+        self._active_store = self.search_store
 
         self._loading = True
         self._switching = False
@@ -34,7 +29,6 @@ class MainWindow(QMainWindow):
         self._last_dir = ""
 
         self._setup_menu()
-        self._setup_toolbar()
         self._setup_statusbar()
         self._setup_tabs()
         self._restore_state()
@@ -60,17 +54,6 @@ class MainWindow(QMainWindow):
         mb.addMenu("&Help").addAction("&About", self._show_about)
 
     # ── Toolbar ───────────────────────────────────
-    def _setup_toolbar(self):
-        tb = QToolBar("Main")
-        tb.setIconSize(QSize(24, 24))
-        tb.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
-        self.addToolBar(tb)
-        tb.addAction("Open", self._on_open)
-        tb.addAction("Save", self._on_save)
-        tb.addSeparator()
-        tb.addAction("Import", self._on_import)
-        tb.addAction("Export", self._on_export_excel)
-
     # ── Statusbar ─────────────────────────────────
     def _setup_statusbar(self):
         self._status = QStatusBar()
@@ -161,6 +144,11 @@ class MainWindow(QMainWindow):
 
     # ── Tab activators ────────────────────────────
     def _activate_search(self):
+        from views.search_view import SearchPanel
+        # Don't recreate if already active
+        w = self._tabs.widget(0)
+        if isinstance(w, SearchPanel):
+            return
         if self.search_store.is_loaded or True:  # always allow search
             self._switching = True
             self._tabs.blockSignals(True)
@@ -176,10 +164,13 @@ class MainWindow(QMainWindow):
                 self._switching = False
 
     def _activate_info(self):
+        from views.info_view import InfoPanel
+        w = self._tabs.widget(4)
+        if isinstance(w, InfoPanel):
+            return
         self._switching = True
         self._tabs.blockSignals(True)
         try:
-            from views.info_view import InfoPanel
             ip = InfoPanel(self.info_store, self.search_store)
             ip.import_requested.connect(self._on_info_import)
             self._tabs.removeTab(4)
@@ -190,6 +181,10 @@ class MainWindow(QMainWindow):
             self._switching = False
 
     def _activate_browse(self, tab_idx, store, label):
+        from views.metadata_table import MetadataTableView
+        w = self._tabs.widget(tab_idx)
+        if isinstance(w, MetadataTableView):
+            return
         if store.is_loaded:
             self._switching = True
             self._tabs.blockSignals(True)
@@ -203,6 +198,10 @@ class MainWindow(QMainWindow):
                 self._switching = False
 
     def _activate_edit(self, tab_idx, store, label):
+        from views.detail_panel import DetailEditPanel
+        w = self._tabs.widget(tab_idx)
+        if isinstance(w, DetailEditPanel):
+            return
         if store.is_loaded:
             self._switching = True
             self._tabs.blockSignals(True)
@@ -216,6 +215,10 @@ class MainWindow(QMainWindow):
                 self._switching = False
 
     def _activate_viz(self, tab_idx, store, label):
+        from views.viz_panel import VisualizationPanel
+        w = self._tabs.widget(tab_idx)
+        if isinstance(w, VisualizationPanel):
+            return
         if store.is_loaded:
             self._switching = True
             self._tabs.blockSignals(True)
@@ -336,64 +339,82 @@ class MainWindow(QMainWindow):
 
         self._active_store = self.search_store
         self._update_row_label()
+        # Auto-activate Search panel BEFORE releasing loading lock
+        self._activate_search()
         self._loading = False
 
     def _load_search_demo(self):
-        """Search demo: mimics REAL gsa_sra.search.py output format (12 cols)."""
+        """Search demo: mimics REAL gsa_sra.search.py detailed output (13 cols)."""
         import pandas as pd
         demos = pd.DataFrame([
             {"Database":"SRA","Run":"SRR31651831","BioProject":"PRJNA1218117",
-             "BioSample":"SAMN45678901","ScientificName":"Lycium barbarum","Tissue":"","Age_GrowthStage":"",
-             "Location":"","LibraryStrategy":"RNA-Seq",
+             "BioSample":"SAMN45678901","ScientificName":"Lycium barbarum",
+             "Tissue":"root","Age_GrowthStage":"2 years",
+             "Location":"China: Ningxia, Yinchuan","LibraryStrategy":"RNA-Seq",
              "LibrarySource":"TRANSCRIPTOMIC","Platform":"ILLUMINA",
              "CenterName":"Ningxia University","ReleaseDate":"2025-06-13"},
             {"Database":"SRA","Run":"SRR33301106","BioProject":"PRJNA1219886",
-             "BioSample":"SAMN45678902","Tissue":"","Age_GrowthStage":"",
-             "Location":"","LibraryStrategy":"RNA-Seq",
+             "BioSample":"SAMN45678902","ScientificName":"Lycium ruthenicum",
+             "Tissue":"fruit","Age_GrowthStage":"3 years | mature fruit stage",
+             "Location":"China: Inner Mongolia, Alxa","LibraryStrategy":"RNA-Seq",
              "LibrarySource":"TRANSCRIPTOMIC","Platform":"ILLUMINA",
              "CenterName":"Inner Mongolia University","ReleaseDate":"2025-11-20"},
             {"Database":"SRA","Run":"SRR33389501","BioProject":"PRJNA1236100",
-             "BioSample":"SAMN45678903","Tissue":"","Age_GrowthStage":"",
-             "Location":"","LibraryStrategy":"RNA-Seq",
+             "BioSample":"SAMN45678903","ScientificName":"Lycium chinense",
+             "Tissue":"leaf","Age_GrowthStage":"",
+             "Location":"China: Qinghai, Xining","LibraryStrategy":"RNA-Seq",
              "LibrarySource":"TRANSCRIPTOMIC","Platform":"ILLUMINA",
              "CenterName":"Qinghai University","ReleaseDate":"2025-12-15"},
             {"Database":"SRA","Run":"SRR29563412","BioProject":"PRJNA1146557",
-             "BioSample":"SAMN45678904","Tissue":"","Age_GrowthStage":"",
-             "Location":"","LibraryStrategy":"RNA-Seq",
+             "BioSample":"SAMN45678904","ScientificName":"Lycium barbarum",
+             "Tissue":"leaf","Age_GrowthStage":"",
+             "Location":"China: Gansu, Lanzhou","LibraryStrategy":"RNA-Seq",
              "LibrarySource":"TRANSCRIPTOMIC","Platform":"ILLUMINA",
              "CenterName":"Gansu Agricultural University","ReleaseDate":"2025-04-12"},
             {"Database":"SRA","Run":"ERR13512478","BioProject":"PRJEB78201",
-             "BioSample":"SAME7890123","Tissue":"","Age_GrowthStage":"",
-             "Location":"","LibraryStrategy":"WGS",
+             "BioSample":"SAME7890123","ScientificName":"Lycium barbarum",
+             "Tissue":"leaf","Age_GrowthStage":"1 year",
+             "Location":"United Kingdom: England, London","LibraryStrategy":"WGS",
              "LibrarySource":"GENOMIC","Platform":"ILLUMINA",
              "CenterName":"Royal Botanic Gardens Kew","ReleaseDate":"2025-03-20"},
             {"Database":"SRA","Run":"DRR512340","BioProject":"PRJDB16890",
-             "BioSample":"SAMD01234567","Tissue":"","Age_GrowthStage":"",
-             "Location":"","LibraryStrategy":"RNA-Seq",
+             "BioSample":"SAMD01234567","ScientificName":"Lycium chinense",
+             "Tissue":"flower","Age_GrowthStage":"2 years | flowering stage",
+             "Location":"Japan: Tokyo, Hachioji","LibraryStrategy":"RNA-Seq",
              "LibrarySource":"TRANSCRIPTOMIC","Platform":"ILLUMINA",
              "CenterName":"University of Tokyo","ReleaseDate":"2025-01-10"},
             {"Database":"GSA","Run":"CRR1126132","BioProject":"PRJCA025572",
-             "BioSample":"SAMC3551095","Tissue":"","Age_GrowthStage":"",
+             "BioSample":"SAMC3551095","ScientificName":"Lycium barbarum",
+             "Tissue":"leaf","Age_GrowthStage":"3 year",
              "Location":"","LibraryStrategy":"RNA-Seq",
              "LibrarySource":"TRANSCRIPTOMIC","Platform":"ILLUMINA",
              "CenterName":"Beijing Forestry University","ReleaseDate":"2024-04-25"},
             {"Database":"GSA","Run":"CRR1126144","BioProject":"PRJCA025572",
-             "BioSample":"SAMC3551107","Tissue":"","Age_GrowthStage":"",
+             "BioSample":"SAMC3551107","ScientificName":"Lycium barbarum",
+             "Tissue":"pistil","Age_GrowthStage":"3 year",
              "Location":"","LibraryStrategy":"RNA-Seq",
              "LibrarySource":"TRANSCRIPTOMIC","Platform":"ILLUMINA",
              "CenterName":"Beijing Forestry University","ReleaseDate":"2024-04-25"},
             {"Database":"GSA","Run":"CRR1128966","BioProject":"PRJCA025589",
-             "BioSample":"SAMC3552001","Tissue":"","Age_GrowthStage":"",
+             "BioSample":"SAMC3552001","ScientificName":"Lycium barbarum",
+             "Tissue":"anther","Age_GrowthStage":"Archeocyte stage",
              "Location":"","LibraryStrategy":"RNA-Seq",
              "LibrarySource":"TRANSCRIPTOMIC","Platform":"ILLUMINA",
              "CenterName":"North Minzu University","ReleaseDate":"2026-04-28"},
             {"Database":"SRA","Run":"SRR32890123","BioProject":"PRJNA1256789",
-             "BioSample":"SAMN45678905","Tissue":"","Age_GrowthStage":"",
-             "Location":"","LibraryStrategy":"RNA-Seq",
+             "BioSample":"SAMN45678905","ScientificName":"Lycium barbarum",
+             "Tissue":"fruit","Age_GrowthStage":"",
+             "Location":"USA: Maryland, Beltsville","LibraryStrategy":"RNA-Seq",
              "LibrarySource":"TRANSCRIPTOMIC","Platform":"ILLUMINA",
              "CenterName":"USDA-ARS","ReleaseDate":"2025-07-25"},
         ])
         self.search_store._df = demos.astype(object)
+        # Add data volume columns
+        vol_data = {"FileSize_MB": ["156", "210", "89", "134", "298", "67", "45", "45", "52", "178"],
+                     "Bases": ["4.2G", "5.8G", "2.1G", "3.5G", "7.9G", "1.8G", "1.2G", "1.2G", "1.4G", "4.5G"],
+                     "Spots": ["14.2M", "19.3M", "7.1M", "11.8M", "26.3M", "6.0M", "4.0M", "4.0M", "4.7M", "15.0M"]}
+        for col, vals in vol_data.items():
+            self.search_store._df[col] = vals
         self.search_store._modified = False
 
     def _load_info_demo(self):
