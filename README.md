@@ -12,7 +12,7 @@
 
 ---
 
-## 三大管线 / Three Pipelines
+## 四大管线 / Four Pipelines
 
 ```
 public_metadata_pipeline/     → 公共数据获取
@@ -34,6 +34,12 @@ virome_analysis_pipeline/     → 已知病毒深度分析
        ├── SnpEff注释 → SNPGenie进化 → 12步全长组装
        ├── HyPhy正选择 → 相似性全景 → DVG/重组检测
        └── 交互式HTML综合报告
+              │
+              ▼
+virome_submission_pipeline/   → 数据提交
+       │
+       ├── 拓扑判断 → 元数据模板 → 假定蛋白注释
+       └── suvtk tbl2asn / Sequin tbl2asn 双模式 → .sqn 提交文件
 ```
 
 ---
@@ -99,6 +105,21 @@ python public_metadata_pipeline/build_host_pipeline.py \
     --stage all --threads 30
 ```
 
+### 5. 提交管线
+
+```bash
+# 从 08_Rescue 一键生成 NCBI 提交文件
+python virome_submission_pipeline/submission_pipeline.py \
+    --work-dir $OUT/08_Rescue/ \
+    --run-title my_plant_virome \
+    --mode both \
+    --suvtk-db ~/database/virus-db/suvtk_db/ \
+    -t 40
+
+# 启动提交 GUI 桌面应用
+python virome_submission_pipeline/submission_gui.py
+```
+
 ---
 
 ## 公共数据管线阶段 / Public Metadata Pipeline Stages
@@ -154,6 +175,20 @@ python public_metadata_pipeline/build_host_pipeline.py \
 | 8 | `similarity` | virus_auto_pipeline.py | 全长相似性热图 + 层次聚类 |
 | 9 | `dvg` | batch_virema_dvg.py | ViReMa DVG/重组检测 + Circos图 |
 | 10 | `report` | generate_pipeline_report.py | 交互式HTML综合报告 |
+
+---
+
+## 数据提交管线阶段 / Submission Pipeline Stages
+
+| # | 阶段 | 脚本 | 功能 |
+|---|------|------|------|
+| 1 | `topology` | viral_topology.py | BWA-MEM2 末端比对 → 病毒基因组拓扑判断 (circular/linear) |
+| 2 | `metadata` | unified_metadata.py | 统一元数据模板生成 (source.src + features + organism) |
+| 3 | `hypothetical` | analyze_hypothetical.py | 假定蛋白功能注释 (HHsuite/Diamond/DeepLoc/PSORTb/TMHMM 5工具) |
+| 4 | `sequin` | sequin_builder.py | Sequin .tbl 格式构建 (Cenote-Taker3 风格) |
+| 5 | `submit` | submission_pipeline.py | 端到端编排: suvtk tbl2asn / Sequin tbl2asn 双模式 → .sqn |
+| 6 | `gui` | submission_gui.py | PyQt6 桌面 GUI: 交互式编辑/验证/导出提交文件 |
+| 7 | `report` | report_html.py | 交互式HTML全表编辑报告 |
 
 ---
 
@@ -246,6 +281,7 @@ MMPV-RNA/
 | `virome_discovery_pipeline/doc.md` | 发现管线全部脚本 — 参数/输入输出/结果解读 |
 | `virome_analysis_pipeline/doc.md` | 分析管线全部脚本 — 参数/输入输出/结果解读 |
 | `public_metadata_pipeline/doc.md` | 公共数据管线 + 宿主库构建 |
+| `virome_submission_pipeline/` | 提交管线脚本头部均有详细 docstring |
 | `doc/14-pipeline-diagrams.md` | Mermaid流程图/架构图 |
 | `SOFTWARE_VERSIONS.txt` | 全部第三方软件版本记录 |
 | `pixi.toml` | 依赖配置 (可直接查看) |
