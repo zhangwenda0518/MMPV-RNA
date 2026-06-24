@@ -206,6 +206,12 @@ def process_gene(gene_fasta: Path, unaligned_fasta: Path, dirs: Dict[str, Path],
     gene_name = gene_fasta.stem
     logger.info(f"===== Processing gene module: {gene_name} =====")
 
+    # GUARD: codon alignment requires reference length divisible by 3
+    ref_seq = str(next(SeqIO.parse(gene_fasta, "fasta")).seq)
+    if len(ref_seq) % 3 != 0:
+        logger.warning(f"Gene '{gene_name}': reference length ({len(ref_seq)}) not divisible by 3 — skipping.")
+        return {"gene": gene_name, "FEL": None, "MEME": None, "PRIME": None, "BUSTED": None, "CONTRASTFEL": None, "RELAX": None}
+
     aligned_fasta = dirs["cawlign"] / f"{gene_name}-aligned.fasta"
     cawlign(gene_fasta, unaligned_fasta, aligned_fasta, genetic_code)
 
