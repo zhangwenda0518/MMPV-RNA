@@ -1545,6 +1545,25 @@ class ViromePipeline:
             else:
                 self.log.info("  analyze_hypothetical — 已存在, 跳过")
 
+        # --- 3b. tbl2gb: 生成 .gb 文件 (供 SnpEff/capheine/similarity) ---
+        gb_dir = self.d['analysis'] / "virus-annotations"
+        if updated_tbl.exists() and (feat_out / "reoriented_nucleotide_sequences.fna").exists():
+            if not list(gb_dir.glob("*.gb")):
+                tbl2gb_script = SCRIPT_DIR.parent / "virome_analysis_pipeline" / "utils" / "tbl2gb.py"
+                cmd = (
+                    f"python {tbl2gb_script} "
+                    f"--tbl {updated_tbl} "
+                    f"--fasta {feat_out / 'reoriented_nucleotide_sequences.fna'} "
+                    f"--taxonomy {tax_tsv} "
+                    f"-o {gb_dir}"
+                )
+                run_cmd(cmd, self.log, "tbl2gb",
+                        str(self.d['analysis'] / "tbl2gb.log"))
+            else:
+                self.log.info("  tbl2gb — .gb 文件已存在, 跳过")
+        else:
+            self.log.info("  tbl2gb — 缺少 featuretable_updated.tbl 或序列文件, 跳过")
+
         # --- 4. viral_topology ---
         topo_out = self.d['analysis'] / "topology.tsv"
         if not topo_out.exists() or topo_out.stat().st_size < 50:
