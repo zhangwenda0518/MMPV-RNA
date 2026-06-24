@@ -393,31 +393,28 @@ def main():
     # ═══════════════════════════════════════════
     if args.filter or args.stage == "filter":
         _sh2 = add_stage_log(detect_dir, "2_filter")
-        if best_summary.exists():
-            if not args.force and (variants_dir / "summary" / "all_summary.tsv").exists():
-                        log.info("[3/10] Variants: checkpoint OK")
+        if not args.force and high_conf.exists():
+            log.info("[2/10] Filter: checkpoint OK, skip")
+        elif best_summary.exists():
             log.info("-" * 40)
-            if not args.force and high_conf.exists():
-                log.info("[2/10] Filter: checkpoint exists, skipping -> %s", high_conf)
-            else:
-                log.info("[2/10] High-Confidence Filtering")
-                filter_parts = [
-                    f"python {script_dir / 'utils/filter_summary.py'}",
-                    f"-i {best_summary}",
-                    f"-o {high_conf}",
-                    f"-c {args.filter_cov}",
-                    f"-d {args.filter_depth}",
-                    f"-r {args.filter_reads}",
-                    f"--summary {detect_dir / 'summary' / 'filter_stats'}",
-                ]
-                if args.filter_keyword:
-                    filter_parts.append(f"-k {args.filter_keyword}")
-                if args.filter_tpm > 0:
-                    filter_parts.append(f"--min_tpm {args.filter_tpm}")
-                if args.filter_poisson > 0:
-                    filter_parts.append(f"--min_poisson {args.filter_poisson}")
-                if run(" ".join(filter_parts), log, "filter_summary"):
-                    log.info("  Filter complete -> %s", high_conf)
+            log.info("[2/10] High-Confidence Filtering")
+            filter_parts = [
+                f"python {script_dir / 'utils/filter_summary.py'}",
+                f"-i {best_summary}",
+                f"-o {high_conf}",
+                f"-c {args.filter_cov}",
+                f"-d {args.filter_depth}",
+                f"-r {args.filter_reads}",
+                f"--summary {detect_dir / 'summary' / 'filter_stats'}",
+            ]
+            if args.filter_keyword:
+                filter_parts.append(f"-k {args.filter_keyword}")
+            if args.filter_tpm > 0:
+                filter_parts.append(f"--min_tpm {args.filter_tpm}")
+            if args.filter_poisson > 0:
+                filter_parts.append(f"--min_poisson {args.filter_poisson}")
+            if run(" ".join(filter_parts), log, "filter_summary"):
+                log.info("  Filter complete -> %s", high_conf)
         else:
             log.warning("  best.summary not found, skipping filter")
 
@@ -427,94 +424,94 @@ def main():
     if args.stage in ("all", "variants"):
         _sh3 = add_stage_log(variants_dir, "3_variants")
         if not args.force and (variants_dir / "summary" / "all_summary.tsv").exists():
-                    log.info("[3/10] Variants: checkpoint OK")
-        log.info("-" * 40)
-        log.info("[3/10] Variant Analysis")
-        summary_in = get_summary()
-        # checkpoint check
-        if not summary_in.exists():
-            log.error("Summary not found: %s (run Stage 1 first)", summary_in)
-            sys.exit(1)
+            log.info("[3/10] Variants: checkpoint OK, skip")
+        else:
+            log.info("-" * 40)
+            log.info("[3/10] Variant Analysis")
+            summary_in = get_summary()
+            if not summary_in.exists():
+                log.error("Summary not found: %s (run Stage 1 first)", summary_in)
+                sys.exit(1)
 
-        parts = [
-            f"python {script_dir / 'batch_virus_variants.py'}",
-            f"--summary {get_summary()}",
-            f"--info {args.ref_info}",
-            f"--reference {args.reference}",
-            f"--variant_caller {args.variant_caller}",
-            f"--output_dir {variants_dir}",
-            f"--threads {args.threads}",
-            f"--jobs {args.jobs}",
-        ]
-        if not args.no_extract_reads:
-            parts.append("--extract_reads")
-        if not args.no_consensus:
-            parts.append("--consensus")
-        if not args.no_call_variants:
-            parts.append("--call_variants")
-        if args.snpeff:
-            parts += [
-                "--snpeff",
-                f"--snpeff_jar {args.snpeff_jar}",
-                f"--snpeff_config {args.snpeff_config}",
-                f"--snpeff_mem {args.snpeff_mem}",
+            parts = [
+                f"python {script_dir / 'batch_virus_variants.py'}",
+                f"--summary {get_summary()}",
+                f"--info {args.ref_info}",
+                f"--reference {args.reference}",
+                f"--variant_caller {args.variant_caller}",
+                f"--output_dir {variants_dir}",
+                f"--threads {args.threads}",
+                f"--jobs {args.jobs}",
             ]
-        if args.snpgenie:
-            parts.append("--snpgenie")
-        if args.bam:
-            parts += ["--bam", args.bam]
-        else:
-            parts += ["--fastq", str(reads)]
-        if args.disable_dynamic_vcf:
-            parts.append("--disable_dynamic_vcf")
-        parts += [
-            f"-q {args.vc_qual}",
-            f"-d {args.vc_depth}",
-            f"-f {args.vc_freq}",
-            f"-a {args.vc_ambig}",
-        ]
-        if not args.no_resume and not args.force:
-            parts.append("--resume")
-        if not run(" ".join(parts), log, "batch_virus_variants"):
-            log.warning("  Variant analysis partially failed, check logs")
-        else:
-            log.info("  Variants complete -> %s", variants_dir)
+            if not args.no_extract_reads:
+                parts.append("--extract_reads")
+            if not args.no_consensus:
+                parts.append("--consensus")
+            if not args.no_call_variants:
+                parts.append("--call_variants")
+            if args.snpeff:
+                parts += [
+                    "--snpeff",
+                    f"--snpeff_jar {args.snpeff_jar}",
+                    f"--snpeff_config {args.snpeff_config}",
+                    f"--snpeff_mem {args.snpeff_mem}",
+                ]
+            if args.snpgenie:
+                parts.append("--snpgenie")
+            if args.bam:
+                parts += ["--bam", args.bam]
+            else:
+                parts += ["--fastq", str(reads)]
+            if args.disable_dynamic_vcf:
+                parts.append("--disable_dynamic_vcf")
+            parts += [
+                f"-q {args.vc_qual}",
+                f"-d {args.vc_depth}",
+                f"-f {args.vc_freq}",
+                f"-a {args.vc_ambig}",
+            ]
+            if not args.no_resume and not args.force:
+                parts.append("--resume")
+            if not run(" ".join(parts), log, "batch_virus_variants"):
+                log.warning("  Variant analysis partially failed, check logs")
+            else:
+                log.info("  Variants complete -> %s", variants_dir)
 
     # ═══════════════════════════════════════════
     # Stage 4: Full-length Assembly
     # ═══════════════════════════════════════════
     if args.stage in ("all", "full"):
         _sh4 = add_stage_log(full_dir, "4_full")
-        if not args.force and (full_dir / "3_Virus_assemblies_final" if False else full_dir).exists():
-                    log.info("[4/10] Assembly: checkpoint OK (resume will skip completed)")
-        log.info("-" * 40)
-        log.info("[4/10] Full-length Assembly")
-        # checkpoint check
-        var_summary = variants_dir / "summary" / "all_summary.tsv"
-        if not var_summary.exists():
-            log.error("Variant summary not found: %s (run Stage 3 first)", var_summary)
-            sys.exit(1)
-
-        vsi = args.virus_full_script or str(script_dir / "virus-full.py")
-        parts = [
-            f"python {script_dir / 'batch_virus_full.py'}",
-            f"--downstream_dir {variants_dir}",
-            f"--summary {get_summary()}",
-            f"--clean_data {reads}",
-            f"--virus_full_script {vsi}",
-            f"--outdir {full_dir}",
-            f"--assembly_tools {args.assembly_tools}",
-            f"--jobs {args.jobs}",
-            f"--threads {args.threads}",
-            f'--extra_args "{args.extra_args}"',
-            f"--min_covered {args.min_covered}",
-        ]
-        if args.gb:
-            parts.append(f"--gb {args.gb}")
-        if not run(" ".join(parts), log, "batch_virus_full"):
-            log.warning("  Assembly partially failed, check logs")
+        if not args.force and full_dir.exists():
+            log.info("[4/10] Assembly: checkpoint OK, skip")
         else:
-            log.info("  Assemblies complete -> %s", full_dir)
+            log.info("-" * 40)
+            log.info("[4/10] Full-length Assembly")
+            var_summary = variants_dir / "summary" / "all_summary.tsv"
+            if not var_summary.exists():
+                log.error("Variant summary not found: %s (run Stage 3 first)", var_summary)
+                sys.exit(1)
+
+            vsi = args.virus_full_script or str(script_dir / "virus-full.py")
+            parts = [
+                f"python {script_dir / 'batch_virus_full.py'}",
+                f"--downstream_dir {variants_dir}",
+                f"--summary {get_summary()}",
+                f"--clean_data {reads}",
+                f"--virus_full_script {vsi}",
+                f"--outdir {full_dir}",
+                f"--assembly_tools {args.assembly_tools}",
+                f"--jobs {args.jobs}",
+                f"--threads {args.threads}",
+                f'--extra_args "{args.extra_args}"',
+                f"--min_covered {args.min_covered}",
+            ]
+            if args.gb:
+                parts.append(f"--gb {args.gb}")
+            if not run(" ".join(parts), log, "batch_virus_full"):
+                log.warning("  Assembly partially failed, check logs")
+            else:
+                log.info("  Assemblies complete -> %s", full_dir)
 
     # ═══════════════════════════════════════════
     # Stage 5: Extract Clean Assemblies
@@ -522,21 +519,21 @@ def main():
     if args.stage in ("all", "extract"):
         _sh5 = add_stage_log(extract_dir, "5_extract")
         if not args.force and extract_dir.exists():
-                    log.info("[5/10] Extract: checkpoint OK")
-        log.info("-" * 40)
-        log.info("[5/10] Extract Longest Contigs")
-        # checkpoint check
-        if full_dir.exists():
-            parts = [
-                f"python {script_dir / 'utils/extract_full_fasta.py'}",
-                f"--dir {full_dir}",
-                f"--outdir {extract_dir}",
-                f"--target_file {args.extract_target}",
-            ]
-            if run(" ".join(parts), log, "extract_full_fasta"):
-                log.info("  Extraction complete -> %s", extract_dir)
+            log.info("[5/10] Extract: checkpoint OK, skip")
         else:
-            log.warning("  Assembly dir not found, skipping extract")
+            log.info("-" * 40)
+            log.info("[5/10] Extract Longest Contigs")
+            if full_dir.exists():
+                parts = [
+                    f"python {script_dir / 'utils/extract_full_fasta.py'}",
+                    f"--dir {full_dir}",
+                    f"--outdir {extract_dir}",
+                    f"--target_file {args.extract_target}",
+                ]
+                if run(" ".join(parts), log, "extract_full_fasta"):
+                    log.info("  Extraction complete -> %s", extract_dir)
+            else:
+                log.warning("  Assembly dir not found, skipping extract")
 
     # ═══════════════════════════════════════════
     # Stage 6: Post-hoc Visualization
@@ -544,98 +541,97 @@ def main():
     if args.stage in ("all", "post"):
         _sh6 = add_stage_log(post_dir, "6_post")
         if not args.force and post_dir.exists():
-                    log.info("[6/10] Post-hoc: checkpoint OK")
-        log.info("-" * 40)
-        log.info("[6/10] Post-hoc Visualization")
-        # checkpoint check
-
-        summary_for_post = get_summary()  # filtered if exists, else best
-        if not summary_for_post.exists():
-            log.warning("  No summary found, skipping post-hoc")
+            log.info("[6/10] Post-hoc: checkpoint OK, skip")
         else:
-            import pandas as pd
+            log.info("-" * 40)
+            log.info("[6/10] Post-hoc Visualization")
 
-            df = pd.read_csv(summary_for_post, sep="\t")
-            acc_col = next(
-                (
-                    c
-                    for c in ["Rep_Accession", "Accession", "Virus"]
-                    if c in df.columns
-                ),
-                df.columns[0],
-            )
-            sp_col = next((c for c in ["Adjusted_Species", "Species_NCBI", "Species_ICTV"] if c in df.columns), None)
-            # Build {Species}_{Accession} directory names (consistent with Stage 4)
-            virus_map = {}
-            for _, row in df.iterrows():
-                acc = str(row.get(acc_col, ""))
-                if not acc: continue
-                sp = str(row.get(sp_col, acc)) if sp_col else acc
-                safe_name = sp.replace(" ", "_").replace("/", "_").replace("'", "")
-                virus_map[acc] = f"{safe_name}_{acc}"
-
-            if len(virus_map) == 0:
-                log.warning("  No viruses to analyze")
+            summary_for_post = get_summary()
+            if not summary_for_post.exists():
+                log.warning("  No summary found, skipping post-hoc")
             else:
-                log.info("  Viruses to process: %d", len(virus_map))
-                post_dir.mkdir(parents=True, exist_ok=True)
+                import pandas as pd
 
-                def process_one_virus(vname):
-                    """Worker for parallel post-hoc analysis of a single virus."""
-                    vname = str(vname)
-                    vout = post_dir / virus_map.get(vname, vname)
-                    vout.mkdir(parents=True, exist_ok=True)
+                df = pd.read_csv(summary_for_post, sep="\t")
+                acc_col = next(
+                    (
+                        c
+                        for c in ["Rep_Accession", "Accession", "Virus"]
+                        if c in df.columns
+                    ),
+                    df.columns[0],
+                )
+                sp_col = next((c for c in ["Adjusted_Species", "Species_NCBI", "Species_ICTV"] if c in df.columns), None)
+                virus_map = {}
+                for _, row in df.iterrows():
+                    acc = str(row.get(acc_col, ""))
+                    if not acc: continue
+                    sp = str(row.get(sp_col, acc)) if sp_col else acc
+                    safe_name = sp.replace(" ", "_").replace("/", "_").replace("'", "")
+                    virus_map[acc] = f"{safe_name}_{acc}"
 
-                    vcf_in = find_virus_dir(variants_dir, "virus-variants", vname)
-                    snpeff_in = find_virus_dir(variants_dir, "virus-SnpEff", vname)
-                    sg_in = find_virus_dir(variants_dir, "virus-SNPGenie", vname)
-                    acc = vname.split("_")[-1] if "_" in vname else vname
+                if len(virus_map) == 0:
+                    log.warning("  No viruses to analyze")
+                else:
+                    log.info("  Viruses to process: %d", len(virus_map))
+                    post_dir.mkdir(parents=True, exist_ok=True)
 
-                    tasks_done, tasks_total = 0, 0
-                    if not args.skip_vcf_viz and vcf_in:
-                        tasks_total += 1
-                        if run(f"python {script_dir / 'virus_variants_analyzer.py'} "
-                               f"-i {vcf_in} -o {vout / 'vcf_viz'} -d {args.post_min_dp} "
-                               f"-f {args.post_min_af} -a {acc} -v {vname}", log, f"vcf_{vname}"):
-                            tasks_done += 1
+                    def process_one_virus(vname):
+                        """Worker for parallel post-hoc analysis of a single virus."""
+                        vname = str(vname)
+                        vout = post_dir / virus_map.get(vname, vname)
+                        vout.mkdir(parents=True, exist_ok=True)
 
-                    if not args.skip_vcf_merge and vcf_in:
-                        tasks_total += 1
-                        if run(f"python {script_dir / 'virus_vcf_pipeline.py'} "
-                               f"-d {vcf_in} -o {vout / 'vcf_merge'} --prefix {vname}", log, f"merge_{vname}"):
-                            tasks_done += 1
+                        vcf_in = find_virus_dir(variants_dir, "virus-variants", vname)
+                        snpeff_in = find_virus_dir(variants_dir, "virus-SnpEff", vname)
+                        sg_in = find_virus_dir(variants_dir, "virus-SNPGenie", vname)
+                        acc = vname.split("_")[-1] if "_" in vname else vname
 
-                    if not args.skip_snpeff_macro and snpeff_in:
-                        tasks_total += 1
-                        if run(f"python {script_dir / 'snpeff_analysis.py'} "
-                               f"--miner {snpeff_in} --outdir {vout / 'snpeff_macro'}", log, f"eff_{vname}"):
-                            tasks_done += 1
+                        tasks_done, tasks_total = 0, 0
+                        if not args.skip_vcf_viz and vcf_in:
+                            tasks_total += 1
+                            if run(f"python {script_dir / 'virus_variants_analyzer.py'} "
+                                   f"-i {vcf_in} -o {vout / 'vcf_viz'} -d {args.post_min_dp} "
+                                   f"-f {args.post_min_af} -a {acc} -v {vname}", log, f"vcf_{vname}"):
+                                tasks_done += 1
 
-                    if not args.skip_maftools and snpeff_in:
-                        tasks_total += 2
-                        if run(f"python {script_dir / 'snpeff2maf.py'} "
-                               f"-i {snpeff_in} -minDP {args.post_min_dp} "
-                               f"-minAF {args.post_min_af} --filter-pass", log, f"maf_{vname}"):
-                            tasks_done += 1
-                        if run(f"Rscript {script_dir / 'viral_maftools.R'} "
-                               f"-i {snpeff_in} -o {vout / 'maftools'}", log, f"maftools_{vname}"):
-                            tasks_done += 1
+                        if not args.skip_vcf_merge and vcf_in:
+                            tasks_total += 1
+                            if run(f"python {script_dir / 'virus_vcf_pipeline.py'} "
+                                   f"-d {vcf_in} -o {vout / 'vcf_merge'} --prefix {vname}", log, f"merge_{vname}"):
+                                tasks_done += 1
 
-                    if not args.skip_snpgenie and sg_in:
-                        tasks_total += 1
-                        if run(f"python {script_dir / 'snpgenie_master.py'} "
-                               f"-i {sg_in} -o {vout / 'snpgenie'} -r {acc}", log, f"sg_{vname}"):
-                            tasks_done += 1
+                        if not args.skip_snpeff_macro and snpeff_in:
+                            tasks_total += 1
+                            if run(f"python {script_dir / 'snpeff_analysis.py'} "
+                                   f"--miner {snpeff_in} --outdir {vout / 'snpeff_macro'}", log, f"eff_{vname}"):
+                                tasks_done += 1
 
-                    return vname, tasks_done, tasks_total
+                        if not args.skip_maftools and snpeff_in:
+                            tasks_total += 2
+                            if run(f"python {script_dir / 'snpeff2maf.py'} "
+                                   f"-i {snpeff_in} -minDP {args.post_min_dp} "
+                                   f"-minAF {args.post_min_af} --filter-pass", log, f"maf_{vname}"):
+                                tasks_done += 1
+                            if run(f"Rscript {script_dir / 'viral_maftools.R'} "
+                                   f"-i {snpeff_in} -o {vout / 'maftools'}", log, f"maftools_{vname}"):
+                                tasks_done += 1
 
-                with ThreadPoolExecutor(max_workers=min(len(virus_map), args.jobs)) as ex:
-                    futures = {ex.submit(process_one_virus, v): v for v in virus_map}
-                    for f in as_completed(futures):
-                        name, done, total = f.result()
-                        log.info("  %s: %d/%d analyses OK", name, done, total)
+                        if not args.skip_snpgenie and sg_in:
+                            tasks_total += 1
+                            if run(f"python {script_dir / 'snpgenie_master.py'} "
+                                   f"-i {sg_in} -o {vout / 'snpgenie'} -r {acc}", log, f"sg_{vname}"):
+                                tasks_done += 1
 
-            log.info("  Post-hoc complete -> %s", post_dir)
+                        return vname, tasks_done, tasks_total
+
+                    with ThreadPoolExecutor(max_workers=min(len(virus_map), args.jobs)) as ex:
+                        futures = {ex.submit(process_one_virus, v): v for v in virus_map}
+                        for f in as_completed(futures):
+                            name, done, total = f.result()
+                            log.info("  %s: %d/%d analyses OK", name, done, total)
+
+                log.info("  Post-hoc complete -> %s", post_dir)
 
     # ═══════════════════════════════════════════
     # Stage 7: Capheine Positive Selection
@@ -643,78 +639,77 @@ def main():
     if args.stage in ("all", "capheine"):
         _sh7 = add_stage_log(capheine_dir, "7_capheine")
         if not args.force and capheine_dir.exists():
-                    log.info("[7/10] Capheine: checkpoint OK")
-        log.info("-" * 40)
-        log.info("[7/10] Positive Selection Analysis (Capheine)")
-        # checkpoint check
+            log.info("[7/10] Capheine: checkpoint OK, skip")
+        else:
+            log.info("-" * 40)
+            log.info("[7/10] Positive Selection Analysis (Capheine)")
 
-        cap_ref = args.capheine_ref
-        cap_unaligned = args.capheine_unaligned
+            cap_ref = args.capheine_ref
+            cap_unaligned = args.capheine_unaligned
 
-        # Auto-extract CDS from virus-annotations if not provided
-        gb_dir = variants_dir / "virus-annotations"
-        cap_input_dir = capheine_dir.parent / ".capheine_input"
+            # Auto-extract CDS from virus-annotations if not provided
+            gb_dir = variants_dir / "virus-annotations"
+            cap_input_dir = capheine_dir.parent / ".capheine_input"
 
-        if (not cap_ref or not cap_unaligned) and gb_dir.exists():
-            log.info("  Auto-extracting CDS from virus-annotations/...")
-            cap_input_dir.mkdir(parents=True, exist_ok=True)
+            if (not cap_ref or not cap_unaligned) and gb_dir.exists():
+                log.info("  Auto-extracting CDS from virus-annotations/...")
+                cap_input_dir.mkdir(parents=True, exist_ok=True)
 
-            # Find the virus to analyze from summary
-            import pandas as _pd
-            _df = _pd.read_csv(get_summary(), sep="\t")
-            _acc_col = next((c for c in ["Rep_Accession", "Accession"] if c in _df.columns), _df.columns[0])
-            _sp_col = next((c for c in ["Adjusted_Species", "Species", "Species_NCBI"] if c in _df.columns), None)
-            _targets = _df[_acc_col].dropna().unique()
+                # Find the virus to analyze from summary
+                import pandas as _pd
+                _df = _pd.read_csv(get_summary(), sep="\t")
+                _acc_col = next((c for c in ["Rep_Accession", "Accession"] if c in _df.columns), _df.columns[0])
+                _sp_col = next((c for c in ["Adjusted_Species", "Species", "Species_NCBI"] if c in _df.columns), None)
+                _targets = _df[_acc_col].dropna().unique()
 
-            # Build virus name mapping {acc: Species_Acc}, same as post-hoc
-            _virus_map = {}
-            for _, row in _df.drop_duplicates(subset=[_acc_col]).iterrows():
-                _a = str(row[_acc_col])
-                if _sp_col:
-                    _sp = str(row[_sp_col]).replace(" ", "_").replace("/", "_").replace("'", "")
-                    _virus_map[_a] = f"{_sp}_{_a}"
-                else:
-                    _virus_map[_a] = _a
+                # Build virus name mapping {acc: Species_Acc}, same as post-hoc
+                _virus_map = {}
+                for _, row in _df.drop_duplicates(subset=[_acc_col]).iterrows():
+                    _a = str(row[_acc_col])
+                    if _sp_col:
+                        _sp = str(row[_sp_col]).replace(" ", "_").replace("/", "_").replace("'", "")
+                        _virus_map[_a] = f"{_sp}_{_a}"
+                    else:
+                        _virus_map[_a] = _a
 
-            for _acc in _targets:
-                _gb_file = gb_dir / f"{_acc}.gb"
-                if not _gb_file.exists():
-                    _gb_file = gb_dir / f"{_acc.split('.')[0]}.gb"
-                if not _gb_file.exists():
-                    continue
+                for _acc in _targets:
+                    _gb_file = gb_dir / f"{_acc}.gb"
+                    if not _gb_file.exists():
+                        _gb_file = gb_dir / f"{_acc.split('.')[0]}.gb"
+                    if not _gb_file.exists():
+                        continue
 
-                _vname = _virus_map.get(str(_acc), str(_acc))
-                _vout = cap_input_dir / _vname
-                _vout.mkdir(parents=True, exist_ok=True)
-                # Extract CDS from GB
-                run(f"python {script_dir / 'utils/gbk_extractor.py'} "
-                    f"-i {_gb_file} -n {_vout / 'ref_cds.fasta'}", log, f"cds_{_acc}")
+                    _vname = _virus_map.get(str(_acc), str(_acc))
+                    _vout = cap_input_dir / _vname
+                    _vout.mkdir(parents=True, exist_ok=True)
+                    # Extract CDS from GB
+                    run(f"python {script_dir / 'utils/gbk_extractor.py'} "
+                        f"-i {_gb_file} -n {_vout / 'ref_cds.fasta'}", log, f"cds_{_acc}")
 
-                _ref_cds = _vout / "ref_cds.fasta"
-                if _ref_cds.exists():
-                    cap_ref = str(_ref_cds)
+                    _ref_cds = _vout / "ref_cds.fasta"
+                    _cap_ref = str(_ref_cds) if _ref_cds.exists() else None
 
-                # Collect assemblies as unaligned
-                _asm_dir = extract_dir / f"*{_acc}*"
-                import glob as _glob
-                _asm_matches = _glob.glob(str(extract_dir / f"*{_acc.split('.')[0]}*"))
-                if _asm_matches:
-                    _unaligned = _vout / "unaligned.fasta"
-                    # Collect assemblies as unaligned input
-                    import shutil as _sh2
-                    _unaligned = _vout / "unaligned.fasta"
-                    _all_seqs = []
-                    for _fa in Path(_asm_matches[0]).rglob("*.full.fasta"):
-                        _all_seqs.append(_fa.read_text())
-                    if _all_seqs:
-                        with open(_unaligned, "w") as _uf:
-                            _uf.write("".join(_all_seqs))
-                    if _unaligned.exists():
-                        cap_unaligned = str(_unaligned)
+                    # Collect assemblies as unaligned
+                    import glob as _glob
+                    _asm_matches = _glob.glob(str(extract_dir / f"*{_acc.split('.')[0]}*"))
+                    _cap_unaligned = None
+                    if _asm_matches:
+                        _unaligned = _vout / "unaligned.fasta"
+                        _all_seqs = []
+                        for _fa in Path(_asm_matches[0]).rglob("*.full.fasta"):
+                            _all_seqs.append(_fa.read_text())
+                        if _all_seqs:
+                            with open(_unaligned, "w") as _uf:
+                                _uf.write("".join(_all_seqs))
+                        if _unaligned.exists():
+                            _cap_unaligned = str(_unaligned)
 
                     # Skip non-coding viruses (e.g. viroids)
-                    if _ref_cds.stat().st_size < 100:
+                    if _ref_cds.exists() and _ref_cds.stat().st_size < 100:
                         log.info("  %s: no CDS (likely non-coding virus), skipped", _vname)
+                        continue
+
+                    if not _cap_ref or not _cap_unaligned:
                         continue
 
                     # Run capheine
@@ -722,7 +717,7 @@ def main():
                     _cap_out.mkdir(parents=True, exist_ok=True)
                     _parts = [
                         f"python {script_dir / 'capheine_pipeline.py'}",
-                        f"-r {cap_ref}", f"-u {cap_unaligned}",
+                        f"-r {_cap_ref}", f"-u {_cap_unaligned}",
                         f"-o {_cap_out}", f"--code {args.capheine_code}",
                         f"--workers {args.jobs}",
                         f"--cpus_iqtree {min(args.threads, 16)}",
@@ -742,27 +737,27 @@ def main():
                     else:
                         log.warning("  %s: capheine failed", _acc)
 
-            log.info("  Capheine complete -> %s", capheine_dir)
-
-        elif cap_ref and cap_unaligned:
-            capheine_dir.mkdir(parents=True, exist_ok=True)
-            parts = [
-                f"python {script_dir / 'capheine_pipeline.py'}",
-                f"-r {cap_ref}", f"-u {cap_unaligned}",
-                f"-o {capheine_dir}", f"--code {args.capheine_code}",
-                f"--workers {args.jobs}",
-                f"--cpus_iqtree {min(args.threads, 16)}",
-                f"--cpus_hyphy {min(args.threads, 32)}",
-            ]
-            if args.capheine_fg:
-                parts.append(f"--foreground_list {args.capheine_fg}")
-            if not run(" ".join(parts), log, "capheine_pipeline"):
-                log.warning("  Capheine analysis failed, check logs")
-            else:
                 log.info("  Capheine complete -> %s", capheine_dir)
-        else:
-            log.warning("  capheine requires CDS input. Provide --capheine_ref/--capheine_unaligned")
-            log.info("  or ensure virus-annotations/ and assemblies exist from Stage 3+5.")
+
+            elif cap_ref and cap_unaligned:
+                capheine_dir.mkdir(parents=True, exist_ok=True)
+                parts = [
+                    f"python {script_dir / 'capheine_pipeline.py'}",
+                    f"-r {cap_ref}", f"-u {cap_unaligned}",
+                    f"-o {capheine_dir}", f"--code {args.capheine_code}",
+                    f"--workers {args.jobs}",
+                    f"--cpus_iqtree {min(args.threads, 16)}",
+                    f"--cpus_hyphy {min(args.threads, 32)}",
+                ]
+                if args.capheine_fg:
+                    parts.append(f"--foreground_list {args.capheine_fg}")
+                if not run(" ".join(parts), log, "capheine_pipeline"):
+                    log.warning("  Capheine analysis failed, check logs")
+                else:
+                    log.info("  Capheine complete -> %s", capheine_dir)
+            else:
+                log.warning("  capheine requires CDS input. Provide --capheine_ref/--capheine_unaligned")
+                log.info("  or ensure virus-annotations/ and assemblies exist from Stage 3+5.")
 
     # ═══════════════════════════════════════════
     # Stage 8: Full-length Similarity Panorama
@@ -770,56 +765,56 @@ def main():
     if args.stage in ("all", "similarity"):
         _sh8 = add_stage_log(similarity_dir, "8_similarity")
         if not args.force and similarity_dir.exists():
-                    log.info("[8/10] Similarity: checkpoint OK")
-        log.info("-" * 40)
-        log.info("[8/10] Full-length Similarity Panorama")
-        # checkpoint check
-
-        consensus_base = variants_dir / "virus-consensus"
-        if not consensus_base.exists():
-            log.warning("  Consensus dir not found: %s", consensus_base)
+            log.info("[8/10] Similarity: checkpoint OK, skip")
         else:
-            similarity_dir.mkdir(parents=True, exist_ok=True)
-            sim_ref = args.sim_ref  # Accession or .gb file (optional — virus_auto_pipeline auto-detects)
+            log.info("-" * 40)
+            log.info("[8/10] Full-length Similarity Panorama")
 
-            for vdir in consensus_base.iterdir():
-                if not vdir.is_dir(): continue
-                vname = vdir.name
-                vout = similarity_dir / vname
-                vout.mkdir(parents=True, exist_ok=True)
+            consensus_base = variants_dir / "virus-consensus"
+            if not consensus_base.exists():
+                log.warning("  Consensus dir not found: %s", consensus_base)
+            else:
+                similarity_dir.mkdir(parents=True, exist_ok=True)
+                sim_ref = args.sim_ref
 
-                # Flatten nested consensus FASTA files into temp dir
-                import tempfile, shutil as _shutil
-                flat_dir = Path(tempfile.mkdtemp(prefix=f"sim_{vname}_", dir=str(_pipeline_tmp)))
-                fasta_files = list(vdir.rglob("*.consensus.fasta")) or list(vdir.rglob("*.fasta"))
-                for ff in fasta_files:
-                    _shutil.copy(ff, flat_dir / f"{ff.parent.name}_{ff.name}")
-                if not list(flat_dir.glob("*")):
-                    log.warning("  %s: no consensus FASTA found", vname)
+                for vdir in consensus_base.iterdir():
+                    if not vdir.is_dir(): continue
+                    vname = vdir.name
+                    vout = similarity_dir / vname
+                    vout.mkdir(parents=True, exist_ok=True)
+
+                    # Flatten nested consensus FASTA files into temp dir
+                    import tempfile, shutil as _shutil
+                    flat_dir = Path(tempfile.mkdtemp(prefix=f"sim_{vname}_", dir=str(_pipeline_tmp)))
+                    fasta_files = list(vdir.rglob("*.consensus.fasta")) or list(vdir.rglob("*.fasta"))
+                    for ff in fasta_files:
+                        _shutil.copy(ff, flat_dir / f"{ff.parent.name}_{ff.name}")
+                    if not list(flat_dir.glob("*")):
+                        log.warning("  %s: no consensus FASTA found", vname)
+                        _shutil.rmtree(flat_dir, ignore_errors=True)
+                        continue
+
+                    parts = [
+                        f"python {script_dir / 'virus_auto_pipeline.py'}",
+                        f"-i {flat_dir}",
+                        f"-o {vout}",
+                        f"--mode {args.sim_mode}",
+                        f"--threads {args.threads}",
+                    ]
+                    if sim_ref:
+                        parts.append(f"-g {sim_ref}")
+                    if args.sim_cdhit:
+                        parts.append("--cdhit")
+                    if not args.no_resume and not args.force:
+                        parts.append("--resume")
+
+                    if run(" ".join(parts), log, f"similarity_{vname}"):
+                        log.info("  %s: similarity OK", vname)
+                    else:
+                        log.warning("  %s: similarity failed", vname)
                     _shutil.rmtree(flat_dir, ignore_errors=True)
-                    continue
 
-                parts = [
-                    f"python {script_dir / 'virus_auto_pipeline.py'}",
-                    f"-i {flat_dir}",
-                    f"-o {vout}",
-                    f"--mode {args.sim_mode}",
-                    f"--threads {args.threads}",
-                ]
-                if sim_ref:
-                    parts.append(f"-g {sim_ref}")
-                if args.sim_cdhit:
-                    parts.append("--cdhit")
-                if not args.no_resume and not args.force:
-                    parts.append("--resume")
-
-                if run(" ".join(parts), log, f"similarity_{vname}"):
-                    log.info("  %s: similarity OK", vname)
-                else:
-                    log.warning("  %s: similarity failed", vname)
-                _shutil.rmtree(flat_dir, ignore_errors=True)  # cleanup temp
-
-            log.info("  Similarity complete -> %s", similarity_dir)
+                log.info("  Similarity complete -> %s", similarity_dir)
 
     # ═══════════════════════════════════════════
     # Stage 9: DVG & Recombination Analysis
@@ -827,37 +822,37 @@ def main():
     if args.stage in ("all", "dvg"):
         _sh9 = add_stage_log(dvg_dir, "9_dvg")
         if not args.force and dvg_dir.exists():
-                    log.info("[9/10] DVG: checkpoint OK")
-        log.info("-" * 40)
-        log.info("[9/10] DVG & Recombination Analysis")
-        summary_in = get_summary()
-        # checkpoint check
-        if not summary_in.exists():
-            log.warning("  Summary not found, skipping DVG analysis")
+            log.info("[9/10] DVG: checkpoint OK, skip")
         else:
-            dvg_dir.mkdir(parents=True, exist_ok=True)
-            dvg_reads = Path(args.dvg_reads) if args.dvg_reads else reads
-            parts = [
-                f"python {script_dir / 'batch_virema_dvg.py'}",
-                f"-s {summary_in}",
-                f"-r {args.reference}",
-                f"-d {dvg_reads}",
-                f"-v {args.virema_script}",
-                f"-o {dvg_dir}",
-                f"--seed {args.dvg_seed}",
-                f"--mindel {args.dvg_mindel}",
-                f"--min_cov {args.dvg_min_cov}",
-                f"-j {args.jobs}",
-                f"-t {min(args.threads, 8)}",
-            ]
-            if args.dvg_shm:
-                parts.append("--shm")
-            if not args.no_resume and not args.force:
-                parts.append("--resume")
-            if not run(" ".join(parts), log, "batch_virema_dvg"):
-                log.warning("  DVG analysis failed, check logs")
+            log.info("-" * 40)
+            log.info("[9/10] DVG & Recombination Analysis")
+            summary_in = get_summary()
+            if not summary_in.exists():
+                log.warning("  Summary not found, skipping DVG analysis")
             else:
-                log.info("  DVG complete -> %s", dvg_dir)
+                dvg_dir.mkdir(parents=True, exist_ok=True)
+                dvg_reads = Path(args.dvg_reads) if args.dvg_reads else reads
+                parts = [
+                    f"python {script_dir / 'batch_virema_dvg.py'}",
+                    f"-s {summary_in}",
+                    f"-r {args.reference}",
+                    f"-d {dvg_reads}",
+                    f"-v {args.virema_script}",
+                    f"-o {dvg_dir}",
+                    f"--seed {args.dvg_seed}",
+                    f"--mindel {args.dvg_mindel}",
+                    f"--min_cov {args.dvg_min_cov}",
+                    f"-j {args.jobs}",
+                    f"-t {min(args.threads, 8)}",
+                ]
+                if args.dvg_shm:
+                    parts.append("--shm")
+                if not args.no_resume and not args.force:
+                    parts.append("--resume")
+                if not run(" ".join(parts), log, "batch_virema_dvg"):
+                    log.warning("  DVG analysis failed, check logs")
+                else:
+                    log.info("  DVG complete -> %s", dvg_dir)
 
     # ═══════════════════════════════════════════
     # Stage 10: Generate Summary Report

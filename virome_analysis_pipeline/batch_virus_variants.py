@@ -863,12 +863,13 @@ class PostProcessPipeline:
             # 丰度: 相对丰度 (%)
             rel_abund = (r['Reads'] / tr * 100.0) if tr > 0 else 0.0
             # Poisson: 期望覆盖 vs 实际覆盖比率
-            read_len = 150.0  # 默认读长
+            # Use actual avg read length from BAM stats; fall back to 150 if unavailable
+            read_len = float(r.get('Avg_Read_Len', 0)) if r.get('Avg_Read_Len', 0) else 150.0
             exp_cov = (r['Reads'] * read_len / r['Length']) if r['Length'] > 0 else 0.01
             actual_cov = r.get('MeanDepth', 0)
             poisson_ratio = round(actual_cov / exp_cov, 4) if exp_cov > 0.01 else 1.0
-            # 预测支持度: 基于 Poisson 分布 P(X > 0)
-            pred_support = round(1.0 - np.exp(-exp_cov * 0.1), 4) if exp_cov > 0 else 0.0
+            # 预测支持度: 基于 Poisson 分布 P(X > 0) = 1 - exp(-λ)
+            pred_support = round(1.0 - np.exp(-exp_cov), 4) if exp_cov > 0 else 0.0
             return pd.Series({
                 'Covered%': round(cov, 2),
                 'Sites_0X': r['Sites_0X'],

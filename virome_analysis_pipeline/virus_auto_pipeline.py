@@ -308,8 +308,8 @@ def _extract_worker(task):
         
         if not is_nt_only:
             try:
-                raw_aa = raw_nuc.translate(table=GENETIC_CODE, cds=False)
-                if not check_protein_integrity(raw_aa)[0]: 
+                raw_aa = raw_nuc.translate(table=GENETIC_CODE, to_stop=True)
+                if not check_protein_integrity(raw_aa)[0]:
                     raw_prot_qc = "Stop"
             except: 
                 raw_prot_qc = "TransErr"
@@ -320,8 +320,8 @@ def _extract_worker(task):
         fill_prot_qc, fill_aa = "Pass", Seq("")
         if not is_nt_only:
             try:
-                fill_aa = fill_nuc.translate(table=GENETIC_CODE, cds=False)
-                if not check_protein_integrity(fill_aa)[0]: 
+                fill_aa = fill_nuc.translate(table=GENETIC_CODE, to_stop=True)
+                if not check_protein_integrity(fill_aa)[0]:
                     fill_prot_qc = "Stop"
             except: 
                 fill_prot_qc = "TransErr"
@@ -796,7 +796,7 @@ def run_mode(mode_name, args, seq_records, ext_dir, base_out_dir, organism, acce
                             ext_samps.add(ref_id)
                             if not args.nt_only:
                                 try: 
-                                    ref_aa = ref_nuc.translate(table=GENETIC_CODE, cds=False)
+                                    ref_aa = ref_nuc.translate(table=GENETIC_CODE, to_stop=True)
                                     gene_dict[g]["aa"][ref_id] = str(ref_aa)
                                 except Exception: 
                                     pass
@@ -854,24 +854,11 @@ def run_mode(mode_name, args, seq_records, ext_dir, base_out_dir, organism, acce
             execute_single_output(nt_m, names_list, mat_dir, "overall_NT_only", args, f"{base_title}\nWhole Genome", is_nt=True)
 
             if not args.nt_only:
-                aa_recs =[]
-                for r in over_recs:
-                    try:
-                        # 先使用 Biopython 的 Seq 对象翻译，再转为字符串
-                        t_seq = str(r.seq.translate(table=GENETIC_CODE, cds=False))
-                    except Exception:
-                        t_seq = ""
-                    aa_recs.append(SeqRecord(Seq(t_seq), id=get_sample_id(r.id), description=""))
-                    
-                SeqIO.write(aa_recs, seq_out_dir / "overall_WholeGenome_AA.fasta", "fasta")
-                aa_m = run_m(aa_recs, True, "整体氨基酸", "overall_AA")
-                
-                aa_names_list =[]
-                for r in aa_recs:
-                    aa_names_list.append(r.id)
-                    
-                execute_single_output(aa_m, aa_names_list, mat_dir, "overall_AA_only", args, f"{base_title}\nWhole Genome", is_nt=False)
-                execute_composite_output(nt_m, aa_m, aa_names_list, mat_dir, "overall_Composite", args, f"{base_title}\nWhole Genome")
+                # NOTE: Whole-genome AA translation is intentionally skipped because viral
+                # genomes contain UTRs, intergenic regions, and stop codons — translating
+                # them produces meaningless proteins. AA similarity is computed per-gene
+                # in the gene-level section below where CDS extraction ensures correct ORFs.
+                pass
         else: 
             print(f"   ⚠️[抛弃全长扫描] 合规参与运算基数偏小。")
 
@@ -1073,7 +1060,7 @@ def main():
     g2.add_argument('--scoring_metric', choices=['sdt_strict', 'blast_global'], default='sdt_strict', help='🎯 【基点法则】sdt_strict(不计空位) vs blast_global(严厉惩罚缺口)')
     g2.add_argument('--min_length', type=int, default=150, help='微小碎片遗物清扫底线 bp')
     g2.add_argument('--no_nj', action='store_true', help='强行废除由层级聚类衍生过的序列平滑度排列')
-    g2.add_argument('--plot', action='store_true', default=True, help='打通出图系统')
+    g2.add_argument('--plot', action=argparse.BooleanOptionalAction, default=True, help='打通出图系统 (default: True, use --no-plot to disable)')
     parser.add_argument('--plot_format', choices=['png', 'pdf'], default='pdf', help='输出格式 (默认 pdf; 底层始终同时出 PNG+PDF)')
 
     args = parser.parse_args()

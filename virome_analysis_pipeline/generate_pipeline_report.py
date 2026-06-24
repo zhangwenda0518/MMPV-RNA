@@ -176,11 +176,11 @@ def generate_html(out_dir, out_html, viruses):
             <p class="accession">{acc}</p>
             <div class="metrics">
                 <div class="metric"><span class="value">{n}</span><span class="unit">Samples</span></div>
-                <div class="metric"><span class="value">{cov:.1f}%</span><span class="unit">Coverage</span></div>
-                <div class="metric"><span class="value">{cpm:.1f}</span><span class="unit">CPM</span></div>
-                <div class="metric"><span class="value">{depth:.1f}x</span><span class="unit">Depth</span></div>
-                <div class="metric"><span class="value">{poisson:.2f}</span><span class="unit">Poisson</span></div>
-                <div class="metric"><span class="value">{reads:.0f}</span><span class="unit">Reads</span></div>
+                <div class="metric"><span class="value">{cov if isinstance(cov, str) else f"{cov:.1f}%"}{"%" if not isinstance(cov, str) and "%" not in (str(cov) if isinstance(cov, str) else "") else ""}</span><span class="unit">Coverage</span></div>
+                <div class="metric"><span class="value">{cpm if isinstance(cpm, str) else f"{cpm:.1f}"}</span><span class="unit">CPM</span></div>
+                <div class="metric"><span class="value">{depth if isinstance(depth, str) else f"{depth:.1f}x"}</span><span class="unit">Depth</span></div>
+                <div class="metric"><span class="value">{poisson if isinstance(poisson, str) else f"{poisson:.2f}"}</span><span class="unit">Poisson</span></div>
+                <div class="metric"><span class="value">{reads if isinstance(reads, str) else f"{reads:.0f}"}</span><span class="unit">Reads</span></div>
             </div>
             <div class="chart-gallery">
                 {chart_html or "<p>No charts found in post-hoc output.</p>"}

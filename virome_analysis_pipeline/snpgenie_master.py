@@ -446,7 +446,7 @@ def fetch_gb_coordinates(accession, output_dir):
 # ==========================================
 #[Fig 10] Trinity 终极进化全境图
 # ==========================================
-def plot_trinity_landscape(df_site, df_prod, output_dir, window=50, ref_acc="OR489165.1"):
+def plot_trinity_landscape(df_site, df_prod, output_dir, window=50, ref_acc=""):
     print("  -> Fig 10: 架构封顶！渲染 Trinity 级泛病毒宏伟生态全景大作...")
     if df_site.empty or df_prod.empty: return
     df_s = df_site.copy(); df_s['site'] = pd.to_numeric(df_s['site'], errors='coerce')
@@ -637,7 +637,7 @@ def main():
     parser = argparse.ArgumentParser(description="SNPGenie Mega-Miner (V13.2 终极整合与防错版)")
     parser.add_argument('-i', '--input', type=str, required=True, help='挂载核心 SNPGenie 输出源')
     parser.add_argument('-o', '--output', type=str, default='./SNPGenie_Omega_Results', help='结果导出域')
-    parser.add_argument('-r', '--ref', type=str, default='OR489165.1', help='用于连网下载极清坐标库的NCBI序列号 (预设: OR489165.1)')
+    parser.add_argument('-r', '--ref', type=str, default='', help='NCBI accession for coordinate download (required for Fig 10)')
     args = parser.parse_args()
 
     os.makedirs(args.output, exist_ok=True)
@@ -660,7 +660,10 @@ def main():
         perform_10000x_bootstrap_dnds(df_prod, args.output)                # 6
         plot_signatures_and_hotspots(df_site_filtered, df_site, args.output)# 7 & 8
         plot_dual_track_window(df_site, args.output)                       # 9
-        plot_trinity_landscape(df_site, df_prod, args.output, ref_acc=args.ref) # 10
+        if args.ref:
+            plot_trinity_landscape(df_site, df_prod, args.output, ref_acc=args.ref) # 10
+        else:
+            print("  -> [跳过 Fig 10] 未提供 -r/--ref 参数，Trinity 全景观图需要 NCBI accession")
         plot_ml_clusters(df_pop, args.output)                              # 11
 
         print("\n"+"="*80)
