@@ -186,7 +186,11 @@ def calculate_adjusted_n_per_kb(df_site_filtered, df_prod, output_dir):
 def plot_joint_dynamics(df_pop, output_dir):
     print("  -> Fig 3 & 4: 渲染宏观与微观演化双动量...")
     # Fig 3 (Inter-host)
-    df_inter = df_pop.dropna(subset=['mean_dN_vs_ref', 'mean_dS_vs_ref']).copy()
+    _cols_dnds = ['mean_dN_vs_ref', 'mean_dS_vs_ref']
+    if not all(c in df_pop.columns for c in _cols_dnds):
+        print("  -> [跳过 Fig 3&4] 未检测到 dN/dS 列 (可能为非蛋白编码序列)")
+        return
+    df_inter = df_pop.dropna(subset=_cols_dnds).copy()
     if not df_inter.empty:
         g = sns.JointGrid(data=df_inter, x='mean_dS_vs_ref', y='mean_dN_vs_ref', height=6)
         g.plot_joint(sns.scatterplot, alpha=0.7, color='#2b83ba', s=60, edgecolor='white')

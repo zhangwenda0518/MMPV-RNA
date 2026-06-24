@@ -109,7 +109,6 @@ def main():
 
     if len(ready_vcfs) == 1:
         # 单样本无需合并，直接使用
-        import shutil
         shutil.copy(ready_vcfs[0], raw_merged_vcf)
         print(f"[信息] 仅 1 个样本，跳过合并步骤，直接使用 {os.path.basename(ready_vcfs[0])}")
     else:
