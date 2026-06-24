@@ -272,115 +272,37 @@ def process_gene(gene_fasta: Path, unaligned_fasta: Path, dirs: Dict[str, Path],
 # ----------------------------------------------------------------------
 def multiqc(input_dir: Path, outdir: Path, title: str = None, args=None):
     """
-    Creates exact Nextflow-style Custom Content YAML files, including dynamic
-    tool version extraction, and then runs MultiQC to generate the final report.
+    Generate a self-contained HTML summary of capheine results.
+    MultiQC is invoked as an optional bonus — DRHIP CSVs are the primary output.
     """
-    # 1. Dynamic Tool Version Extraction
-    def get_version(cmd, regex_pattern=None):
-        try:
-            res = subprocess.run(cmd, shell=True, capture_output=True, text=True)
-            output = res.stdout.strip() + " " + res.stderr.strip()
-            if regex_pattern:
-                match = re.search(regex_pattern, output)
-                return match.group(1) if match else "Unknown"
-            return output.split('\n')[0]
-        except Exception:
-            return "Unknown"
+    os.makedirs(outdir, exist_ok=True)
 
-    versions = {
-        "Python": sys.version.split()[0],
-        "Biopython": Bio.__version__,
-        "IQ-TREE": get_version("iqtree -version", r"version\s+([0-9\.]+)"),
-        "HyPhy": get_version("hyphy --version", r"HYPHY (.+)"),
-        "Cawlign": get_version("cawlign --version"),
-        "DRHIP": get_version("drhip --version", r"drhip\s+(.+)"),
-    }
-
-    # 2. Fake Workflow Summary YAML
-    summary_yaml = input_dir / "workflow_summary_mqc.yaml"
-    command_str = " ".join(sys.argv)
-    with open(summary_yaml, "w") as f:
-        f.write(f"""id: 'nf-core-capheine-summary'
-description: ' - this information is collected when the pipeline is started.'
-section_name: 'veg/CAPHEINE Workflow Summary'
-section_href: 'https://github.com/veg/CAPHEINE'
-plot_type: 'html'
-data: |
-    <dl class="dl-horizontal">
-        <dt>Execution Command</dt><dd><samp>python {command_str}</samp></dd>
-        <dt>Output Directory</dt><dd><samp>{args.outdir}</samp></dd>
-        <dt>Reference Genes</dt><dd><samp>{args.reference}</samp></dd>
-        <dt>Unaligned Seqs</dt><dd><samp>{args.unaligned}</samp></dd>
-        <dt>Genetic Code</dt><dd><samp>{args.code}</samp></dd>
-        <dt>Test Branches</dt><dd><samp>{args.test_branches}</samp></dd>
-        <dt>Max Gap Fraction</dt><dd><samp>{args.max_gap_fraction}</samp></dd>
-        <dt>Workers / Concurrency</dt><dd><samp>{args.workers}</samp></dd>
-        <dt>Use MPI</dt><dd><samp>{str(args.use_mpi).lower()}</samp></dd>
-    </dl>
-""")
-
-    # 3. Fake Software Versions YAML
-    versions_yaml = input_dir / "software_versions_mqc.yaml"
-    with open(versions_yaml, "w") as f:
-        f.write("""id: 'software_versions'
-section_name: 'Software Versions'
-description: 'Software Versions lists versions of software tools extracted from the current environment.'
-plot_type: 'table'
-pconfig:
-    id: 'software_versions_table'
-    title: 'Software Versions'
-data:
-    "Pipeline Tools":
-""")
-        for tool, ver in versions.items():
-            f.write(f"        '{tool}': '{ver}'\n")
-
-    # 4. Fake Methods Description YAML (Citations)
-    methods_yaml = input_dir / "methods_description_mqc.yaml"
-    with open(methods_yaml, "w") as f:
-        f.write("""id: 'nf-core-capheine-methods-description'
-section_name: 'CAPHEINE Methods Description'
-description: 'Suggested text and references to use when describing pipeline usage within the methods section of a publication. https://github.com/veg/capheine'
-plot_type: 'html'
-data: |
-    <h4>Methods</h4>
-    <p>Data was processed using CAPHEINE (Pure Python Architecture). The pipeline executes reproducible software environments from Bioconda and Biocontainers.</p>
-    <p>Tools used in the workflow included: BioPython (Cock et al., 2009) BUSTED (Murrell et al., 2015) Cawlign Contrast-FEL (Kosakovsky Pond et al., 2020) DRHIP FEL (Kosakovsky Pond et al., 2005) HyPhy (Kosakovsky Pond et al., 2019) IQ-TREE (Minh et al., 2020) MEME (Murrell et al., 2012) MultiQC (Ewels et al., 2016) PRIME RELAX (Wertheim et al., 2014).</p>
-    <h4>References</h4>
-    <ul>
-        <li>Cock PJ, Antao T, Chang JT, Chapman BA, Cox CJ, Dalke A, et al. Biopython. Bioinformatics. 2009;25(11):1422–3. doi: 10.1093/bioinformatics/btp163</li>
-        <li>Murrell B, Weaver S, Smith MD, Wertheim JO, Murrell S, Aylward A, et al. Gene-wide identification of episodic selection. Mol Biol Evol. 2015;32(5):1365–71. doi: 10.1093/molbev/msv035</li>
-        <li>Kosakovsky Pond SL, Wisotsky SR, Escalante A, Magalis BR, Weaver S. Contrast-FEL. Mol Biol Evol. 2020;38(3):1184–98. doi: 10.1093/molbev/msaa263</li>
-        <li>Kosakovsky Pond SL, Frost SD. Not so different after all. Mol Biol Evol. 2005;22(5):1208–22. doi: 10.1093/molbev/msi105</li>
-        <li>Kosakovsky Pond SL, Poon AF, Velazquez R, Weaver S, et al. Hyphy 2.5. Mol Biol Evol. 2019;37(1):295–9. doi: 10.1093/molbev/msz197</li>
-        <li>Minh BQ, Schmidt HA, Chernomor O, Schrempf D, et al. IQ-tree 2. Mol Biol Evol. 2020;37(5):1530–4. doi: 10.1093/molbev/msaa015</li>
-        <li>Murrell B, Wertheim JO, Moola S, Weighill T, et al. Detecting individual sites subject to episodic diversifying selection. PLoS Genetics. 2012;8(7). doi: 10.1371/journal.pgen.1002764</li>
-        <li>Ewels P, Magnusson M, Lundin S, Käller M. MultiQC. Bioinformatics. 2016;32(19):3047-8. doi: 10.1093/bioinformatics/btw354</li>
-        <li>Wertheim JO, Murrell B, Smith MD, Kosakovsky Pond SL, Scheffler K. Relax. Mol Biol Evol. 2014;32(3):820–32. doi: 10.1093/molbev/msu400</li>
-    </ul>
-""")
-
-    # 5. Generate simple HTML summary (MultiQC as optional bonus)
-    title_arg = f"--title '{title}'" if title else ""
-    cmd = f"multiqc {input_dir} -o {outdir} {title_arg} --force 2>/dev/null || true"
-    logger.info(f"[MultiQC] Executing: {cmd}")
-    result = subprocess.run(cmd, shell=True)
-    # Always write a minimal summary HTML
+    # 1. Always generate our own clean HTML summary
     summary_html = outdir / "capheine_summary.html"
     with open(summary_html, "w") as f:
         f.write(f"<html><head><title>Capheine Results</title></head><body>")
         f.write(f"<h1>Capheine Positive Selection Analysis</h1>")
         f.write(f"<p>Output: {input_dir}</p>")
         f.write(f"<h2>Results</h2><ul>")
-        for d in ["FEL", "MEME", "PRIME", "BUSTED"]:
-            json_files = list((input_dir / "hyphy" / d).glob("*.json"))
+        for d in ["FEL", "MEME", "PRIME", "BUSTED", "CONTRASTFEL", "RELAX"]:
+            hyphy_dir = input_dir / "hyphy" / d
+            json_files = list(hyphy_dir.glob("*.json")) if hyphy_dir.exists() else []
             if json_files:
                 f.write(f"<li><strong>{d}:</strong> {len(json_files)} gene(s) analyzed</li>")
-        if (input_dir / "drhip" / "combined_sites.csv").exists():
+        csv_path = input_dir / "drhip" / "combined_sites.csv"
+        if csv_path.exists():
             f.write(f"<li><strong>DRHIP:</strong> combined_sites.csv available</li>")
         f.write(f"</ul></body></html>")
+    logger.info(f"[Summary] HTML report written to {summary_html}")
+
+    # 2. MultiQC as optional bonus — run on DRHIP output only (skip YAML generation to avoid API issues)
+    title_arg = f"--title '{title}'" if title else ""
+    cmd = f"multiqc {input_dir} -o {outdir} {title_arg} --force 2>/dev/null || true"
+    logger.info(f"[MultiQC] Attempting: {cmd}")
+    result = subprocess.run(cmd, shell=True)
     if result.returncode != 0:
-        logger.warning(f"[MultiQC] returned exit code {result.returncode} — report may be incomplete")
+        logger.warning(f"[MultiQC] returned exit code {result.returncode} — report may be incomplete. "
+                       f"Primary results (HyPhy JSON, DRHIP CSV, capheine_summary.html) are unaffected.")
 
 # ----------------------------------------------------------------------
 # CLI Setup and Orchestration
