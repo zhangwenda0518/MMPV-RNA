@@ -774,11 +774,9 @@ def main():
         consensus_base = variants_dir / "virus-consensus"
         if not consensus_base.exists():
             log.warning("  Consensus dir not found: %s", consensus_base)
-        elif not args.sim_ref:
-            log.warning("  --sim_ref required for similarity analysis. Skipping.")
         else:
             similarity_dir.mkdir(parents=True, exist_ok=True)
-            sim_ref = args.sim_ref  # Accession or .gb file
+            sim_ref = args.sim_ref  # Accession or .gb file (optional — virus_auto_pipeline auto-detects)
 
             for vdir in consensus_base.iterdir():
                 if not vdir.is_dir(): continue
@@ -800,11 +798,12 @@ def main():
                 parts = [
                     f"python {script_dir / 'virus_auto_pipeline.py'}",
                     f"-i {flat_dir}",
-                    f"-g {sim_ref}",
                     f"-o {vout}",
                     f"--mode {args.sim_mode}",
                     f"--threads {args.threads}",
                 ]
+                if sim_ref:
+                    parts.append(f"-g {sim_ref}")
                 if args.sim_cdhit:
                     parts.append("--cdhit")
                 if not args.no_resume and not args.force:
