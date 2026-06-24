@@ -144,6 +144,10 @@ def run_cmd(cmd: str, description: str, attempt: int = 1, max_retries: int = 1) 
     logger.info(f"[{description}] Executing: {cmd}")
     result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
     if result.returncode != 0:
+        # exit=2: IQ-TREE checkpoint exists (previous run completed), treat as success
+        if result.returncode == 2 and 'successfully finished' in (result.stderr or ''):
+            logger.info(f"[{description}] Checkpoint found — previous run completed, skipping.")
+            return
         if result.returncode in list(range(130, 146)) + [104] and attempt <= max_retries:
             wait = 2 ** attempt
             logger.warning(f"[{description}] Failed (exit={result.returncode}). Retrying in {wait}s ({attempt}/{max_retries})...")
