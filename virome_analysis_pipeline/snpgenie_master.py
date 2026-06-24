@@ -74,7 +74,7 @@ def parse_and_filter_data(input_dir):
         
     for s_file in summary_files:
         d_name = os.path.dirname(s_file)
-        sample_id = os.path.basename(d_name).replace("_OR489165.1", "").replace("SNPGenie_Results", "")
+        sample_id = os.path.basename(d_name).replace("SNPGenie_Results", "")
         sample_id = sample_id.strip("_") or os.path.basename(d_name)
         
         try:

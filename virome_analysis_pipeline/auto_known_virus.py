@@ -240,9 +240,9 @@ def main():
                 profile = yaml.safe_load(f)
             parser.set_defaults(**{k: v for k, v in profile.items() if v is not None})
         except ImportError:
-            pass
-        except Exception:
-            pass
+            print(f"[WARNING] pyyaml 未安装, 跳过 profile 加载: {profile_file}", file=sys.stderr)
+        except Exception as e:
+            print(f"[WARNING] profile 加载失败 ({profile_file}): {e}", file=sys.stderr)
 
     args = parser.parse_args()
 
@@ -313,7 +313,10 @@ def main():
 
     best_summary = detect_dir / "summary" / "all_viruses.best.summary.tsv"
     high_conf = detect_dir / "summary" / "high_conf.summary.tsv"
-    summary_in = high_conf if high_conf.exists() else best_summary
+
+    def get_summary():
+        """动态获取当前最优 summary（filter 运行后自动切换到 high_conf）"""
+        return high_conf if high_conf.exists() else best_summary
 
     def add_stage_log(stage_dir, stage_name):
         """Attach a per-stage FileHandler so logs go to both console and stage dir."""
@@ -427,6 +430,7 @@ def main():
                     log.info("[3/10] Variants: checkpoint OK")
         log.info("-" * 40)
         log.info("[3/10] Variant Analysis")
+        summary_in = get_summary()
         # checkpoint check
         if not summary_in.exists():
             log.error("Summary not found: %s (run Stage 1 first)", summary_in)
@@ -434,7 +438,7 @@ def main():
 
         parts = [
             f"python {script_dir / 'batch_virus_variants.py'}",
-            f"--summary {summary_in}",
+            f"--summary {get_summary()}",
             f"--info {args.ref_info}",
             f"--reference {args.reference}",
             f"--variant_caller {args.variant_caller}",
@@ -495,7 +499,7 @@ def main():
         parts = [
             f"python {script_dir / 'batch_virus_full.py'}",
             f"--downstream_dir {variants_dir}",
-            f"--summary {summary_in}",
+            f"--summary {get_summary()}",
             f"--clean_data {reads}",
             f"--virus_full_script {vsi}",
             f"--outdir {full_dir}",
@@ -545,7 +549,7 @@ def main():
         log.info("[6/10] Post-hoc Visualization")
         # checkpoint check
 
-        summary_for_post = summary_in  # filtered if exists, else best
+        summary_for_post = get_summary()  # filtered if exists, else best
         if not summary_for_post.exists():
             log.warning("  No summary found, skipping post-hoc")
         else:
@@ -657,7 +661,7 @@ def main():
 
             # Find the virus to analyze from summary
             import pandas as _pd
-            _df = _pd.read_csv(summary_in, sep="\t")
+            _df = _pd.read_csv(get_summary(), sep="\t")
             _acc_col = next((c for c in ["Rep_Accession", "Accession"] if c in _df.columns), _df.columns[0])
             _sp_col = next((c for c in ["Adjusted_Species", "Species", "Species_NCBI"] if c in _df.columns), None)
             _targets = _df[_acc_col].dropna().unique()
@@ -826,6 +830,7 @@ def main():
                     log.info("[9/10] DVG: checkpoint OK")
         log.info("-" * 40)
         log.info("[9/10] DVG & Recombination Analysis")
+        summary_in = get_summary()
         # checkpoint check
         if not summary_in.exists():
             log.warning("  Summary not found, skipping DVG analysis")
@@ -869,7 +874,7 @@ def main():
         if args.report_ai or args.ai_api_key:
             parts.append("--ai_prompts")
         if args.ai_api_key:
-            parts.append(f"--ai_api_key {args.ai_api_key}")
+            os.environ['AI_API_KEY'] = args.ai_api_key
             parts.append(f"--ai_model {args.ai_model}")
         if run(" ".join(parts), log, "generate_report"):
             log.info("  Report generated -> %s", out / "Pipeline_Summary_Report.html")
