@@ -577,7 +577,22 @@ class MetadataTableView(QWidget):
                 if parts[0].isdigit() and len(parts[0])==4:
                     years.add(parts[0])
 
+        # Data volume
+        total_gb = 0; gb_count = 0
+        size_col = col("FileSize_GB") or col("FileSize_MB")
+        if size_col and size_col in df.columns:
+            for v in df[size_col]:
+                try:
+                    total_gb += float(str(v).strip())
+                    gb_count += 1
+                except (ValueError, TypeError):
+                    pass
+        vol_info = ""
+        if gb_count > 0:
+            vol_info = f"Data volume: {total_gb:.1f} GB total ({gb_count} runs with size data, avg {total_gb/gb_count:.1f} GB/run)"
+
         stats_text = f"""Total records: {stats['total_runs']}
+{vol_info}
 Database sources: {', '.join(f'{k}({v})' for k,v in db_counts.most_common())}
 Species: {', '.join(f'{k}({v})' for k,v in species_counts.most_common())}
 Tissues: {', '.join(f'{k}({v})' for k,v in tissue_counts.most_common())}
@@ -629,9 +644,10 @@ Based on the following metadata statistics of public sequencing runs collected f
 
 Requirements:
 - Write in formal scientific English, past tense
-- Include total number of runs, database split (SRA/GSA), species covered, tissue types, geographic locations, and collection time span
+- Include total number of runs, database split (SRA/GSA), and total data volume (in GB)
+- Include species covered, tissue types, geographic locations, and collection time span
 - Mention key institutions that contributed data
-- Note that the data was primarily transcriptomic (RNA-seq)
+- Note the sequencing type (transcriptomic/genomic) and average data volume per run
 - End with a note on data availability
 
 Output ONLY the paragraph, no markdown, no headings."""

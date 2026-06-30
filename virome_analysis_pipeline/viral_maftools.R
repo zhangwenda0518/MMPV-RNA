@@ -24,9 +24,9 @@ option_list <- list(
 opt <- parse_args(OptionParser(option_list = option_list))
 if (is.null(opt$input)) quit(status = 1)
 
-out_dir <- dirname(opt$output)
-if (out_dir != "." && !dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
-output_prefix <- file.path(out_dir, basename(opt$output))
+out_dir <- opt$output
+if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
+output_prefix <- file.path(out_dir, "maftools")
 
 tcga_native_non_syn <- c("Missense_Mutation", "Nonsense_Mutation", "Nonstop_Mutation", "Translation_Start_Site", "Frame_Shift_Ins", "Frame_Shift_Del", "In_Frame_Ins", "In_Frame_Del", "Splice_Site", "Targeted_Region", "5'Flank", "3'Flank", "IGR", "3'UTR", "5'UTR", "Intron")
 custom_colors <- c("Missense_Mutation"="#33A02C", "Frame_Shift_Del"="#E31A1C", "Frame_Shift_Ins"="#FF7F00", "Nonsense_Mutation"="#1F78B4", "Nonstop_Mutation"="#A6CEE3", "Translation_Start_Site"="#000000", "In_Frame_Ins"="#FDBF6F", "In_Frame_Del"="#CAB2D6", "Silent"="#CCCCCC", "Splice_Site"="#6A3D9A", "5'Flank"="#B15928", "3'Flank"="#E7298A", "IGR"="#E7298A", "3'UTR"="#B15928", "5'UTR"="#E7298A", "Intron"="#A6CEE3", "Targeted_Region"="#808080")
@@ -191,6 +191,11 @@ safe_plot <- function(filepath, width, height, call_expr) {
   pdf(filepath, width = width, height = height)
   res <- tryCatch({ suppressWarnings(eval(call_expr)); TRUE }, error = function(e) { cat("   -[拦截]: ", e$message, "\n"); FALSE })
   while(dev.cur() > 1) dev.off(); if(!res && file.exists(filepath)) file.remove(filepath)
+  # PNG version
+  png_path <- sub("\\.pdf$", ".png", filepath)
+  png(png_path, width = width, height = height, units = "in", res = 300)
+  res2 <- tryCatch({ suppressWarnings(eval(call_expr)); TRUE }, error = function(e) { cat("   -[PNG拦截]: ", e$message, "\n"); FALSE })
+  while(dev.cur() > 1) dev.off(); if(!res2 && file.exists(png_path)) file.remove(png_path)
 }
 
 cat("\n================ 基因空间绘图起跑 ================\n")

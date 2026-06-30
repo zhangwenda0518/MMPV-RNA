@@ -528,6 +528,7 @@ def generate_polishing_plots(tsv_file, gb_file, out_dir, logger, sample):
     if not has_gb: ax1_cov.set_xlabel('Genome Position (bp)', fontweight='bold', fontsize=13)
     else: draw_gene_track(axes1[1], genes_data, max_pos)
     fig1.savefig(out_dir / f'{sample}_plot_1_base_composition.png', dpi=300, bbox_inches='tight')
+    fig1.savefig(out_dir / f'{sample}_plot_1_base_composition.pdf', dpi=300, bbox_inches='tight')
     plt.close(fig1)
 
     # 图2: 测序总深度
@@ -549,6 +550,7 @@ def generate_polishing_plots(tsv_file, gb_file, out_dir, logger, sample):
     if not has_gb: ax2_cov.set_xlabel('Genome Position (bp)', fontweight='bold', fontsize=13)
     else: draw_gene_track(axes2[1], genes_data, max_pos)
     fig2.savefig(out_dir / f'{sample}_plot_2_total_depth.png', dpi=300, bbox_inches='tight')
+    fig2.savefig(out_dir / f'{sample}_plot_2_total_depth.pdf', dpi=300, bbox_inches='tight')
     plt.close(fig2)
 
 # =====================================================================
@@ -1073,7 +1075,7 @@ def run_pipeline(sample, sample_data, orig_ref, ref_len, out_root, active_tools,
     if not is_valid(f11_circ):
         check_and_trim_circularity(f10_gapf, f11_circ, d11_circ, avg_read_len=args.avg_read_len, min_identity=args.circ_identity, logger=logger, sample=sample)
     log_stat('8.Ultimate_Result', f11_circ)
-  
+
     final_msg = "快车道极速抛光组装完成" if is_perfect_early else "全流程双引擎 Gap 填补深度组装执行完毕"
     return finish_pipeline(final_msg, is_perfect_early=is_perfect_early, final_eval_file=f11_circ)
 

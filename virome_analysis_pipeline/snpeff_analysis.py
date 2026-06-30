@@ -143,7 +143,9 @@ def export_statistical_matrices(df, outdir):
     af_matrix = df.pivot_table(index='Variant_ID', columns='Sample', values='AF', fill_value=0.0)
     af_matrix.to_csv(os.path.join(outdir, "Matrix_05_Continuous_AF_Matrix.csv"))
     
-    onco_matrix = df.pivot_table(index='Variant_ID', columns='Sample', values='Onco_State', aggfunc=lambda x: ';'.join(set(x)), fill_value="")
+    onco_matrix = df.pivot_table(index='Variant_ID', columns='Sample', values='Onco_State',
+        aggfunc=lambda x: ';'.join(set(str(v) for v in x if pd.notna(v) and str(v).strip() != "")),
+        fill_value="")
     min_occ = max(2, int(df['Sample'].nunique() * 0.03))
     valid_vars = hotspots[hotspots['Sample_Count'] >= min_occ]['Variant_ID']
     onco_out = onco_matrix.loc[onco_matrix.index.intersection(valid_vars)]
@@ -169,6 +171,7 @@ def render_core_figures(df, hotspots, outdir):
     plt.legend(bbox_to_anchor=(1.01, 1), loc='upper left')
     plt.tight_layout()
     plt.savefig(os.path.join(outdir, "Figure_1_Manhattan_Mut_Landscape.pdf"), dpi=300)
+    plt.savefig(os.path.join(outdir, "Figure_1_Manhattan_Mut_Landscape.png"), dpi=300)
     plt.close()
     
     # --- 图 2：突变效应载荷对比 (添加类病毒判定防空图) ---
@@ -183,6 +186,7 @@ def render_core_figures(df, hotspots, outdir):
             plt.ylabel("Cumulative Discovered Variations")
             plt.tight_layout()
             plt.savefig(os.path.join(outdir, "Figure_2_Gene_Payload.pdf"), dpi=300)
+            plt.savefig(os.path.join(outdir, "Figure_2_Gene_Payload.png"), dpi=300)
             plt.close()
     else:
         print("   -> ⚠️ 无蛋白编码区 (类病毒特性)，自动跳过 Figure 2 (基因突变图)。")
@@ -202,6 +206,7 @@ def render_core_figures(df, hotspots, outdir):
             plt.xticks(rotation=90, fontsize=8)
             plt.tight_layout()
             plt.savefig(os.path.join(outdir, "Figure_3_IntraHost_Diversity.pdf"), dpi=300)
+            plt.savefig(os.path.join(outdir, "Figure_3_IntraHost_Diversity.png"), dpi=300)
             plt.close()
 
     # --- 图 4：重点错义聚类网络 ---
@@ -215,6 +220,7 @@ def render_core_figures(df, hotspots, outdir):
                                 xticklabels=True, yticklabels=False, cbar_kws={'label':'Allele Frequency'})
             cm.fig.suptitle("Figure 4: Unsupervised Lineage Clustering via Shared Missense Mutations", fontweight='bold', y=1.02)
             plt.savefig(os.path.join(outdir, "Figure_4_Lineage_Clustermap.pdf"), dpi=300)
+            plt.savefig(os.path.join(outdir, "Figure_4_Lineage_Clustermap.png"), dpi=300)
             plt.close()
     else:
         print("   -> ⚠️ 无足够多错义突变参与分组，自动跳过 Figure 4 (错义分支聚类图)。")
@@ -224,14 +230,17 @@ def render_core_figures(df, hotspots, outdir):
 # ==========================================
 def inject_and_run_r_script(outdir):
     print("[Phase 4/4] 🧬 正在自动生成并后台拉起 R 语言，绘制顶区级瀑布图...")
-    
-    # 完美移除了约束行/列树状聚类的限制，全自动激化瀑布流排布
-    r_code = """
+    outdir_safe = outdir.replace('\\', '/')
+    onco_csv = f"{outdir_safe}/Matrix_06_Ultimate_OncoPrint_State.csv"
+    out_pdf = f"{outdir_safe}/Figure_5_Ultimate_Quasispecies_OncoPrint.pdf"
+    out_png = f"{outdir_safe}/Figure_5_Ultimate_Quasispecies_OncoPrint.png"
+
+    r_code = f"""
 options(warn=-1)
 suppressPackageStartupMessages(library(ComplexHeatmap))
 suppressPackageStartupMessages(library(grid))
 
-onco_file <- file.path("DIR_PLACEHOLDER", "Matrix_06_Ultimate_OncoPrint_State.csv")
+onco_file <- "{onco_csv}"
 onco_mat <- as.matrix(read.csv(onco_file, row.names=1, check.names=FALSE))
 
 col_map <- c(
@@ -241,45 +250,53 @@ col_map <- c(
 )
 
 alter_fun = list(
-    background = function(x,y,w,h) { grid.rect(x,y,w-unit(1,"pt"),h-unit(1,"pt"), gp=gpar(fill="#F5F5F5",col=NA)) },
-    Fixed_Missense = function(x,y,w,h) { grid.rect(x,y,w,h, gp=gpar(fill=col_map["Fixed_Missense"], col=NA)) },
-    Major_Missense = function(x,y,w,h) { grid.rect(x,y,w,h*0.75, gp=gpar(fill=col_map["Major_Missense"], col=NA)) },
-    Minor_Missense = function(x,y,w,h) { grid.rect(x,y,w,h*0.4, gp=gpar(fill=col_map["Minor_Missense"], col=NA)) },
-    Fixed_Synonymous = function(x,y,w,h) { grid.rect(x,y,w,h, gp=gpar(fill=col_map["Fixed_Synonymous"], col=NA)) },
-    Major_Synonymous = function(x,y,w,h) { grid.rect(x,y,w,h*0.75, gp=gpar(fill=col_map["Major_Synonymous"], col=NA)) },
-    Minor_Synonymous = function(x,y,w,h) { grid.rect(x,y,w,h*0.4, gp=gpar(fill=col_map["Minor_Synonymous"], col=NA)) },
-    Fixed_Regulatory = function(x,y,w,h) { grid.rect(x,y,w,h, gp=gpar(fill=col_map["Fixed_Regulatory"], col=NA)) },
-    Major_Regulatory = function(x,y,w,h) { grid.rect(x,y,w,h*0.75, gp=gpar(fill=col_map["Major_Regulatory"], col=NA)) },
-    Minor_Regulatory = function(x,y,w,h) { grid.rect(x,y,w,h*0.4, gp=gpar(fill=col_map["Minor_Regulatory"], col=NA)) }
+    background = function(x,y,w,h) {{ grid.rect(x,y,w-unit(1,"pt"),h-unit(1,"pt"), gp=gpar(fill="#F5F5F5",col=NA)) }},
+    Fixed_Missense = function(x,y,w,h) {{ grid.rect(x,y,w,h, gp=gpar(fill=col_map["Fixed_Missense"], col=NA)) }},
+    Major_Missense = function(x,y,w,h) {{ grid.rect(x,y,w,h*0.75, gp=gpar(fill=col_map["Major_Missense"], col=NA)) }},
+    Minor_Missense = function(x,y,w,h) {{ grid.rect(x,y,w,h*0.4, gp=gpar(fill=col_map["Minor_Missense"], col=NA)) }},
+    Fixed_Synonymous = function(x,y,w,h) {{ grid.rect(x,y,w,h, gp=gpar(fill=col_map["Fixed_Synonymous"], col=NA)) }},
+    Major_Synonymous = function(x,y,w,h) {{ grid.rect(x,y,w,h*0.75, gp=gpar(fill=col_map["Major_Synonymous"], col=NA)) }},
+    Minor_Synonymous = function(x,y,w,h) {{ grid.rect(x,y,w,h*0.4, gp=gpar(fill=col_map["Minor_Synonymous"], col=NA)) }},
+    Fixed_Regulatory = function(x,y,w,h) {{ grid.rect(x,y,w,h, gp=gpar(fill=col_map["Fixed_Regulatory"], col=NA)) }},
+    Major_Regulatory = function(x,y,w,h) {{ grid.rect(x,y,w,h*0.75, gp=gpar(fill=col_map["Major_Regulatory"], col=NA)) }},
+    Minor_Regulatory = function(x,y,w,h) {{ grid.rect(x,y,w,h*0.4, gp=gpar(fill=col_map["Minor_Regulatory"], col=NA)) }}
 )
 
-out_pdf <- file.path("DIR_PLACEHOLDER", "Figure_5_Ultimate_Quasispecies_OncoPrint.pdf")
-pdf(out_pdf, width=16, height=10)
+out_pdf <- "{out_pdf}"
+out_png <- "{out_png}"
 
-ht = oncoPrint(onco_mat, 
+ht = oncoPrint(onco_mat,
                alter_fun = alter_fun, col = col_map,
                remove_empty_columns = TRUE, remove_empty_rows = TRUE,
-               show_column_names = FALSE, 
+               show_column_names = FALSE,
                row_names_gp = gpar(fontsize = 9),
                pct_side = "right", row_names_side = "left",
                column_title = "Figure 5: Mutational Waterfall Landscape of Viral Isolates",
                heatmap_legend_param = list(title = "Fixation State", at=names(col_map)))
+
+pdf(out_pdf, width=16, height=10)
 draw(ht)
 invisible(dev.off())
-""".replace("DIR_PLACEHOLDER", outdir.replace('\\', '/'))
-    
+
+png(out_png, width=16, height=10, units="in", res=300)
+draw(ht)
+invisible(dev.off())
+"""
+
     r_file = os.path.join(outdir, "Execute_Figure_5_R_ComplexHeatmap.R")
     with open(r_file, "w", encoding="utf-8") as f:
         f.write(r_code.strip())
-        
-    # --- 自动跨语言通信执行 R 语言脚本 ---
+
+    log_file = os.path.join(outdir, "Rscript_OncoPrint.log")
     try:
-        subprocess.run(["Rscript", r_file], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        with open(log_file, "w") as rf_log:
+            subprocess.run(["Rscript", r_file], check=True, stdout=rf_log, stderr=subprocess.STDOUT)
         print("   -> ✅ 跨语言联用成功！R引擎所绘原生阶梯瀑布 OncoPrint (图5) 已自动落盘！")
     except FileNotFoundError:
-        print("   -> ⚠️ 未能在环境中检测到 Rscript，跳过 R语言自动化。您可以后续在该输出目录手工运行生成的文件。")
-    except subprocess.CalledProcessError as e:
-        print(f"   -> ⚠️ R 执行中部分函数异常, 你可以前往目录排查(可能为包缺失)。")
+        print("   -> ⚠️ 未能在环境中检测到 Rscript，跳过 R语言自动化。")
+    except subprocess.CalledProcessError:
+        print(f"   -> ⚠️ R 执行失败, 图 5 (OncoPrint) 绘制失败。")
+        print(f"   -> 💡 日志: {log_file} (检查是否缺少 ComplexHeatmap 包)")
 
 
 # ==========================================

@@ -832,7 +832,8 @@ def run_other_tools(tool_name, input_fasta, sample, base_dir, args):
     elif tool_name == "viralm":
         core_dump_cmd = "ulimit -c unlimited && "
         out_subdir = os.path.join(base_dir, "viralm_output")
-        cmd = f"{core_dump_cmd} conda run -n viralm taskset -c 0-60 python '{args.viralm_path}' --database '{args.db_dir}/viralm_db/' -i '{input_fasta}' -o '{out_subdir}' --processes {args.threads} -f --batch_size 128 --chunk_size 500 --len {LEN_VIRUS_MIN}"
+        viralm_procs = min(args.threads, 8)  # ViralM 多进程内存大户, 限制并发
+        cmd = f"{core_dump_cmd} conda run -n viralm taskset -c 0-60 python '{args.viralm_path}' --database '{args.db_dir}/viralm_db/' -i '{input_fasta}' -o '{out_subdir}' --processes {viralm_procs} -f --batch_size 128 --chunk_size 500 --len {LEN_VIRUS_MIN}"
         run_command(cmd, os.path.join(base_dir, "viralm.log"))
         
         virus_fa_out = None

@@ -132,6 +132,7 @@ def main():
 
     # control
     parser.add_argument("--dry-run", action="store_true", help="仅打印统计不写文件")
+    parser.add_argument("--plot", action="store_true", help="生成过滤摘要图")
     parser.add_argument("--summary", help="输出每样本/每病毒统计 TSV 前缀")
 
     args = parser.parse_args()
@@ -230,6 +231,58 @@ def main():
         if len(failed) > 0:
             failed.write_csv(discarded_file, separator='\t')
             print(f"  Discarded -> {discarded_file}")
+
+    # ── 过滤摘要图 ──
+    if args.plot:
+        import matplotlib
+        matplotlib.use('Agg')
+        import matplotlib.pyplot as plt
+
+        sample_col = next((c for c in ['Sample', 'sample', 'Run'] if c in df.columns), df.columns[0])
+        n_total = len(df)
+
+        # Panel A: per-sample pass/fail
+        pass_counts = passed.group_by(sample_col).len().to_pandas() if len(passed) > 0 else None
+        fail_counts = failed.group_by(sample_col).len().to_pandas() if len(failed) > 0 else None
+
+        samples = sorted(set(
+            list(pass_counts[sample_col]) if pass_counts is not None else [] +
+            list(fail_counts[sample_col]) if fail_counts is not None else []
+        ))
+
+        pass_dict = dict(zip(pass_counts[sample_col], pass_counts['len'])) if pass_counts is not None else {}
+        fail_dict = dict(zip(fail_counts[sample_col], fail_counts['len'])) if fail_counts is not None else {}
+
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(max(10, len(samples) * 0.5), 5))
+
+        x = range(len(samples))
+        pass_vals = [pass_dict.get(s, 0) for s in samples]
+        fail_vals = [fail_dict.get(s, 0) for s in samples]
+        ax1.bar(x, pass_vals, label='Passed', color='#2ca02c', edgecolor='#333')
+        ax1.bar(x, fail_vals, bottom=pass_vals, label='Discarded', color='#d62728', edgecolor='#333')
+        ax1.set_xticks(x)
+        ax1.set_xticklabels(samples, rotation=45, ha='right', fontsize=8)
+        ax1.set_ylabel('Virus Records')
+        ax1.set_title(f'Filter Result per Sample (n={n_total} total)', fontweight='bold')
+        ax1.legend()
+
+        # Panel B: summary donut
+        n_pass = len(passed)
+        n_fail = len(failed)
+        ax2.pie([n_pass, n_fail], labels=[f'Passed\n{n_pass}', f'Discarded\n{n_fail}'],
+                colors=['#2ca02c', '#d62728'], autopct='%1.1f%%', startangle=90,
+                wedgeprops=dict(width=0.4, edgecolor='white'))
+        ax2.set_title(f'Overall: {n_pass}/{n_total} retained ({n_pass/max(n_total,1)*100:.1f}%)',
+                      fontweight='bold')
+
+        plt.tight_layout()
+        plot_path = os.path.join(os.path.dirname(args.output) if args.output != '/dev/null' else '.',
+                                 'filter_summary_plot.pdf')
+        plot_path_png = plot_path.replace('.pdf', '.png')
+        fig.savefig(plot_path, dpi=300, bbox_inches='tight')
+        fig.savefig(plot_path_png, dpi=300, bbox_inches='tight')
+        plt.close()
+        print(f"  Filter plot -> {plot_path}")
 
 
 if __name__ == "__main__":

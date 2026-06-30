@@ -117,7 +117,7 @@ python virome_submission_pipeline/submission_pipeline.py \
     -t 40
 
 # 启动提交 GUI 桌面应用
-python virome_submission_pipeline/submission_gui.py
+python submission_gui/submission_gui.py
 ```
 
 ---
@@ -187,7 +187,7 @@ python virome_submission_pipeline/submission_gui.py
 | 3 | `hypothetical` | analyze_hypothetical.py | 假定蛋白功能注释 (HHsuite/Diamond/DeepLoc/PSORTb/TMHMM 5工具) |
 | 4 | `sequin` | sequin_builder.py | Sequin .tbl 格式构建 (Cenote-Taker3 风格) |
 | 5 | `submit` | submission_pipeline.py | 端到端编排: suvtk tbl2asn / Sequin tbl2asn 双模式 → .sqn |
-| 6 | `gui` | submission_gui.py | PyQt6 桌面 GUI: 交互式编辑/验证/导出提交文件 |
+| 6 | `gui` | submission_gui/submission_gui.py | PySide6 桌面 GUI: 交互式编辑/验证/导出提交文件 |
 | 7 | `report` | report_html.py | 交互式HTML全表编辑报告 |
 
 ---
@@ -199,7 +199,7 @@ MMPV-RNA/
 ├── virome_discovery_pipeline/      # 新病毒发现 (18+4脚本)
 │   ├── virome_pipeline.py          # 主编排器
 │   ├── doc.md                      # 完整流程文档
-│   └── utils/                      # 辅助工具
+│   └── utils/                      # 辅助工具 (组装/鉴定/COBRA统计, Sankey)
 │
 ├── virome_analysis_pipeline/       # 已知病毒深度分析 (17+11脚本)
 │   ├── auto_known_virus.py         # 分析编排器
@@ -221,9 +221,13 @@ MMPV-RNA/
 │
 ├── virome_submission_pipeline/     # 提交管线 (GenBank/CNCB)
 │   ├── submission_pipeline.py      # 主编排器
-│   ├── submission_gui.py           # 提交 GUI
 │   ├── sequin_builder.py           # Sequin 构建器
 │   └── ...                         # 元数据/报告/拓扑分析
+│
+├── submission_gui/                 # 提交桌面 GUI
+│   └── submission_gui.py           # PySide6 交互式编辑/验证/导出
+│
+├── metadata_gui/                   # 元数据管理 GUI
 │
 ├── biosoft/                        # 第三方工具 (脚本/JAR, 无需编译)
 │   ├── VirBot/VirBot.py
@@ -231,7 +235,6 @@ MMPV-RNA/
 │   ├── ViReMa/ViReMa.py
 │   └── snpEff/snpEff.jar + config + scripts/
 │
-├── stats/                          # 辅助统计/可视化
 ├── doc/                            # 历史文档 (17篇)
 ├── envs/viralm.yaml                # ViraLM 独立conda环境
 ├── pixi.toml                       # 一键部署 (100个依赖)

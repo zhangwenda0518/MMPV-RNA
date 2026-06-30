@@ -1,0 +1,5 @@
+MIUVIG_parameter	value
+source_uvig	metatranscriptome (not viral targeted)
+assembly_software	MEGAHIT;1.2.9;default parameters
+vir_ident_software	Genomad;1.7.0;default parameters
+nucl_acid_ext	none

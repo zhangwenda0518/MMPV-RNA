@@ -59,37 +59,6 @@ try:
 except ImportError:
     resource = None
 
-# ==================== R 绘图脚本 ====================
-R_PLOT_SCRIPT = r"""#!/usr/bin/env Rscript
-suppressWarnings({ suppressPackageStartupMessages({ library(ggplot2); library(dplyr); library(tidyr); library(optparse); library(viridis) }) })
-option_list <- list(
-  make_option(c("-i", "--input"), type = "character", default = "all_viruses.best.summary.tsv", help = "输入文件"),
-  make_option(c("-o", "--output"), type = "character", default = "virus_analysis_plots", help = "输出前缀"),
-  make_option(c("-w", "--width"), type = "numeric", default = 10),
-  make_option(c("-e", "--height"), type = "numeric", default = 8),
-  make_option(c("--log10-transform"), type = "logical", default = FALSE, action = "store_true")
-)
-opt <- parse_args(OptionParser(option_list = option_list))
-if (!file.exists(opt$input)) { stop("输入文件不存在") }
-data <- read.delim(opt$input, check.names = FALSE)
-if(nrow(data) == 0) { cat("数据为空，跳过绘图\n"); q() }
-sp_col <- if("Adjusted_Species" %in% colnames(data)) "Adjusted_Species" else "Species"
-data$Display_Name <- paste0(data[[sp_col]], "\n(TaxID: ", data$taxid, ")")
-data$Display_Name <- sapply(data$Display_Name, function(x) paste(strwrap(x, width = 45), collapse = "\n"))
-metrics <- c("Asm_EM_Reads", "Asm_CPM", "Asm_FPKM", "Avg_Read_ANI", "Poisson_Ratio")
-available_metrics <- intersect(metrics, colnames(data))
-plot_data <- data %>% select(Display_Name, Sample, all_of(available_metrics)) %>% pivot_longer(cols = all_of(available_metrics), names_to = "Metric", values_to = "Value") %>% filter(!is.na(Value))
-if (opt$`log10-transform`) {
-  for (m in unique(plot_data$Metric)) { min_v <- min(plot_data$Value[plot_data$Metric==m & plot_data$Value>0], na.rm=TRUE); plot_data$Value[plot_data$Metric==m & plot_data$Value<=0] <- min_v/10 }
-}
-if ("Asm_EM_Reads" %in% colnames(data)) {
-    medians <- aggregate(Value ~ Display_Name, data=plot_data[plot_data$Metric=="Asm_EM_Reads",], median)
-    plot_data$Display_Name <- factor(plot_data$Display_Name, levels=medians[order(medians$Value), "Display_Name"])
-}
-p <- ggplot(plot_data, aes(x=Display_Name, y=Value)) + geom_boxplot(aes(fill=Display_Name), alpha=0.6, outlier.shape=NA) + geom_point(aes(color=Display_Name), position=position_jitter(width=0.2, height=0), alpha=0.6) + facet_wrap(~ Metric, scales="free_x", ncol=length(available_metrics)) + scale_fill_viridis_d(option="turbo") + scale_color_viridis_d(option="turbo") + theme_bw(base_size=13) + theme(legend.position="none", axis.text.y=element_text(size=9, face="italic")) + coord_flip()
-if (opt$`log10-transform`) p <- p + scale_y_log10()
-ggsave(sprintf("%s_multi_metrics.pdf", opt$output), plot=p, width=opt$width*1.5, height=max(opt$height, length(unique(data$Display_Name))*0.8), dpi=300)
-"""
 
 # ==================== 日志与基础工具 ====================
 class TqdmLoggingHandler(logging.Handler):
@@ -160,16 +129,17 @@ class UnifiedVirusPipeline:
     def __init__(self, args):
         self.args = args
         self.output_dir = Path(args.output_dir).resolve()
+        self.script_dir = Path(__file__).resolve().parent
         global logger
         logger, self.logs_dir = setup_logging(self.output_dir, args.verbose)
         self.logger = logger
-        
+
         self.samples = []
         self.index_path = None
         self.ref_length_dict = {}
-        self.taxid_clusters = {}  
+        self.taxid_clusters = {}
         self.tax_map = {}
-        
+
         self.is_pseudo = self.args.tool in ['kallisto', 'salmon']
         
         self.check_tools()
@@ -714,8 +684,13 @@ class UnifiedVirusPipeline:
             best_csv = self.output_dir / "summary" / "all_viruses.best.summary.tsv"
             df_confirmed.select(final_cols).write_csv(str(best_csv), separator='\t')
             plots_dir = self.output_dir / 'plots'
-            with open(plots_dir / 'virus_frequency_plot.R', 'w', encoding='utf-8') as f: f.write(R_PLOT_SCRIPT)
-            if shutil.which('Rscript'): subprocess.run(['Rscript', str(plots_dir / 'virus_frequency_plot.R'), '-i', str(best_csv), '-o', str(plots_dir / 'virus_analysis'), '--log10-transform'], capture_output=True)
+            freq_script = self.script_dir / 'batch_plot_virus_depth.py'
+            if freq_script.is_file():
+                subprocess.run([
+                    sys.executable, str(freq_script), '--mode', 'freq',
+                    '-m', str(best_csv), '-o', str(plots_dir / 'virus_analysis'),
+                    '--log10', '--multi_plot'
+                ], capture_output=True)
             
         self.generate_report_txt(len(df), len(final_df), len(df_confirmed), len(df_novel), df_confirmed)
 

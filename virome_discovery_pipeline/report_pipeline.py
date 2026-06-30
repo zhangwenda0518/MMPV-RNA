@@ -72,6 +72,18 @@ def _parse_fasta_lens(fa_path):
     return lens
 
 
+def _img_to_base64(path, max_kb=3000):
+    """Convert image to base64 for embedding in HTML. Skip if > max_kb."""
+    import base64
+    if not path or not Path(path).exists():
+        return None
+    size_kb = Path(path).stat().st_size / 1024
+    if size_kb > max_kb:
+        return None
+    with open(str(path), 'rb') as f:
+        return base64.b64encode(f.read()).decode('utf-8')
+
+
 # ═══════════════════════════════════════════════════════════════
 # 阶段数据收集 (各阶段独立函数)
 # ═══════════════════════════════════════════════════════════════
@@ -321,16 +333,50 @@ def _collect_cluster(root, report_dir, _add):
     _add("04_CLUSTER", "✓", key_metric=f"{n_centroids:,} novel + {n_known:,} known centroids", details=str(cluster))
     ctsv = cluster / "3_vclust" / "vclust_clusters.tsv"
     if ctsv.is_file():
-        n_clusters = _count_lines(ctsv) - 1
-        sizes = []
+        n_contigs_in = _count_lines(ctsv) - 1
+        cluster_map = {}
         with open(ctsv) as cf:
             cf.readline()
             for line in cf:
-                members = line.strip().split('\t')[1] if '\t' in line else ""
-                sizes.append(len(members.split(',')) if members else 0)
+                parts = line.strip().split()
+                if len(parts) >= 2:
+                    cid, clid = parts[0], parts[1]
+                    cluster_map.setdefault(clid, []).append(cid)
+        n_clusters = len(cluster_map)
+        sizes = [len(v) for v in cluster_map.values()]
         singletons = sum(1 for sz in sizes if sz <= 1)
         max_sz = max(sizes) if sizes else 0
         _add("  └ vclust", "✓", key_metric=f"{n_clusters:,} 簇, {singletons} 单例, 最大簇={max_sz}")
+        size_bins = {'1 (singleton)':0,'2-3':0,'4-5':0,'6-10':0,'11-20':0,'21+':0}
+        for sz in sizes:
+            if sz <= 1: size_bins['1 (singleton)'] += 1
+            elif sz <= 3: size_bins['2-3'] += 1
+            elif sz <= 5: size_bins['4-5'] += 1
+            elif sz <= 10: size_bins['6-10'] += 1
+            elif sz <= 20: size_bins['11-20'] += 1
+            else: size_bins['21+'] += 1
+        with open(report_dir / 'cluster_size_distribution.tsv', 'w') as csf:
+            csf.write('Size\tCount\n')
+            for k, v in size_bins.items():
+                csf.write(f'{k}\t{v}\n')
+        with open(report_dir / 'cluster_pipeline_reduction.tsv', 'w') as prf:
+            prf.write('Stage\tCount\n')
+            prf.write(f'Input contigs\t{sum(sizes)}\n')
+            prf.write(f'vOTU clusters\t{n_clusters}\n')
+            prf.write(f'Final centroids\t{n_centroids}\n')
+        skip_counts = {}
+        centroids_d = cluster / 'centroids'
+        if centroids_d.is_dir():
+            for sf in centroids_d.glob('skipped_*.fasta'):
+                host = sf.stem.replace('skipped_', '').title()
+                skip_counts[host] = _count_fasta(sf)
+            unk = _count_fasta(centroids_d / 'unknown_votus.fasta')
+            if unk > 0: skip_counts['Unknown'] = unk
+            if skip_counts:
+                with open(report_dir / 'cluster_skip_by_host.tsv', 'w') as hsf:
+                    hsf.write('Host\tCount\n')
+                    for h, c in sorted(skip_counts.items(), key=lambda x: -x[1]):
+                        hsf.write(f'{h}\t{c}\n')
     known_linked_fa = cluster / "2_cdhit" / "known_linked_centroids.fasta"
     n_linked = _count_fasta(known_linked_fa) if known_linked_fa.is_file() else 0
     if n_linked > 0: _add("  └ CD-HIT linked", "✓", key_metric=f"{n_linked} 有关联contig的已知簇")
@@ -340,8 +386,8 @@ def _collect_cluster(root, report_dir, _add):
 def _collect_taxonomy(root, report_dir, _add):
     """05_Taxonomy 阶段"""
     tax = root / "05_Taxonomy"
-    final_tax = tax / "integrated" / "final_integrated_classification.tsv"
-    if final_tax.is_file():
+    final_tax = _find_final_taxonomy(tax)
+    if final_tax:
         n = _count_lines(final_tax) - 1
         counts = {"Known": 0, "Novel_Species": 0, "Novel_Genus": 0, "Novel_Family": 0}
         rank_fill = {"Realm":0,"Kingdom":0,"Phylum":0,"Class":0,"Order":0,"Family":0,"Genus":0,"Species":0}
@@ -389,6 +435,50 @@ def _collect_taxonomy(root, report_dir, _add):
             _add("  └ Plant Virus Taxonomy", "✓",
                  key_metric=f"{n_plant} 条, Known={counts_p['Known']} NewSp={counts_p['Novel_Species']} NewGe={counts_p['Novel_Genus']} NewFa={counts_p['Novel_Family']}")
 
+    # 收集 R 生成的 TSV + taxonomy composition + UpSet PNG
+    integrated_dir = None
+    for d in (root / "05_Taxonomy").glob("*.integrated"):
+        if d.is_dir(): integrated_dir = d; break
+    if integrated_dir:
+        for src, dst in [("fill_stats.tsv", "taxonomy_fill_stats.tsv"),
+                          ("agreement_stats.tsv", "taxonomy_agreement_stats.tsv"),
+                          ("consistency_summary.tsv", "taxonomy_consistency_summary.tsv")]:
+            sp = integrated_dir / src
+            if sp.is_file():
+                import shutil
+                shutil.copy2(str(sp), str(report_dir / dst))
+        # UpSet PNG
+        upset_png = integrated_dir / "intersection_upset.png"
+        b64 = _img_to_base64(upset_png, max_kb=2000)
+        if b64:
+            import json as _json
+            with open(report_dir / "taxonomy_images.json", "w") as imf:
+                _json.dump({"Tool Intersection UpSet": b64}, imf)
+    # Taxonomy composition (from final_integrated_classification.tsv)
+    if final_tax.is_file():
+        tax_comp = {}
+        with open(final_tax) as tf:
+            for row in csv.DictReader(tf, delimiter="\t"):
+                for rk in ["Realm","Kingdom","Phylum","Class","Order","Family","Genus","Species"]:
+                    v = row.get(rk, row.get(rk.lower(), ""))
+                    if v and str(v).strip() not in ("","NA","-","N/A","None"):
+                        tax_comp.setdefault(rk, {})
+                        tax_comp[rk][v] = tax_comp[rk].get(v, 0) + 1
+        with open(report_dir / "taxonomy_composition.tsv", "w") as tcf:
+            tcf.write("Rank\tTaxon\tCount\n")
+            for rk in ["Realm","Kingdom","Phylum","Class","Order","Family","Genus","Species"]:
+                if rk not in tax_comp: continue
+                for taxon, cnt in sorted(tax_comp[rk].items(), key=lambda x: -x[1]):
+                    tcf.write(f"{rk}\t{taxon}\t{cnt}\n")
+        if "Family" in tax_comp:
+            top_fam = sorted(tax_comp["Family"].items(), key=lambda x: -x[1])[:5]
+            _add("  \u2514 Family", "\u2713", key_metric=" | ".join(f"{k}={v}" for k,v in top_fam)[:200])
+
+    # 复制 final_integrated_classification.tsv 到 report_dir 供表格嵌入
+    if final_tax.is_file():
+        import shutil as _shutil
+        _shutil.copy2(str(final_tax), str(report_dir / "final_integrated_classification.tsv"))
+
 
 def _collect_hostprediction(root, report_dir, _add):
     """06_HostPrediction 阶段"""
@@ -399,10 +489,23 @@ def _collect_hostprediction(root, report_dir, _add):
         try:
             import polars as pl
             hdf = pl.read_csv(str(host_summary), separator="\t", null_values=["NA","N/A",""])
+            # Final_Host 分布
             if "Final_Host" in hdf.columns:
-                hcounts = hdf.group_by("Final_Host").agg(pl.len()).sort("len", descending=True)
+                hcounts = hdf.group_by("Final_Host").agg(pl.len().alias("count")).sort("count", descending=True)
                 all_hosts = " | ".join(f"{r[0]}={r[1]}" for r in hcounts.iter_rows())
                 _add("06_HostPrediction", "✓", key_metric=f"{n} 条, {all_hosts}", details=str(host))
+                # 写入 host_distribution.tsv
+                with open(report_dir / "host_distribution.tsv", "w") as hdfile:
+                    hdfile.write("Host\tCount\n")
+                    for r in hcounts.iter_rows():
+                        hdfile.write(f"{r[0]}\t{r[1]}\n")
+            # Decision_Method 分布
+            if "Decision_Method" in hdf.columns:
+                dm_counts = hdf.group_by("Decision_Method").agg(pl.len().alias("count")).sort("count", descending=True)
+                with open(report_dir / "host_decision_method.tsv", "w") as dmf:
+                    dmf.write("Method\tCount\n")
+                    for r in dm_counts.iter_rows():
+                        dmf.write(f"{r[0]}\t{r[1]}\n")
         except Exception as e:
             print(f"  [WARN] HostPrediction polars 解析失败: {e}")
             _add("06_HostPrediction", "✓", key_metric=f"{n} 条", details=str(host))
@@ -410,6 +513,16 @@ def _collect_hostprediction(root, report_dir, _add):
         _add("06_HostPrediction", "○", key_metric="已运行但无最终结果", details=str(host))
     else:
         _add("06_HostPrediction", "○", details="未运行")
+
+    # 复制 C9 ICTV 分类汇总表
+    c9_summary = host / "C9_ICTV_result" / "classification_summary.tsv"
+    if c9_summary.is_file():
+        import shutil
+        shutil.copy2(str(c9_summary), str(report_dir / "host_ictv_classification_summary.tsv"))
+    c9_conf = host / "C9_ICTV_result" / "confidence_report.tsv"
+    if c9_conf.is_file():
+        import shutil
+        shutil.copy2(str(c9_conf), str(report_dir / "host_ictv_confidence.tsv"))
 
 
 def _collect_checkv(root, report_dir, _add):
@@ -487,16 +600,34 @@ def _collect_rescue(root, report_dir, _add):
     for rf in rescue_finals:
         if "branch" not in str(rf) and "known" not in str(rf): n_rescued += _count_fasta(rf)
     branch_info = []
-    for bname, blabel in [("branch_a","CheckV"),("branch_b","VSI"),("branch_c","BLASTN")]:
+    branch_input = {}
+    branch_pass = {}
+    desc = {"CheckV":"CheckV completeness >= 90%","VSI":"Virseqimprover extension","BLASTN":"BLASTN+ragtag scaffolding","genus_len":"Genus length >= 85% avg"}
+    # 总输入 centroids
+    for ic in rescue.rglob("input_centroids.fasta"):
+        if "branch" not in str(ic):
+            total_input = _count_fasta(ic)
+            break
+    else:
+        total_input = 0
+    # 每个支路的 pass + fail
+    for bname, blabel in [("branch_a","CheckV"),("branch_b","VSI"),("branch_c","BLASTN"),("branch_d","genus_len")]:
         for bd in rescue.rglob(bname):
             if not bd.is_dir(): continue
-            pass_fa = bd / f"{'branchA' if bname=='branch_a' else 'branchB' if bname=='branch_b' else 'branchC'}_pass.fasta"
-            if not pass_fa.is_file():
-                pass_fa = bd / f"{'branchB' if bname=='branch_b' else 'branchC'}_pass.fasta"
-            if pass_fa.is_file():
-                bp = _count_fasta(pass_fa)
-                if bp > 0: branch_info.append(f"{blabel}={bp}")
-    _add("08_Rescue", "✓", key_metric=f"{n_rescued:,} HQ vOTU ({' | '.join(branch_info) if branch_info else '0 pas'})", details=str(rescue))
+            prefix_map = {"branch_a":"branchA","branch_b":"branchB","branch_c":"branchC","branch_d":"branchD"}
+            pass_fa = bd / f"{prefix_map[bname]}_pass.fasta"
+            fail_fa = bd / f"{prefix_map[bname]}_fail.fasta"
+            n_pass = _count_fasta(pass_fa) if pass_fa.is_file() else 0
+            n_fail = _count_fasta(fail_fa) if fail_fa.is_file() else 0
+            branch_pass[blabel] = n_pass
+            branch_input[blabel] = n_pass + n_fail
+            if n_pass > 0: branch_info.append(f"{blabel}={n_pass}")
+    # 写入 rescue_summary.tsv
+    with open(report_dir / "rescue_summary.tsv", "w") as rsf:
+        rsf.write("Branch\tDescription\tInput\tPassed\n")
+        for label in ["CheckV","VSI","BLASTN","genus_len"]:
+            rsf.write(f"{label}\t{desc.get(label,label)}\t{branch_input.get(label,0)}\t{branch_pass.get(label,0)}\n")
+    _add("08_Rescue", "✓", key_metric=f"{n_rescued:,} HQ vOTU ({' | '.join(branch_info) if branch_info else '0 pass'})", details=str(rescue))
 
 
 def _collect_analysis(root, report_dir, _add):
@@ -518,31 +649,46 @@ def _collect_analysis(root, report_dir, _add):
         except: pass
 
     # integrated_summary.tsv (两源对比)
+    # 兼容两种格式: v2.3 pipeline 格式 (suvtk_taxonomy 列) 与 integrated_summary.py 格式 (suvtk_family 等列)
     int_sum = analysis / "integrated_summary.tsv"
     if int_sum.is_file():
         try:
             rows = _read_tsv(int_sum)
-            n_top = len([r for r in rows if r.get('topology','') == 'linear'])
-            n_hypo = len([r for r in rows if r.get('suvtk_taxonomy','')])
-            parts.append(f"topology: {n_top} linear | suvtk: {n_hypo} 分类")
+            # topology: 优先用 topology 列, 回退到 genome_struc (linear/circular)
+            if any('topology' in r for r in rows[:1]):
+                n_top = len([r for r in rows if r.get('topology','') == 'linear'])
+            else:
+                n_top = len([r for r in rows if r.get('genome_struc','') == 'linear'])
+            # suvtk 分类: 兼容 suvtk_taxonomy 与 suvtk_family/suvtk_genus/suvtk_species 两种列名
+            if any('suvtk_taxonomy' in r for r in rows[:1]):
+                n_suvtk = len([r for r in rows if r.get('suvtk_taxonomy','')])
+            else:
+                n_suvtk = len([r for r in rows if r.get('suvtk_family','') or r.get('suvtk_genus','') or r.get('suvtk_species','')])
+            parts.append(f"topology: {n_top} linear | suvtk: {n_suvtk} 分类")
         except: pass
 
-    # suvtk taxonomy + features
-    suvtk_tax = analysis / "suvtk.taxonomy_output" / "taxonomy.tsv"
-    if suvtk_tax.is_file():
-        parts.append(f"suvtk taxonomy: {_count_lines(suvtk_tax)-1} seqs")
+    # suvtk taxonomy + features (兼容 dot/underscore 两种目录名)
+    for tax_dir in ["suvtk_taxonomy", "suvtk.taxonomy_output"]:
+        suvtk_tax = analysis / tax_dir / "taxonomy.tsv"
+        if suvtk_tax.is_file():
+            parts.append(f"suvtk taxonomy: {_count_lines(suvtk_tax)-1} seqs")
+            break
 
-    suvtk_feat = analysis / "suvtk.features_output" / "featuretable.tbl"
-    if suvtk_feat.is_file():
-        n_cds = sum(1 for l in open(suvtk_feat) if l.strip().split()[-1:] == ['CDS'])
-        parts.append(f"{n_cds} CDS annotated")
+    for feat_dir in ["suvtk_features", "suvtk.features_output"]:
+        suvtk_feat = analysis / feat_dir / "featuretable.tbl"
+        if suvtk_feat.is_file():
+            n_cds = sum(1 for l in open(suvtk_feat) if l.strip().split()[-1:] == ['CDS'])
+            parts.append(f"{n_cds} CDS annotated")
+            break
 
-    # hypothetical
-    hypo_tbl = analysis / "analyze_hypothetical" / "featuretable_updated.tbl"
-    if hypo_tbl.is_file():
-        n_hypo = sum(1 for l in open(hypo_tbl) if 'hypothetical' in l.lower())
-        n_anno = sum(1 for l in open(hypo_tbl) if 'inference\talignment' in l)
-        parts.append(f"hypothetical: {n_anno} annotated, {n_hypo} remaining")
+    # hypothetical (兼容两种目录名)
+    for hypo_dir in ["hypothetical", "analyze_hypothetical"]:
+        hypo_tbl = analysis / hypo_dir / "featuretable_updated.tbl"
+        if hypo_tbl.is_file():
+            n_hypo = sum(1 for l in open(hypo_tbl) if 'hypothetical' in l.lower())
+            n_anno = sum(1 for l in open(hypo_tbl) if 'inference\talignment' in l)
+            parts.append(f"hypothetical: {n_anno} annotated, {n_hypo} remaining")
+            break
 
     # topology
     topo = analysis / "topology.tsv"
@@ -552,6 +698,13 @@ def _collect_analysis(root, report_dir, _add):
 
     key_metric = " | ".join(parts)[:250] if parts else "已运行"
     _add("09_Virome_Analysis", "✓", key_metric=key_metric, details=str(analysis))
+
+    # 复制关键 TSV 到 report_dir 供 HTML 表格嵌入
+    import shutil as _shutil
+    for _src_name in ["ref_info.tsv", "integrated_summary.tsv"]:
+        _src = analysis / _src_name
+        if _src.is_file():
+            _shutil.copy2(str(_src), str(report_dir / ("analysis_" + _src_name)))
 
 
 def collect_data(output_dir, report_dir, blast_db=None):
@@ -614,9 +767,9 @@ def _generate_plant_virus_summary(root, report_dir, _add, blast_db=None):
                 }
 
     # 3. Taxonomy
-    tax_tsv = root / "05_Taxonomy" / "integrated" / "final_integrated_classification.tsv"
+    tax_tsv = _find_final_taxonomy(root / "05_Taxonomy")
     tax_data = {}
-    if tax_tsv.is_file():
+    if tax_tsv:
         with open(tax_tsv) as tf:
             for row in csv.DictReader(tf, delimiter="\t"):
                 cid = row.get("contig_id","")
@@ -687,12 +840,28 @@ def _generate_plant_virus_summary(root, report_dir, _add, blast_db=None):
 # Sankey 图生成
 # ═══════════════════════════════════════════════════════════════
 
+def _find_final_taxonomy(tax_dir):
+    """在 05_Taxonomy 下动态查找 final_integrated_classification.tsv (子目录名不固定)"""
+    tax_dir = Path(tax_dir)
+    # 1. 优先查找标准路径
+    p = tax_dir / "integrated" / "final_integrated_classification.tsv"
+    if p.is_file(): return p
+    # 2. glob 搜索任意子目录
+    for p in sorted(tax_dir.glob("*integrated*/final_integrated_classification.tsv")):
+        if p.is_file(): return p
+    # 3. glob 搜索任意子目录 (兜底)
+    for p in sorted(tax_dir.glob("*/final_integrated_classification.tsv")):
+        if p.is_file(): return p
+    return None
+
 def generate_sankey(output_dir, report_dir):
     """生成交互式 taxonomy Sankey HTML (全部 + 植物病毒)"""
     tax = Path(output_dir) / "05_Taxonomy"
-    final_tax = tax / "integrated" / "final_integrated_classification.tsv"
-    if not final_tax.is_file(): return
-    sankey_script = SCRIPT_DIR.parent / "analysis" / "taxonomic_sankey.py"
+    final_tax = _find_final_taxonomy(tax)
+    if not final_tax: return
+    sankey_script = SCRIPT_DIR.parent / "stats" / "taxonomic_sankey.py"
+    if not sankey_script.is_file():
+        sankey_script = SCRIPT_DIR / "utils" / "taxonomic_sankey.py"
     if not sankey_script.is_file(): return
     try:
         import importlib.util
@@ -703,7 +872,7 @@ def generate_sankey(output_dir, report_dir):
         subprocess.run([sys.executable, str(sankey_script),
                         "-i", str(final_tax), "-o", str(report_dir / "classification_sankey.html"),
                         "--format", "html", "--min-flow", "1", "--min-genus-flow", "10",
-                        "--palette", "set3", "--height", "860", "--width", "1000", "--node-pad", "30",
+                        "--palette", "set3", "--height", "600", "--width", "800", "--node-pad", "30",
                         "--label-truncate", "25", "--font-size", "9", "--title-font-size", "14",
                         "--title", ""],
                        capture_output=True, timeout=120)
@@ -725,7 +894,7 @@ def generate_sankey(output_dir, report_dir):
                     subprocess.run([sys.executable, str(sankey_script),
                                     "-i", str(plant_tax), "-o", str(report_dir / "classification_sankey_plant.html"),
                                     "--format", "html", "--min-flow", "1", "--min-genus-flow", "5",
-                                    "--palette", "set3", "--height", "860", "--width", "1000", "--node-pad", "30",
+                                    "--palette", "set3", "--height", "600", "--width", "800", "--node-pad", "30",
                                     "--label-truncate", "25", "--font-size", "9", "--title-font-size", "14",
                                     "--title", ""],
                                    capture_output=True, timeout=120)
@@ -895,6 +1064,77 @@ def write_html_report(report_dir, stage_stats):
             chart_scripts += _chart('chart_s03', 'bar', {"labels":csamples,"datasets":ds_c},
                 {"responsive":True,"plugins":{"title":{"display":True,"text":"COBRA Extension & Orphan Rate"}},"scales":scales_c})
 
+    # S04 cluster charts
+    csd_rows = _read_tsv(report_dir / "cluster_size_distribution.tsv")
+    if csd_rows:
+        csd_labels = [r.get("Size","") for r in csd_rows]
+        csd_counts = [int(r.get("Count",0)) for r in csd_rows]
+        csd_colors = ["#e8eaf6","#c5cae9","#9fa8da","#7986cb","#5c6bc0","#3949ab"]
+        chart_scripts += _chart('chart_s04a', 'bar', {"labels": csd_labels, "datasets": [{"label":"Clusters","data":csd_counts,"backgroundColor":csd_colors}]}, {"responsive":True,"plugins":{"title":{"display":True,"text":"Cluster Size Distribution"},"legend":{"display":False}}, "scales":{"y":{"beginAtZero":True,"title":{"text":"Number of Clusters"}}}})
+        stage_has_chart['s04a'] = True
+    prd_rows = _read_tsv(report_dir / "cluster_pipeline_reduction.tsv")
+    if prd_rows:
+        prd_labels = [r.get("Stage","") for r in prd_rows]
+        prd_counts = [int(r.get("Count",0)) for r in prd_rows]
+        prd_colors = ["#90caf9","#42a5f5","#1565c0"]
+        chart_scripts += _chart('chart_s04c', 'bar', {"labels": prd_labels, "datasets": [{"label":"Count","data":prd_counts,"backgroundColor":prd_colors}]}, {"responsive":True,"indexAxis":"y", "plugins":{"title":{"display":True,"text":"Pipeline Reduction: Contigs to vOTUs"},"legend":{"display":False}}, "scales":{"x":{"beginAtZero":True,"title":{"text":"Count"}}}})
+        stage_has_chart['s04c'] = True
+
+    # S05 taxonomy composition charts
+    tax_comp_rows = _read_tsv(report_dir / "taxonomy_composition.tsv")
+    if tax_comp_rows:
+        family_rows = [r for r in tax_comp_rows if r.get("Rank","") == "Family"]
+        if family_rows:
+            f_labels = [r.get("Taxon","")[:25] for r in family_rows[:20]]
+            f_counts = [int(r.get("Count",0)) for r in family_rows[:20]]
+            chart_scripts += _chart('chart_s05b', 'bar', {"labels": f_labels, "datasets": [{"label":"vOTUs","data":f_counts,"backgroundColor":"#1565c0"}]}, {"responsive":True,"indexAxis":"y","plugins":{"title":{"display":True,"text":"Family Distribution"},"legend":{"display":False}}, "scales":{"x":{"beginAtZero":True,"title":{"text":"vOTU Count"}}}})
+            stage_has_chart['s05b'] = True
+        genus_rows = [r for r in tax_comp_rows if r.get("Rank","") == "Genus"]
+        if genus_rows:
+            g_labels = [r.get("Taxon","")[:25] for r in genus_rows[:20]]
+            g_counts = [int(r.get("Count",0)) for r in genus_rows[:20]]
+            chart_scripts += _chart('chart_s05c', 'bar', {"labels": g_labels, "datasets": [{"label":"vOTUs","data":g_counts,"backgroundColor":"#6a1b9a"}]}, {"responsive":True,"indexAxis":"y","plugins":{"title":{"display":True,"text":"Genus Distribution"},"legend":{"display":False}}, "scales":{"x":{"beginAtZero":True,"title":{"text":"vOTU Count"}}}})
+            stage_has_chart['s05c'] = True
+    # R data charts
+    fs_rows = _read_tsv(report_dir / "taxonomy_fill_stats.tsv")
+    if fs_rows:
+        fs_labels = [r.get("Rank","") for r in fs_rows]
+        fs_rates = [round(float(r.get("Rate",0))*100, 1) for r in fs_rows]
+        fs_filled = [int(r.get("Filled",0)) for r in fs_rows]
+        chart_scripts += _chart('chart_s05d', 'bar', {"labels": fs_labels, "datasets": [{"label":"Fill Rate (%)","data":fs_rates,"backgroundColor":"#1565c0","yAxisID":"y"}, {"label":"Filled vOTUs","data":fs_filled,"backgroundColor":"#90caf9","yAxisID":"y1"}]}, {"responsive":True,"indexAxis":"y", "plugins":{"title":{"display":True,"text":"Taxonomy Fill Rate by Rank"}}, "scales":{"x":{"beginAtZero":True,"position":"bottom","title":{"text":"Fill Rate (%)"}},"y":{"position":"left"},"y1":{"display":False}}})
+        stage_has_chart['s05d'] = True
+    ag_rows = _read_tsv(report_dir / "taxonomy_agreement_stats.tsv")
+    if ag_rows:
+        levels_order = ["Realm","Kingdom","Phylum","Class","Order","Family","Genus","Species"]
+        tools_set = sorted(set(r.get("Tool","") for r in ag_rows))
+        ag_by_level = {}
+        for r in ag_rows:
+            lv = r.get("Taxonomic_Level","")
+            if lv not in ag_by_level: ag_by_level[lv] = {}
+            ag_by_level[lv][r.get("Tool","")] = round(float(r.get("Agreement_Rate",0))*100, 1)
+        ag_levels = [lv for lv in levels_order if lv in ag_by_level]
+        ag_colors = ["#1565c0","#42a5f5","#1a237e","#5c6bc0","#7986cb","#9fa8da","#283593","#3949ab"]
+        ag_datasets = []
+        for ti, tool in enumerate(tools_set):
+            ag_datasets.append({"label": tool, "data": [ag_by_level.get(lv,{}).get(tool, 0) for lv in ag_levels], "backgroundColor": ag_colors[ti % 8]})
+        chart_scripts += _chart('chart_s05e', 'bar', {"labels": ag_levels, "datasets": ag_datasets}, {"responsive":True, "plugins":{"title":{"display":True,"text":"Tool Agreement Rate by Taxonomic Level"}, "legend":{"position":"bottom","labels":{"boxWidth":12,"font":{"size":10}}}}, "scales":{"y":{"beginAtZero":True,"max":100,"title":{"text":"Agreement Rate (%)"}}}})
+        stage_has_chart['s05e'] = True
+    cs_rows = _read_tsv(report_dir / "taxonomy_consistency_summary.tsv")
+    if cs_rows:
+        cs_by_level = {}
+        for r in cs_rows:
+            lv = r.get("Level","")
+            if lv not in cs_by_level: cs_by_level[lv] = {}
+            cs_by_level[lv][r.get("Tool","")] = int(r.get("Classified",0))
+        cs_levels = [lv for lv in levels_order if lv in cs_by_level]
+        cs_tools = sorted(set(r.get("Tool","") for r in cs_rows))
+        cs_colors = ["#2e7d32","#66bb6a","#a5d6a7","#81c784","#4caf50","#388e3c","#1b5e20","#43a047"]
+        cs_datasets = []
+        for ti, tool in enumerate(cs_tools):
+            cs_datasets.append({"label": tool, "data": [cs_by_level.get(lv,{}).get(tool, 0) for lv in cs_levels], "backgroundColor": cs_colors[ti % 8]})
+        chart_scripts += _chart('chart_s05f', 'bar', {"labels": cs_levels, "datasets": cs_datasets}, {"responsive":True, "plugins":{"title":{"display":True,"text":"Tool Classification Count by Level"}, "legend":{"position":"bottom","labels":{"boxWidth":12,"font":{"size":10}}}}, "scales":{"x":{"stacked":True},"y":{"stacked":True,"beginAtZero":True,"title":{"text":"vOTU Count"}}}})
+        stage_has_chart['s05f'] = True
+
     # S05 — Taxonomy novelty
     tax_novelty_kv = {}
     for s in stage_stats:
@@ -959,13 +1199,49 @@ def write_html_report(report_dir, stage_stats):
     rescue_kv = {}
     for s in stage_stats:
         if '08_Rescue' in s['Stage']:
-            rescue_kv = _extract_kv(s['Key_Metric'], r'(CheckV|VSI|BLASTN)=(\d+)')
+            rescue_kv = _extract_kv(s['Key_Metric'], r'(CheckV|VSI|BLASTN|genus_len)=(\d+)')
     if rescue_kv:
         stage_has_chart['s08'] = True
         chart_scripts += _chart('chart_s08', 'pie', {
             "labels": list(rescue_kv.keys()),
-            "datasets": [{"data":list(rescue_kv.values()),"backgroundColor":["#66bb6a","#42a5f5","#ffa726"]}]},
+            "datasets": [{"data":list(rescue_kv.values()),"backgroundColor":["#66bb6a","#42a5f5","#ffa726","#ab47bc"]}]},
             {"responsive":True,"plugins":{"title":{"display":True,"text":"Rescue Branch Contributions"},"legend":{"position":"bottom"}}})
+
+    # S10 — 09 Virome Analysis: genome_type 分布 + suvtk genus 分布
+    analysis_dir = report_dir.parent / "09_Virome_Analysis"
+    int_sum = analysis_dir / "integrated_summary.tsv"
+    if int_sum.is_file():
+        int_rows = _read_tsv(int_sum)
+        if int_rows:
+            # genome_type 分布
+            gt_counter = {}
+            for r in int_rows:
+                gt = r.get('genome_type','').strip()
+                if gt: gt_counter[gt] = gt_counter.get(gt, 0) + 1
+            if gt_counter:
+                stage_has_chart['s10'] = True
+                gt_labels = list(gt_counter.keys())
+                gt_values = list(gt_counter.values())
+                gt_colors = ["#1565c0","#ef6c00","#2e7d32","#c62828","#6a1b9a","#00838f","#37474f","#ffa726"][:len(gt_labels)]
+                chart_scripts += _chart('chart_s10a', 'doughnut', {
+                    "labels": gt_labels,
+                    "datasets": [{"data":gt_values,"backgroundColor":gt_colors}]},
+                    {"responsive":True,"plugins":{"title":{"display":True,"text":"Genome Type Distribution"},"legend":{"position":"bottom","labels":{"boxWidth":12,"font":{"size":11}}}}})
+            # suvtk_genus 分布 (top 15)
+            sg_counter = {}
+            for r in int_rows:
+                sg = r.get('suvtk_genus','').strip()
+                if sg: sg_counter[sg] = sg_counter.get(sg, 0) + 1
+            if sg_counter:
+                stage_has_chart['s10'] = True
+                sg_sorted = sorted(sg_counter.items(), key=lambda x: -x[1])[:15]
+                sg_labels = [x[0] for x in sg_sorted]
+                sg_values = [x[1] for x in sg_sorted]
+                chart_scripts += _chart('chart_s10b', 'bar', {
+                    "labels": sg_labels,
+                    "datasets": [{"label":"vOTU Count","data":sg_values,"backgroundColor":"#8e24aa"}]},
+                    {"indexAxis":"y","responsive":True,"plugins":{"title":{"display":True,"text":"suvtk Genus Classification (Top 15)"},"legend":{"display":False}},
+                     "scales":{"x":{"beginAtZero":True,"title":{"text":"vOTU Count","display":True}}}})
 
     # Sankey 交互式嵌入 (用 Blob URL 动态注入, 避免 data URI 大小限制)
     # s05=全部分类, s06=植物病毒
@@ -983,11 +1259,11 @@ def write_html_report(report_dir, stage_stats):
                 sankey_b64 = base64.b64encode(sf.read()).decode()
             card = f'''<div class="sankey-card">
 <h3>{stitle}</h3>
-<iframe id="sankey_iframe_{i}" style="width:100%;height:700px;border:none;border-radius:4px" loading="lazy"></iframe>
+<iframe id="sankey_iframe_{i}" style="width:100%;height:480px;border:none;border-radius:4px" loading="lazy"></iframe>
 </div>\n'''
             sankey_by_stage.setdefault(stage_key, "")
             sankey_by_stage[stage_key] += card
-            sankey_inject_scripts += f"(function(){{var b='{sankey_b64}';var d=atob(b);var u=URL.createObjectURL(new Blob([d],{{type:'text/html'}}));document.getElementById('sankey_iframe_{i}').src=u;}})();\n"
+            sankey_inject_scripts += f"(function(){{var b='{sankey_b64}';var d=decodeURIComponent(escape(atob(b)));var u=URL.createObjectURL(new Blob([d],{{type:'text/html;charset=utf-8'}}));document.getElementById('sankey_iframe_{i}').src=u;}})();\n"
 
     # 旭日图 (Plotly Sunburst) → s05 section
     sunburst_path = report_dir / "taxonomy_sunburst.html"
@@ -1001,7 +1277,7 @@ def write_html_report(report_dir, stage_stats):
 </div>\n'''
         sankey_by_stage.setdefault("s09", "")
         sankey_by_stage["s09"] += sunburst_card
-        sankey_inject_scripts += f"(function(){{var b='{sunburst_b64}';var d=atob(b);var u=URL.createObjectURL(new Blob([d],{{type:'text/html'}}));document.getElementById('sunburst_iframe').src=u;}})();\n"
+        sankey_inject_scripts += f"(function(){{var b='{sunburst_b64}';var d=decodeURIComponent(escape(atob(b)));var u=URL.createObjectURL(new Blob([d],{{type:'text/html;charset=utf-8'}}));document.getElementById('sunburst_iframe').src=u;}})();\n"
 
     # ── KPI ──
     kpis = {}
@@ -1082,10 +1358,13 @@ def write_html_report(report_dir, stage_stats):
         's01':  [('chart_s01b','Contig Count'),('chart_s01a','N50 (kb)')],
         's02':  [('chart_s02','UniProt Filter')],
         's03':  [('chart_s03','COBRA Rates')],
-        's05':  [('chart_s05a','Taxonomy Novelty')],
+        's04':  [('chart_s04a','Cluster Size'),('chart_s04c','Pipeline Reduction')],
+        's05':  [('chart_s05a','Taxonomy Novelty'),('chart_s05b','Family Distribution'),('chart_s05c','Genus Distribution'),
+                  ('chart_s05d','Fill Rate'),('chart_s05e','Agreement Rate'),('chart_s05f','Tool Classification')],
         's06':  [('chart_s06a','Host Distribution')],
         's07':  [('chart_s07a','CheckV Quality'),('chart_s07b','CheckV Confidence')],
         's08':  [('chart_s08','Rescue Branches')],
+        's10':  [('chart_s10a','Genome Type'),('chart_s10b','suvtk Genus')],
     }
 
     # 每个阶段对应的 TSV 文件, 用于在卡片内嵌入数据表
@@ -1095,15 +1374,41 @@ def write_html_report(report_dir, stage_stats):
         's01':  ['assembly_summary.tsv'],
         's02':  ['ident_summary.tsv', 'filter_summary.tsv'],
         's03':  ['cobra_summary.tsv'],
-        's05':  [],
-        's06':  [],
+        's04':  ['cluster_size_distribution.tsv', 'cluster_pipeline_reduction.tsv'],
+        's05':  ['taxonomy_composition.tsv', 'final_integrated_classification.tsv'],
+        's06':  ['host_distribution.tsv', 'host_decision_method.tsv', 'host_ictv_classification_summary.tsv', 'host_ictv_confidence.tsv'],
         's07':  ['checkv_summary.tsv', 'checkv_confidence.tsv'],
-        's08':  [],
+        's08':  ['rescue_summary.tsv'],
         's09':  ['plant_virus_summary.tsv'],
-        's10':  [],
+        's10':  ['analysis_ref_info.tsv', 'analysis_integrated_summary.tsv'],
     }
 
+    _sd = {}
+    _stage_key_map = {sk: short for sk, short, _, _, _ in stage_defs}
+    for _s in stage_stats:
+        _sn = _s.get("Stage", "")
+        if not _sn.startswith("  "):
+            _num = _sn.split("_")[0] if "_" in _sn else _sn
+            _key = "s" + _num
+            _sd[_key] = {"stage": _sn, "status": _s.get("Status",""), "metrics": _s.get("Key_Metric",""), "short": _stage_key_map.get(_key, "")}
+    import json as _json4
+    stage_data_json = _json4.dumps(_sd, ensure_ascii=False)
     sections_html = ""
+    table_pager_js = ""
+    stage_extra_html = {}
+    tax_img_json = report_dir / "taxonomy_images.json"
+    if tax_img_json.is_file():
+        try:
+            import json as _json3
+            with open(tax_img_json) as tif:
+                tax_images = _json3.load(tif)
+            img_html = ""
+            for label, b64 in tax_images.items():
+                img_html += '<div class="chart-box"><div class="chart-title">' + _esc(label) + '</div>'
+                img_html += '<img src="data:image/png;base64,' + b64 + '" loading="lazy" style="width:100%;height:auto;max-height:650px;object-fit:contain;display:block"></div>'
+            if img_html:
+                stage_extra_html['s05'] = '<div class="stage-charts" style="grid-template-columns:1fr">' + img_html + '</div>'
+        except Exception: pass
     for sk, short, full, icon, color in stage_defs:
         st = stage_status.get(sk, 'skip'); metric = stage_metric.get(sk, '')
         if st == 'pass': badge_cls, badge_txt, border_cls = 's-pass','✓ PASS','stage-pass'
@@ -1124,8 +1429,16 @@ def write_html_report(report_dir, stage_stats):
                     if cid == 'chart_s01b' and stage_has_chart.get('s01b'): active.append(cid)
                 elif sk == 's02':
                     if stage_has_chart.get('s02'): active.append(cid)
+                elif sk == 's04':
+                    if cid == 'chart_s04a' and stage_has_chart.get('s04a'): active.append(cid)
+                    if cid == 'chart_s04c' and stage_has_chart.get('s04c'): active.append(cid)
                 elif sk == 's05':
                     if cid == 'chart_s05a' and stage_has_chart.get('s05'): active.append(cid)
+                    if cid == 'chart_s05b' and stage_has_chart.get('s05b'): active.append(cid)
+                    if cid == 'chart_s05c' and stage_has_chart.get('s05c'): active.append(cid)
+                    if cid == 'chart_s05d' and stage_has_chart.get('s05d'): active.append(cid)
+                    if cid == 'chart_s05e' and stage_has_chart.get('s05e'): active.append(cid)
+                    if cid == 'chart_s05f' and stage_has_chart.get('s05f'): active.append(cid)
                 elif sk == 's07':
                     if cid == 'chart_s07a' and stage_has_chart.get('s07a'): active.append(cid)
                     if cid == 'chart_s07b' and stage_has_chart.get('s07b'): active.append(cid)
@@ -1153,25 +1466,60 @@ def write_html_report(report_dir, stage_stats):
 
         # 在卡片内嵌入对应 TSV 数据表
         table_html = ""
-        table_pager_js = ""
         for tsv_name in stage_tsv_map.get(sk, []):
             tsv_path = report_dir / tsv_name
             if not tsv_path.is_file(): continue
             tsv_rows = _read_tsv(tsv_path)
             if not tsv_rows: continue
-            use_pagination = len(tsv_rows) > 10
-            preview = tsv_rows[:10] if use_pagination else tsv_rows
+            is_large = len(tsv_rows) > 500
+            use_pagination = len(tsv_rows) > 10 and not is_large
+            preview = tsv_rows[:10]
             cols = list(preview[0].keys()) if preview else []
             th_h = "".join(f"<th>{_esc(c)}</th>" for c in cols)
             tr_h = ""
-            for r in tsv_rows if use_pagination else preview:
-                tr_h += "<tr" + (" class='pag-row' style='display:none'" if use_pagination else "") + ">" + "".join(f"<td>{_esc(str(r.get(c,'')))[:60]}</td>" for c in cols) + "</tr>"
-            more = f'<span style="color:var(--muted);font-size:10px">({len(tsv_rows)} rows)</span>'
-            dl_uri = _tsv_data_uri(tsv_path)
-            dl_link = f'<a href="{dl_uri}" download="{tsv_name}" style="font-size:10px;margin-left:6px;color:var(--blue)">[download]</a>' if dl_uri else ""
-            tbid = f"stagetbl_{sk}"
+            if is_large:
+                import json as _json3
+                _load_rows = tsv_rows[:500]
+                _js_data = _json3.dumps([{c: str(r.get(c,''))[:100] for c in cols} for r in _load_rows], ensure_ascii=False)
+                tbid = f"stagetbl_{sk}_{abs(hash(tsv_name)) % 10000}_large"
+                tr_h = '<tr><td colspan="' + str(len(cols)) + '" style="text-align:center;color:var(--muted)">Loading...</td></tr>'
+            elif use_pagination:
+                for r in tsv_rows:
+                    tr_h += "<tr class='pag-row' style='display:none'>" + "".join(f"<td>{_esc(str(r.get(c,'')))[:60]}</td>" for c in cols) + "</tr>"
+            else:
+                for r in preview:
+                    tr_h += "<tr>" + "".join(f"<td>{_esc(str(r.get(c,'')))[:60]}</td>" for c in cols) + "</tr>"
+            more = f'<span style="color:var(--muted);font-size:10px">({len(tsv_rows)} rows{" - showing first 500" if is_large else ""})</span>'
+            if is_large:
+                dl_uri = ""
+            else:
+                dl_uri = _tsv_data_uri(tsv_path)
+            dl_link = f'<a href="{dl_uri}" download="{tsv_name}" style="font-size:10px;margin-left:6px;color:var(--blue)">[download]</a>' if dl_uri else ''
+            if not is_large:
+                tbid = f"stagetbl_{sk}_{abs(hash(tsv_name)) % 10000}"
             pager_html = ""
-            if use_pagination:
+            if is_large:
+                pager_html = f'<div id="pager_{tbid}" style="display:flex;justify-content:center;align-items:center;gap:8px;padding:8px;font-size:11px;color:var(--muted)"><button onclick="tblPrev_{tbid}()" style="border:1px solid #ccc;background:#fff;padding:3px 10px;border-radius:4px;cursor:pointer;font-size:11px">Prev</button><span id="info_{tbid}">Page 1</span><button onclick="tblNext_{tbid}()" style="border:1px solid #ccc;background:#fff;padding:3px 10px;border-radius:4px;cursor:pointer;font-size:11px">Next</button></div>'
+                table_pager_js += f"""
+var _tblRows_{tbid} = {_js_data};
+var _tblCols_{tbid} = {_json3.dumps(cols, ensure_ascii=False)};
+var _tblPage_{tbid} = 0;
+var _tblPerPage_{tbid} = 10;
+function tblShow_{tbid}(p){{
+  _tblPage_{tbid} = p;
+  var pp=_tblPerPage_{tbid}, start=p*pp;
+  var page=_tblRows_{tbid}.slice(start,start+pp);
+  var h='';
+  page.forEach(function(r){{ h+='<tr>'+_tblCols_{tbid}.map(function(c){{ var v=r[c]||''; return '<td>'+v.substring(0,60)+'</td>'; }}).join('')+'</tr>'; }});
+  document.getElementById('{tbid}').querySelector('tbody').innerHTML=h;
+  var total=Math.ceil(_tblRows_{tbid}.length/pp);
+  document.getElementById('info_{tbid}').textContent='Page '+(p+1)+' of '+total;
+}}
+function tblPrev_{tbid}(){{ if(_tblPage_{tbid}>0) tblShow_{tbid}(_tblPage_{tbid}-1); }}
+function tblNext_{tbid}(){{ var total=Math.ceil(_tblRows_{tbid}.length/_tblPerPage_{tbid}); if(_tblPage_{tbid}<total-1) tblShow_{tbid}(_tblPage_{tbid}+1); }}
+tblShow_{tbid}(0);
+"""
+            elif use_pagination:
                 pager_html = f'<div id="pager_{tbid}" style="display:flex;justify-content:center;gap:8px;padding:8px;font-size:11px;color:var(--muted)"></div>'
                 table_pager_js += f"""
 (function(){{
@@ -1183,9 +1531,7 @@ def write_html_report(report_dir, stage_stats):
   function show(p){{
     page=Math.max(0,Math.min(p,totalPages-1));
     rows.forEach(function(r,i){{r.style.display=(i>=page*perPage&&i<(page+1)*perPage)?'':'none'}});
-    pager.innerHTML='<button onclick=\"arguments[0]\" '+(page===0?'disabled':'')+' style=\"border:1px solid #ccc;background:#fff;padding:3px 10px;border-radius:4px;cursor:pointer;font-size:11px\">← Prev</button>'+
-      '<span>Page <b>'+(page+1)+'</b> of '+totalPages+'</span>'+
-      '<button '+(page===totalPages-1?'disabled':'')+' style=\"border:1px solid #ccc;background:#fff;padding:3px 10px;border-radius:4px;cursor:pointer;font-size:11px\">Next →</button>';
+    pager.innerHTML='<button onclick="void(0)" '+(page===0?'disabled':'')+' style="border:1px solid #ccc;background:#fff;padding:3px 10px;border-radius:4px;cursor:pointer;font-size:11px">Prev</button>'+'<span>Page <b>'+(page+1)+'</b> of '+totalPages+'</span>'+'<button '+(page===totalPages-1?'disabled':'')+' style="border:1px solid #ccc;background:#fff;padding:3px 10px;border-radius:4px;cursor:pointer;font-size:11px">Next</button>';
     pager.querySelectorAll('button')[0].onclick=function(){{show(page-1)}};
     pager.querySelectorAll('button')[1].onclick=function(){{show(page+1)}};
   }}
@@ -1200,17 +1546,22 @@ def write_html_report(report_dir, stage_stats):
 </div>
 </details>'''
         if table_html:
-            table_html = f'<div class="stage-tables">{table_html}</div>'
+            if sk == 's04':
+                table_html = f'<div class="stage-charts" style="grid-template-columns:1fr 1fr">{table_html}</div>'
+            else:
+                table_html = f'<div class="stage-tables">{table_html}</div>'
 
+        extra_html = stage_extra_html.get(sk, "")
         sections_html += f'''
 <section class="stage {border_cls}" id="stage-{short}">
   <div class="stage-header">
     <div class="stage-icon" style="background:{color}">{icon}</div>
-    <div class="stage-title"><h2>{full}</h2><span class="stage-metric">{_esc(metric)}</span></div>
+    <div class="stage-title"><h2>{full} <button onclick="runStageAI('{sk}')" class="ai-stage-btn" title="AI summarize">AI</button></h2><span class="stage-metric">{_esc(metric)}</span></div>
     <span class="stage-badge {badge_cls}">{badge_txt}</span>
   </div>
   {table_html}
   {chart_html}
+  {extra_html}
 </section>'''
 
     # ── Table ──
@@ -1308,6 +1659,17 @@ def write_html_report(report_dir, stage_stats):
     if r_hq: flow_stages.append(("HQ vOTUs",r_hq,"#2e7d32"))
 
     flow_html = ""
+    ai_pager_js = """
+function toggleChat(){var p=document.getElementById("chat-panel");p.style.display=p.style.display==="none"?"flex":"none";}
+function toggleAIPanel(){var p=document.getElementById("ai-panel");p.style.display=p.style.display==="none"?"block":"none";}
+function onProviderChange(){var p=document.getElementById("ai-provider").value;var m={openai:"gpt-4o-mini",deepseek:"deepseek-v4-flash",ollama:"qwen2.5:7b",moonshot:"moonshot-v1-8k",custom:""};document.getElementById("ai-model").value=m[p]||"";}
+function getAIURL(){var p=document.getElementById("ai-provider").value;if(p==="openai")return"https://api.openai.com/v1/chat/completions";if(p==="deepseek")return"https://api.deepseek.com/v1/chat/completions";if(p==="moonshot")return"https://api.moonshot.cn/v1/chat/completions";if(p==="ollama")return"http://localhost:11434/v1/chat/completions";return prompt("Enter API base URL:")||"";}
+function sendChat(){var inp=document.getElementById("chat-input");var q=inp.value.trim();if(!q)return;var key=document.getElementById("ai-api-key").value||sessionStorage.getItem("ai_key");if(!key){toggleAIPanel();alert("Please enter your API key");return;}sessionStorage.setItem("ai_key",key);var msgs=document.getElementById("chat-msgs");msgs.innerHTML+="<div class=chat-msg user>"+q.replace(/</g,"&lt;")+"</div>";inp.value="";msgs.scrollTop=msgs.scrollHeight;var th=document.createElement("div");th.className="chat-msg ai";th.textContent="...";msgs.appendChild(th);var ctx=document.getElementById("stage-data")?document.getElementById("stage-data").textContent:"{}";fetch(getAIURL(),{method:"POST",headers:{"Content-Type":"application/json",Authorization:"Bearer "+key},body:JSON.stringify({model:document.getElementById("ai-model").value,messages:[{role:"system",content:"You are a virology research assistant. Answer concisely in Chinese using the report context: "+ctx},{role:"user",content:q}],temperature:0.3,max_tokens:500})}).then(function(r){return r.json()}).then(function(d){th.textContent=d.choices[0].message.content.trim();msgs.scrollTop=msgs.scrollHeight;}).catch(function(e){th.textContent="Error: "+e;});}
+function runStageAI(sn){var key=document.getElementById("ai-api-key").value||sessionStorage.getItem("ai_key");if(!key){toggleAIPanel();alert("Please enter your API key");return;}sessionStorage.setItem("ai_key",key);var stageInfo=_stageData[sn]||{};var sel=stageInfo.short||sn;var btn=document.querySelector("#stage-"+sel+" .ai-stage-btn");if(!btn)return;var orig=btn.textContent;btn.textContent="...";btn.disabled=true;var ctx=document.getElementById("stage-data")?document.getElementById("stage-data").textContent:"{}";fetch(getAIURL(),{method:"POST",headers:{"Content-Type":"application/json",Authorization:"Bearer "+key},body:JSON.stringify({model:document.getElementById("ai-model").value,messages:[{role:"system",content:"You are a virology scientist. Summarize this pipeline stage concisely in Chinese (2-3 sentences)."},{role:"user",content:"Stage: "+sn+"\\nData: "+ctx}],temperature:0.3,max_tokens:300})}).then(function(r){return r.json()}).then(function(d){btn.textContent=orig;btn.disabled=false;var t=document.querySelector("#stage-"+sel+" .ai-stage-summary");if(!t){t=document.createElement("p");t.className="ai-stage-summary";t.style.display="block";var h=document.querySelector("#stage-"+sel+" .stage-charts, #stage-"+sel+" .stage-tables");if(h)h.before(t);else{var s=document.querySelector("#stage-"+sel+" .stage-header");if(s)s.after(t);}}t.textContent=d.choices[0].message.content.trim();}).catch(function(e){btn.textContent=orig;btn.disabled=false;alert("Error: "+e);});}
+var _stageData=JSON.parse(document.getElementById("stage-data").textContent);var _saved=sessionStorage.getItem("ai_key");if(_saved)document.getElementById("ai-api-key").value=_saved;
+document.getElementById("ai-provider").value=sessionStorage.getItem("ai_provider")||"openai";
+document.getElementById("ai-model").value=sessionStorage.getItem("ai_model")||"gpt-4o-mini";
+"""
     if len(flow_stages) >= 3:
         f_labels = [s[0] for s in flow_stages]
         f_values = [s[1] for s in flow_stages]
@@ -1417,6 +1779,23 @@ td{{padding:9px 16px;border-bottom:1px solid #f0f0f0}}
 .ai-block-text{{font-size:13px;line-height:1.9;color:#37474f;text-align:justify}}
 .ai-bg{{border-left-color:#1565c0}}.ai-methods{{border-left-color:#00897b}}.ai-results{{border-left-color:#ef6c00}}.ai-discussion{{border-left-color:#6a1b9a}}
 .ai-error{{color:var(--red);font-size:12px;padding:8px}}
+.ai-stage-btn{{font-size:10px;font-weight:700;padding:1px 8px;margin-left:8px;background:linear-gradient(135deg,#667eea,#764ba2);color:#fff;border:none;border-radius:10px;cursor:pointer;vertical-align:middle;opacity:.8}}
+.ai-stage-btn:hover{{opacity:1}}
+.ai-stage-summary{{font-size:12px;line-height:1.6;padding:8px 12px;margin:6px 22px;background:#f0f4ff;border-radius:6px;display:none}}
+#chat-btn{{position:fixed;bottom:72px;right:24px;width:38px;height:38px;background:linear-gradient(135deg,#667eea,#764ba2);color:#fff;border:none;border-radius:50%;font-size:16px;font-weight:700;cursor:pointer;z-index:200;box-shadow:0 2px 8px rgba(102,126,234,.3);transition:transform .15s}}
+#chat-btn:hover{{transform:scale(1.1)}}
+#chat-panel{{position:fixed;bottom:120px;right:24px;width:360px;max-height:500px;background:var(--card-bg);border:1px solid var(--border);border-radius:var(--radius);box-shadow:0 8px 24px rgba(0,0,0,.12);z-index:199;display:none;flex-direction:column}}
+.chat-header{{display:flex;justify-content:space-between;align-items:center;padding:8px 12px;border-bottom:1px solid var(--border);font-size:13px;font-weight:600}}
+.chat-messages{{flex:1;overflow-y:auto;padding:8px 10px;max-height:360px;display:flex;flex-direction:column;gap:6px}}
+.chat-msg{{font-size:12px;line-height:1.5;padding:6px 10px;border-radius:8px;max-width:85%}}
+.chat-msg.user{{align-self:flex-end;background:var(--indigo);color:#fff}}
+.chat-msg.ai{{align-self:flex-start;background:#f0f4ff;color:var(--text)}}
+.chat-input-row{{display:flex;gap:6px;padding:8px 10px;border-top:1px solid var(--border)}}
+.chat-input-row input{{flex:1;padding:6px 8px;border:1px solid var(--border);border-radius:4px;font-size:12px}}
+.chat-send-btn{{padding:6px 12px;background:var(--indigo);color:#fff;border:none;border-radius:4px;font-size:12px;cursor:pointer}}
+#ai-btn{{position:fixed;bottom:72px;right:72px;width:38px;height:38px;background:linear-gradient(135deg,#667eea,#764ba2);color:#fff;border:none;border-radius:50%;font-size:13px;font-weight:700;cursor:pointer;z-index:200;box-shadow:0 2px 8px rgba(102,126,234,.3);transition:transform .15s}}
+#ai-btn:hover{{transform:scale(1.1)}}
+#ai-panel{{position:fixed;bottom:120px;right:24px;width:300px;background:var(--card-bg);border:1px solid var(--border);border-radius:var(--radius);box-shadow:0 8px 24px rgba(0,0,0,.12);z-index:198;display:none}}
 .footer{{text-align:center;padding:24px;color:var(--muted);font-size:11px;line-height:1.8}}
 .footer a{{color:var(--blue);text-decoration:none}}
 @media(max-width:768px){{
@@ -1437,6 +1816,39 @@ td{{padding:9px 16px;border-bottom:1px solid #f0f0f0}}
 </style>
 </head>
 <body>
+<button id="chat-btn" onclick="toggleChat()" title="Ask questions about this report">?</button>
+<div id="chat-panel" style="display:none">
+    <div class="chat-header">
+        <span>Report Q&amp;A</span>
+        <button onclick="toggleChat()" style="background:none;border:none;color:var(--muted);font-size:16px;cursor:pointer">&times;</button>
+    </div>
+    <div class="chat-messages" id="chat-msgs"></div>
+    <div class="chat-input-row">
+        <input id="chat-input" type="text" placeholder="Ask about this report..." onkeydown="if(event.key==='Enter')sendChat()">
+        <button onclick="sendChat()" class="chat-send-btn">Send</button>
+    </div>
+</div>
+<button id="ai-btn" onclick="toggleAIPanel()" title="AI Settings">AI</button>
+<div id="ai-panel" style="display:none">
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 14px;border-bottom:1px solid var(--border)">
+        <span style="font-weight:700;font-size:14px;color:#1a237e">AI Settings</span>
+        <button onclick="toggleAIPanel()" style="background:none;border:none;font-size:18px;cursor:pointer;color:var(--muted)">&times;</button>
+    </div>
+    <div style="padding:10px 14px">
+        <label style="font-size:11px;color:var(--muted)">API Key (saved in this browser)</label>
+        <input id="ai-api-key" type="password" placeholder="sk-..." style="width:100%;padding:6px 8px;margin:4px 0 8px;border:1px solid var(--border);border-radius:4px;font-size:12px" autocomplete="off">
+        <label style="font-size:11px;color:var(--muted)">Provider</label>
+        <select id="ai-provider" onchange="onProviderChange()" style="width:100%;padding:6px 8px;margin:4px 0 8px;border:1px solid var(--border);border-radius:4px;font-size:12px">
+            <option value="openai">OpenAI</option>
+            <option value="deepseek">DeepSeek</option>
+            <option value="moonshot">Kimi (Moonshot)</option>
+            <option value="ollama">Ollama (localhost)</option>
+            <option value="custom">Custom</option>
+        </select>
+        <label style="font-size:11px;color:var(--muted)">Model</label>
+        <input id="ai-model" value="gpt-4o-mini" style="width:100%;padding:6px 8px;margin:4px 0 8px;border:1px solid var(--border);border-radius:4px;font-size:12px">
+    </div>
+</div>
 <div class="sidebar">
   <div class="sb-title">Pipeline Modules</div>
   {sidebar_items}
@@ -1467,6 +1879,7 @@ td{{padding:9px 16px;border-bottom:1px solid #f0f0f0}}
   Generated by <code>report_pipeline.py</code> &nbsp;|&nbsp; {gen_time}
 </div>
 </div>
+<script id="stage-data" type="application/json">{stage_data_json}</script>
 <script>
 {chart_scripts}
 {sankey_inject_scripts}
@@ -1551,6 +1964,9 @@ function exportTable(){{
     chart.update();
   }};
 }})();
+</script>
+<script>
+{ai_pager_js}
 </script>
 </body></html>'''
 
@@ -1727,7 +2143,7 @@ def main():
     p.add_argument("--skip-html", action="store_true", help="仅生成 TSV, 不生成 HTML")
     p.add_argument("--blast-db", help="BLAST 参考数据库路径 (用于序列相似度分类)")
     p.add_argument("--ai-summary", action="store_true", help="生成 AI 管线总结 (需 --ai-key)")
-    p.add_argument("--ai-provider", default="openai", choices=["openai","ollama","deepseek","custom"], help="AI 提供商 (default: openai)")
+    p.add_argument("--ai-provider", default="openai", choices=["openai","ollama","deepseek","moonshot","custom"], help="AI 提供商 (default: openai)")
     p.add_argument("--ai-model", default="gpt-4o-mini", help="模型名 (default: gpt-4o-mini)")
     p.add_argument("--ai-key", default="", help="API Key (或 ollama 时留空)")
     p.add_argument("--ai-base-url", default="", help="自定义 API 地址 (如 http://localhost:11434/v1/chat/completions)")
@@ -1794,6 +2210,8 @@ def main():
                 generate_ai_summary._base_url = "http://localhost:11434/v1/chat/completions"
             elif args.ai_provider == "deepseek":
                 generate_ai_summary._base_url = "https://api.deepseek.com/v1/chat/completions"
+            elif args.ai_provider == "moonshot":
+                generate_ai_summary._base_url = "https://api.moonshot.cn/v1/chat/completions"
             else:
                 generate_ai_summary._base_url = ""
         else:

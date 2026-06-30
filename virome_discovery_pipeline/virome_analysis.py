@@ -9,7 +9,8 @@ virome_analysis.py — 病毒基因组下游分析 + GenBank 提交准备 v2.1
   1. suvtk taxonomy     — ICTV 分类学注释
   2. suvtk features     — CDS/tRNA/结构蛋白注释 (生成 .tbl)
   3. hypothetical       — DIAMOND/HMM 假想蛋白深度注释
-  4. submission (Sequin) — .fsa + .tbl + .cmt → .sqn (tbl2asn)
+  4. viral_topology     — 环形/线性基因组判断
+  5. submission (Sequin) — .fsa + .tbl + .cmt → .sqn (tbl2asn)
 
 用法:
   python virome_analysis.py -i out/08_Rescue/all_plant_viruses.fasta -o out/09_Virome_Analysis/ -t 40
@@ -29,7 +30,7 @@ def setup_logger(out_dir):
     logger.handlers.clear()
     ch = logging.StreamHandler()
     ch.setLevel(logging.INFO)
-    ch.setFormatter(logging.Formatter('[%H:%M:%S] %(levelname)s %(message)s'))
+    ch.setFormatter(logging.Formatter('%(levelname)s %(message)s'))
     logger.addHandler(ch)
     os.makedirs(out_dir, exist_ok=True)
     fh = logging.FileHandler(os.path.join(out_dir, 'analysis.log'), encoding='utf-8')
@@ -58,7 +59,7 @@ def run_taxonomy(fasta, out_dir, db, threads, log):
     tax_out = out_dir / "suvtk_taxonomy"
     tax_tsv = tax_out / "taxonomy.tsv"
     if tax_tsv.is_file() and tax_tsv.stat().st_size > 100:
-        log.info("[1/5] taxonomy — 跳过 (已存在)")
+        log.info("[1/6] taxonomy — 跳过 (已存在)")
         return tax_out
     tax_out.mkdir(parents=True, exist_ok=True)
     ok = run(f"suvtk taxonomy -i {fasta} -o {tax_out} -d {db} -s 0.7 -t {threads}",
@@ -74,7 +75,7 @@ def run_features(fasta, out_dir, tax_dir, db, threads, log):
     feat_out = out_dir / "suvtk_features"
     tbl = feat_out / "featuretable.tbl"
     if tbl.is_file() and tbl.stat().st_size > 100:
-        log.info("[2/5] features — 跳过 (已存在)")
+        log.info("[2/6] features — 跳过 (已存在)")
         return feat_out
     feat_out.mkdir(parents=True, exist_ok=True)
     cmd = f"suvtk features -i {fasta} -o {feat_out} -d {db} --coding-complete -t {threads}"
@@ -94,13 +95,13 @@ def run_hypothetical(out_dir, feat_dir, rvdb_dir, threads, log):
     hypo_out = out_dir / "hypothetical"
     updated_tbl = hypo_out / "featuretable_updated.tbl"
     if updated_tbl.is_file() and updated_tbl.stat().st_size > 100:
-        log.info("[3/5] hypothetical — 跳过 (已存在)")
+        log.info("[3/6] hypothetical — 跳过 (已存在)")
         return hypo_out
 
     tbl = feat_dir / "featuretable.tbl"
     faa = feat_dir / "proteins.faa"
     if not tbl.is_file() or not faa.is_file():
-        log.warning("[3/5] hypothetical — 缺少 .tbl/.faa, 跳过")
+        log.warning("[3/6] hypothetical — 缺少 .tbl/.faa, 跳过")
         return None
 
     hypo_out.mkdir(parents=True, exist_ok=True)
@@ -111,7 +112,7 @@ def run_hypothetical(out_dir, feat_dir, rvdb_dir, threads, log):
 
     script = SCRIPT_DIR / "analyze_hypothetical.py"
     if not script.is_file():
-        script = SCRIPT_DIR.parent / "suvtk_submission" / "analyze_hypothetical.py"
+        script = SCRIPT_DIR.parent / "virome_submission_pipeline" / "analyze_hypothetical.py"
 
     cmd = f"python {script} -t {tbl} -f {faa} -o {hypo_out} --threads {threads}"
     if rvdb_fasta and rvdb_fasta.is_file():
@@ -126,14 +127,36 @@ def run_hypothetical(out_dir, feat_dir, rvdb_dir, threads, log):
 
 
 # ══════════════════════════════════════════════════════════════
-# Stage 4: Sequin submission files
+# Stage 4: Viral topology (circular / linear)
+# ══════════════════════════════════════════════════════════════
+
+def run_topology(fasta, out_dir, tax_dir, log):
+    topo_out = out_dir / "topology.tsv"
+    if topo_out.is_file() and topo_out.stat().st_size > 50:
+        log.info("[4/6] viral_topology — 跳过 (已存在)")
+        return topo_out
+    tax_tsv = tax_dir / "taxonomy.tsv" if tax_dir else None
+    if not tax_tsv or not tax_tsv.is_file():
+        log.warning("[4/6] viral_topology — 缺少 taxonomy.tsv, 跳过")
+        return None
+    topo_script = SCRIPT_DIR.parent / "virome_submission_pipeline" / "viral_topology.py"
+    if not topo_script.is_file():
+        log.warning("[4/6] viral_topology — 脚本不存在: %s", topo_script)
+        return None
+    cmd = f"python {topo_script} --taxonomy {tax_tsv} --fasta {fasta} -o {topo_out}"
+    ok = run(cmd, log, "viral_topology")
+    return topo_out if ok else None
+
+
+# ══════════════════════════════════════════════════════════════
+# Stage 5: Sequin submission files
 # ══════════════════════════════════════════════════════════════
 
 def run_submission(fasta, out_dir, feat_dir, tax_dir, hypo_dir, log):
     sub_out = out_dir / "submission"
     sqn = sub_out / "submission.sqn"
     if sqn.is_file() and sqn.stat().st_size > 100:
-        log.info("[4/5] submission — 跳过 (已存在)")
+        log.info("[5/6] submission — 跳过 (已存在)")
         return sub_out
     sub_out.mkdir(parents=True, exist_ok=True)
 
@@ -165,7 +188,7 @@ def run_submission(fasta, out_dir, feat_dir, tax_dir, hypo_dir, log):
 
     # tbl2asn: generate .sqn
     cmd = f"tbl2asn -p {sub_out} -t template.sbt -i {fsa} -o {sub_out}"
-    log.info("[4/5] tbl2asn: %s", cmd)
+    log.info("[5/6] tbl2asn: %s", cmd)
 
     return sub_out
 
@@ -200,7 +223,7 @@ def main():
 
     t0 = time.time()
 
-    # 1-4. suvtk pipeline
+    # 1-5. suvtk pipeline
     if not args.skip_suvtk:
         # 1. Taxonomy
         tax_dir = run_taxonomy(inp, out, args.suvtk_db, args.threads, log)
@@ -210,13 +233,17 @@ def main():
         hypo_dir = None
         if feat_dir:
             hypo_dir = run_hypothetical(out, feat_dir, args.rvdb_dir, args.threads, log)
-        # 4. Submission
+        # 4. Topology
+        topo_file = None
+        if tax_dir:
+            topo_file = run_topology(inp, out, tax_dir, log)
+        # 5. Submission
         if feat_dir:
             sub_dir = run_submission(inp, out, feat_dir, tax_dir, hypo_dir, log)
     else:
-        log.info("[1-4/5] suvtk pipeline — 跳过")
+        log.info("[1-5/6] suvtk pipeline — 跳过")
 
-    # 5. 生成 ref_info.tsv (供 virome_analysis_pipeline/auto_known_virus.py 使用)
+    # 6. 生成 ref_info.tsv (供 virome_analysis_pipeline/auto_known_virus.py 使用)
     ref_info = out / "ref_info.tsv"
     if not ref_info.is_file():
         ref_builder = SCRIPT_DIR / "build_ref_info.py"
@@ -230,6 +257,7 @@ def main():
     log.info("  suvtk_taxonomy/       ICTV 分类注释")
     log.info("  suvtk_features/       基因注释 (CDS/tRNA)")
     log.info("  hypothetical/          假想蛋白深度注释")
+    log.info("  topology.tsv           环形/线性判断")
     log.info("  submission/            GenBank 提交文件 (.sqn)")
     log.info("  ref_info.tsv           已知病毒分析 info 文件")
     log.info("=" * 60)

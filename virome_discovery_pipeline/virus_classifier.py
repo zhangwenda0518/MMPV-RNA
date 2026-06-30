@@ -67,12 +67,19 @@ def lineage_to_ranks(lineage_str):
         p = p.strip()
         if not p or p == "Viruses": continue
         p = p.replace("unclassified ","").replace("Unclassified ","")
-        if raw and p == raw[-1]: continue  # 去相邻重复 ("Riboviria;unclassified Riboviria")
+        if p != "-" and raw and p == raw[-1]: continue  # 去相邻重复, 但保留 "-" 占位符 (CAT格式用)
         raw.append(p)
-    # 先过滤再丢弃 NA; 保留过滤后的有效段用于锚定 (避免 NA 占位推偏索引)
+    # 先过滤再丢弃 NA; 保留 "-" 占位符用于 CAT 对齐 (CAT intermediate 用 "-" 标缺 rank)
     parts_filtered = [p for p in raw if p != "-" and not any(w in p.lower() for w in skip)
                       and not any(p.endswith(s) for s in SUBRANKS)]
     ranks = {r:"NA" for r in RANK_NAMES}
+    # 若上游已用 "-" 占位 (CAT 格式), 直接按位置映射, 不依赖锚点
+    if "-" in raw:
+        for i, p in enumerate(raw):
+            if p != "-" and p != "Viruses" and i < len(RANK_NAMES):
+                if not any(w in p.lower() for w in skip) and not any(p.endswith(s) for s in SUBRANKS):
+                    ranks[RANK_NAMES[i]] = p
+        return ranks
     if not parts_filtered: return ranks
     parts = parts_filtered
     # 寻找 anchor: 已知realm/kingdom > -viricota(phylum) > -viricetes(class) > -idae(family) > -ales(order) > -virus(genus)
@@ -92,8 +99,9 @@ def lineage_to_ranks(lineage_str):
                     anchor = i; rp = RANK_NAMES.index(rank_name); break
         if anchor is not None: break
     valid_parts = [p for p in parts if p!="NA"]
-    # 特判: 只有2个有效段(Realm + species名)
-    if len(valid_parts)==2 and valid_parts[0] in KNOWN_REALMS:
+    # 特判: 只有2个有效段(Realm + species名), 仅当 anchor 未找到且第2段像种名时才生效
+    if (anchor is None and len(valid_parts)==2 and valid_parts[0] in KNOWN_REALMS
+        and (valid_parts[1].endswith("virus") or " sp." in valid_parts[1])):
         ranks = {r:"NA" for r in RANK_NAMES}
         ranks["realm"] = valid_parts[0]
         ranks["species"] = valid_parts[1]
@@ -181,7 +189,14 @@ def classify_metabuli(inp, s, out, db, th):
     tf = os.path.join(d, f"{s}_taxids.txt")
     os.system(f"awk '$1==1{{print $3}}' '{ct}' | sort -u > '{tf}' 2>/dev/null")
     if is_file_valid(tf,1):
-        os.system(f"taxonkit lineage '{tf}' | awk -F'\\t' 'FNR==NR{{lin[$1]=$2; next}} $1==1 && $3 in lin && lin[$3] ~ /^Viruses;/{{print $2\"\\t1\\t1.0000\\t\"$3\"\\t\"lin[$3]}}' - '{ct}' > '{r}' 2>/dev/null")
+        # 优先用本地新 NCBI 数据库 (含 ICTV 名), 回退 taxonkit
+        taxdb = os.path.expanduser("~/database/taxonomy/fullnamelineage.dmp")
+        if os.path.exists(taxdb):
+            # fullnamelineage.dmp 格式: taxID | name | lineage | (lineage 仅父级, 不含自身)
+            # $1=taxID, $3=name, $5=lineage → 拼接为 lineage + name 得完整路径
+            os.system(f"awk -F'\\t' 'NR==FNR{{gsub(/^[[:space:]]+|[[:space:]]+$/, \"\", $1); gsub(/^[[:space:]]+|[[:space:]]+$/, \"\", $3); gsub(/^[[:space:]]+|[[:space:]]+$/, \"\", $5); lin[$1]=$5 $3 \";\"; next}} $1==1 && $3 in lin{{print $2\"\\t1\\t1.0000\\t\"$3\"\\t\"lin[$3]}}' '{taxdb}' '{ct}' > '{r}' 2>/dev/null")
+        else:
+            os.system(f"taxonkit lineage '{tf}' | awk -F'\\t' 'FNR==NR{{lin[$1]=$2; next}} $1==1 && $3 in lin && lin[$3] ~ /^Viruses;/{{print $2\"\\t1\\t1.0000\\t\"$3\"\\t\"lin[$3]}}' - '{ct}' > '{r}' 2>/dev/null")
     return r
 
 def classify_cat(inp, s, out, cat_db, cat_tax, th):
@@ -203,7 +218,7 @@ def classify_cat(inp, s, out, cat_db, cat_tax, th):
     # Step 3: 解析 "full lineage names" 列 (col 6), rank 格式: Name (rank)
     RANK_MAP = {"realm":"realm","kingdom":"kingdom","phylum":"phylum","class":"class",
                 "order":"order","family":"family","genus":"genus","species":"species",
-                "superkingdom":"realm","subfamily":"family","subgenus":"genus"}
+                "superkingdom":"realm","subgenus":"genus"}
     with open(nf) as f, open(r, 'w') as fo:
         fo.write("seq_name\ttaxid\tlineage\n")
         hdr = f.readline().strip().split('\t')
@@ -255,19 +270,36 @@ def postproc_mmseqs(inp, s, out):
             if is_file_valid(p,10): raw = p; break
     r = os.path.join(out, f"{s}_mmseqs_taxonomy.tsv")
     if not is_file_valid(raw,10): return r
+    # 加载 ICTV lineage 校正表 (taxID → ICTV lineage)
+    # fullnamelineage.dmp 格式: taxID | name | lineage |
+    ictv_correction = {}
+    taxdb = os.path.expanduser("~/database/taxonomy/fullnamelineage.dmp")
+    if os.path.exists(taxdb):
+        with open(taxdb) as tf:
+            for line in tf:
+                parts = line.strip().split("\t|\t")
+                if len(parts) >= 3:
+                    tid = parts[0].strip()
+                    lineage = parts[2].strip().rstrip(";| ")
+                    if lineage and "Viruses" in lineage:
+                        ictv_correction[tid] = lineage
+
     with open(raw) as f, open(r,'w') as fo:
         fo.write("seq_name\ttaxid\tlineage\n")
         for ln in f:
             ps = ln.strip().split('\t')
             if len(ps)<9: continue
             sid, tid, lin = ps[0], ps[1], ps[8]
+            # 优先用 ICTV 校正表 (含正确 ICTV genus/species)
+            if tid in ictv_correction:
+                lin = ictv_correction[tid]
             if "cellular" in lin.lower() and "viruses" not in lin.lower() and "viria" not in lin.lower(): continue
             lp = []
             for p in lin.split(";"):
                 p = p.strip()
                 if not p: continue
-                if p.startswith("-_"): p = p[2:]  # -_Riboviria → Riboviria (realm)
-                elif len(p)>2 and p[1]=='_': p = p[2:]  # k_/p_/c_/o_/f_/g_/s_ 前缀
+                if p.startswith("-_"): p = p[2:]
+                elif len(p)>2 and p[1]=='_': p = p[2:]
                 if p and p != "Viruses": lp.append(p)
             fo.write(sid + "\t" + tid + "\t" + "Viruses;" + ";".join(lp) + "\n")
     return r
@@ -410,6 +442,8 @@ def merge_taxonomy_results(sample, output_dir, tools_ran):
             line = '\t'.join(row)
             if line.strip(): f.write(line + '\n')
     safe_print(f"  [合并] {len(rows)} 条 -> {os.path.basename(combined)}")
+    # NCBI→ICTV 纠正 (用 fullnamelineage.dmp 替换 NCBI 名为 ICTV 名)
+    fill_taxonomy_na(combined, combined)
     return combined
 
 # ==========================================================
@@ -510,10 +544,14 @@ def validate_results(output_dir, sample, tools_ran=None, verbose=False):
 
 
 def fill_taxonomy_na(tsv_path, output_path):
+    """用 fullnamelineage.dmp (NCBI→ICTV) 纠正 combined_taxonomy.tsv 中的分类名
+    流式处理: 先收集 unique names, grep 匹配行, 构建局部映射表, 再逐行纠正"""
     if not is_file_valid(tsv_path, 100): return
-    if not shutil.which("taxonkit"):
-        safe_print("  [fill] 跳过 — taxonkit 未安装")
-        return
+    taxdb = os.path.expanduser("~/database/taxonomy/fullnamelineage.dmp")
+    if not os.path.exists(taxdb):
+        safe_print("  [fill] 跳过 — fullnamelineage.dmp 不存在"); return
+
+    # 1. 收集 unique 最深 rank 名
     with open(tsv_path) as f:
         lines = [l.rstrip('\r\n') for l in f.readlines()]
     hdr = lines[0].strip().split('\t')
@@ -522,127 +560,70 @@ def fill_taxonomy_na(tsv_path, output_path):
     for r in rank_cols:
         for i, h in enumerate(hdr):
             if h.lower()==r.lower(): ci[r]=i; break
-    skip_vals = {"NA","N/A","-","no rank","unknown","Unclassified","","default"}
-    subranks = ("viricotina","viricetidae","virineae","virinae")
-    skip_words = ("unplaced","novel_subfamily","novel_order","novel_genus","cellular","root",
-                  "viruses","DNA viruses","dsDNA viruses","RNA viruses","unclassified phages")
-
-    def _ok(v):
-        if not v or v in skip_vals: return False
-        return not any(w in v.lower() for w in skip_words)
-
     unames = set()
-    to_fill = []
-    for i, line in enumerate(lines[1:], 1):
-        line = line.rstrip('\n')
-        if not line.strip(): continue
-        ps = line.split('\t')
-        if len(ps)<len(hdr): continue
-        if not any(not _ok(ps[ci[r]].strip()) for r in rank_cols if r in ci and ci[r]<len(ps)): continue
-        dn = None
+    for line in lines[1:]:
+        ps = line.strip().split('\t')
         for r in reversed(rank_cols):
             idx = ci.get(r)
-            if idx is not None and idx<len(ps):
-                if _ok(ps[idx].strip()): dn=ps[idx].strip(); break
-        if dn: unames.add(dn); to_fill.append((i, dn))
-        else: to_fill.append((i, None))
+            if idx is not None and idx < len(ps):
+                v = ps[idx].strip().strip('"')
+                if v and v not in ("NA","","-"):
+                    unames.add(v); break
     if not unames:
-        safe_print("  [fill] 无需回填 (0 NA)"); return
-    safe_print(f"  [fill] {len(to_fill)} 行需回填, {len(unames)} 个唯一名, 批量 taxonkit...")
-    r1 = subprocess.run("taxonkit name2taxid 2>/dev/null", input='\n'.join(unames), shell=True, capture_output=True, text=True)
-    n2t = {}
-    for ln in r1.stdout.strip().split('\n'):
-        ps = ln.split('\t')
-        if len(ps)>=2 and ps[1].isdigit(): n2t[ps[0]] = ps[1]
-    tids = list(set(n2t.values()))
-    if not tids:
-        safe_print("  [fill] taxonkit name2taxid 无结果"); return
-    r2 = subprocess.run("taxonkit lineage 2>/dev/null", input='\n'.join(tids), shell=True, capture_output=True, text=True)
-    t2l = {}
-    for ln in r2.stdout.strip().split('\n'):
-        ps = ln.split('\t')
-        if len(ps)>=2: t2l[ps[0]] = ps[1]
-    n2r = {}
-    for name, tid in n2t.items():
-        l = t2l.get(tid,"")
-        if not l: continue
-        lp = []
-        for p in l.split(";"):
-            p = p.strip()
-            if not p or p == "Viruses": continue
-            p = p.replace("unclassified ","").replace("Unclassified ","")
-            if any(w in p.lower() for w in skip_words): continue
-            if any(p.endswith(s) for s in subranks): continue
-            if lp and p == lp[-1]: continue
-            lp.append(p)
-        fill = {rn:"" for rn in rank_cols}
-        if len(lp)==8:
-            for i, rn in enumerate(rank_cols):
-                if lp[i]!="NA" and lp[i] not in skip_vals: fill[rn]=lp[i]
-        else:
-            pi = None; rp = None
-            KR = {"Riboviria","Monodnaviria","Duplodnaviria","Varidnaviria","Adnaviria","Ribozyviria"}
-            KK = {"Orthornavirae","Shotokuvirae","Heunggongvirae","Lenarviricota"}
-            for item, rn in [(KR,"realm"),(KK,"kingdom"),("viricota","phylum"),("viricetes","class"),
-                              ("idae","family"),("ales","order"),("viridae","family"),("virus","genus")]:
-                if isinstance(item, set):
-                    for i, p in enumerate(lp):
-                        if p in item: pi=i; rp=rank_cols.index(rn); break
-                else:
-                    for i, p in enumerate(lp):
-                        if p.endswith(item): pi=i; rp=rank_cols.index(rn); break
-                if pi is not None: break
-            if pi is not None:
-                for o, rn in enumerate(rank_cols):
-                    ix = pi + (o - rp)
-                    if 0<=ix<len(lp): fill[rn]=lp[ix]
-            else:
-                tail = lp[-6:] if len(lp)>=6 else lp
-                tr = ["phylum","class","order","family","genus","species"][-len(tail):]
-                for i, p in enumerate(tail):
-                    if i<len(tr): fill[tr[i]]=p
-            # 统一修复 (同 lineage_to_ranks)
-            _vns = [p for p in lp if p and p not in skip_vals
-                    and not any(p.endswith(s) for s in subranks)]
-            if any(fill.get(rn,"") != "" and any(fill[rn].endswith(s) for s in subranks)
-                   for rn in ("genus","species")):
-                if len(_vns) >= 1: fill["species"] = _vns[-1]
-                if len(_vns) >= 2: fill["genus"] = _vns[-2]
-                else: fill["genus"] = ""
-            if fill.get("species","") == "" and fill.get("genus","") != "":
-                ge = fill["genus"]
-                if " sp." in ge or " sp" == ge[-3:] or " cf." in ge or " aff." in ge or len(ge.split()) >= 2:
-                    fill["species"] = ge
-                    genus_candidate = ge.split()[0]
-                    if genus_candidate != ge \
-                       and genus_candidate.endswith("virus") \
-                       and not genus_candidate.endswith("viridae") \
-                       and not any(genus_candidate.endswith(s) for s in subranks):
-                        fill["genus"] = genus_candidate
-                    else:
-                        fill["genus"] = ""
-        n2r[name]=fill
-    fc = 0
-    for row_idx, dn in to_fill:
-        if not dn or dn not in n2r: continue
-        fill = n2r[dn]
-        ps = lines[row_idx].rstrip('\n').split('\t')
-        for r in rank_cols:
-            idx = ci.get(r)
-            if idx is not None and idx<len(ps):
-                if not _ok(ps[idx].strip()):
-                    nv = fill.get(r,"")
-                    if nv and nv != dn: ps[idx]=nv; fc+=1  # 不同名才填 (防止 genus→species 复制)
-        lines[row_idx] = '\t'.join(ps)
-    non_empty = [l for l in lines if l.strip()]
-    with open(output_path, 'w') as f:
-        f.write('\n'.join(non_empty) + '\n')
-    safe_print(f"  [fill] {fc} 个 rank 回填完成")
+        safe_print("  [fill] 无有效名称"); return
 
-# ==========================================================
-# 主类
-# ==========================================================
+    # 2. 用 grep 从 fullnamelineage.dmp 匹配相关行, 局部构建映射
+    import tempfile
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as nf:
+        for n in unames: nf.write(n + '\n')
+        names_file = nf.name
+    # grep -F -f names_file taxdb: 只提取匹配行
+    result = subprocess.run(
+        f"grep -F -f '{names_file}' '{taxdb}' 2>/dev/null",
+        shell=True, capture_output=True, text=True, timeout=120)
+    os.unlink(names_file)
+    n2r = {}  # name → {rank: value}
+    for line in result.stdout.strip().split('\n'):
+        parts = line.strip().split("\t|\t")
+        if len(parts) < 3: continue
+        name = parts[1].strip().rstrip(";| ")
+        lineage = parts[2].strip().rstrip(";| ")
+        if "Viruses" in lineage:
+            r = lineage_to_ranks(lineage)
+            if any(r[rn] != "NA" for rn in RANK_NAMES):
+                n2r[name.lower()] = r
+                n2r[name] = r  # 保留原始大小写
 
+    safe_print(f"  [fill] {len(unames)} 个名称 → {len(n2r)} 条 NCBI→ICTV 映射")
+
+    # 3. 逐行纠正
+    corrected = 0
+    with open(output_path, 'w') as fo:
+        fo.write('\t'.join(hdr) + '\n')
+        for line in lines[1:]:
+            if not line.strip(): continue
+            ps = line.strip().split('\t')
+            # 查找最深 rank 名 → ICTV 映射
+            name = None
+            for r in reversed(rank_cols):
+                idx = ci.get(r)
+                if idx is not None and idx < len(ps):
+                    v = ps[idx].strip().strip('"')
+                    if v and v not in ("NA","","-"): name = v; break
+            if name:
+                ictv = n2r.get(name.lower()) or n2r.get(name)
+                if ictv:
+                    for rn in rank_cols:
+                        rv = ictv.get(rn, "NA")
+                        if rv != "NA":
+                            idx = ci.get(rn)
+                            if idx is not None and idx < len(ps):
+                                old = ps[idx].strip().strip('"')
+                                if old != rv and old != "":
+                                    ps[idx] = rv; corrected += 1
+            fo.write('\t'.join(ps) + '\n')
+
+    safe_print(f"  [fill] 纠正了 {corrected} 个 NCBI→ICTV 分类名")
 class VirusClassifier:
     def __init__(self, args, quiet_console=False, db_paths=None):
         self.args = args
@@ -714,12 +695,12 @@ class VirusClassifier:
         uniprot = self.db_paths.get("uniprot","")
         tools_ran = []  # 线程安全: 用 list + lock 或事后统计
 
-        cat_db = self.db_paths.get("cat", os.path.expanduser("~/database/virus-db/RVDB-30/CAT-db/db"))
-        cat_tax = self.db_paths.get("cat_tax", os.path.expanduser("~/database/virus-db/RVDB-30/CAT-db/tax"))
+        cat_db = self.db_paths.get("cat", os.path.expanduser("~/database/virus-db/RVDB-v31/CAT-db/db"))
+        cat_tax = self.db_paths.get("cat_tax", os.path.expanduser("~/database/virus-db/RVDB-v31/CAT-db/tax"))
         vdb = self.db_paths.get("VITAP", os.path.expanduser("~/database/virus-db/vitap-db/VMR-MSL40_DB"))
-        mdb = self.db_paths.get("mmseqs", os.path.expanduser("~/database/virus-db/RVDB-30/RVDB.mmseqs"))
+        mdb = self.db_paths.get("mmseqs", os.path.expanduser("~/database/virus-db/RVDB-v31/RVDB.mmseqs_db/RVDB.mmseqs"))
         if not os.path.exists(mdb):
-            for alt in ["RVDB-30/RVDB.mmseqs", "RVDB-v31/RVDB.mmseqs_db"]:
+            for alt in ["RVDB-v31/RVDB.mmseqs_db/RVDB.mmseqs", "RVDB-v31/RVDB.mmseqs_db"]:
                 p = os.path.join(os.path.expanduser("~/database/virus-db"), alt)
                 if os.path.exists(p): mdb = p; break
         adb = self.db_paths.get("ACVirus", os.path.expanduser("~/database/virus-db/acvirus_db"))
@@ -824,8 +805,13 @@ def main():
     p.add_argument('--acvirus-db'); p.add_argument('--vcontact3-db')
     args = p.parse_args()
 
-    all_tools = ["genomad","metabuli","CAT","diamond_lca","VITAP","mmseqs","ACVirus","vcontact3"]
-    args.tools = all_tools if args.tools.lower()=='all' else [t.strip() for t in args.tools.split(',') if t.strip() in all_tools]
+    all_tools = ["genomad","metabuli","CAT","diamond_lca","VITAP","mmseqs","ACVirus"]
+    optin_tools = ["vcontact3"]  # 仅显式指定时运行, 默认 all 不包含
+    valid_tools = all_tools + optin_tools
+    if args.tools.lower() == 'all':
+        args.tools = all_tools[:]
+    else:
+        args.tools = [t.strip() for t in args.tools.split(',') if t.strip() in valid_tools]
 
     # ── validate-only 模式: 不运行分类, 只对比已有结果 ──
     if getattr(args, 'validate_only', False):
@@ -855,11 +841,11 @@ def main():
     db_paths = {
         "genomad": args.genomad_db or os.path.join(args.db_dir,"genomad_db"),
         "metabuli": args.metabuli_db or os.path.join(args.db_dir,"RVDB-v31","RVDB_viroids.metabuli_db"),
-        "uniprot": args.uniprot_db or "",
-        "cat": args.cat_db or os.path.join(args.db_dir,"RVDB-30","CAT-db","db"),
-        "cat_tax": args.cat_tax or os.path.join(args.db_dir,"RVDB-30","CAT-db","tax"),
+        "uniprot": args.uniprot_db or os.path.join(args.db_dir,"RVDB-v31","RVDB_viroids.diamond_db","U-RVDBv31.0-prot_unique.dmnd"),
+        "cat": args.cat_db or os.path.join(args.db_dir,"RVDB-v31","CAT-db","db"),
+        "cat_tax": args.cat_tax or os.path.join(args.db_dir,"RVDB-v31","CAT-db","tax"),
         "VITAP": args.vitap_db or os.path.join(args.db_dir,"vitap-db","VMR-MSL40_DB"),
-        "mmseqs": args.mmseqs_db or os.path.join(args.db_dir,"RVDB-30","RVDB.mmseqs"),
+        "mmseqs": args.mmseqs_db or os.path.join(args.db_dir,"RVDB-v31","RVDB.mmseqs_db","RVDB.mmseqs"),
         "ACVirus": args.acvirus_db or os.path.join(args.db_dir,"acvirus_db"),
         "vcontact3": args.vcontact3_db or os.path.join(args.db_dir,"vConTACT3_db"),
     }

@@ -50,12 +50,22 @@ def run_tools(args):
         if not args.force and check_file(rvh_csv, 50):
             print(f"[SKIP] RNAVirHost — exists: {rvh_csv}")
         else:
-            rvh_dir = os.path.join(args.output_dir, "RVH_result"); os.makedirs(rvh_dir, exist_ok=True)
-            rvh_taxa = os.path.join(rvh_dir, "RVH_taxa.csv")
-            cmd1 = ["rnavirhost", "classify_order", "-i", args.input, "-o", rvh_taxa]
-            run_step(cmd1, "RNAVirHost Classify Order")
-            cmd2 = ["rnavirhost", "predict", "-i", args.input, "--taxa", rvh_taxa, "-o", rvh_dir]
-            run_step(cmd2, "RNAVirHost Predict")
+            # classify_order 输出 taxa 文件到父目录 (避免和 predict 的输出目录冲突)
+            rvh_taxa = os.path.join(args.output_dir, "RVH_taxa.csv")
+            if not args.force and check_file(rvh_taxa, 50):
+                print(f"[SKIP] RNAVirHost Classify Order — exists: {rvh_taxa}")
+            else:
+                cmd1 = ["rnavirhost", "classify_order", "-i", args.input, "-o", rvh_taxa]
+                run_step(cmd1, "RNAVirHost Classify Order")
+            # predict 输出到子目录, 需要干净目录 (RNAVirHost 不允许已存在)
+            rvh_dir = os.path.join(args.output_dir, "RVH_result")
+            if not args.force and check_file(rvh_csv, 50):
+                print(f"[SKIP] RNAVirHost Predict — exists: {rvh_csv}")
+            else:
+                if os.path.isdir(rvh_dir):
+                    import shutil; shutil.rmtree(rvh_dir)
+                cmd2 = ["rnavirhost", "predict", "-i", args.input, "--taxa", rvh_taxa, "-o", rvh_dir]
+                run_step(cmd2, "RNAVirHost Predict")
 
     # 2. PhaBOX2 CHERRY
     pb2_tsv = os.path.join(args.output_dir, "phabox2_output", "final_prediction", "cherry_prediction.tsv")
@@ -197,8 +207,8 @@ def main():
     p.add_argument("-o", "--output-dir", default="host_out", help="Output directory")
     p.add_argument("-t", "--threads", type=int, default=40, help="Threads to use")
     p.add_argument("--phabox-db", default=os.path.expanduser("~/database/virus-db/phabox_db_v2_2"), help="PhaBOX2 DB")
-    p.add_argument("--prob-dir", default="cross_analysis",
-                   help="ICTV 宿主概率表目录 (classify_contigs 使用, 默认: cross_analysis/)")
+    p.add_argument("--prob-dir", default=str(SCRIPT_DIR.parent / "cross_analysis"),
+                   help="ICTV 宿主概率表目录 (classify_contigs 使用)")
 
     p.add_argument("--mode", default="all",
                    choices=["all", "ICTV", "RNAVirHost", "PhaBOX2"],

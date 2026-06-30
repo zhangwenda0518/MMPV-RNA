@@ -62,11 +62,22 @@ def run(cmd, desc="", timeout=None, check=True):
 # ══════════════════════════════════════════════════════════════
 
 def run_vclust_prefilter_align_cluster(fasta_in, out_dir, ani=0.95, qcov=0.85, threads=4, algorithm="leiden"):
-    """vclust 三件套: prefilter → align → cluster。返回 clusters.tsv 路径"""
+    """vclust 三件套: prefilter → align → cluster。返回 clusters.tsv 路径 (支持断点续传)"""
     d = Path(out_dir); d.mkdir(parents=True, exist_ok=True)
     pre, atsv, ctsv, ids = d / "vclust_prefilter.txt", d / "vclust_ani.tsv", d / "vclust_clusters.tsv", d / "vclust_ani.ids.tsv"
-    run(["vclust", "prefilter", "-i", str(fasta_in), "-o", str(pre), "--min-ident", str(ani), "--threads", str(threads)], "vclust prefilter")
-    run(["vclust", "align", "--filter", str(pre), "-i", str(fasta_in), "--out-ani", str(ani), "--out-qcov", str(qcov), "-o", str(atsv), "--out-aln", str(d / "vclust_ani.aln.tsv"), "--threads", str(threads)], "vclust align")
+    # 断点续传: 最终结果已存在
+    if ctsv.is_file() and ctsv.stat().st_size > 100:
+        print(f"  [RESUME] vclust clusters 已存在 → {ctsv}")
+        return str(ctsv)
+    # 断点续传: ani.tsv 已存在, 跳过 prefilter+align
+    if atsv.is_file() and atsv.stat().st_size > 100:
+        print(f"  [RESUME] vclust ani.tsv 已存在, 跳过 prefilter+align → {atsv}")
+    else:
+        if not pre.is_file() or pre.stat().st_size < 100:
+            run(["vclust", "prefilter", "-i", str(fasta_in), "-o", str(pre), "--min-ident", str(ani), "--threads", str(threads)], "vclust prefilter")
+        else:
+            print(f"  [RESUME] vclust prefilter 已存在 → {pre}")
+        run(["vclust", "align", "--filter", str(pre), "-i", str(fasta_in), "--out-ani", str(ani), "--out-qcov", str(qcov), "-o", str(atsv), "--out-aln", str(d / "vclust_ani.aln.tsv"), "--threads", str(threads)], "vclust align")
     run(["vclust", "cluster", "-i", str(atsv), "-o", str(ctsv), "--ids", str(ids), "--algorithm", algorithm, "--metric", "ani", "--ani", str(ani), "--qcov", str(qcov), "--out-repr"], "vclust cluster")
     return str(ctsv)
 
@@ -83,6 +94,12 @@ def tag_and_merge_fasta(contig_fa, ref_fa, out_dir):
     """去重参考 → 给 ID 加前缀 → 合并: ref → ref|xxx, contig → our|xxx。返回 (merged_fa, ref_id_set)"""
     d = Path(out_dir); d.mkdir(parents=True, exist_ok=True)
     merged = d / "cdhit_combined.fasta"
+
+    # 断点续传: merged FASTA 已存在
+    if merged.is_file() and merged.stat().st_size > 0:
+        print(f"  [RESUME] CD-HIT merged FASTA 已存在 → {merged}")
+        ref_ids = {rec.id for rec in SeqIO.parse(merged, "fasta") if rec.id.startswith(TAG_REF)}
+        return str(merged), ref_ids
 
     # 0. 统计去重前参考数
     n_ref_before = sum(1 for _ in SeqIO.parse(ref_fa, "fasta")) if ref_fa and os.path.isfile(ref_fa) else 0
@@ -135,10 +152,12 @@ def split_cdhit_clusters(clusters_dict, ref_id_set):
 
     for cname, info in clusters_dict.items():
         rep = info["ref"]  # cd-hit 中最长序列为代表
-        if rep.startswith(TAG_REF):
+        # 检查 cluster 中是否有任何参考序列 (不只看 rep — contig 可能比参考更长)
+        ref_members = [m for m in info["members"] if m.startswith(TAG_REF)]
+        if ref_members:
             known[cname] = info
-            # 记录 contig→参考 关联
-            ref_acc = strip_tags(rep)
+            # 记录 contig→参考 关联 (用第一个参考做代表)
+            ref_acc = strip_tags(ref_members[0])
             for member in info["members"]:
                 if member.startswith(TAG_OUR):
                     association[strip_tags(member)] = ref_acc
@@ -383,6 +402,10 @@ def main():
     p.add_argument("--qcov", type=float, default=0.85)
     p.add_argument("--skip-vclust", action="store_true")
     p.add_argument("--vclust-cluster-file", default=None)
+    p.add_argument("--skip-rmdup", action="store_true",
+                   help="跳过 genome_rmDuplicates 去冗余步骤")
+    p.add_argument("--rmdup-length", type=int, default=1000,
+                   help="genome_rmDuplicates 短序列阈值 bp (默认: 1000)")
     p.add_argument("--ref-genomes", default=None, nargs='*',
                    help="ICTV/NCBI 参考基因组 FASTA (可多个, 启用 CD-HIT 参考引导预聚类)")
     p.add_argument("--cdhit-ani", type=float, default=0.95,
@@ -449,7 +472,7 @@ def main():
                                                args.threads, args.min_length)
             print(f"  CD-HIT 结果: {n_known_clusters} 个 known 簇有关联 contig, {n_novel} 新颖 contig → vclust Leiden")
             # 保存 association 表到 centroids
-            assoc_out = out / "centroids" / "known_association.tsv"
+            assoc_out = out / "04_centroids" / "known_association.tsv"
             assoc_out.parent.mkdir(parents=True, exist_ok=True)
             src_assoc = Path(out) / "2_cdhit" / "known_association.tsv"
             if src_assoc.is_file():
@@ -487,10 +510,68 @@ def main():
                     grf.write(f"{fasta_info[rid]['header']}\n{fasta_info[rid]['seq']}\n")
     print(f"  代表序列合集: {global_ref_fa}")
 
+    # ── Step 3: genome_rmDuplicates 去冗余 ──
+    d3_rmdup_fa = d2 / "all.cluster.ref.rmdup.fasta"
+    d3_tmp = d2 / "tmp"
+    rmdup_script = Path(__file__).resolve().parent / "utils" / "genome_rmDuplicates.pl"
+
+    if args.resume and d3_rmdup_fa.is_file() and d3_rmdup_fa.stat().st_size > 0:
+        print(f"\n  [RESUME] Step 3 rmdup 已有结果 → {d3_rmdup_fa}")
+        rmdup_ids = set()
+        for rec in SeqIO.parse(d3_rmdup_fa, "fasta"):
+            rmdup_ids.add(rec.id)
+        # 过滤 clusters
+        n_before = len(clusters)
+        clusters = {cname: info for cname, info in clusters.items() if info["ref"] in rmdup_ids}
+        print(f"  过滤 clusters: {n_before} → {len(clusters)} 簇")
+    elif args.skip_rmdup or not rmdup_script.is_file():
+        if not rmdup_script.is_file():
+            print(f"\n── Step 3: 跳过 genome_rmDuplicates (脚本不存在: {rmdup_script})")
+        else:
+            print(f"\n── Step 3: 跳过 genome_rmDuplicates (--skip-rmdup)")
+        rmdup_ids = None  # 全部保留
+    else:
+        print(f"\n── Step 3: genome_rmDuplicates 去冗余 ──")
+        rmdup_cmd = [
+            "perl", str(rmdup_script),
+            "--length", str(args.rmdup_length),
+            "--CPU", str(args.threads),
+            "--tmp", str(d3_tmp),
+            str(global_ref_fa)
+        ]
+        with open(d3_rmdup_fa, "w") as rf:
+            result = run(rmdup_cmd, "genome_rmDuplicates", timeout=86400, check=False)
+            if result:
+                if result.stdout:
+                    rf.write(result.stdout)
+                if result.returncode != 0:
+                    print(f"  [WARN] genome_rmDuplicates 退出码 {result.returncode}")
+                    if result.stderr:
+                        for line in result.stderr.strip().split('\n')[-5:]:
+                            print(f"         {line}")
+        if d3_rmdup_fa.is_file() and d3_rmdup_fa.stat().st_size > 0:
+            rmdup_ids = set()
+            for rec in SeqIO.parse(d3_rmdup_fa, "fasta"):
+                rmdup_ids.add(rec.id)
+            n_rmdup = len(rmdup_ids)
+            n_removed = len(clusters) - n_rmdup
+            print(f"  去冗余: {len(clusters)} → {n_rmdup} 条代表序列 (移除 {n_removed} 条, {n_removed/max(len(clusters),1)*100:.1f}%)")
+            # 过滤 clusters: 只保留代表序列未被移除的簇
+            clusters = {cname: info for cname, info in clusters.items() if info["ref"] in rmdup_ids}
+            # 重写 global_ref_fa
+            with open(global_ref_fa, "w") as grf:
+                for cname, info in clusters.items():
+                    rid = info["ref"]
+                    if rid in fasta_info:
+                        grf.write(f"{fasta_info[rid]['header']}\n{fasta_info[rid]['seq']}\n")
+        else:
+            print(f"  [WARN] genome_rmDuplicates 无输出, 保留全部代表序列")
+            rmdup_ids = None
+
     # 产出 centroids (供 taxonomy/host 阶段读取)
     # final_centroids.fasta = known_linked (有关联 contig 的已知簇) + vclust novel
     # 纯参考簇 (无 contig 关联) 不进入 — 我们的目的是分析样本
-    final_dir = out / "centroids"; final_dir.mkdir(parents=True, exist_ok=True)
+    final_dir = out / "04_centroids"; final_dir.mkdir(parents=True, exist_ok=True)
     centroids_fa = final_dir / "final_centroids.fasta"
     known_id_file = final_dir / "known_ids.txt"
 

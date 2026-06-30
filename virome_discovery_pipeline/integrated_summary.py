@@ -78,6 +78,21 @@ def load_suvtk_taxonomy(path):
         }
     return data
 
+
+def load_miuvig_taxonomy(path):
+    """suvtk miuvig_taxonomy.tsv: contig\pred_genome_type\pred_genome_struc"""
+    data = {}
+    if not Path(path).is_file(): return data
+    rows = _read_tsv(path)
+    for r in rows:
+        cid = r.get("contig", r.get("contig_id", ""))
+        if not cid: continue
+        data[cid] = {
+            "genome_type": r.get("pred_genome_type", ""),
+            "genome_struc": r.get("pred_genome_struc", ""),
+        }
+    return data
+
 def load_suvtk_features(path):
     """suvtk featuretable.tbl: 统计每 contig 的 CDS/tRNA 数量"""
     data = defaultdict(lambda: {"cds_count": 0, "trna_count": 0, "gene_products": []})
@@ -139,8 +154,20 @@ def main():
     root = Path(args.output_dir)
     analysis_dir = Path(args.analysis_dir) if args.analysis_dir else root / "09_Virome_Analysis"
 
-    # 输入
+    # 输入 — 自动探测 {sample}.integrated 目录
     r_tsv = root / "05_Taxonomy" / "Votus.integrated" / "final_integrated_classification.tsv"
+    if not r_tsv.is_file():
+        tax_dir = root / "05_Taxonomy"
+        for d in tax_dir.glob("*.integrated"):
+            candidate = d / "final_integrated_classification.tsv"
+            if candidate.is_file():
+                r_tsv = candidate
+                break
+        else:
+            d2 = tax_dir / "integrated"
+            c2 = d2 / "final_integrated_classification.tsv"
+            if c2.is_file():
+                r_tsv = c2
     sv_tax = analysis_dir / "suvtk_taxonomy" / "taxonomy.tsv"
     sv_feat = analysis_dir / "suvtk_features" / "featuretable.tbl"
     all_fa = root / "08_Rescue" / "all_plant_viruses.fasta"
@@ -159,20 +186,61 @@ def main():
     features = load_suvtk_features(sv_feat)
     print(f"    {len(features)} 条 CDS 特征")
 
+    miuvig_tax_path = analysis_dir / "suvtk_taxonomy" / "miuvig_taxonomy.tsv"
+    print(f"[3b] suvtk miuvig taxonomy: {miuvig_tax_path}")
+    miuvig_data = load_miuvig_taxonomy(miuvig_tax_path)
+    print(f"    {len(miuvig_data)} 条 genome_type 记录")
+
     n_plant = _count_fasta(all_fa)
     print(f"[4] 植物病毒序列: {all_fa}")
     print(f"    {n_plant} 条序列\n")
 
-    # 整合
+    # 4b. CheckV completeness
+    checkv_data = {}
+    for cv_tsv in [
+        root / "08_Rescue" / "checkv" / "Plant" / "completeness.tsv",
+        root / "08_Rescue" / "checkv" / "no_rescue" / "completeness.tsv",
+        root / "07_Checkv" / "Plant" / "completeness.tsv",
+    ]:
+        if cv_tsv.is_file():
+            for r in _read_tsv(cv_tsv):
+                cid = r.get("contig_id", "")
+                if cid and cid not in checkv_data:
+                    checkv_data[cid] = {
+                        "aai_completeness": r.get("aai_completeness", ""),
+                        "aai_confidence": r.get("aai_confidence", ""),
+                        "aai_expected_length": r.get("aai_expected_length", ""),
+                        "aai_error": r.get("aai_error", ""),
+                        "aai_num_hits": r.get("aai_num_hits", ""),
+                        "aai_top_hit": r.get("aai_top_hit", ""),
+                        "aai_id": r.get("aai_id", ""),
+                        "aai_af": r.get("aai_af", ""),
+                    }
+    print(f"[4b] CheckV: {len(checkv_data)} 条评估记录")
+
+    # 整合 — 同时读取序列长度
     plant_ids = set()
+    seq_lens = {}
     if all_fa.is_file():
+        cur_id, cur_seq = None, []
         for line in open(all_fa):
             if line.startswith('>'):
-                plant_ids.add(line[1:].split()[0])
+                if cur_id:
+                    seq_lens[cur_id] = len("".join(cur_seq))
+                cur_id = line[1:].split()[0]
+                plant_ids.add(cur_id)
+                cur_seq = []
+            else:
+                cur_seq.append(line.strip())
+        if cur_id:
+            seq_lens[cur_id] = len("".join(cur_seq))
 
     cols = [
         "contig_id", "length",
         "cds_count", "trna_count",
+        "genome_type", "genome_struc",
+        "aai_completeness", "aai_confidence", "aai_expected_length",
+        "aai_error", "aai_num_hits", "aai_top_hit", "aai_id", "aai_af",
         "tax_consensus",
         "best_family", "best_genus", "best_species",
         "r_family", "r_genus", "r_species",
@@ -189,14 +257,23 @@ def main():
             ft = features.get(cid, {})
 
             tax = compare_taxonomy(r_cons, suvtk_tax, cid)
+            miu = miuvig_data.get(cid, {})
+            cv = checkv_data.get(cid, {})
 
-            # 从 FASTA 获取长度
-            seq_len = ""
-            # (长度可选, 暂不读)
             vals = [
-                cid, seq_len,
+                cid, seq_lens.get(cid, ""),
                 ft.get("cds_count", 0),
                 ft.get("trna_count", 0),
+                miu.get("genome_type", ""),
+                miu.get("genome_struc", ""),
+                cv.get("aai_completeness", ""),
+                cv.get("aai_confidence", ""),
+                cv.get("aai_expected_length", ""),
+                cv.get("aai_error", ""),
+                cv.get("aai_num_hits", ""),
+                cv.get("aai_top_hit", ""),
+                cv.get("aai_id", ""),
+                cv.get("aai_af", ""),
                 tax["tax_consensus"],
                 tax["best_family"], tax["best_genus"], tax["best_species"],
                 tax["r_family"], tax["r_genus"], tax["r_species"],

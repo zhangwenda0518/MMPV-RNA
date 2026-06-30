@@ -68,6 +68,18 @@ def main():
     # R 共识 (05_Taxonomy)
     r_data = {}
     r_tsv = root / "05_Taxonomy" / "Votus.integrated" / "final_integrated_classification.tsv"
+    if not r_tsv.is_file():
+        tax_dir = root / "05_Taxonomy"
+        for d in tax_dir.glob("*.integrated"):
+            candidate = d / "final_integrated_classification.tsv"
+            if candidate.is_file():
+                r_tsv = candidate
+                break
+        else:
+            d2 = tax_dir / "integrated"
+            c2 = d2 / "final_integrated_classification.tsv"
+            if c2.is_file():
+                r_tsv = c2
     if r_tsv.is_file():
         for r in _read_tsv(r_tsv):
             cid = r.get("contig_id","").strip('"')

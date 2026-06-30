@@ -8,7 +8,7 @@ Virome Pipeline v2.3 — 宏病毒组端到端全自动主控流水线
 数据流:
   Raw FASTQ ──→ [00a_CleanData] ──→ [00b_HostDepletion] ──→ [01_Assembly]
                                                                    │
-   [05_Reports] ←── [04_CLUSTER] ←── [03_COBRA] ←── [02_Identification] ←──┘
+   [05_Reports] ←── [04_CLUSTER] ←── [03b_MergeSamples] ←── [03a_COBRA] ←── [02_Identification] ←──┘
 
 依赖脚本 (同目录):
   clean-data.py              → Step 0a: Fastp + Seqkit + Clumpify
@@ -249,8 +249,13 @@ class ViromePipeline:
             'bbnorm':    out / '00c_BBnorm',
             'asm':       out / '01_Assembly',
             'ident':     out / '02_Identification',
-            'cobra':     out / '03_COBRA',
-            'cluster':   out / '04_CLUSTER',
+            'cobra':         out / '03_COBRA',
+            '_cobra_dirs':   [out / '03a_COBRA', out / '03_COBRA'],
+            'merge_samples': out / '03b_MergeSamples',
+            'cluster':       out / '04_CLUSTER',
+            'centroids':     out / '04_CLUSTER' / '4_centroids',  # 旧集群用 4.centroids
+            '_centroids_v1': out / '04_CLUSTER' / '4.centroids',
+            '_centroids_v2': out / '04_CLUSTER' / 'centroids',    # 新集群用 centroids
             'taxonomy':  out / '05_Taxonomy',
             'host_pred':  out / '06_HostPrediction',
             'checkv_dir': out / '07_Checkv',
@@ -284,7 +289,7 @@ class ViromePipeline:
         self._validate()
 
         # 检测原始样本
-        no_reads_stages = {'identification', 'cluster', 'taxonomy', 'host', 'checkv', 'report'}
+        no_reads_stages = {'identification', 'merge', 'cluster', 'taxonomy', 'host', 'checkv', 'report', 'rescue'}
         if not set(self.args.stage).issubset(no_reads_stages):
             self.orig_samples = scan_samples_in_dir(self.reads_dir)
             if not self.orig_samples:
@@ -629,11 +634,22 @@ class ViromePipeline:
         self.viral_map = scan_viral_files(self.d['ident'])
         self.log.info("  鉴定完成: %d 样本有病毒候选序列", len(self.viral_map))
 
-    # ── Step 3: COBRA 延伸 ──
+    # ── Step 3a: COBRA 延伸 ──
+    # ── 自动探测 COBRA 目录 (兼容 03a_COBRA / 03_COBRA) ──
+    def _resolve_cobra_dir(self):
+        for d in self.d.get('_cobra_dirs', [self.d['root'] / '03a_COBRA']):
+            if d.is_dir():
+                self.d['cobra'] = d
+                return d
+        self.d['cobra'] = self.d['root'] / '03a_COBRA'
+        return self.d['cobra']
+
+    # ── Step 3a: COBRA 延伸 ──
     def run_cobra(self):
+        self._resolve_cobra_dir()
         self.d['cobra'].mkdir(parents=True, exist_ok=True)
         self.log.info("=" * 50)
-        self.log.info("[3] COBRA 批量延伸 (BWA-MEM2 + COBRA + CheckV)")
+        self.log.info("[3a] COBRA 批量延伸 (BWA-MEM2 + COBRA + CheckV)")
 
         # cobra_pipeline.py 完整参数:
         #   --mode, --reads-dir, --contigs-dir, --virsorter-dir, --output-dir,
@@ -679,53 +695,176 @@ class ViromePipeline:
         self.log.info("  COBRA 阶段完成")
         self.log.info("  输出: %s", self.d['cobra'])
 
+    # ── Step 3b: 合并多样本 COBRA 结果 + 可选 Flye 共组装 ──
+    def run_merge_samples(self):
+        self._resolve_cobra_dir()
+        """
+        收集 03a_COBRA 下所有样本的结果, 合并为单个 FASTA。
+        默认对合并结果跑 Flye --subassemblies; --skip-flye 可跳过。
+        最终输出 Flye 延伸版 + 原始合并版的拼接文件。
+        产出: 03b_MergeSamples/all_sample_virus.fasta (或 _combined.fasta)
+        """
+        merge_dir = self.d['merge_samples']
+        merge_dir.mkdir(parents=True, exist_ok=True)
+
+        self._resolve_cobra_dir()
+        self.log.info("=" * 50)
+        self.log.info("[3b] 合并多样本 COBRA 结果")
+
+        cobra_dir = self.d['cobra']
+        if not cobra_dir.is_dir():
+            self.log.error("COBRA 输出 %s 不存在, 跳过 merge", cobra_dir)
+            sys.exit(1)
+
+        # ── 收集合并 ──
+        merged_fa = merge_dir / "all_sample_virus.fasta"
+        n_cobra, n_virus = 0, 0
+        with open(merged_fa, 'w') as out:
+            for sd in cobra_dir.iterdir():
+                if not sd.is_dir():
+                    continue
+                cobra_files = list(sd.rglob('*.cobra.fa'))
+                if cobra_files:
+                    for cf in cobra_files:
+                        with open(cf) as inf:
+                            out.write(inf.read())
+                            n_cobra += 1
+                else:
+                    for vf in sd.rglob('*virus*.fasta'):
+                        with open(vf) as inf:
+                            out.write(inf.read())
+                            n_virus += 1
+                    for vf in sd.rglob('*virus*.fa'):
+                        with open(vf) as inf:
+                            out.write(inf.read())
+                            n_virus += 1
+
+        if merged_fa.stat().st_size == 0:
+            self.log.error("合并后 FASTA 为空, 未找到任何 COBRA 或 virus 结果")
+            sys.exit(1)
+
+        n_input = n_cobra + n_virus
+        total_bp = sum(len(rec.seq) for rec in SeqIO.parse(str(merged_fa), "fasta"))
+        if n_virus:
+            self.log.info("  合并: %d cobra + %d virus = %d 条, %.1f Mb → %s", n_cobra, n_virus, n_input, total_bp / 1e6, merged_fa)
+        else:
+            self.log.info("  合并: %d cobra, %.1f Mb → %s", n_cobra, total_bp / 1e6, merged_fa)
+
+        # ── Flye 共组装 (可选) ──
+        if getattr(self.args, 'skip_flye', False):
+            self.log.info("  merge 阶段完成 (跳过 Flye)")
+            return
+
+        flye_dir = merge_dir / "flye_coassembly"
+        flye_dir.mkdir(parents=True, exist_ok=True)
+        flye_out = flye_dir / "flye_output"
+
+        min_ovlp = getattr(self.args, 'flye_min_overlap', 500)
+        read_err = getattr(self.args, 'flye_read_error', 0.005)
+
+        self.log.info("-" * 40)
+        self.log.info("  Flye --subassemblies: min_overlap=%d, read_error=%.3f", min_ovlp, read_err)
+
+        flye_cmd = (
+            f"flye --subassemblies {merged_fa}"
+            f" -t {self.args.threads}"
+            f" --meta"
+            f" --read-error {read_err}"
+            f" -m {min_ovlp}"
+            f" -o {flye_out}"
+        )
+
+        ok, _ = run_cmd(flye_cmd, self.log, "Flye co-assembly", str(flye_dir / "flye.log"))
+        if not ok:
+            self.log.warning("Flye 运行失败, merge 输出为原始合并结果")
+            return
+
+        flye_assembly = flye_out / "assembly.fasta"
+        if not flye_assembly.exists() or flye_assembly.stat().st_size == 0:
+            self.log.warning("Flye 未产出有效 contig, merge 输出为原始合并结果")
+            return
+
+        n_flye = sum(1 for _ in open(flye_assembly) if _.startswith('>'))
+        flye_bp = sum(len(rec.seq) for rec in SeqIO.parse(str(flye_assembly), "fasta"))
+        self.log.info("  Flye 产出: %d 条 contig, %.1f Mb", n_flye, flye_bp / 1e6)
+
+        # 溯源报告
+        trace_script = SCRIPT_DIR / "utils" / "flye_trace_native.py"
+        if trace_script.exists():
+            run_cmd(
+                f"python {trace_script} -i {flye_out} -o {flye_dir / 'flye_mapping.tsv'} -s {flye_dir / 'flye_summary.txt'} -p {flye_dir / 'flye_report.png'} --full",
+                self.log, "Flye trace", str(flye_dir / "trace.log")
+            )
+
+        # 合并: Flye + 原始 → combined
+        combined_fa = merge_dir / "all_sample_virus_combined.fasta"
+        with open(combined_fa, 'w') as out:
+            with open(flye_assembly) as inf:
+                out.write(inf.read())
+            with open(merged_fa) as inf:
+                out.write(inf.read())
+
+        n_combined = sum(1 for _ in open(combined_fa) if _.startswith('>'))
+        combined_bp = sum(len(rec.seq) for rec in SeqIO.parse(str(combined_fa), "fasta"))
+        self.log.info("  合并: Flye %d + 原始 %d = %d 条, %.1f Mb → %s",
+                      n_flye, n_input, n_combined, combined_bp / 1e6, combined_fa)
+        self.log.info("  merge 阶段完成 (含 Flye 共组装)")
+
     # ── Step 4: CLUSTER 三支路去冗余 ──
     def run_cluster(self):
+        self._resolve_cobra_dir()
         self.d['cluster'].mkdir(parents=True, exist_ok=True)
         self.log.info("=" * 50)
         self.log.info("[4] CLUSTER 三支路病毒基因组去冗余")
 
-        # 优先使用直接输入, 否则按样本收集 03_COBRA: 有 cobra.fa 用 cobra, 否则 virus.fa
+        # 确定 cluster 输入
         if self.args.cluster_input and os.path.isfile(self.args.cluster_input):
             cluster_fa = Path(self.args.cluster_input)
             self.log.info("  CLUSTER 直接输入: %s", cluster_fa)
         else:
-            cobra_dir = self.d['cobra']
-            if not cobra_dir.is_dir():
-                self.log.error("COBRA 输出 %s 不存在, 跳过 CLUSTER", cobra_dir)
-                return
-            cluster_fa = Path(self.d['root']) / "cluster_input.fasta"
+            # 优先取 merge stage 的输出
+            merge_out = self.d['merge_samples']
+            combined_fa = merge_out / "all_sample_virus_combined.fasta"
+            raw_fa = merge_out / "all_sample_virus.fasta"
 
-            n_cobra, n_virus = 0, 0
-            with open(cluster_fa, 'w') as out:
-                for sd in cobra_dir.iterdir():
-                    if not sd.is_dir():
-                        continue
-                    # 检查该样本是否有 cobra 延伸结果
-                    cobra_files = list(sd.rglob('*.cobra.fa'))
-                    if cobra_files:
-                        for cf in cobra_files:
-                            with open(cf) as inf:
-                                out.write(inf.read())
-                                n_cobra += 1
-                    else:
-                        # 无延伸, 回退到原始 virus.fa
-                        for vf in sd.rglob('*virus*.fasta'):
-                            with open(vf) as inf:
-                                out.write(inf.read())
-                                n_virus += 1
-                        for vf in sd.rglob('*virus*.fa'):
-                            with open(vf) as inf:
-                                out.write(inf.read())
-                                n_virus += 1
-
-            if cluster_fa.stat().st_size == 0:
-                self.log.warning("未找到任何输入, 跳过 CLUSTER")
-                return
-            if n_virus:
-                self.log.info("  CLUSTER 输入 (自动收集): %d cobra + %d virus → %s", n_cobra, n_virus, cluster_fa)
+            if combined_fa.exists() and combined_fa.stat().st_size > 0:
+                cluster_fa = combined_fa
+                self.log.info("  CLUSTER 输入 (merge+Flye): %s", cluster_fa)
+            elif raw_fa.exists() and raw_fa.stat().st_size > 0:
+                cluster_fa = raw_fa
+                self.log.info("  CLUSTER 输入 (merge): %s", cluster_fa)
             else:
-                self.log.info("  CLUSTER 输入 (自动收集): %d cobra → %s", n_cobra, cluster_fa)
+                # 向后兼容: 现场收集
+                self.log.info("  未找到 merge 输出, 现场收集 COBRA 结果...")
+                cobra_dir = self.d['cobra']
+                if not cobra_dir.is_dir():
+                    self.log.error("COBRA 输出 %s 不存在, 跳过 CLUSTER", cobra_dir)
+                    return
+                cluster_fa = Path(self.d['root']) / "cluster_input.fasta"
+                n_cobra, n_virus = 0, 0
+                with open(cluster_fa, 'w') as out:
+                    for sd in cobra_dir.iterdir():
+                        if not sd.is_dir():
+                            continue
+                        cobra_files = list(sd.rglob('*.cobra.fa'))
+                        if cobra_files:
+                            for cf in cobra_files:
+                                with open(cf) as inf:
+                                    out.write(inf.read())
+                                    n_cobra += 1
+                        else:
+                            for vf in sd.rglob('*virus*.fasta'):
+                                with open(vf) as inf:
+                                    out.write(inf.read())
+                                    n_virus += 1
+                            for vf in sd.rglob('*virus*.fa'):
+                                with open(vf) as inf:
+                                    out.write(inf.read())
+                                    n_virus += 1
+                if cluster_fa.stat().st_size == 0:
+                    self.log.warning("未找到任何输入, 跳过 CLUSTER")
+                    return
+                self.log.info("  CLUSTER 输入 (现场收集): %d cobra + %d virus", n_cobra, n_virus)
 
         self.log.info("  CLUSTER 输入: %s", cluster_fa)
 
@@ -752,6 +891,10 @@ class ViromePipeline:
             parts.append("--skip-vclust")
         if self.args.vclust_cluster_file:
             parts.append(f"--vclust-cluster-file {self.args.vclust_cluster_file}")
+        if getattr(self.args, 'skip_rmdup', False):
+            parts.append("--skip-rmdup")
+        if getattr(self.args, 'rmdup_length', None):
+            parts.append(f"--rmdup-length {self.args.rmdup_length}")
         if not self.args.force:
             parts.append("--resume")
 
@@ -760,8 +903,12 @@ class ViromePipeline:
             self.log.error("CLUSTER vclust 阶段失败, 终止。")
             sys.exit(1)
 
-        centroids = Path(self.d['cluster']) / "centroids" / "final_centroids.fasta"
-        if centroids.exists():
+        centroids = self.d['centroids'] / "final_centroids.fasta"
+        if not centroids.is_file():
+            for alt_key in ['_centroids_v1', '_centroids_v2']:
+                centroids = self.d[alt_key] / "final_centroids.fasta"
+                if centroids.is_file(): break
+        if centroids.is_file():
             n = sum(1 for _ in open(centroids) if _.startswith('>'))
             self.log.info("  CLUSTER 输出: %d 条 centroids → %s", n, centroids)
         else:
@@ -781,9 +928,19 @@ class ViromePipeline:
             self.log.error("宿主预测结果 %s 不存在, 请先运行 --stage host", host_summary)
             sys.exit(1)
 
-        centroids_fa = self.d['cluster'] / "centroids" / "final_centroids.fasta"
-        if not centroids_fa.exists():
-            self.log.error("centroids %s 不存在, 请先运行 --stage cluster", centroids_fa)
+        centroids_fa = self.d['centroids'] / "final_centroids.fasta"
+        if not centroids_fa.is_file():
+            centroids_fa = self.d['centroids'] / "final_centroids.fasta"
+        for alt_key in ['_centroids_v1', '_centroids_v2']:
+            if centroids_fa.is_file(): break
+            centroids_fa = self.d[alt_key] / "final_centroids.fasta"
+        if not centroids_fa.is_file():
+            self.log.error("centroids 不存在 (试了 4_centroids, 4.centroids, centroids), 请先运行 --stage cluster")
+            sys.exit(1)
+
+        clusters_tsv = self.d['cluster'] / "3_vclust" / "vclust_clusters.tsv"
+        if not clusters_tsv.is_file():
+            self.log.error("clusters.tsv %s 不存在", clusters_tsv)
             sys.exit(1)
 
         clusters_tsv = self.d['cluster'] / "3_vclust" / "vclust_clusters.tsv"
@@ -838,7 +995,7 @@ class ViromePipeline:
 
         # 3. 输出 Unknown centroids
         if unknown_ids:
-            unknown_out = self.d['cluster'] / "centroids" / "unknown_votus.fasta"
+            unknown_out = self.d['centroids'] / "unknown_votus.fasta"
             with open(unknown_out, "w") as uf:
                 written = 0
                 for cid in unknown_ids:
@@ -852,7 +1009,7 @@ class ViromePipeline:
             if not ids:
                 continue
             safe_host = host.replace("/", "_").replace(" ", "_")
-            host_out = self.d['cluster'] / "centroids" / f"skipped_{safe_host}.fasta"
+            host_out = self.d['centroids'] / f"skipped_{safe_host}.fasta"
             with open(host_out, "w") as hf:
                 written = 0
                 for cid in ids:
@@ -867,7 +1024,7 @@ class ViromePipeline:
             return
 
         # 4.5 区分 CD-HIT known vs vclust novel
-        known_id_file = self.d['cluster'] / "centroids" / "known_ids.txt"
+        known_id_file = self.d['centroids'] / "known_ids.txt"
         cdhit_known_ids = set()
         if known_id_file.is_file():
             with open(known_id_file) as kf:
@@ -964,17 +1121,32 @@ class ViromePipeline:
             f"--ani {self.args.ani}",
             f"--qcov {self.args.qcov}",
         ]
-        if self.args.blast_db:
-            parts.append(f"-db {self.args.blast_db}")
+        # 分支 C 默认用 centroids + cdhit_combined 自动建库
+        # 如需外部 BLAST DB, 在 run_config.json 中加 "extra_blast_db" 即可
+        if getattr(self.args, 'extra_blast_db', None):
+            parts.append(f"-db {getattr(self.args, 'extra_blast_db')}")
         vsi_path = self.args.virseqimprover_path or str(self.sc['cluster'].parent / 'Virseqimprover.py')
         parts += [f"--virseqimprover-path {vsi_path}"]
         parts += [f"--salmon-bin {self.args.salmon_bin}"]
         parts += [f"--max-vsi-samples {self.args.max_vsi_samples}"]
         parts += [f"--min-vsi-len {self.args.min_vsi_len}"]
-        if getattr(self.args, 'checkv_threshold', 90.0) != 90.0:
-            parts += [f"--checkv-threshold {self.args.checkv_threshold}"]
+        parts += [f"--checkv-threshold {getattr(self.args, 'checkv_threshold', 90.0)}"]
+        # Taxonomy + genus_len (分支 D + VSI genus_avg_len 备选截止)
+        sample = getattr(self.args, 'tax_sample_name', None) or "Votus"
+        tax_tsv = self.d['taxonomy'] / f"{sample}.integrated" / "final_integrated_classification.tsv"
+        if tax_tsv.is_file():
+            parts.append(f"--taxonomy-tsv {tax_tsv}")
+        genus_len_path = Path(os.path.expanduser("~/database/virus-db/db/genus_lens"))
+        if not genus_len_path.is_file():
+            genus_len_path = self.script_dir.parent / "database" / "genus_lens"
+        if genus_len_path.is_file():
+            parts.append(f"--genus-len {genus_len_path}")
         if not self.args.force:
             parts.append("--resume")
+        # cdhit_combined.fasta (供分支C自动建库)
+        cdhit_fa = self.d['cluster'] / "2_cdhit" / "cdhit_combined.fasta"
+        if cdhit_fa.is_file():
+            parts.append(f"--cdhit-fa {cdhit_fa}")
 
         ok, _ = run_cmd(' '.join(parts), self.log, f"Rescue ({','.join(host_filter)})", str(rescue_out / "rescue.log"))
         if ok:
@@ -1118,14 +1290,14 @@ class ViromePipeline:
             all_stats["免拯救(known+≥90%)"] = (dist, total)
 
         # 2. Unknown centroids
-        unknown_fa = self.d['cluster'] / "centroids" / "unknown_votus.fasta"
+        unknown_fa = self.d['centroids'] / "unknown_votus.fasta"
         if unknown_fa.exists():
             dist, total = self._run_checkv_on_fasta(unknown_fa, self.d['rescue_dir'] / "checkv" / "unknown")
             all_stats["Unknown"] = (dist, total)
 
         # 3. 跳过的宿主 centroids
         seen_hosts = set()
-        for f in (self.d['cluster'] / "centroids").glob("skipped_*.fasta"):
+        for f in (self.d['centroids']).glob("skipped_*.fasta"):
             host_label = f.stem.replace("skipped_", "").replace("_", " ")
             if host_label in seen_hosts:
                 continue
@@ -1134,7 +1306,7 @@ class ViromePipeline:
             all_stats[f"Skipped_{host_label}"] = (dist, total)
 
         # 4. 汇总 centroids
-        all_centroids = self.d['cluster'] / "centroids" / "final_centroids.fasta"
+        all_centroids = self.d['centroids'] / "final_centroids.fasta"
         if all_centroids.exists():
             dist, total = self._run_checkv_on_fasta(all_centroids, self.d['rescue_dir'] / "checkv" / "all")
             all_stats["All_centroids"] = (dist, total)
@@ -1195,7 +1367,7 @@ class ViromePipeline:
         self.log.info("=" * 50)
         self.log.info("[5] 病毒分类注释 (virus_classifier.py + R 共识整合)")
 
-        centroids = self.d['cluster'] / "centroids" / "final_centroids.fasta"
+        centroids = self.d['centroids'] / "final_centroids.fasta"
         if not centroids.exists():
             self.log.warning("未找到 centroids, 跳过分类")
             return
@@ -1280,7 +1452,7 @@ class ViromePipeline:
         self.log.info("=" * 50)
         self.log.info("[6] 宿主预测 (RNAVirHost + PhaBOX2 + ICTV, ICTV > RVH > PB2)")
 
-        centroids = self.d['cluster'] / "centroids" / "final_centroids.fasta"
+        centroids = self.d['centroids'] / "final_centroids.fasta"
         sample = getattr(self.args, 'tax_sample_name', None) or "Votus"
         tax_tsv = self.d['taxonomy'] / f"{sample}.integrated" / "final_integrated_classification.tsv"
         if not centroids.exists():
@@ -1327,7 +1499,7 @@ class ViromePipeline:
         self.log.info("[CheckV] 按宿主分类预评估 centroids 完整性")
 
         host_summary = self.d['host_pred'] / "ensemble_host_summary.tsv"
-        centroids_fa = self.d['cluster'] / "centroids" / "final_centroids.fasta"
+        centroids_fa = self.d['centroids'] / "final_centroids.fasta"
 
         if not host_summary.exists():
             self.log.warning("宿主预测结果不存在, 跳过 CheckV 预评估")
@@ -1432,58 +1604,23 @@ class ViromePipeline:
 
     # ── Step 09: 病毒基因组下游分析 + GenBank 提交 ──
     def run_analysis(self):
+        """[9] 病毒基因组下游分析 + suvtk 注释 (合并阶段)
+
+        1. suvtk taxonomy → features → hypothetical → tbl2gb → topology
+        2. integrate_taxonomy_suvtk (05_Taxonomy + suvtk 交叉补充)
+        3. virome_analysis.py (丰度/多样性等)
+        4. integrated_summary.py (三源交叉验证)
+        """
         self.d['analysis'].mkdir(parents=True, exist_ok=True)
         self.log.info("=" * 50)
-        self.log.info("[9] Virome Analysis — 病毒基因组下游分析")
+        self.log.info("[9] Virome Analysis — 下游分析 + suvtk 注释")
 
         all_plant = self.d['rescue_dir'] / "all_plant_viruses.fasta"
         if not all_plant.is_file():
             self.log.warning("  all_plant_viruses.fasta 不存在, 跳过")
             return
 
-        n = sum(1 for _ in open(all_plant) if _.startswith('>'))
-        self.log.info("  输入: %d 条植物病毒", n)
-
-        analysis_script = SCRIPT_DIR / "virome_analysis.py"
-        cmd = [
-            f"python {analysis_script}",
-            f"-i {all_plant}",
-            f"-o {self.d['analysis']}",
-            f"-t {self.args.threads}",
-        ]
-        ok, _ = run_cmd(' '.join(cmd), self.log, "Virome Analysis",
-                        str(self.d['analysis'] / "analysis.log"))
-        if ok:
-            # 三源交叉验证整合
-            integ_script = SCRIPT_DIR / "integrated_summary.py"
-            if integ_script.is_file():
-                run_cmd(f"python {integ_script} -o {self.d['root']}",
-                        self.log, "Integrated Summary",
-                        str(self.d['analysis'] / "integrated_summary.log"))
-            self.log.info("  分析完成 → %s", self.d['analysis'])
-        else:
-            self.log.warning("  分析部分失败, 检查日志")
-
-    def run_suvtk_annotate(self):
-        """[suvtk] 对救援产出的 all_plant_viruses 运行分类+特征+假想蛋白注释
-
-        产出到 09_Virome_Analysis/ 目录:
-          suvtk.taxonomy_output/   → ICTV 分类
-          suvtk.features_output/   → ORF 预测 + BFVD 注释
-          analyze_hypothetical/    → 假想蛋白 diamond+HMM 注释
-          topology.tsv            → 环形/线性判断
-        """
-        self.d['analysis'].mkdir(parents=True, exist_ok=True)
-        self.log.info("=" * 50)
-        self.log.info("[suvtk] 运行 suvtk taxonomy + features + hypothetical + topology")
-
-        # 输入 FASTA
-        all_plant = self.d['rescue_dir'] / "all_plant_viruses.fasta"
-        if not all_plant.is_file():
-            self.log.warning("  all_plant_viruses.fasta 不存在, 跳过 suvtk 注释")
-            return
-
-        # 复制/链接到 analysis 目录
+        # 复制到 analysis 目录
         import shutil
         dest_fasta = self.d['analysis'] / "all_plant_viruses.fasta"
         if not dest_fasta.exists():
@@ -1492,42 +1629,38 @@ class ViromePipeline:
         n = sum(1 for _ in open(all_plant) if _.startswith('>'))
         self.log.info("  输入: %d 条植物病毒", n)
 
-        # 线程数
         t = getattr(self.args, 'threads', 40)
         suvtk_db = getattr(self.args, 'suvtk_db', None) or os.path.expanduser('~/database/virus-db/suvtk_db')
         rvdb = getattr(self.args, 'rvdb_db', None) or os.path.expanduser('~/database/virus-db/RVDB-v31')
 
-        # --- 1. suvtk taxonomy ---
+        # ── Part 1: suvtk taxonomy + features ──
         tax_out = self.d['analysis'] / "suvtk.taxonomy_output"
         tax_tsv = tax_out / "taxonomy.tsv"
-        if not tax_tsv.exists() or tax_tsv.stat().st_size < 100:
+        if not tax_tsv.is_file() or tax_tsv.stat().st_size < 100:
             cmd = f"suvtk taxonomy -i {dest_fasta} -o {tax_out} -d {suvtk_db} -s 0.7 -t {t}"
             run_cmd(cmd, self.log, "suvtk taxonomy", str(self.d['analysis'] / "suvtk_taxonomy.log"))
         else:
             self.log.info("  suvtk taxonomy — 已存在, 跳过")
 
-        # --- 2. suvtk features ---
         feat_out = self.d['analysis'] / "suvtk.features_output"
         tbl = feat_out / "featuretable.tbl"
-        if not tbl.exists() or tbl.stat().st_size < 100:
+        if not tbl.is_file() or tbl.stat().st_size < 100:
             cmd = f"suvtk features -i {dest_fasta} -o {feat_out} -d {suvtk_db} --coding-complete"
-            if tax_tsv.exists():
+            if tax_tsv.is_file():
                 cmd += f" --taxonomy {tax_tsv}"
             cmd += f" -t {t}"
             run_cmd(cmd, self.log, "suvtk features", str(self.d['analysis'] / "suvtk_features.log"))
         else:
             self.log.info("  suvtk features — 已存在, 跳过")
 
-        # --- 3. analyze_hypothetical ---
+        # ── Part 2: analyze_hypothetical ──
         hypo_out = self.d['analysis'] / "analyze_hypothetical"
         updated_tbl = hypo_out / "featuretable_updated.tbl"
         hypo_script = SCRIPT_DIR.parent / "virome_submission_pipeline" / "analyze_hypothetical.py"
-        if not hypo_script.exists():
-            self.log.error("  analyze_hypothetical.py 未找到: %s", hypo_script)
-            hypo_script = None
-
-        if tbl.exists() and (feat_out / "proteins.faa").exists() and hypo_script:
-            if not updated_tbl.exists() or updated_tbl.stat().st_size < 100:
+        if not hypo_script.is_file():
+            hypo_script = SCRIPT_DIR.parent / "virome_analysis_pipeline" / "analyze_hypothetical.py"
+        if tbl.is_file() and (feat_out / "proteins.faa").is_file():
+            if not updated_tbl.is_file() or updated_tbl.stat().st_size < 100:
                 rvdb_fasta = Path(rvdb) / "U-RVDBv31.0-prot.EX.acc.fasta"
                 rvdb_hmm = Path(rvdb) / "U-RVDBv31.0-prot.hmm"
                 rvdb_annot = Path(rvdb) / "U-RVDBv31.0-prot.info.tab"
@@ -1546,36 +1679,55 @@ class ViromePipeline:
             else:
                 self.log.info("  analyze_hypothetical — 已存在, 跳过")
 
-        # --- 3b. tbl2gb: 生成 .gb 文件 (供 SnpEff/capheine/similarity) ---
-        gb_dir = self.d['analysis'] / "virus-annotations"
-        if updated_tbl.exists() and (feat_out / "reoriented_nucleotide_sequences.fna").exists():
-            if not list(gb_dir.glob("*.gb")):
-                tbl2gb_script = SCRIPT_DIR.parent / "virome_analysis_pipeline" / "utils" / "tbl2gb.py"
-                cmd = (
-                    f"python {tbl2gb_script} "
-                    f"--tbl {updated_tbl} "
-                    f"--fasta {feat_out / 'reoriented_nucleotide_sequences.fna'} "
-                    f"--taxonomy {tax_tsv} "
-                    f"-o {gb_dir}"
-                )
-                run_cmd(cmd, self.log, "tbl2gb",
-                        str(self.d['analysis'] / "tbl2gb.log"))
+        # ── Part 3: tbl2gb (GenBank) ──
+        tbl2gb_script = SCRIPT_DIR.parent / "virome_analysis_pipeline" / "tbl2gb.py"
+        if not tbl2gb_script.is_file():
+            tbl2gb_script = SCRIPT_DIR.parent / "virome_submission_pipeline" / "tbl2gb.py"
+        nuc_fna = feat_out / "reoriented_nucleotide_sequences.fna"
+        if not nuc_fna.is_file():
+            nuc_fna = feat_out / "nucleotide_sequences.fasta"
+        gb_out = self.d['analysis'] / "virus-annotations"
+        if tbl2gb_script.is_file() and updated_tbl.is_file() and nuc_fna.is_file():
+            if not gb_out.is_dir() or not any(gb_out.glob("*.gb")):
+                gb_out.mkdir(exist_ok=True)
+                cmd = f"python {tbl2gb_script} --tbl {updated_tbl} --fasta {nuc_fna} -o {gb_out}"
+                run_cmd(cmd, self.log, "tbl2gb (GenBank)", str(self.d['analysis'] / "tbl2gb.log"))
+                n_gb = len(list(gb_out.glob("*.gb"))) if gb_out.is_dir() else 0
+                self.log.info("  tbl2gb — 生成 %d 个 .gb 文件", n_gb)
             else:
-                self.log.info("  tbl2gb — .gb 文件已存在, 跳过")
+                self.log.info("  tbl2gb — 已存在, 跳过")
         else:
-            self.log.info("  tbl2gb — 缺少 featuretable_updated.tbl 或序列文件, 跳过")
+            self.log.warning("  tbl2gb — 跳过 (缺 tbl/fna/script)")
 
-        # --- 4. viral_topology ---
+        # ── Part 4: viral_topology ──
         topo_out = self.d['analysis'] / "topology.tsv"
-        if not topo_out.exists() or topo_out.stat().st_size < 50:
+        if not topo_out.is_file() or topo_out.stat().st_size < 50:
             topo_script = SCRIPT_DIR.parent / "virome_submission_pipeline" / "viral_topology.py"
             cmd = f"python {topo_script} --taxonomy {tax_tsv} --fasta {dest_fasta} -o {topo_out}"
             run_cmd(cmd, self.log, "viral_topology", str(self.d['analysis'] / "topology.log"))
 
-        # --- 5. 整合 05_Taxonomy + suvtk → 补充 miuvig_taxonomy / ref_info / topology ---
+        # ── Part 5: 整合 05_Taxonomy + suvtk ──
         self._integrate_taxonomy_suvtk(dest_fasta, tax_tsv, hypo_out)
 
-        self.log.info("  suvtk 注释完成 → %s", self.d['analysis'])
+        # ── Part 6: 病毒组下游分析 ──
+        analysis_script = SCRIPT_DIR / "virome_analysis.py"
+        cmd = f"python {analysis_script} -i {dest_fasta} -o {self.d['analysis']} -t {t}"
+        ok, _ = run_cmd(cmd, self.log, "Virome Analysis",
+                        str(self.d['analysis'] / "analysis.log"))
+        if ok:
+            integ_script = SCRIPT_DIR / "integrated_summary.py"
+            if integ_script.is_file():
+                run_cmd(f"python {integ_script} -o {self.d['root']}",
+                        self.log, "Integrated Summary",
+                        str(self.d['analysis'] / "integrated_summary.log"))
+        else:
+            self.log.warning("  分析部分失败, 检查日志")
+
+        self.log.info("  分析完成 → %s", self.d['analysis'])
+
+    def run_suvtk_annotate(self):
+        """[已废弃] 合并到 run_analysis()"""
+        self.run_analysis()
 
     def _integrate_taxonomy_suvtk(self, fasta_path, tax_tsv, hypo_dir):
         """整合 05_Taxonomy 共识分类 + suvtk → 丰富化输出
@@ -1756,22 +1908,6 @@ class ViromePipeline:
                         self.log.error("  %s", line)
         except Exception as e:
             self.log.error("  Report generation error: %s", e)
-OVERVIEW = """\
-Virome Pipeline v2.3 — 宏病毒组端到端全自动主控流水线
-
-数据流:
-  Raw FASTQ → 00a_CleanData → 00b_HostDepletion → 01_Assembly
-                                                       │
-  10_Reports ← 08_Rescue ← 07_Checkv ← 06_HostPrediction ← 05_Taxonomy ← 04_CLUSTER ← 03_COBRA ← 02_Identification ←┘
-
-阶段:
-  clean deplete bbnorm assembly identification cobra cluster
-  taxonomy host checkv rescue suvtk_annotate reports all
-
-用法:
-  python virome_pipeline.py --input_reads <dir> --output_dir <dir> --stage all
-  python virome_pipeline.py --input_reads <dir> --output_dir <dir> --stage clean,deplete,assembly
-"""
 
 STAGE_HELP = {
     'clean':         '00a: Fastp质控 + Seqkit转FASTA + Clumpify去冗余',
@@ -1779,15 +1915,59 @@ STAGE_HELP = {
     'bbnorm':        '00c: BBNorm覆盖度均一化 (可选, co-assembly前)',
     'assembly':      '01:  MEGAHIT / rnaviralSPAdes / Penguin 三工具组装',
     'identification':'02:  10工具并行病毒鉴定 (Genomad/Diamond/VirSorter2/...)',
-    'cobra':         '03:  BWA-MEM2 + COBRA-Meta 重叠群延伸',
+    'cobra':         '03a: BWA-MEM2 + COBRA-Meta 重叠群延伸',
+    'merge':         '03b: 合并多样本COBRA结果 + 可选Flye共组装',
     'cluster':       '04:  CD-HIT参考预聚类 + vclust Leiden聚类',
     'taxonomy':      '05:  8工具分类 + R加权投票共识',
     'host':          '06:  ICTV > RNAVirHost > PhaBOX2 宿主预测',
     'checkv':        '07:  CheckV 完整性评估',
-    'rescue':        '08:  三支路级联拯救 (CheckV → Virseqimprover → BLASTN)',
-    'suvtk_annotate':'09:  suvtk分类+特征+假想蛋白注释 → GenBank准备',
-    'reports':       '10:  TSV汇总 + Sankey图 + 交互式HTML报告',
+    'rescue':        '08:  三支路级联拯救 (CheckV -> Virseqimprover -> BLASTN)',
+    'analysis':      '09:  suvtk + integrated summary -> GenBank准备',
+    'report':        '10:  TSV汇总 + Sankey图 + 交互式HTML报告',
 }
+
+STAGE_ARGS = {
+    "clean":         ["clean-data"],
+    "deplete":       ["host_depletion"],
+    "bbnorm":        [],
+    "assembly":      ["assembly_pipeline"],
+    "identification":["virus_identification"],
+    "cobra":         ["cobra_pipeline"],
+    "merge":         [],
+    "cluster":       ["cluster_pipeline"],
+    "taxonomy":      ["virus_classifier"],
+    "host":          ["run_host_prediction"],
+    "checkv":        [],
+    "rescue":        ["cluster_pipeline"],
+    "analysis":      [],
+    "report":        [],
+}
+
+OVERVIEW = """
+╔══════════════════════════════════════════════════════════════╗
+║   MMPV-RNA — 宏病毒组端到端全自动分析流水线          ║
+╚══════════════════════════════════════════════════════════════╝
+
+Stage 流程 (顺序执行):
+  clean         → 原始数据质控 (fastp)
+  deplete       → 宿主去除 (bowtie2)
+  assembly      → 组装 (rnaviralSPAdes)
+  identification→ 病毒鉴定 (geNomad)
+  cobra         → 跨样本聚类 (COBRA)
+  cluster       → vOTU 聚类 (CD-HIT + vclust)
+  taxonomy      → 分类学注释 (mmseqs + genomad)
+  host          → 宿主预测
+  checkv        → 完整性评估 (CheckV)
+  rescue        → 三支路级联拯救 (CheckV → VSI → BLASTN → genus_len)
+  analysis      → 病毒组下游分析
+  suvtk_annotate→ suvtk 注释 + tbl2gb (GenBank)
+  report        → HTML 报告生成
+
+用法:
+  python virome_pipeline.py --stage rescue --output_dir <DIR>
+  python virome_pipeline.py --stage rescue,analysis,suvtk_annotate,report --output_dir <DIR>
+  python virome_pipeline.py --stage all --output_dir <DIR> --input_reads <FASTQ_DIR>
+"""
 
 def print_help_and_exit():
     print(OVERVIEW)
@@ -1796,7 +1976,7 @@ def print_help_and_exit():
 
 def _build_parser(add_help=True):
     """构建 argparse, 可复用"""
-    p = argparse.ArgumentParser(
+    p = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter,
         description='宏病毒组端到端全自动主控流水线', add_help=add_help)
 
     g = p.add_argument_group('路径配置')
@@ -1810,7 +1990,7 @@ def _build_parser(add_help=True):
     g.add_argument('--profile', default='default', help='配置预设 (默认: default, 可选: downstream/plant)')
     g.add_argument('--dump-config', action='store_true', help='仅打印配置摘要并退出 (不运行)')
     g.add_argument('--stage', default=['all'], nargs='+',
-                   choices=['all', 'clean', 'deplete', 'bbnorm', 'assembly', 'identification', 'cobra', 'cluster', 'taxonomy', 'host', 'checkv', 'rescue', 'suvtk_annotate', 'analysis', 'reports', 'report'],
+                   choices=['all', 'clean', 'deplete', 'bbnorm', 'assembly', 'identification', 'cobra', 'merge', 'cluster', 'taxonomy', 'host', 'checkv', 'rescue', 'analysis', 'suvtk_annotate', 'report'],
                    help='运行阶段 (可多个, 如: --stage clean deplete)')
     g.add_argument('--host-filter', default='Plant',
                    help='目标宿主 (逗号分隔, rescue 阶段使用, 默认: Plant. Unknown 默认跳过并输出到 unknown_votus.fasta)')
@@ -1850,7 +2030,7 @@ def _build_parser(add_help=True):
     g.add_argument('--asm_keep_temp', action='store_true', help='保留组装临时文件及 refineC 中间目录')
 
     g = p.add_argument_group('Identification 阶段 (virus_identification.py)')
-    g.add_argument('--nr_db', help='Diamond NR 数据库路径')
+    g.add_argument('--nr_db', default='~/database/nr_diamond/nr.dmnd', help='Diamond NR 数据库路径')
     g.add_argument('--skip_uniprot_filter', action='store_true', help='跳过 UniProt 后置过滤')
     g.add_argument('--skip_nr_filter', action='store_true', help='跳过 NR 后置过滤')
     g.add_argument('--skip_id_plots', action='store_true', help='跳过鉴定阶段图表生成')
@@ -1867,6 +2047,16 @@ def _build_parser(add_help=True):
     g = p.add_argument_group('CLUSTER 阶段 (cluster_pipeline.py)')
     g.add_argument('--skip_vclust', action='store_true', help='跳过 vclust 聚类步骤')
     g.add_argument('--vclust_cluster_file', help='复用已有 vclust 聚类 TSV 文件')
+    g.add_argument('--skip-rmdup', action='store_true',
+                   help='跳过 genome_rmDuplicates 去冗余 (vclust 聚类后)')
+    g.add_argument('--rmdup-length', type=int, default=1000,
+                   help='genome_rmDuplicates 短序列阈值 bp (默认: 1000)')
+    g.add_argument('--skip-flye', action='store_true',
+                   help='跳过 Flye 共组装延伸, 仅合并多样本 COBRA 结果')
+    g.add_argument('--flye-min-overlap', type=int, default=500,
+                   help='Flye 最小重叠长度 bp (默认: 500, 因为输入 contig 通常较短)')
+    g.add_argument('--flye-read-error', type=float, default=0.005,
+                   help='Flye 读长错误率 (默认: 0.005)')
 
     g = p.add_argument_group('Taxonomy 阶段 (virus_classifier.py)')
     g.add_argument('--tax_tools', default='all', help='分类工具: genomad,metabuli,diamond_lca,VITAP,mmseqs,ACVirus,vcontact3,PhaGCN3,all (默认: all)')
@@ -1881,11 +2071,12 @@ def _build_parser(add_help=True):
     g.add_argument('--skip_ictv', action='store_true', help='跳过 ICTV 宿主查找')
 
     g = p.add_argument_group('数据库路径')
-    g.add_argument('--host_db', help='宿主数据库根目录 (自动查找 kraken2/ bowtie2/ hisat2/ minimap2/)')
+    g.add_argument('--host_db', default='~/database/host_db/', help='宿主数据库根目录')
     g.add_argument('--kraken2_db', help='Kraken2 宿主库 (覆盖 --host_db 自动检测)')
     g.add_argument('--host_align_db', help='宿主比对索引 (覆盖 --host_db 自动检测)')
-    g.add_argument('--virus_db', help='病毒鉴定数据库根目录')
-    g.add_argument('--checkv_db', help='CheckV 数据库路径')
+    g.add_argument('--virus_db', default='~/database/virus-db/', help='病毒鉴定数据库根目录')
+    g.add_argument('--checkv_db', default='~/database/virus-db/checkv-db-v1.7', help='CheckV 数据库路径')
+    g.add_argument('--blast-db', default='~/database/virus-db/ncbi-virus_ref/ncbi-virus_ref.blast.db', help='BLAST 参考数据库 (rescue 阶段)')
 
     g = p.add_argument_group('工具与算法')
     g.add_argument('--aligner', default='bowtie2', choices=['bowtie2', 'hisat2', 'minimap2'])
@@ -1921,7 +2112,6 @@ def _build_parser(add_help=True):
     g.add_argument('--host-mode', default='all', choices=['all','ICTV','RNAVirHost','PhaBOX2'], help='宿主预测模式 (默认: all)')
     g.add_argument('--prob-dir', help='ICTV 宿主概率表目录 (host 阶段, 默认: cross_analysis/)')
     g.add_argument('--ref-genomes', nargs='*', help='ICTV/NCBI 参考基因组 FASTA (可多个, CD-HIT 参考引导预聚类)')
-    g.add_argument('--blast-db', help='BLAST 参考数据库 (rescue 阶段分支 D, ref.fasta)')
 
     g = p.add_argument_group('计算资源')
     g.add_argument('--threads', '-t', type=int, default=20, help='线程 (默认 20)')
@@ -1961,9 +2151,48 @@ def parse_args():
             # 如果同时有 --stage <name> -h, 显示阶段详情
             for j, b in enumerate(sys.argv[1:], 1):
                 if b == '--stage' and j < len(sys.argv) - 1:
-                    stage = sys.argv[j + 1]
-                    if stage in STAGE_HELP:
-                        print(STAGE_HELP[stage])
+                    stages_help = []
+                    k = j + 1
+                    while k < len(sys.argv) and sys.argv[k] not in ('-h', '--help'):
+                        if sys.argv[k] in STAGE_HELP:
+                            stages_help.append(sys.argv[k])
+                        k += 1
+                    if stages_help:
+                        import argparse as _ap
+                        always_show = ['path config', 'pipeline control', 'Resources']
+                        all_keys = set()
+                        for s in stages_help:
+                            for kk in STAGE_ARGS.get(s, []):
+                                all_keys.add(kk)
+                        print()
+                        print(f"  {'='*50}")
+                        print(f"  Stages: {', '.join(stages_help)}")
+                        print(f"  {'='*50}")
+                        for s in stages_help:
+                            print(f"    {s}: {STAGE_HELP[s]}")
+                        print()
+                        if all_keys:
+                            print("  [Relevant arguments]")
+                            print()
+                            pp = _build_parser(add_help=False)
+                            for grp in pp._action_groups:
+                                title = grp.title
+                                if any(kk in title for kk in all_keys) or title in always_show:
+                                    print(f"  --- {title} ---")
+                                    for action in grp._group_actions:
+                                        opts = ', '.join(action.option_strings) if action.option_strings else action.dest
+                                        if action.help:
+                                            h = action.help
+                                            if action.default is not None and action.default is not _ap.SUPPRESS and action.default is not False:
+                                                if 'default' not in h and '默认' not in h:
+                                                    h += f' (default: {action.default})'
+                                            print(f"    {opts:42s} {h}")
+                                    print()
+                        print(f"  [Usage]")
+                        print(f"    single:  --output_dir DIR --stage {stages_help[0]}")
+                        print(f"    multi:   --output_dir DIR --stage {' '.join(stages_help)}")
+                        print(f"    all:     --output_dir DIR --stage all")
+                        print()
                         sys.exit(0)
             print_help_and_exit()
 
@@ -2026,8 +2255,9 @@ def _load_config(args):
 
     # assembly
     asm_cfg = profile.get('assembly', {})
-    if 'assembler' in asm_cfg:
-        setattr(args, 'assembler', asm_cfg['assembler'])
+    if hasattr(args, 'assembler') and 'assembler' in asm_cfg:
+        if getattr(args, 'assembler', 'megahit') == 'megahit':
+            setattr(args, 'assembler', asm_cfg['assembler'])
 
     # identification
     id_cfg = profile.get('identification', {})
@@ -2180,6 +2410,10 @@ def main():
         flow.append(f'Assemble({args.assembler})')
         flow.append(f'Identify({args.identify_tools})')
         flow.append('COBRA')
+        if getattr(args, 'skip_flye', False):
+            flow.append('MergeSamples')
+        else:
+            flow.append('MergeSamples+Flye')
         flow.append('Cluster(vclust)')
         flow.append('Taxonomy')
         flow.append('Host')
@@ -2210,7 +2444,7 @@ def main():
                 logger.info("  [WARN] 输入目录无序列文件")
         else:
             logger.info("  输入目录: %s (不存在或未指定)", args.input_reads)
-        logger.info("  阶段:     %s", ','.join(sorted(stages)))
+        logger.info("  阶段:     %s", stage)
         logger.info("  输出目录: %s", args.output_dir)
         logger.info("═══ DRY-RUN 结束 ═══")
         return
@@ -2233,7 +2467,7 @@ def main():
         else:
             pipe.reads_dir = pipe.d['hostdep']
         if not pipe.reads_dir.exists() or not any(pipe.reads_dir.iterdir()):
-            if stages <= {'cluster', 'taxonomy', 'host', 'checkv', 'report'}:
+            if stages <= {'merge', 'cluster', 'taxonomy', 'host', 'checkv', 'report', 'rescue', 'analysis'}:
                 logger.info("  无需 reads, 跳过")
             else:
                 logger.error("reads 目录 %s 为空", pipe.reads_dir)
@@ -2253,14 +2487,14 @@ def main():
         'clean': pipe.run_clean, 'deplete': pipe.run_depletion,
         'bbnorm': pipe.run_bbnorm,
         'assembly': pipe.run_assembly, 'identification': pipe.run_identification,
-        'cobra': pipe.run_cobra, 'cluster': pipe.run_cluster,
+        'cobra': pipe.run_cobra, 'merge': pipe.run_merge_samples, 'cluster': pipe.run_cluster,
         'taxonomy': pipe.run_taxonomy, 'host': pipe.run_host,
         'checkv': pipe.run_checkv_stage, 'rescue': pipe.run_rescue,
         'analysis': pipe.run_analysis, 'suvtk_annotate': pipe.run_suvtk_annotate, 'report': pipe.run_reports,
     }
     # 按流水线顺序排列
-    stage_order = ['clean','deplete','bbnorm','assembly','identification','cobra','cluster',
-                   'taxonomy','host','checkv','rescue','analysis','suvtk_annotate','report']
+    stage_order = ['clean','deplete','bbnorm','assembly','identification','cobra','merge','cluster',
+                   'taxonomy','host','checkv','rescue','analysis','report']
     stages_to_run = [(s, stage_map[s]) for s in stage_order if _all or s in stages]
 
     # 准备阶段日志目录
@@ -2277,12 +2511,11 @@ def main():
         try:
             stage_func()
         except SystemExit as e:
-            _ec = e.code if e.code is not None else 1
             if args.stop_on_error:
-                logger.error("[%s] 阶段失败 (exit=%d), 终止", stage_name, _ec)
-                sys.exit(_ec)
+                logger.error("[%s] 阶段失败 (exit=%d), 终止", stage_name, e.code if e.code else 1)
+                sys.exit(e.code if e.code else 1)
             else:
-                logger.warning("[%s] 阶段失败 (exit=%d), 继续", stage_name, _ec)
+                logger.warning("[%s] 阶段失败 (exit=%d), 继续", stage_name, e.code if e.code else 1)
                 failed_stages.append(stage_name)
         except Exception as e:
             if args.stop_on_error:

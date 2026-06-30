@@ -182,6 +182,8 @@ def main():
     # ---- Stage 5: Extract ----
     g = parser.add_argument_group("Stage 5: Extract Assemblies")
     g.add_argument("--extract_target", default="11.Ultimate_Circular_Result.fasta")
+    g.add_argument("--max_n_genome", type=float, default=5.0, help="N content threshold%% for extract N-fill (default: 5)")
+    g.add_argument("--min_length", type=int, default=150, help="Min contig length for extract (default: 150)")
 
     # ---- Stage 6: Post-hoc ----
     g = parser.add_argument_group("Stage 6: Post-hoc Visualization")
@@ -208,7 +210,7 @@ def main():
 
     # ---- Stage 9: DVG ----
     g = parser.add_argument_group("Stage 9: DVG & Recombination (batch_virema_dvg)")
-    g.add_argument("--virema_script", default=str(SCRIPT_DIR / "../biosoft/ViReMa/ViReMa.py"), help="Path to ViReMa.py")
+    g.add_argument("--virema_script", default=str(SCRIPT_DIR / "../biosoft/virema/ViReMa.py"), help="Path to ViReMa.py")
     g.add_argument("--dvg_seed", type=int, default=25, help="ViReMa seed length (default: 25)")
     g.add_argument("--dvg_mindel", type=int, default=15, help="Microdeletion threshold (default: 15)")
     g.add_argument("--dvg_min_cov", type=float, default=80.0, help="Min coverage%% for DVG analysis (default: 80)")
@@ -303,16 +305,18 @@ def main():
 
     # ---- Shared paths ----
     detect_dir = out / "1_FastViromeExplorer"
-    variants_dir = out / "2_Virus_variants_Results"
-    full_dir = out / "3_Virus_assemblies_final"
-    extract_dir = out / "4_assemblies_clean"
-    post_dir = out / "5_post_analysis"
-    capheine_dir = out / "6_capheine"
-    similarity_dir = out / "7_similarity"
-    dvg_dir = out / "8_virema_dvg"
+    filter_dir = out / "2_Virus_result_filter"
+    variants_dir = out / "3_Virus_variants_Results"
+    full_dir = out / "4_Virus_assemblies_final"
+    extract_dir = out / "5_assemblies_clean"
+    post_dir = out / "6_post_analysis"
+    capheine_dir = out / "7_capheine"
+    similarity_dir = out / "8_similarity"
+    dvg_dir = out / "9_virema_dvg"
+    report_dir = out / "10_Reports"
 
     best_summary = detect_dir / "summary" / "all_viruses.best.summary.tsv"
-    high_conf = detect_dir / "summary" / "high_conf.summary.tsv"
+    high_conf = filter_dir / "high_conf.summary.tsv"
 
     def get_summary():
         """动态获取当前最优 summary（filter 运行后自动切换到 high_conf）"""
@@ -386,13 +390,30 @@ def main():
             parts.append("--resume")
         if not run(" ".join(parts), log, "batch_virus_depth"):
             sys.exit(1)
+        # ── Stage 1 viz: batch_plot_virus_depth.py ──
+        batch_plot = script_dir / 'batch_plot_virus_depth.py'
+        if batch_plot.is_file() and best_summary.exists():
+            log.info("  [1/10 viz] Generating Stage 1 visualization plots...")
+            run(f"python {batch_plot} --mode sample "
+                f"-m {best_summary} -o {detect_dir / 'sample_distribution'}",
+                log, "plot_sample_dist")
+            run(f"python {batch_plot} --mode coabundance "
+                f"-m {best_summary} -o {detect_dir / 'coabundance'}",
+                log, "plot_coabundance")
+            depth_stat_dir = detect_dir / "stat"
+            if depth_stat_dir.exists():
+                run(f"python {batch_plot} --mode depth "
+                    f"-d {depth_stat_dir} -m {best_summary} "
+                    f"-o {detect_dir / 'depth_plots'} -t {args.threads} -g",
+                    log, "plot_depth_all")
+            log.info("  [1/10 viz] Stage 1 plots complete -> %s", detect_dir)
         log.info("  Detection complete -> %s", detect_dir)
 
     # ═══════════════════════════════════════════
     # Stage 2: Filter (optional auto-filter)
     # ═══════════════════════════════════════════
     if args.filter or args.stage == "filter":
-        _sh2 = add_stage_log(detect_dir, "2_filter")
+        _sh2 = add_stage_log(filter_dir, "2_filter")
         if not args.force and high_conf.exists():
             log.info("[2/10] Filter: checkpoint OK, skip")
         elif best_summary.exists():
@@ -405,7 +426,8 @@ def main():
                 f"-c {args.filter_cov}",
                 f"-d {args.filter_depth}",
                 f"-r {args.filter_reads}",
-                f"--summary {detect_dir / 'summary' / 'filter_stats'}",
+                f"--summary {filter_dir / 'filter_stats'}",
+                "--plot",
             ]
             if args.filter_keyword:
                 filter_parts.append(f"-k {args.filter_keyword}")
@@ -482,7 +504,7 @@ def main():
     # ═══════════════════════════════════════════
     if args.stage in ("all", "full"):
         _sh4 = add_stage_log(full_dir, "4_full")
-        if not args.force and full_dir.exists():
+        if not args.force and full_dir.exists() and any(p.is_dir() for p in full_dir.iterdir()):
             log.info("[4/10] Assembly: checkpoint OK, skip")
         else:
             log.info("-" * 40)
@@ -518,7 +540,7 @@ def main():
     # ═══════════════════════════════════════════
     if args.stage in ("all", "extract"):
         _sh5 = add_stage_log(extract_dir, "5_extract")
-        if not args.force and extract_dir.exists():
+        if not args.force and extract_dir.exists() and any(p.is_dir() for p in extract_dir.iterdir()):
             log.info("[5/10] Extract: checkpoint OK, skip")
         else:
             log.info("-" * 40)
@@ -529,6 +551,12 @@ def main():
                     f"--dir {full_dir}",
                     f"--outdir {extract_dir}",
                     f"--target_file {args.extract_target}",
+                    f"--fill",
+                    f"--ref_info {args.ref_info}",
+                    f"--ref_dir {variants_dir}",
+                    f"--max_n_genome {args.max_n_genome}",
+                    f"--min_len {args.min_length}",
+                    "--plot",
                 ]
                 if run(" ".join(parts), log, "extract_full_fasta"):
                     log.info("  Extraction complete -> %s", extract_dir)
@@ -540,7 +568,7 @@ def main():
     # ═══════════════════════════════════════════
     if args.stage in ("all", "post"):
         _sh6 = add_stage_log(post_dir, "6_post")
-        if not args.force and post_dir.exists():
+        if not args.force and post_dir.exists() and any(p.is_dir() for p in post_dir.iterdir()):
             log.info("[6/10] Post-hoc: checkpoint OK, skip")
         else:
             log.info("-" * 40)
@@ -586,6 +614,11 @@ def main():
                         snpeff_in = find_virus_dir(variants_dir, "virus-SnpEff", vname)
                         sg_in = find_virus_dir(variants_dir, "virus-SNPGenie", vname)
                         acc = vname.split("_")[-1] if "_" in vname else vname
+                        # Fix NC_ prefix loss: vname like "...tuber_viroid_NC_002030.1"
+                        # split("_")[-1] gives "002030.1" (missing "NC_")
+                        _parts = vname.split("_")
+                        if len(_parts) >= 2 and _parts[-2].isalpha() and _parts[-2].isupper() and len(_parts[-2]) == 2:
+                            acc = f"{_parts[-2]}_{_parts[-1]}"
 
                         tasks_done, tasks_total = 0, 0
                         if not args.skip_vcf_viz and vcf_in:
@@ -597,8 +630,10 @@ def main():
 
                         if not args.skip_vcf_merge and vcf_in:
                             tasks_total += 1
-                            if run(f"python {script_dir / 'virus_vcf_pipeline.py'} "
-                                   f"-d {vcf_in} -o {vout / 'vcf_merge'} --prefix {vname}", log, f"merge_{vname}"):
+                            merge_flags = f"-d {vcf_in} -o {vout / 'vcf_merge'} --prefix {vname} --visualize"
+                            if args.variant_caller == "ivar":
+                                merge_flags += " --ivar"
+                            if run(f"python {script_dir / 'virus_vcf_pipeline.py'} {merge_flags}", log, f"merge_{vname}"):
                                 tasks_done += 1
 
                         if not args.skip_snpeff_macro and snpeff_in:
@@ -631,6 +666,14 @@ def main():
                             name, done, total = f.result()
                             log.info("  %s: %d/%d analyses OK", name, done, total)
 
+                    # Virus vs metadata association
+                    meta_script = script_dir / 'utils' / 'virus_metadata_plot.py'
+                    if meta_script.is_file():
+                        run(f"python {meta_script} "
+                            f"-m {summary_for_post} "
+                            f"-o {post_dir / 'metadata_association'}",
+                            log, "meta_association")
+
                 log.info("  Post-hoc complete -> %s", post_dir)
 
     # ═══════════════════════════════════════════
@@ -638,7 +681,7 @@ def main():
     # ═══════════════════════════════════════════
     if args.stage in ("all", "capheine"):
         _sh7 = add_stage_log(capheine_dir, "7_capheine")
-        if not args.force and capheine_dir.exists():
+        if not args.force and capheine_dir.exists() and any(p.is_dir() for p in capheine_dir.iterdir()):
             log.info("[7/10] Capheine: checkpoint OK, skip")
         else:
             log.info("-" * 40)
@@ -734,6 +777,39 @@ def main():
                             run(f"python {script_dir / 'utils/visual_codon_miner.py'} "
                                 f"--drhip {drhip_csv} --clndir {cln_dir} "
                                 f"-o {_cap_out / 'codon_plots'}", log, f"codon_{_acc}")
+
+                        # Per-gene selection summary bar chart
+                        if drhip_csv.exists():
+                            _gen_bar = _cap_out / "selection_per_gene.pdf"
+                            try:
+                                import matplotlib
+                                matplotlib.use('Agg')
+                                import matplotlib.pyplot as __plt
+                                _dr = __pd.read_csv(drhip_csv)
+                                _gene_col = next((c for c in ['gene', 'Gene', 'gene_name'] if c in _dr.columns), None)
+                                if _gene_col and len(_dr) > 0:
+                                    _dr['gene_short'] = _dr[_gene_col].str.replace(
+                                        r'.*\.part_', '', regex=True)
+                                    _cnts = _dr['gene_short'].value_counts()
+                                    _fig, _ax = __plt.subplots(figsize=(max(6, len(_cnts)*0.4), 5))
+                                    _colors = __plt.cm.Set2(__plt.Normalize(0, max(len(_cnts)-1, 1))(range(len(_cnts))))
+                                    _ax.barh(range(len(_cnts)), _cnts.values, color=_colors, edgecolor='#333')
+                                    _ax.set_yticks(range(len(_cnts)))
+                                    _ax.set_yticklabels(_cnts.index, fontsize=10, fontweight='bold')
+                                    _ax.set_xlabel('Positive Selection Sites', fontweight='bold')
+                                    _ax.set_title(f'Positive Selection Sites per Gene ({_acc})',
+                                                 fontweight='bold', fontsize=13)
+                                    for _j, _v in enumerate(_cnts.values):
+                                        _ax.text(_v + max(_cnts.values)*0.02, _j, str(_v),
+                                                va='center', fontweight='bold')
+                                    __plt.tight_layout()
+                                    _fig.savefig(_gen_bar, dpi=300, bbox_inches='tight')
+                                    _gen_bar_png = str(_gen_bar).replace('.pdf', '.png')
+                                    _fig.savefig(_gen_bar_png, dpi=300, bbox_inches='tight')
+                                    __plt.close()
+                                    log.info("  %s: gene selection plot -> %s", _acc, _gen_bar)
+                            except Exception as _ex:
+                                log.warning("  %s: gene selection plot failed: %s", _acc, _ex)
                     else:
                         log.warning("  %s: capheine failed", _acc)
 
@@ -764,7 +840,7 @@ def main():
     # ═══════════════════════════════════════════
     if args.stage in ("all", "similarity"):
         _sh8 = add_stage_log(similarity_dir, "8_similarity")
-        if not args.force and similarity_dir.exists():
+        if not args.force and similarity_dir.exists() and any(p.is_dir() for p in similarity_dir.iterdir()):
             log.info("[8/10] Similarity: checkpoint OK, skip")
         else:
             log.info("-" * 40)
@@ -821,7 +897,7 @@ def main():
     # ═══════════════════════════════════════════
     if args.stage in ("all", "dvg"):
         _sh9 = add_stage_log(dvg_dir, "9_dvg")
-        if not args.force and dvg_dir.exists():
+        if not args.force and dvg_dir.exists() and any(p.is_dir() for p in dvg_dir.iterdir()):
             log.info("[9/10] DVG: checkpoint OK, skip")
         else:
             log.info("-" * 40)
@@ -831,22 +907,21 @@ def main():
                 log.warning("  Summary not found, skipping DVG analysis")
             else:
                 dvg_dir.mkdir(parents=True, exist_ok=True)
-                dvg_reads = Path(args.dvg_reads) if args.dvg_reads else reads
+                dvg_reads = Path(args.dvg_reads).resolve() if args.dvg_reads else reads
                 parts = [
                     f"python {script_dir / 'batch_virema_dvg.py'}",
                     f"-s {summary_in}",
                     f"-r {args.reference}",
                     f"-d {dvg_reads}",
                     f"-v {args.virema_script}",
+                    f"--ref_info {args.ref_info}",
                     f"-o {dvg_dir}",
                     f"--seed {args.dvg_seed}",
                     f"--mindel {args.dvg_mindel}",
                     f"--min_cov {args.dvg_min_cov}",
                     f"-j {args.jobs}",
-                    f"-t {min(args.threads, 8)}",
+                    f"-t {args.threads}",
                 ]
-                if args.dvg_shm:
-                    parts.append("--shm")
                 if not args.no_resume and not args.force:
                     parts.append("--resume")
                 if not run(" ".join(parts), log, "batch_virema_dvg"):
@@ -858,21 +933,19 @@ def main():
     # Stage 10: Generate Summary Report
     # ═══════════════════════════════════════════
     if args.stage in ("all", "report"):
-        _sh10 = add_stage_log(out, "10_report")
+        _sh10 = add_stage_log(report_dir, "10_report")
         log.info("-" * 40)
         log.info("[10/10] Generate Pipeline Summary Report")
         parts = [
             f"python {script_dir / 'generate_pipeline_report.py'}",
             f"-d {out}",
-            f"-o {out / 'Pipeline_Summary_Report'}",
+            f"-o {report_dir / 'Pipeline_Summary_Report.html'}",
         ]
-        if args.report_ai or args.ai_api_key:
-            parts.append("--ai_prompts")
         if args.ai_api_key:
-            os.environ['AI_API_KEY'] = args.ai_api_key
-            parts.append(f"--ai_model {args.ai_model}")
+            parts.append(f"--ai-api-key {args.ai_api_key}")
+            parts.append(f"--ai-model {args.ai_model}")
         if run(" ".join(parts), log, "generate_report"):
-            log.info("  Report generated -> %s", out / "Pipeline_Summary_Report.html")
+            log.info("  Report generated -> %s", report_dir / "Pipeline_Summary_Report.html")
         else:
             log.warning("  Report generation failed")
 

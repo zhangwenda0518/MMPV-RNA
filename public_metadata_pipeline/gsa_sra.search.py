@@ -396,15 +396,156 @@ def run_ai_sanitizer(df, api_key, api_base, model):
     return df
 
 # ==========================================
+# 📊 FileSize_GB 提取
+# ==========================================
+def _add_filesize_sra(df):
+    """SRA: map size_MB → GB."""
+    if df is None or df.empty:
+        return
+    if "size_MB" in df.columns:
+        def _to_gb(x):
+            try:
+                return f"{float(x)/1024:.1f}"
+            except (ValueError, TypeError):
+                return ""
+        df["FileSize_GB"] = df["size_MB"].apply(_to_gb)
+
+
+def _add_filesize_gsa(df, out_dir):
+    """GSA: parse bytes from cached Excel Run sheet → GB."""
+    if df is None or df.empty or "Run" not in df.columns:
+        return
+    import glob as _glob
+    xls_dir = os.path.join(out_dir, "GSA_Results", "1_xls_cache")
+    df["FileSize_GB"] = ""
+    if not os.path.isdir(xls_dir):
+        return
+    run_sizes = {}
+    for fname in os.listdir(xls_dir):
+        if not fname.endswith(".xlsx"):
+            continue
+        xls_path = os.path.join(xls_dir, fname)
+        try:
+            xls = pd.ExcelFile(xls_path)
+            if "Run" not in xls.sheet_names:
+                continue
+            df_run = pd.read_excel(xls, sheet_name="Run")
+            for _, rrow in df_run.iterrows():
+                acc = str(rrow.get("Accession", "")).strip()
+                if not acc:
+                    continue
+                total_bytes = 0; file_count = 0
+                for col in df_run.columns:
+                    cl = col.strip().lower()
+                    if "read filename" in cl and "md5" not in cl:
+                        val = str(rrow[col]).strip() if pd.notna(rrow[col]) else ""
+                        m = re.search(r'\((\d+)\s*bytes?\)', val, re.I)
+                        if m:
+                            total_bytes += int(m.group(1)); file_count += 1
+                if file_count > 0:
+                    total_gb = total_bytes / 1073741824
+                    run_sizes[acc] = f"{total_gb:.1f}"
+        except Exception:
+            pass
+    for idx, row in df.iterrows():
+        run = str(row["Run"]).strip()
+        if run in run_sizes:
+            df.at[idx, "FileSize_GB"] = run_sizes[run]
+
+
+# ==========================================
+# 🤖 AI Summary (本地)
+# ==========================================
+def _generate_ai_summary(df, api_key, model, out_dir):
+    """Generate SCI writing summary via DeepSeek API."""
+    if df.empty or not api_key:
+        return
+    from collections import Counter
+
+    def _safe_col(name):
+        c = name if name in df.columns else None
+        if c:
+            series = df[c].astype(str).str.strip()
+            series = series[~series.isin(["", "NA", "N/A", "Not_Provided", "nan", "None"])]
+            return Counter(series)
+        return Counter()
+
+    db_counts = _safe_col("Database")
+    species_counts = _safe_col("ScientificName")
+    tissue_counts = _safe_col("Tissue")
+    location_counts = _safe_col("Location")
+    center_counts = _safe_col("CenterName")
+    age_counts = _safe_col("Age_GrowthStage")
+    total = len(df)
+
+    # Data volume
+    vol_str = "N/A"
+    if "FileSize_GB" in df.columns:
+        try:
+            gb_vals = pd.to_numeric(df["FileSize_GB"], errors="coerce").dropna()
+            if len(gb_vals) > 0:
+                vol_str = f"{gb_vals.sum():.1f} GB total, avg {gb_vals.mean():.1f} GB/run"
+        except Exception:
+            pass
+
+    # Collection years
+    years = set()
+    for c in ["ReleaseDate", "CollectionDate"]:
+        if c in df.columns:
+            for v in df[c]:
+                parts = str(v).strip().replace("/","-").split("-")
+                if parts[0].isdigit() and len(parts[0]) == 4:
+                    years.add(parts[0])
+
+    stats_text = f"""Total records: {total}
+Data volume: {vol_str}
+Database: {', '.join(f'{k}({v})' for k,v in db_counts.most_common())}
+Species: {', '.join(f'{k}({v})' for k,v in species_counts.most_common())}
+Tissues: {', '.join(f'{k}({v})' for k,v in tissue_counts.most_common())}
+Locations (top10): {', '.join(f'{k}({v})' for k,v in location_counts.most_common(10))}
+Institutions (top10): {', '.join(f'{k}({v})' for k,v in center_counts.most_common(10))}
+Growth stages: {', '.join(f'{k}({v})' for k,v in age_counts.most_common(5))}
+Years: {', '.join(sorted(years)) if years else 'N/A'}"""
+
+    prompt = f"""You are a scientific writer. Based on these metadata statistics, write a concise paragraph (150-250 words) for the Data Collection section of a virome/metagenomics paper.
+{stats_text}
+Requirements: formal scientific English, past tense. Include total runs, database split, data volume, species, tissues, locations, time span, key institutions, sequencing type.
+Output ONLY the paragraph, no markdown."""
+
+    try:
+        client = OpenAI(api_key=api_key, base_url="https://api.deepseek.com")
+        kwargs = {"model": model, "messages": [
+            {"role": "system", "content": "You are a scientific writer. Output only the paragraph."},
+            {"role": "user", "content": prompt}
+        ]}
+        kwargs["temperature"] = 0.3
+        response = client.chat.completions.create(**kwargs)
+        summary = response.choices[0].message.content or ""
+        print(f"\n{'='*60}")
+        print("📝 AI Summary (Data Collection)")
+        print(f"{'='*60}")
+        print(summary)
+        # Save to file
+        summary_file = os.path.join(out_dir, "AI_Summary.txt")
+        with open(summary_file, "w", encoding="utf-8") as f:
+            f.write(summary)
+        print(f"\n📁 Summary saved: {summary_file}")
+    except Exception as e:
+        print(f"\n⚠️ AI Summary failed: {e}")
+
+
+# ==========================================
 # 🌍 数据大一统合并
 # ==========================================
-def merge_results(df_sra, df_gsa, out_dir, detailed, api_key, api_base, model):
+def merge_results(df_sra, df_gsa, out_dir, detailed, api_key, api_base, model, do_summary=False):
     if not df_sra.empty:
         df_sra['Database'] = 'SRA'
+        _add_filesize_sra(df_sra)
     else: df_sra = pd.DataFrame()
 
     if not df_gsa.empty:
         df_gsa['Database'] = 'GSA'
+        _add_filesize_gsa(df_gsa, out_dir)
     else: df_gsa = pd.DataFrame()
 
     df_merged = pd.concat([df_sra, df_gsa], ignore_index=True)
@@ -416,12 +557,12 @@ def merge_results(df_sra, df_gsa, out_dir, detailed, api_key, api_base, model):
     target_cols = ['Database', 'Run', 'BioProject', 'BioSample', 'ScientificName']
     if detailed:
         target_cols.extend(['Tissue', 'Age_GrowthStage', 'Location'])
-    target_cols.extend(['LibraryStrategy', 'LibrarySource', 'Platform', 'CenterName', 'ReleaseDate'])
-    
+    target_cols.extend(['LibraryStrategy', 'LibrarySource', 'Platform', 'CenterName', 'ReleaseDate', 'FileSize_GB'])
+
     final_cols = [c for c in target_cols if c in df_merged.columns]
-    
+
     df_final = df_merged[final_cols].drop_duplicates(subset=['Run'])
-    
+
     out_file = os.path.join(out_dir, "SRA_GSA_Merged_Final.csv")
     df_final.to_csv(out_file, index=False, encoding='utf-8-sig')
     
@@ -437,8 +578,9 @@ if __name__ == "__main__":
     parser.add_argument("--db", default="both", choices=["sra", "gsa", "both"],
                         help="目标数据库: sra (仅NCBI), gsa (仅CNCB), both (默认, 两者)")
     parser.add_argument("--no-detailed", action="store_true", help="关闭详细模式 (默认开启)")
+    parser.add_argument("--summary", action="store_true", help="搜索完成后生成 AI 统计段落 (需 --deepseek-api)")
     parser.add_argument("--ncbi-api", help="NCBI E-utilities API Key (提升速率)")
-    parser.add_argument("--deepseek-api", help="DeepSeek API Key (AI 智能清洗)")
+    parser.add_argument("--deepseek-api", help="DeepSeek API Key (AI 智能清洗及AI统计)")
     parser.add_argument("--deepseek-model", default="deepseek-v4-flash",
                         choices=["deepseek-chat", "deepseek-reasoner", "deepseek-v4-flash", "deepseek-v4-pro"],
                         help="DeepSeek 模型")
@@ -462,6 +604,11 @@ if __name__ == "__main__":
         df_gsa = gsa_engine.fetch_gsa()
 
     merge_results(df_sra, df_gsa, args.outdir, args.detailed, args.deepseek_api, "https://api.deepseek.com", args.deepseek_model)
+
+    # AI Summary
+    if args.summary and args.deepseek_api:
+        df_final = pd.read_csv(os.path.join(args.outdir, "SRA_GSA_Merged_Final.csv"))
+        _generate_ai_summary(df_final, args.deepseek_api, args.deepseek_model, args.outdir)
 
     # 生成下载链接文件
     import csv as csv_mod

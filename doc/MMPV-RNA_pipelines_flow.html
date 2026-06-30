@@ -1,0 +1,515 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MMPV-RNA v3.0 — 五大管道技术路线图</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<style>
+  :root {
+    --bg: #0f172a;
+    --surface: #1e293b;
+    --border: #334155;
+    --text: #e2e8f0;
+    --muted: #94a3b8;
+    --accent: #38bdf8;
+    --green: #4ade80;
+    --orange: #fb923c;
+    --purple: #a78bfa;
+    --pink: #f472b6;
+    --blue: #60a5fa;
+  }
+  body {
+    margin: 0; padding: 0;
+    font-family: 'Segoe UI', 'Noto Sans SC', system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.7;
+  }
+  .container { max-width: 1200px; margin: 0 auto; padding: 40px 24px; }
+
+  h1 {
+    font-size: 2.2em; font-weight: 800; margin: 0 0 8px 0;
+    background: linear-gradient(135deg, var(--accent), var(--purple));
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  }
+  .subtitle { color: var(--muted); font-size: 1.05em; margin-bottom: 40px; }
+
+  h2 {
+    font-size: 1.5em; font-weight: 700; margin: 60px 0 16px 0; padding-bottom: 8px;
+    border-bottom: 2px solid var(--border);
+    display: flex; align-items: center; gap: 12px;
+  }
+  h2 .num { 
+    display: inline-flex; width: 36px; height: 36px; border-radius: 8px;
+    align-items: center; justify-content: center; font-size: 0.85em; font-weight: 800;
+    background: var(--surface); color: var(--accent);
+  }
+
+  .mermaid-wrap {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 12px; padding: 32px 16px; margin: 20px 0;
+    overflow-x: auto;
+  }
+
+  table {
+    width: 100%; border-collapse: collapse; margin: 20px 0;
+    font-size: 0.92em;
+  }
+  th {
+    background: var(--surface); text-align: left; padding: 10px 14px;
+    font-weight: 700; border-bottom: 2px solid var(--border); color: var(--accent);
+  }
+  td {
+    padding: 8px 14px; border-bottom: 1px solid var(--border); vertical-align: top;
+  }
+  td code, th code {
+    background: #1a1a2e; color: var(--accent); padding: 2px 6px; border-radius: 4px;
+    font-size: 0.9em;
+  }
+
+  .highlight-box {
+    background: var(--surface); border-left: 4px solid var(--orange);
+    border-radius: 0 8px 8px 0; padding: 16px 20px; margin: 20px 0;
+    font-size: 0.93em;
+  }
+  .highlight-box h4 { margin: 0 0 8px 0; color: var(--orange); }
+
+  .branch-grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 12px; margin: 16px 0;
+  }
+  .branch-card {
+    background: var(--surface); border-radius: 8px; padding: 16px;
+    border: 1px solid var(--border);
+  }
+  .branch-card h4 { margin: 0 0 6px 0; }
+  .branch-card p { margin: 0; color: var(--muted); font-size: 0.9em; }
+
+  .flow-summary {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 16px; margin: 32px 0;
+  }
+  .flow-card {
+    background: var(--surface); border-radius: 10px; padding: 20px;
+    border: 1px solid var(--border);
+  }
+  .flow-card .pipe-name { font-weight: 800; font-size: 1.1em; margin-bottom: 8px; }
+  .flow-card .pipe-desc { color: var(--muted); font-size: 0.88em; }
+
+  .changelog { margin-top: 60px; padding-top: 30px; border-top: 2px solid var(--border); }
+  .changelog h2 { border-bottom: none; }
+  .changelog ul { list-style: none; padding: 0; }
+  .changelog li {
+    padding: 8px 0; color: var(--muted); font-size: 0.92em;
+    border-bottom: 1px solid rgba(255,255,255,0.05);
+  }
+  .changelog li::before { content: '▸ '; color: var(--green); }
+
+  .badge {
+    display: inline-block; padding: 2px 10px; border-radius: 12px;
+    font-size: 0.8em; font-weight: 700;
+  }
+  .badge-new { background: #065f46; color: var(--green); }
+  .badge-changed { background: #7c2d12; color: var(--orange); }
+
+  @media (max-width: 768px) {
+    .container { padding: 20px 14px; }
+    h1 { font-size: 1.6em; }
+    table { font-size: 0.82em; }
+  }
+</style>
+</head>
+<body>
+<div class="container">
+
+<h1>MMPV-RNA v3.0</h1>
+<p class="subtitle">五大管道技术路线图 — 从公共数据挖掘到 NCBI 提交的完整闭环</p>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!-- 总览 -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+
+<h2><span class="num">⊞</span> 五管道整体数据流</h2>
+
+<div class="mermaid-wrap">
+<div class="mermaid">
+flowchart LR
+    P1["管道 ①<br/>public_metadata<br/>━━━━━━━━━<br/>search → info<br/>→ down → plot"] 
+    -->|"FASTQ"| P2
+
+    P1 -->|"hostdb索引"| P3
+
+    P2["管道 ②<br/>virome_discovery<br/>━━━━━━━━━<br/>00a Clean → 00b Deplete<br/>→ 00c BBNorm → 01 Assembly<br/>→ 02 ID → 03 COBRA<br/>→ 04 Cluster → 05 Tax<br/>→ 06 Host → 07 CheckV<br/>→ 08 Rescue → 09 Report"]
+    -->|"HQ vOTU FASTA"| P4
+
+    P2 -->|"HQ vOTU FASTA<br/>+ metadata"| P5
+
+    P4["管道 ③<br/>virome_analysis<br/>━━━━━━━━━<br/>detect → variants<br/>→ full → capheine<br/>→ similarity → dvg<br/>→ report"]
+
+    P5["管道 ④<br/>virome_submission<br/>━━━━━━━━━<br/>topology → metadata<br/>→ hypothetical<br/>→ sequin → submit"]
+
+    style P1 fill:#1e293b,stroke:#38bdf8,color:#e2e8f0
+    style P2 fill:#1e293b,stroke:#4ade80,color:#e2e8f0
+    style P3 fill:#1e293b,stroke:#38bdf8,color:#e2e8f0
+    style P4 fill:#1e293b,stroke:#a78bfa,color:#e2e8f0
+    style P5 fill:#1e293b,stroke:#f472b6,color:#e2e8f0
+</div>
+</div>
+
+<div class="flow-summary">
+  <div class="flow-card">
+    <div class="pipe-name" style="color:var(--accent)">① 公共数据获取</div>
+    <div class="pipe-desc">NCBI SRA + CNCB GSA 双引擎检索 → DeepSeek AI 元数据清洗 → aria2c/prefetch 下载 → SCI 可视化</div>
+  </div>
+  <div class="flow-card">
+    <div class="pipe-name" style="color:var(--green)">② 新病毒发现</div>
+    <div class="pipe-desc">00a-09 十阶段端到端流程：10工具并行鉴定 → CD-HIT+vclust聚类 → 8工具分类 → 四支路级联拯救 → HQ vOTU catalog</div>
+  </div>
+  <div class="flow-card">
+    <div class="pipe-name" style="color:var(--purple)">③ 已知病毒分析</div>
+    <div class="pipe-desc">Salmon 快速定量 → FreeBayes 变异 + SnpEff/SnpGenie → 12步全长组装 → HyPhy 正选择 → DVG/重组</div>
+  </div>
+  <div class="flow-card">
+    <div class="pipe-name" style="color:var(--pink)">④ NCBI 提交</div>
+    <div class="pipe-desc">拓扑判断 → 元数据模板 → 5工具假定蛋白注释 → suvtk/Sequin 双模式 → .sqn 提交文件</div>
+  </div>
+</div>
+
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!-- 管道 1: 公共数据 -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+
+<h2><span class="num">①</span> 公共数据获取管道 <code style="font-size:0.8em;color:var(--muted)">public_metadata_pipeline/</code></h2>
+
+<div class="mermaid-wrap">
+<div class="mermaid">
+flowchart LR
+    A["📂 物种 + TaxID"] --> B["search<br/>SRA + GSA 双引擎检索"]
+    B --> C["info<br/>13列元数据提取<br/>+ AI文献溯源"]
+    C --> D["down<br/>aria2c / prefetch<br/>双协议下载"]
+    D --> E["plot<br/>SCI 六图可视化"]
+    E --> F["✅ FASTQ<br/>+ Core13.csv<br/>+ 可视化 PDF"]
+
+    A --> G["📂 物种 + TaxID<br/><small>宿主库构建</small>"]
+    G --> H["genome-down<br/>NCBI datasets<br/>参考基因组"]
+    H --> I["hostdb<br/>Kraken2 + Bowtie2<br/>+ HISAT2 + Minimap2"]
+
+    style A fill:#1e40af,color:#fff
+    style G fill:#1e40af,color:#fff
+    style F fill:#065f46,color:#fff
+    style I fill:#065f46,color:#fff
+</div>
+</div>
+
+<table>
+  <tr><th>阶段</th><th>脚本</th><th>功能</th></tr>
+  <tr>
+    <td>search</td>
+    <td><code>gsa_sra.search.py</code></td>
+    <td>NCBI SRA (E-utilities) + CNCB GSA (爬虫) 双引擎检索，DeepSeek AI 辅助生成检索词，去重合并 → <code>SRA_GSA_Merged_Final.csv</code></td>
+  </tr>
+  <tr>
+    <td>info</td>
+    <td><code>gsa_sra.info.py</code></td>
+    <td>SRA XML 解析 + GSA Excel 爬虫，13 核心字段提取（Tissue / Age / Location / CollectionDate 等），BioProject → PubMed 文献追溯，datavzrd 交互报告</td>
+  </tr>
+  <tr>
+    <td>down</td>
+    <td><code>gsa_sra.down.py</code></td>
+    <td>NGDC aria2c/wget + NCBI prefetch/fasterq-dump 双通道下载，断点续传，失败列表自动生成</td>
+  </tr>
+  <tr>
+    <td>plot</td>
+    <td><code>gsa_sra.plot.py</code></td>
+    <td>3×2 面板 SCI 级图表：时间分布 / 数据库占比 / 机构 Top10 / 组织分布 / 地理分布 / 发育阶段</td>
+  </tr>
+  <tr>
+    <td>genome-down</td>
+    <td><code>download_host_genome.py</code></td>
+    <td>NCBI datasets 下载核基因组 + GFF3，可选叶绿体/线粒体，seq-report 去重</td>
+  </tr>
+  <tr>
+    <td>hostdb</td>
+    <td><code>build_hostbase.py</code></td>
+    <td>Kraken2 (含标准库 + TaxID 注入) + Bowtie2 + HISAT2 + Minimap2 四索引并行构建</td>
+  </tr>
+</table>
+
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!-- 管道 2: 发现管线 -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+
+<h2><span class="num">②</span> 新病毒发现管道 <code style="font-size:0.8em;color:var(--muted)">virome_discovery_pipeline/</code></h2>
+
+<h3 style="color:var(--muted);font-size:1em;margin-top:24px">Stage 00a–00c：数据预处理</h3>
+
+<div class="mermaid-wrap">
+<div class="mermaid">
+flowchart LR
+    A["📂 Raw FASTQ"] --> B
+
+    subgraph S0["00a CleanData"]
+        direction LR
+        B["Fastp QC<br/>接头+Q&lt;15过滤"] --> C["Seqkit 统计"] --> D["Clumpify<br/>光学去重"]
+    end
+
+    D --> E
+
+    subgraph S1["00b HostDepletion"]
+        direction LR
+        E["Kraken2<br/>快速分类标记"] --> F["Bowtie2 / HISAT2<br/>/ Minimap2 严格比对"] --> G["Ribodetector<br/>rRNA 过滤"]
+    end
+
+    G --> H
+
+    subgraph S2["00c BBNorm"]
+        H["BBNorm<br/>k-mer 归一化<br/><small>共组装前可选</small>"]
+    end
+
+    style A fill:#1e40af,color:#fff
+    style S2 fill:#334155,stroke:#475569,color:#e2e8f0
+</div>
+</div>
+
+<table>
+  <tr><th>步骤</th><th>工具</th><th>功能</th></tr>
+  <tr><td>Fastp</td><td><code>fastp</code></td><td>Illumina 接头切除，Q&lt;15 过滤，&lt;50bp 丢弃，JSON + HTML 质检报告</td></tr>
+  <tr><td>Seqkit</td><td><code>seqkit stats</code></td><td>每步 reads 数和碱基数实时统计，支持 FASTA/FASTQ 自动识别</td></tr>
+  <tr><td>Clumpify</td><td><code>clumpify.sh</code></td><td>光学/PCR 重复 reads 去除，支持 PE 配对保留</td></tr>
+  <tr><td>Kraken2</td><td><code>kraken2</code></td><td>快速 k-mer 分类标记宿主 reads，confidence ≥0.4</td></tr>
+  <tr><td>比对引擎</td><td><code>bowtie2</code> / <code>hisat2</code> / <code>minimap2</code></td><td>三选一严格比对宿主参考基因组，支持 dna-short / rna-short / nanopore / pacbio</td></tr>
+  <tr><td>Ribodetector</td><td><code>ribodetector</code></td><td>去除残留核糖体 RNA（可选）</td></tr>
+  <tr><td>BBNorm <span class="badge badge-new">v3.0</span></td><td><code>bbnorm.sh</code></td><td>k-mer 覆盖度归一化，target=70，降低高覆盖度序列偏差，共组装前推荐</td></tr>
+</table>
+
+<h3 style="color:var(--muted);font-size:1em;margin-top:32px">Stage 01–04：组装 → 鉴定 → 延伸 → 聚类</h3>
+
+<div class="mermaid-wrap">
+<div class="mermaid">
+flowchart LR
+    A["📂 Clean FASTQ"] --> B["01 Assembly<br/>MEGAHIT / SPAdes<br/>/ Penguin<br/>+ refineC 后处理"]
+    B --> C["02 Identification<br/>10工具并行<br/>+ UpSet/Venn 可视化"]
+    C --> D["03 COBRA<br/>BWA-MEM2 + CoverM<br/>末端延伸"]
+    D --> E["04 CLUSTER<br/>CD-HIT 参考预聚类<br/>+ vclust Leiden 聚类"]
+    E --> F["centroids/<br/>final_centroids.fasta"]
+
+    style A fill:#1e40af,color:#fff
+    style F fill:#0f766e,color:#fff
+</div>
+</div>
+
+<div class="highlight-box">
+  <h4>🔬 10 工具并行病毒鉴定 <span class="badge badge-changed">v3.0 升级</span></h4>
+  <p style="margin:8px 0 0 0">
+    <strong>Genomad</strong> · <strong>Diamond BLASTX</strong> (VP + NR + UniProt 三库) · <strong>VirSorter2</strong> · <strong>ViralVerify</strong> ·
+    <strong>VirHunter</strong> (DL-CPU) · <strong>Metabuli</strong> · <strong>RdrpCatch</strong> · <strong>ViraLM</strong> (DNABERT-2) ·
+    <strong>VirBot</strong> · <strong>Viroid BLASTN</strong> <span class="badge badge-new">新增</span>
+  </p>
+  <p style="margin:4px 0 0 0;color:var(--muted);font-size:0.88em">
+    产出统一候选 FASTA + 多维比较可视化 (UpSet / Venn / 柱状图)，三档过滤 (raw / filter / strict)
+  </p>
+</div>
+
+<h3 style="color:var(--muted);font-size:1em;margin-top:32px">Stage 05–07：分类 → 宿主 → 完整性</h3>
+
+<div class="mermaid-wrap">
+<div class="mermaid">
+flowchart LR
+    A["centroids.fasta"] --> B["05 Taxonomy<br/>8工具并行分类<br/>+ R 加权投票共识"]
+    B --> C["06 Host Prediction<br/>ICTV > RNAVirHost<br/>> PhaBOX2 决策树"]
+    C --> D["07 CheckV<br/>按宿主分组<br/>完整性评估"]
+
+    style A fill:#0f766e,color:#fff
+</div>
+</div>
+
+<table>
+  <tr><th>阶段</th><th>工具数</th><th>方法</th></tr>
+  <tr><td>05 Taxonomy</td><td>8 工具</td><td>Genomad · Metabuli · CAT · Diamond LCA · VITAP · MMseqs2 · ACVirus · vConTACT3 → R 加权投票 → 8 级 taxonomy (Realm → Species)</td></tr>
+  <tr><td>06 Host</td><td>3 来源</td><td>ICTV C9 分类查找 > RNAVirHost > PhaBOX2/CHERRY → ensemble_host_summary.tsv</td></tr>
+  <tr><td>07 CheckV</td><td>1 工具</td><td>按宿主分组完整性评估：Complete / High / Medium / Low / NA</td></tr>
+</table>
+
+<h3 style="color:var(--muted);font-size:1em;margin-top:32px">Stage 08：四支路级联拯救 <span class="badge badge-changed">v3.0 扩展</span></h3>
+
+<div class="mermaid-wrap">
+<div class="mermaid">
+flowchart TB
+    A["Plant novel<br/>centroids"]
+
+    A --> B["分支 A: CheckV 直通<br/>completeness ≥ 90%<br/>直接进入 HQ"]
+    A -->|"未达标"| C["分支 B: Virseqimprover<br/>cluster 内多样本<br/>reads 聚合 → SPAdes<br/>→ iterative extension"]
+    A -->|"仍未达标"| D["分支 C: BLASTN 参考引导<br/>blastn → blastdbcmd<br/>→ ragtag scaffold"]
+    C -->|"未达标"| D
+    D -->|"仍未达标"| E["分支 D: 属长度拯救<br/>同属物种长度 ±15%<br/>兜底策略 <span class='badge badge-new'>v3.0 新增</span>"]
+
+    B --> F["CheckV 复评"]
+    C --> F
+    D --> F
+    E --> F
+
+    F --> G["vclust 最终去重"]
+    G --> H["✅ all_plant_viruses.fasta<br/>HQ vOTU catalog"]
+
+    style A fill:#c2410c,color:#fff
+    style H fill:#065f46,color:#fff
+</div>
+</div>
+
+<div class="branch-grid">
+  <div class="branch-card">
+    <h4 style="color:var(--green)">分支 A · 免拯救</h4>
+    <p>CheckV completeness ≥90% 直接通过，约占 centroids 的 15-30%</p>
+  </div>
+  <div class="branch-card">
+    <h4 style="color:var(--accent)">分支 B · Virseqimprover</h4>
+    <p>读取 cluster 内所有样本的原始 reads，Salmon 定量 → 提取 → SPAdes 组装 → CheckV 复评</p>
+  </div>
+  <div class="branch-card">
+    <h4 style="color:var(--purple)">分支 C · BLASTN</h4>
+    <p>BLASTN 搜索 NCBI 病毒参考 → 取 top hit → blastdbcmd 提取 → ragtag.py 参考引导 scaffolding</p>
+  </div>
+  <div class="branch-card">
+    <h4 style="color:var(--orange)">分支 D · 属长度 <span class="badge badge-new">v3.0</span></h4>
+    <p>基于已知同属物种基因组长度 ±15% 兜底筛选，确保碎片化但完整的基因组不被丢弃</p>
+  </div>
+</div>
+
+<h3 style="color:var(--muted);font-size:1em;margin-top:32px">Stage 09：报告生成</h3>
+
+<table>
+  <tr><th>产出</th><th>说明</th></tr>
+  <tr><td><code>pipeline_report.html</code></td><td>交互式 HTML 报告，含侧边栏导航 / 嵌入图表 / 数据表</td></tr>
+  <tr><td><code>stage_summary.tsv</code></td><td>各阶段状态与关键指标汇总</td></tr>
+  <tr><td><code>assembly_summary.tsv</code></td><td>组装 N50 / N90 / 总 contig 数 / 总碱基数</td></tr>
+  <tr><td><code>ident_summary.tsv</code></td><td>各鉴定工具命中统计</td></tr>
+  <tr><td><code>checkv_summary.tsv</code></td><td>CheckV 完整性分布统计</td></tr>
+  <tr><td><code>sankey_*.png / sankey_*.html</code></td><td>分类学 Sankey 流向图</td></tr>
+</table>
+
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!-- 管道 3: 分析管线 -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+
+<h2><span class="num">③</span> 已知病毒分析管道 <code style="font-size:0.8em;color:var(--muted)">virome_analysis_pipeline/</code></h2>
+
+<div class="mermaid-wrap">
+<div class="mermaid">
+flowchart LR
+    A["📂 FASTQ<br/>+ vOTU 参考"] --> B
+
+    subgraph S1["detect 检测"]
+        direction LR
+        B["Salmon / Bowtie2<br/>索引 + 定量"] --> C["Poisson 打假<br/>双轨过滤"] --> D["depth_summary.tsv"]
+    end
+
+    D --> E
+
+    subgraph S2["variants 变异"]
+        direction LR
+        E["FreeBayes / iVar<br/>/ LoFreq SNP"] --> F["SnpEff<br/>功能注释"] --> G["SNPGenie<br/>dN/dS / π"]
+    end
+
+    G --> H
+
+    subgraph S3["full + post"]
+        direction LR
+        H["virus-full.py<br/>12步全长组装"] --> I["HyPhy 正选择<br/>FEL/MEME/BUSTED<br/>/PRIME/CONTRASTFEL"] --> J["ViReMa<br/>DVG/重组检测"]
+    end
+
+    J --> K["✅ 交互式 HTML<br/>综合报告"]
+
+    style A fill:#1e40af,color:#fff
+    style K fill:#065f46,color:#fff
+</div>
+</div>
+
+<table>
+  <tr><th>阶段</th><th>工具</th><th>产出</th></tr>
+  <tr><td>01 detect</td><td>Salmon / Kallisto / Bowtie2 / BWA / Minimap2 / HISAT2 / Strobealign</td><td>TPM 定量矩阵 + Poisson Ratio 假阳性过滤 + 双轨过滤 (RNA-seq 仅 RNA 病毒)</td></tr>
+  <tr><td>02 filter</td><td>filter_summary.py</td><td>高置信度检出表 (覆盖度 / 深度 / reads / TPM 多阈值)</td></tr>
+  <tr><td>03 variants</td><td>FreeBayes / iVar / LoFreq → SnpEff → SNPGenie</td><td>VCF + 功能注释 (同义/错义/移码) + 群体遗传 (dN/dS, πN/πS, Tajima's D)</td></tr>
+  <tr><td>04 full</td><td>virus-full.py (12步 OmniVirusAssembler)</td><td>MEGAHIT/SPAdes → refineC → Divine Fusion → PVGA 延伸 → Gap Filling → 环化检测</td></tr>
+  <tr><td>05 post</td><td>6 脚本并行</td><td>VCF 可视化 + PCA + MAF oncoplot + 变异景观 9 图 + SNPGenie 11 图</td></tr>
+  <tr><td>06 capheine</td><td>HyPhy (FEL/MEME/BUSTED/PRIME/CONTRASTFEL/RELAX) + cawlign + IQ-TREE</td><td>正选择位点汇总 (DRHIP 聚合) + MultiQC 报告</td></tr>
+  <tr><td>07 similarity</td><td>virus_auto_pipeline.py</td><td>两两相似性矩阵 (NT/AA) + 层次聚类热图 + CD-HIT 去重</td></tr>
+  <tr><td>08 dvg</td><td>ViReMa + Circos (4-track)</td><td>DVG 检测 + 重组事件 + Circos 可视化 (scatter + coverage 轨道)</td></tr>
+  <tr><td>09 report</td><td>generate_pipeline_report.py</td><td>自包含 HTML：侧边栏病毒导航 + 嵌入图表 + AI 写作建议</td></tr>
+</table>
+
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!-- 管道 4: 提交管线 -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+
+<h2><span class="num">④</span> NCBI 数据提交管道 <code style="font-size:0.8em;color:var(--muted)">virome_submission_pipeline/</code></h2>
+
+<div class="mermaid-wrap">
+<div class="mermaid">
+flowchart LR
+    A["📂 08_Rescue<br/>HQ vOTU"] --> B["topology<br/>BWA-MEM2 末端比对<br/>circular / linear 判断"]
+    B --> C["metadata<br/>source.src + features<br/>+ organism 模板"]
+    C --> D["hypothetical<br/>HHsuite / Diamond<br/>/ DeepLoc / PSORTb<br/>/ TMHMM 5工具注释"]
+    D --> E{"提交模式"}
+    E -->|"模式 A"| F["suvtk table2asn<br/>taxonomy + features<br/>→ .sqn"]
+    E -->|"模式 B"| G["Sequin tbl2asn<br/>.fsa + .tbl + .cmt<br/>→ .sqn"]
+    F --> H["✅ .sqn<br/>NCBI 提交文件"]
+    G --> H
+
+    style A fill:#1e40af,color:#fff
+    style H fill:#065f46,color:#fff
+</div>
+</div>
+
+<table>
+  <tr><th>阶段</th><th>脚本</th><th>功能</th></tr>
+  <tr><td>topology</td><td><code>viral_topology.py</code></td><td>BWA-MEM2 末端比对 → 判断病毒基因组 circular / linear 拓扑结构</td></tr>
+  <tr><td>metadata</td><td><code>unified_metadata.py</code></td><td>自动填充 source.src / features / organism 元数据模板</td></tr>
+  <tr><td>hypothetical</td><td><code>analyze_hypothetical.py</code></td><td>HHsuite + Diamond + DeepLoc + PSORTb + TMHMM 五工具假定蛋白功能注释</td></tr>
+  <tr><td>sequin</td><td><code>sequin_builder.py</code></td><td>Cenote-Taker3 风格 .tbl 格式构建</td></tr>
+  <tr><td>submit</td><td><code>submission_pipeline.py</code></td><td>端到端编排：suvtk table2asn / Sequin tbl2asn 双模式 → .sqn</td></tr>
+  <tr><td>gui</td><td><code>submission_gui.py</code></td><td>PySide6 桌面 GUI：交互式编辑 / 验证 / 导出</td></tr>
+  <tr><td>report</td><td><code>report_html.py</code></td><td>交互式 HTML 全表编辑报告</td></tr>
+</table>
+
+<div class="highlight-box">
+  <h4>🔄 双模式提交策略</h4>
+  <p style="margin:8px 0 0 0">
+    <strong>suvtk 模式</strong>：source.src → suvtk comments → table2asn → .sqn（自动化程度高）<br>
+    <strong>Sequin 模式</strong>：.fsa + .tbl + .cmt → tbl2asn → .sqn（手动可控，Cenote-Taker3 风格，作为 suvtk 失败时的回退方案）
+  </p>
+</div>
+
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!-- Changelog -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+
+<div class="changelog">
+<h2>📋 v2.3 → v3.0 主要变更</h2>
+<ul>
+  <li><strong>版本号</strong>：v2.3 → v3.0，README 同步更新</li>
+  <li><strong>BBNorm 阶段</strong>：新增 00c BBNorm 归一化阶段，共组装前可选 k-mer 覆盖度均衡</li>
+  <li><strong>宿主去除升级</strong>：从仅 Bowtie2 扩展为三引擎可选（Bowtie2 / HISAT2 / Minimap2），支持多种测序类型</li>
+  <li><strong>组装后处理</strong>：新增 refineC split → merge 后处理流程，拆分嵌合 contig</li>
+  <li><strong>鉴定工具数</strong>：9 → 10，新增 Viroid BLASTN 专门捕获类病毒序列</li>
+  <li><strong>聚类输出重构</strong>：centroids 提升为独立目录，known/novel contig 分流更清晰</li>
+  <li><strong>分类工具数</strong>：9 → 8，优化工具组合，R 共识引擎升级</li>
+  <li><strong>拯救分支扩展</strong>：3 支路 → 4 支路，新增属水平长度拯救（同属 ±15%）作为兜底策略</li>
+  <li><strong>宿主预测重构</strong>：RNAVirHost + iPHoP → RNAVirHost + PhaBOX2/CHERRY，决策树逻辑优化</li>
+  <li><strong>提交管线独立</strong>：virome_submission_pipeline 从附属脚本提升为独立管道，增加 suvtk 模式和 GUI</li>
+  <li><strong>环境管理</strong>：pixi.toml 新增 feature 分组（discovery / analysis / publicdata / gpu），按需安装</li>
+</ul>
+</div>
+
+</div>
+
+<script>
+mermaid.initialize({ startOnLoad: true, theme: 'dark', securityLevel: 'loose' });
+</script>
+</body>
+</html>

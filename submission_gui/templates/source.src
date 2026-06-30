@@ -1,0 +1,6 @@
+Sequence_ID	Organism	Isolate	Collection_date	geo_loc_name	Lat_Lon	Bioproject	Biosample	SRA	Segment	Metagenomic	Metagenome_source	Host
+ALL_merged_k99_11308	Potexvirus flavimaculae	NXGQ001	2024	China:Ningxia						TRUE	plant virome	Lycium chinense
+ALL_merged_k99_32577	Pospiviroid chloronani	NXGQ002	2024	China:Ningxia						TRUE	plant virome	Lycium chinense
+ALL_merged_k99_38723	Betacytorhabdovirus lycii	NXGQ003	2024	China:Ningxia						TRUE	plant virome	Lycium chinense
+OR489165.1	Betacytorhabdovirus lycii	NXGQ004	2024	China:Ningxia						TRUE	plant virome	Lycium chinense
+ALL_merged_k99_67366	Betacytorhabdovirus lycii	NXGQ005	2024	China:Ningxia						TRUE	plant virome	Lycium chinense

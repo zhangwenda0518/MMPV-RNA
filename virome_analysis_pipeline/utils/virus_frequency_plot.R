@@ -111,6 +111,8 @@ for (mode in available_modes) {
   # 如果翻转了坐标轴，高度可以随着种类数量动态伸缩
   dynamic_height <- ifelse(should_flip, max(opt$height, unique_viruses * 0.8), opt$height)
   ggsave(fn, plot=p, width=opt$width, height=dynamic_height, dpi=opt$dpi, bg="white")
+  fn_pdf <- sub("\\.[^.]+$", ".pdf", fn); if (fn != fn_pdf) ggsave(fn_pdf, plot=p, width=opt$width, height=dynamic_height, dpi=opt$dpi, bg="white")
+  fn_png <- sub("\\.[^.]+$", ".png", fn); if (fn != fn_png) ggsave(fn_png, plot=p, width=opt$width, height=dynamic_height, dpi=opt$dpi, bg="white")
   cat(sprintf("📊 成功生成图表: %s\n", fn))
 }
 
@@ -152,6 +154,8 @@ if (opt$`multi-plot` && length(available_modes) > 1) {
   fn_f <- sprintf("%s_multi_metrics%s.%s", opt$output, ifelse(opt$`log10-transform`, "_log10", ""), opt$format)
   dynamic_height_facet <- max(opt$height, unique_viruses * 0.8)
   ggsave(fn_f, plot=p_facet, width=opt$width * 1.5, height=dynamic_height_facet, dpi=opt$dpi, bg="white")
+  fn_f_pdf <- sub("\\.[^.]+$", ".pdf", fn_f); if (fn_f != fn_f_pdf) ggsave(fn_f_pdf, plot=p_facet, width=opt$width * 1.5, height=dynamic_height_facet, dpi=opt$dpi, bg="white")
+  fn_f_png <- sub("\\.[^.]+$", ".png", fn_f); if (fn_f != fn_f_png) ggsave(fn_f_png, plot=p_facet, width=opt$width * 1.5, height=dynamic_height_facet, dpi=opt$dpi, bg="white")
   cat(sprintf("📈 成功生成综合面板图: %s\n", fn_f))
 }
 cat("🎉 所有可视化任务完成！\n")

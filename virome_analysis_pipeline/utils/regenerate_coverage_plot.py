@@ -166,6 +166,7 @@ def plot_coverage_compact(tool_data, ref_length, out_prefix, n_regions_map=None)
     plt.tight_layout()
     plt.savefig(f"{out_prefix}_Compact.png", dpi=300)
     plt.savefig(f"{out_prefix}_Compact.pdf", dpi=300)
+    plt.savefig(f"{out_prefix}_Compact.png", dpi=300)
     plt.close()
 
 
@@ -231,6 +232,7 @@ def plot_coverage_stacked(tool_data, ref_length, out_prefix, n_regions_map=None)
     plt.tight_layout()
     plt.savefig(f"{out_prefix}_Stacked.png", dpi=300)
     plt.savefig(f"{out_prefix}_Stacked.pdf", dpi=300)
+    plt.savefig(f"{out_prefix}_Stacked.png", dpi=300)
     plt.close()
 
 

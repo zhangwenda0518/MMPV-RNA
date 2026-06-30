@@ -970,7 +970,7 @@ def main():
         p.print_help()
         sys.exit(0)
 
-    out = Path(args.output if hasattr(args, 'output') else args.work_dir).resolve()
+    out = Path(args.output if hasattr(args, 'output') and args.output else args.work_dir).resolve()
     log = setup_logger(str(out))
 
     if args.mode == "novel":
@@ -983,7 +983,6 @@ def main():
             str(work), log,
             getattr(args, 'updated_tbl', None),
             getattr(args, 'updated_faa', None),
-            getattr(args, 'metadata', None),
         )
     elif args.mode == "step":
         work = Path(args.work_dir)

@@ -20,6 +20,7 @@ salmonBin = os.path.expanduser("~/mambaforge/envs/Virseqimprover/bin/salmon")
 checkv_db = ""
 run_counter = 1
 checkv_triggered = False
+genus_avg_len = 0
 
 
 def printHelp():
@@ -57,7 +58,7 @@ Example:
 def parseArguments(args):
     global outputDir, read1, read2, scaffold
     global spadesKmerlen, minOverlapCircular, minIdentityCircular, salmonReadFraction, minSuspiciousLen
-    global threads, salmonBin, checkv_db
+    global threads, salmonBin, checkv_db, genus_avg_len
 
     if len(args) == 0:
         printHelp()
@@ -98,6 +99,8 @@ def parseArguments(args):
                         salmonBin = args[i + 1]
                     elif args[i] == "-checkv_db":
                         checkv_db = os.path.abspath(args[i + 1])
+                    elif args[i] == "-genus_avg_len":
+                        genus_avg_len = float(args[i + 1])
                     else:
                         print("Invalid argument: " + args[i])
                         return
@@ -206,6 +209,7 @@ def createBed():
                + "cd tmp/spades-res\n"
                # 把 SPAdes 的 NODE_1_... 头改回原始 contig 名
                + "sed -i \"1s/^>.*/>" + orig_name + "/\" scaffold.fasta\n"
+               + "samtools faidx scaffold.fasta\n"   # 重建 fai (旧索引引用了 old header)
                + "mv scaffold.fasta " + outputDir + "/scaffold-truncated\n"
                + "mv scaffold.fasta.fai " + outputDir + "/scaffold-truncated\n")
 
@@ -1039,7 +1043,7 @@ def runCheckV(fasta_file):
                 bwOutLog = open(os.path.join(outputDir, "output-log.txt"), 'a')
                 bwOutLog.write(f"\nExtension stopped: aai_completeness=NA (not evaluable).\n")
                 bwOutLog.close()
-                is_complete = True  # 触发停止
+                is_complete = False  # NA不代表完整, 继续延伸
 
             # 停摆条件1: 完整度 >= 90%
             if comp_val >= 90.0:
@@ -1058,6 +1062,12 @@ def runCheckV(fasta_file):
                 bwOutLog.write(f"\nAssembly stopped: CheckV completeness reached {comp_val}%.\n")
                 bwOutLog.write(f"Contig Length: {contig_length} bp, Expected Length: {expected_length:.0f} bp.\n")
                 bwOutLog.close()
+
+            # 停摆条件2b: CheckV NA 时用 genus_avg_len 做截止 (达到属平均长度90%)
+            elif not is_evaluable and genus_avg_len > 0 and contig_length >= genus_avg_len * 0.9:
+                is_complete = True
+                print(f"[STOP] Genus avg: {genus_avg_len:.0f}bp, Contig: {contig_length}bp ({100*contig_length/genus_avg_len:.1f}%)")
+                return is_complete, expected_length
 
             # 停摆条件2: 长度 >= 2x 预期长度 (硬性上限，防止极端过度延伸)
             elif expected_length > 0 and contig_length >= expected_length * 2:
@@ -1132,6 +1142,7 @@ def checkCoverage():
 
 
 def extendOneScaffold():
+    global checkv_triggered
     print("extendOneScaffold:")
     print('Start time: {0}'.format(datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')))
 
@@ -1187,10 +1198,19 @@ def extendOneScaffold():
                 iteration += 1
         else:
             extendContig = False
+            bwOutLog = open(outputDir + "/output-log.txt",'a')
+            bwOutLog.write(f"\nExtension stopped: scaffold no longer growing (current={currentLength}bp, prev={prevLength}bp).\n")
+            bwOutLog.close()
 
         if extendContig and iteration > 2000:
             extendContig = False
+            bwOutLog = open(outputDir + "/output-log.txt",'a')
+            bwOutLog.write(f"\nExtension stopped: max iterations (2000) reached.\n")
+            bwOutLog.close()
 
+    bwOutLog = open(outputDir + "/output-log.txt",'a')
+    bwOutLog.write(f"\n=== VSI finished: iterations={iteration}, final_length={prevLength}bp ===\n")
+    bwOutLog.close()
     print('End time: {0}'.format(datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')))
 
 

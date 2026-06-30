@@ -410,9 +410,7 @@ class MainWindow(QMainWindow):
         ])
         self.search_store._df = demos.astype(object)
         # Add data volume columns
-        vol_data = {"FileSize_MB": ["156", "210", "89", "134", "298", "67", "45", "45", "52", "178"],
-                     "Bases": ["4.2G", "5.8G", "2.1G", "3.5G", "7.9G", "1.8G", "1.2G", "1.2G", "1.4G", "4.5G"],
-                     "Spots": ["14.2M", "19.3M", "7.1M", "11.8M", "26.3M", "6.0M", "4.0M", "4.0M", "4.7M", "15.0M"]}
+        vol_data = {"FileSize_GB": ["2.8", "3.8", "1.6", "2.4", "5.4", "1.2", "0.8", "0.8", "0.9", "3.2"]}
         for col, vals in vol_data.items():
             self.search_store._df[col] = vals
         self.search_store._modified = False

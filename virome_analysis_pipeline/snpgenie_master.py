@@ -145,6 +145,7 @@ def plot_vaf_spectrum(df_filtered, output_dir):
     plt.ylabel('Density', fontweight='bold')
     plt.legend(); sns.despine(); plt.tight_layout()
     plt.savefig(os.path.join(output_dir, "Fig01_VAF_Spectrum.png"))
+    plt.savefig(os.path.join(output_dir, "Fig01_VAF_Spectrum.pdf"))
     plt.close()
 
 # ==========================================
@@ -178,6 +179,7 @@ def calculate_adjusted_n_per_kb(df_site_filtered, df_prod, output_dir):
     plt.xlabel('Viral Product', fontweight='bold'); plt.ylabel('Adjusted # iSNVs per Kb', fontweight='bold')
     sns.despine(); plt.tight_layout()
     plt.savefig(os.path.join(output_dir, "Fig02_Adjusted_iSNV_Density.png"))
+    plt.savefig(os.path.join(output_dir, "Fig02_Adjusted_iSNV_Density.pdf"))
     plt.close()
 
 # ==========================================
@@ -203,7 +205,8 @@ def plot_joint_dynamics(df_pop, output_dir):
         g.ax_joint.set_xlabel('dS (Synonymous Divergence)', fontweight='bold')
         g.ax_joint.set_ylabel('dN (Nonsynonymous Divergence)', fontweight='bold')
         plt.suptitle("Fig 3: Inter-host Evolutionary Dynamics", y=1.03, fontsize=14, fontweight='bold')
-        plt.savefig(os.path.join(output_dir, "Fig03_InterHost_dNdS.png"), bbox_inches='tight'); plt.close()
+        plt.savefig(os.path.join(output_dir, "Fig03_InterHost_dNdS.png"), bbox_inches='tight')
+        plt.savefig(os.path.join(output_dir, "Fig03_InterHost_dNdS.pdf"), bbox_inches='tight'); plt.close()
 
     # Fig 4 (Intra-host)
     df_intra = df_pop[(df_pop.get('piN', 0) > 0) | (df_pop.get('piS', 0) > 0)].dropna(subset=['piN', 'piS']).copy()
@@ -219,7 +222,8 @@ def plot_joint_dynamics(df_pop, output_dir):
         g2.ax_joint.set_xlabel('\u03C0S (Synonymous Diversity)', fontweight='bold')
         g2.ax_joint.set_ylabel('\u03C0N (Nonsynonymous Diversity)', fontweight='bold')
         plt.suptitle("Fig 4: Intra-host Quasispecies Dynamics", y=1.03, fontsize=14, fontweight='bold')
-        plt.savefig(os.path.join(output_dir, "Fig04_IntraHost_pi.png"), bbox_inches='tight'); plt.close()
+        plt.savefig(os.path.join(output_dir, "Fig04_IntraHost_pi.png"), bbox_inches='tight')
+        plt.savefig(os.path.join(output_dir, "Fig04_IntraHost_pi.pdf"), bbox_inches='tight'); plt.close()
 
         # Kruskal-Wallis on \u03C0N/\u03C0S ratio across genes
         if 'product' in df_intra.columns and df_intra['product'].nunique() >= 2:
@@ -237,7 +241,10 @@ def plot_joint_dynamics(df_pop, output_dir):
 # ==========================================
 def plot_gene_dnds_with_stats(df_prod, output_dir):
     print("  -> Fig 5: 提取小提琴统计推衍图层...")
-    df_valid = df_prod[pd.to_numeric(df_prod.get('mean_dS_vs_ref', 0), errors='coerce') > 0].copy()
+    if df_prod.empty or 'mean_dS_vs_ref' not in df_prod.columns:
+        print("    -> [跳过 Fig 5] 缺少 dN/dS 列 (非蛋白编码序列)")
+        return
+    df_valid = df_prod[pd.to_numeric(df_prod['mean_dS_vs_ref'], errors='coerce') > 0].copy()
     if df_valid.empty: return
     df_valid['dNdS'] = pd.to_numeric(df_valid['mean_dN_vs_ref']) / pd.to_numeric(df_valid['mean_dS_vs_ref'])
     
@@ -272,7 +279,8 @@ def plot_gene_dnds_with_stats(df_prod, output_dir):
     plt.xlabel('Viral Gene', fontweight='bold')
     plt.ylabel('dN/dS Ratio', fontweight='bold')
     plt.legend(); sns.despine(); plt.tight_layout()
-    plt.savefig(os.path.join(output_dir, "Fig05_Gene_dNdS_Stats.png")); plt.close()
+    plt.savefig(os.path.join(output_dir, "Fig05_Gene_dNdS_Stats.png"))
+    plt.savefig(os.path.join(output_dir, "Fig05_Gene_dNdS_Stats.pdf")); plt.close()
 
     # Save Kruskal-Wallis result
     if not np.isnan(kw_h):
@@ -286,7 +294,11 @@ def plot_gene_dnds_with_stats(df_prod, output_dir):
 # ==========================================
 def perform_10000x_bootstrap_dnds(df_prod, output_dir, bs=10000):
     print(f"  -> Fig 6: 引爆 {bs} 轮蒙特卡洛纯化选择边界计算...")
-    df = df_prod[['product', 'N_diffs_vs_ref', 'S_diffs_vs_ref', 'N_sites', 'S_sites']].copy().apply(pd.to_numeric, errors='ignore')
+    needed_cols = ['product', 'N_diffs_vs_ref', 'S_diffs_vs_ref', 'N_sites', 'S_sites']
+    if df_prod.empty or not all(c in df_prod.columns for c in needed_cols):
+        print("    -> [跳过 Fig 6] 缺少 bootstrap 所需列 (非蛋白编码序列)")
+        return
+    df = df_prod[needed_cols].copy().apply(pd.to_numeric, errors='ignore')
     results = []
     
     for gene in df['product'].unique():
@@ -343,6 +355,7 @@ def perform_10000x_bootstrap_dnds(df_prod, output_dir, bs=10000):
     plt.ylabel('dNdS with 95% Bootstrap CI', fontweight='bold')
     sns.despine(); plt.tight_layout()
     plt.savefig(os.path.join(output_dir, "Fig06_Bootstrapped_dNdS.png"))
+    plt.savefig(os.path.join(output_dir, "Fig06_Bootstrapped_dNdS.pdf"))
     plt.close()
 
 # ==========================================
@@ -351,7 +364,10 @@ def perform_10000x_bootstrap_dnds(df_prod, output_dir, bs=10000):
 def plot_signatures_and_hotspots(df_site_filtered, df_site_all, output_dir):
     print("  -> Fig 7 & 8: 免疫无代码崩溃防线，输出异常碱基偏移与变异热刺...")
     # -- Fig 7 (突变频谱) --
-    df_mut = df_site_all[df_site_all.get('ref_nt','').isin(list('ACGT')) & df_site_all.get('maj_nt','').isin(list('ACGT'))].copy()
+    if df_site_all.empty or not all(c in df_site_all.columns for c in ['ref_nt', 'maj_nt']):
+        print("    -> [跳过 Fig 7] site_results 缺少 ref_nt/maj_nt 列")
+        return
+    df_mut = df_site_all[df_site_all['ref_nt'].isin(list('ACGT')) & df_site_all['maj_nt'].isin(list('ACGT'))].copy()
     if not df_mut.empty:
         # [防崩溃补丁] 安全降级转换类型
         df_mut['pos'] = pd.to_numeric(df_mut.get('position_in_codon', np.nan), errors='coerce')
@@ -370,7 +386,8 @@ def plot_signatures_and_hotspots(df_site_filtered, df_site_all, output_dir):
             plt.title('Fig 7: Mutational Spectrum & Codon Buffer Bias', fontsize=14, fontweight='bold')
             plt.legend(title='Codon Pos'); plt.xlabel('Substitution Motif', fontweight='bold'); plt.ylabel('Occurrences', fontweight='bold')
             sns.despine(); plt.tight_layout()
-            plt.savefig(os.path.join(output_dir, "Fig07_Mutational_Spectrum.png")); plt.close()
+            plt.savefig(os.path.join(output_dir, "Fig07_Mutational_Spectrum.png"))
+            plt.savefig(os.path.join(output_dir, "Fig07_Mutational_Spectrum.pdf")); plt.close()
 
     # -- Fig 8 (趋同热点靶点) --
     if 'class_vs_ref' in df_site_filtered.columns:
@@ -385,7 +402,8 @@ def plot_signatures_and_hotspots(df_site_filtered, df_site_all, output_dir):
             plt.xlim(0, tc['n'].max() * 1.15)
             plt.xlabel('Sample Count', fontweight='bold'); plt.ylabel('Viral Target', fontweight='bold')
             sns.despine(); plt.tight_layout()
-            plt.savefig(os.path.join(output_dir, "Fig08_Top_Hotspots.png")); plt.close()
+            plt.savefig(os.path.join(output_dir, "Fig08_Top_Hotspots.png"))
+            plt.savefig(os.path.join(output_dir, "Fig08_Top_Hotspots.pdf")); plt.close()
 
 # ==========================================
 #[Fig 9] 双轨滑动多态窗口 (pi_N vs pi_S)
@@ -414,6 +432,7 @@ def plot_dual_track_window(df_site_all, output_dir, window=50):
     plt.legend()
     sns.despine(); plt.tight_layout()
     plt.savefig(os.path.join(output_dir, "Fig09_DualTrack_Window.png"))
+    plt.savefig(os.path.join(output_dir, "Fig09_DualTrack_Window.pdf"))
     plt.close()
 
 # ==========================================
@@ -516,7 +535,8 @@ def plot_trinity_landscape(df_site, df_prod, output_dir, window=50, ref_acc=""):
     a3.set_xlabel('Genomic Coordinates (bp)', fontweight='bold')
     a3.set_ylim(0, ytop); a3.set_xlim(0, max_l)
     a3.spines['top'].set_visible(False); a3.spines['right'].set_visible(False)
-    plt.tight_layout(); plt.savefig(os.path.join(output_dir, "Fig10_Trinity_Landscape.png"), bbox_inches='tight'); plt.close()
+    plt.tight_layout(); plt.savefig(os.path.join(output_dir, "Fig10_Trinity_Landscape.png"), bbox_inches='tight')
+    plt.savefig(os.path.join(output_dir, "Fig10_Trinity_Landscape.pdf"), bbox_inches='tight'); plt.close()
 
 # ==========================================
 # ==========================================
@@ -537,7 +557,7 @@ def plot_ml_clusters(df_pop, output_dir, metadata_file=None):
     X = StandardScaler().fit_transform(df[feats])
 
     # === AI Auto-K: Silhouette Score maximization ===
-    max_k = min(7, len(X) // 5)
+    max_k = max(2, min(7, len(X) // 5))
     best_k, best_score = 2, -1.0
     for k in range(2, max_k + 1):
         labels_temp = KMeans(n_clusters=k, random_state=42).fit_predict(X)
@@ -598,6 +618,7 @@ def plot_ml_clusters(df_pop, output_dir, metadata_file=None):
     sns.despine()
     plt.tight_layout()
     plt.savefig(os.path.join(output_dir, "Fig11a_PCA_2D.png"), bbox_inches='tight')
+    plt.savefig(os.path.join(output_dir, "Fig11a_PCA_2D.pdf"), bbox_inches='tight')
     plt.close()
 
     # ================= 3D PCA =================
@@ -623,6 +644,7 @@ def plot_ml_clusters(df_pop, output_dir, metadata_file=None):
 
     plt.tight_layout()
     plt.savefig(os.path.join(output_dir, "Fig11b_PCA_3D.png"), bbox_inches='tight')
+    plt.savefig(os.path.join(output_dir, "Fig11b_PCA_3D.pdf"), bbox_inches='tight')
     plt.close()
 
     print(f"    -> [完成] 2D + 3D PCA 双模式图表已生成。")

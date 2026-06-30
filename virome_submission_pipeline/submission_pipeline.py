@@ -39,8 +39,30 @@ import subprocess
 import logging
 from pathlib import Path
 from datetime import datetime
+from Bio import SeqIO
 
 SCRIPT_DIR = Path(__file__).resolve().parent
+
+
+def _read_tsv_simple(path):
+    """读取 TSV 文件, 返回 [{col: val}]"""
+    rows = []
+    if not Path(path).is_file():
+        return rows
+    with open(path) as f:
+        hdr = f.readline().strip().split('\t')
+        for line in f:
+            if not line.strip(): continue
+            rows.append(dict(zip(hdr, line.strip().split('\t'))))
+    return rows
+
+
+def _count_lines(path):
+    """计算文件行数"""
+    if not Path(path).is_file(): return 0
+    with open(path) as f:
+        return sum(1 for _ in f)
+
 
 # ══════════════════════════════════════════════════════════════
 # 管道参数自动检测 (从 pipeline_config.yaml)
@@ -122,6 +144,19 @@ def run(cmd, log, step_name, check=False):
         return False
 
 
+def _find_suvtk_output(work_dir, rel_path, min_size=100):
+    """在 work_dir 及其上级目录的 09_Virome_Analysis 中查找已有 suvtk 输出"""
+    # 1. work_dir 直接子目录
+    candidate = work_dir / rel_path
+    if candidate.exists() and os.path.getsize(candidate) > min_size:
+        return candidate
+    # 2. 上级目录的 09_Virome_Analysis (主流水线输出位置)
+    for parent in [work_dir.parent, work_dir.parent.parent]:
+        alt = parent / "09_Virome_Analysis" / rel_path
+        if alt.exists() and os.path.getsize(alt) > min_size:
+            return alt
+    return None
+
 # ══════════════════════════════════════════════════════════════
 # 自动检测 + 补运行缺失步骤
 # ══════════════════════════════════════════════════════════════
@@ -130,6 +165,20 @@ def ensure_taxonomy(work_dir, fasta, suvtk_db, threads, log):
     """确保 suvtk taxonomy 已完成"""
     tax_out = work_dir / "suvtk.taxonomy_output"
     tax_tsv = tax_out / "taxonomy.tsv"
+    # 检查是否已有 suvtk 输出 (可能在 09_Virome_Analysis)
+    existing = _find_suvtk_output(work_dir, "suvtk.taxonomy_output/taxonomy.tsv")
+    if existing and existing != tax_tsv:
+        log.info("[1/5] taxonomy — 在 %s 找到, 复用", existing.parent)
+        os.makedirs(tax_out, exist_ok=True)
+        for fname in ["taxonomy.tsv", "miuvig_taxonomy.tsv", "miuvig_taxonomy_enriched.tsv",
+                      "segmented_viruses_info.tsv", "taxresults_lca.tsv"]:
+            src = existing.parent / fname
+            dst = tax_out / fname
+            if src.exists():
+                if dst.exists() or dst.is_symlink():
+                    dst.unlink()
+                os.symlink(src, dst)
+        return tax_out
     if tax_tsv.exists() and os.path.getsize(tax_tsv) > 100:
         log.info("[1/5] taxonomy — 已存在, 跳过")
         return tax_out
@@ -146,6 +195,21 @@ def ensure_features(work_dir, fasta, tax_dir, suvtk_db, threads, log):
     """确保 suvtk features 已完成"""
     feat_out = work_dir / "suvtk.features_output"
     tbl = feat_out / "featuretable.tbl"
+    existing = _find_suvtk_output(work_dir, "suvtk.features_output/featuretable.tbl")
+    if existing and existing != tbl:
+        log.info("[2/5] features — 在 %s 找到, 复用", existing.parent)
+        os.makedirs(feat_out, exist_ok=True)
+        # 链核心文件
+        for fname in ["featuretable.tbl", "proteins.faa", "proteins_updated.faa",
+                      "reoriented_nucleotide_sequences.fna", "miuvig_features.tsv",
+                      "alignment.m8", "tophit_info.tsv"]:
+            src = existing.parent / fname
+            dst = feat_out / fname
+            if src.exists():
+                if dst.exists() or dst.is_symlink():
+                    dst.unlink()
+                os.symlink(src, dst)
+        return feat_out
     if tbl.exists() and os.path.getsize(tbl) > 100:
         log.info("[2/5] features — 已存在, 跳过")
         return feat_out
@@ -164,6 +228,12 @@ def ensure_hypothetical(work_dir, feat_dir, rvdb_dir, threads, log):
     """确保 analyze_hypothetical 已完成"""
     hypo_out = work_dir / "analyze_hypothetical"
     updated_tbl = hypo_out / "featuretable_updated.tbl"
+    existing = _find_suvtk_output(work_dir, "analyze_hypothetical/featuretable_updated.tbl")
+    if existing and existing != updated_tbl:
+        log.info("[2.5/5] hypothetical — 在 %s 找到, 复用", existing.parent)
+        os.makedirs(hypo_out, exist_ok=True)
+        os.symlink(existing, updated_tbl)
+        return hypo_out
     if updated_tbl.exists() and os.path.getsize(updated_tbl) > 100:
         log.info("[2.5/5] hypothetical — 已存在, 跳过")
         return hypo_out
@@ -864,21 +934,244 @@ def main():
     fna = feat_dir / "reoriented_nucleotide_sequences.fna" if feat_dir else None
     miuvig_feat = feat_dir / "miuvig_features.tsv" if feat_dir else None
 
+    # 统一输出目录 (work_dir 平级，不污染分析目录)
+    sub_out = work_dir.parent / f"submission_{args.run_title}"
+    sub_out.mkdir(parents=True, exist_ok=True)
+
     if args.mode in ('suvtk', 'both'):
         log.info("─" * 40 + "\n  suvtk 模式: 生成 source.src + .cmt → table2asn\n" + "─" * 40)
 
-        suvtk_script = SCRIPT_DIR / "virome_submission.py"
+        sv_dir = sub_out / "suvtk_submission"
+        sv_dir.mkdir(parents=True, exist_ok=True)
 
-        if tax_tsv and feat_dir:
-            cmd = (
-                f"python {suvtk_script} report "
-                f"--work-dir {work_dir} "
-                f"--updated-tbl {updated_tbl} "
-                f"--updated-faa {updated_faa}"
+        miuvig_tax = tax_dir / "miuvig_taxonomy.tsv" if tax_dir else None
+        miuvig_feat = feat_dir / "miuvig_features.tsv" if feat_dir else None
+        reoriented_fna = feat_dir / "reoriented_nucleotide_sequences.fna" if feat_dir else None
+
+        # 1. 生成 miuvig.tsv (MIUVIG global parameters, key-value)
+        #    ref: https://github.com/NCBI-Codeathons/suvtk
+        miuvig_tsv = sv_dir / "miuvig.tsv"
+        if not miuvig_tsv.exists():
+            pipe_params = load_pipeline_params(work_dir)
+            with open(miuvig_tsv, "w") as mf:
+                mf.write("MIUVIG_parameter\tvalue\n")
+                mf.write(f"source_uvig\t{pipe_params.get('source_uvig','metatranscriptome (not viral targeted)')}\n")
+                mf.write(f"assembly_software\t{pipe_params.get('assembler','MEGAHIT v1.2.9')}\n")
+                mf.write("vir_ident_software\tGenomad;1.7.0;default parameters\n")
+                mf.write(f"nucl_acid_ext\t{pipe_params.get('enrichment','RNA extracted from leaf tissue')}\n")
+            log.info("  生成 miuvig.tsv")
+
+        # 2. 生成 assembly.tsv (Assembly-Data structured comment, key-value)
+        asm_tsv = sv_dir / "assembly.tsv"
+        if not asm_tsv.exists():
+            pipe_params = load_pipeline_params(work_dir)
+            with open(asm_tsv, "w") as af:
+                af.write("Assembly_parameter\tvalue\n")
+                af.write("StructuredCommentPrefix\tAssembly-Data\n")
+                af.write(f"Assembly Method\t{pipe_params.get('assembler','MEGAHIT v1.2.9')}\n")
+                af.write(f"Sequencing Technology\t{pipe_params.get('sequencer','Illumina NovaSeq 6000')}\n")
+            log.info("  生成 assembly.tsv")
+
+        # 2.8 tbl2gb: 生成 GenBank .gb 文件 (供 SnpEff/capheine/similarity 下游)
+        gb_dir = sv_dir / "virus-annotations"
+        gb_dir.mkdir(exist_ok=True)
+        tbl2gb_script = SCRIPT_DIR.parent / "virome_analysis_pipeline" / "utils" / "tbl2gb.py"
+        tax_tsv_path = tax_dir / "taxonomy.tsv" if tax_dir else None
+        if tbl2gb_script.exists() and reoriented_fna and updated_tbl and tax_tsv_path and tax_tsv_path.exists():
+            if not list(gb_dir.glob("*.gb")):
+                tbl2gb_cmd = (
+                    f"python {tbl2gb_script} "
+                    f"--tbl {updated_tbl} "
+                    f"--fasta {reoriented_fna} "
+                    f"--taxonomy {tax_tsv_path} "
+                    f"-o {gb_dir}"
+                )
+                run(tbl2gb_cmd, log, "tbl2gb → .gb")
+            else:
+                log.info("[2.8/5] tbl2gb — .gb 文件已存在, 跳过")
+        else:
+            missing = []
+            if not tbl2gb_script.exists(): missing.append("tbl2gb.py")
+            if not reoriented_fna or not reoriented_fna.exists(): missing.append("reoriented.fna")
+            if not updated_tbl or not os.path.exists(updated_tbl): missing.append("featuretable.tbl")
+            if missing:
+                log.info("[2.8/5] tbl2gb — 跳过 (%s)", ", ".join(missing))
+
+        # 3. suvtk comments: 生成 MIUVIG 结构化注释 .cmt (suvtk 会自动加 .cmt 后缀)
+        comments_cmt = sv_dir / "comments"
+        if miuvig_tax and miuvig_tax.exists() and miuvig_feat and miuvig_feat.exists():
+            comments_cmd = (
+                f"suvtk comments "
+                f"-t {miuvig_tax} "
+                f"-f {miuvig_feat} "
+                f"-m {miuvig_tsv} "
+                f"-a {asm_tsv} "
+                f"-o {comments_cmt}"
             )
-            run(cmd, log, "suvtk report")
+            run(comments_cmd, log, "suvtk comments")
 
-        log.info("  下一步: 编辑 source.src 后运行 suvtk comments & table2asn")
+        # 4. suvtk table2asn → .sqn
+        src_file = sv_dir / "source.src"
+        sbt_file = sv_dir / "template.sbt"
+
+        # 生成 source.src (TSV 格式, suvtk table2asn 要求)
+        # ref: suvtk docs — Sequence_ID, Organism, Isolate, Collection_date, geo_loc_name, Lat_Lon, ...
+        if not src_file.exists():
+            # 从 taxonomy 和 ref_info 读取实际数据
+            ref_info_path = work_dir.parent / "09_Virome_Analysis" / "ref_info.tsv"
+            has_ref_info = ref_info_path.is_file()
+            with open(src_file, "w") as sf:
+                cols = ["Sequence_ID","Organism","Isolate","Collection_date","geo_loc_name",
+                        "Lat_Lon","Bioproject","Biosample","SRA","Segment","Metagenomic","Metagenome_source","Host"]
+                sf.write("\t".join(cols) + "\n")
+                # use suvtk taxonomy for Organism, generate unique Isolate per sequence
+                isolate_counter = 0
+                for row in _read_tsv_simple(ref_info_path) if has_ref_info else []:
+                    cid = row.get("Accession", row.get("contig_id", ""))
+                    if not cid: continue
+                    isolate_counter += 1
+                    organism = row.get("suvtk_Species", row.get("Species", "unclassified plant virus"))
+                    if organism in ("nan", "", "NA", None):
+                        organism = "unclassified plant virus"
+                    isolate = f"NXGQ{isolate_counter:03d}"  # NingXia GouQi unique ID
+                    sf.write(f"{cid}\t{organism}\t{isolate}\t2024\t"
+                            f"China:Ningxia\t\t\t\t\t\tTRUE\tplant virome\tLycium chinense\n")
+                if not has_ref_info:
+                    # fallback: generate from FASTA
+                    for rec in SeqIO.parse(str(fasta), "fasta"):
+                        isolate_counter += 1
+                        isolate = f"NXGQ{isolate_counter:03d}"
+                        sf.write(f"{rec.id}\tunclassified plant virus\t{isolate}\t2024\t"
+                                f"China:Ningxia\t\t\t\t\t\tTRUE\tplant virome\tLycium chinense\n")
+            log.info("  生成 source.src (%d 条)", isolate_counter)
+
+        # 生成 template.sbt (NCBI ASN.1 格式, table2asn 兼容)
+        # NOTE: ASN.1 解析对格式极其敏感, 每个字段必须单独一行
+        if not sbt_file.exists():
+            with open(sbt_file, "w") as sf:
+                sf.write(
+                    'Submit-block ::= {\n'
+                    '  contact {\n'
+                    '    contact {\n'
+                    '      name name {\n'
+                    '        last "Zhang",\n'
+                    '        first "Wenda",\n'
+                    '        middle "",\n'
+                    '        initials "",\n'
+                    '        suffix "",\n'
+                    '        title ""\n'
+                    '      },\n'
+                    '      affil std {\n'
+                    '        affil "Ningxia University",\n'
+                    '        div "College of Life Sciences",\n'
+                    '        city "Yinchuan",\n'
+                    '        sub "Ningxia",\n'
+                    '        country "China",\n'
+                    '        street "Ningxia University",\n'
+                    '        email "zhangwenda@example.com",\n'
+                    '        postal-code "750021"\n'
+                    '      }\n'
+                    '    }\n'
+                    '  },\n'
+                    '  cit {\n'
+                    '    authors {\n'
+                    '      names std {\n'
+                    '        {\n'
+                    '          name name {\n'
+                    '            last "Zhang",\n'
+                    '            first "Wenda",\n'
+                    '            middle "",\n'
+                    '            initials "",\n'
+                    '            suffix "",\n'
+                    '            title ""\n'
+                    '          }\n'
+                    '        }\n'
+                    '      },\n'
+                    '      affil std {\n'
+                    '        affil "Ningxia University",\n'
+                    '        div "College of Life Sciences",\n'
+                    '        city "Yinchuan",\n'
+                    '        sub "Ningxia",\n'
+                    '        country "China",\n'
+                    '        street "Ningxia University",\n'
+                    '        postal-code "750021"\n'
+                    '      }\n'
+                    '    }\n'
+                    '  },\n'
+                    '  subtype new\n'
+                    '}\n'
+                    'Seqdesc ::= pub {\n'
+                    '  pub {\n'
+                    '    gen {\n'
+                    '      cit "unpublished",\n'
+                    '      authors {\n'
+                    '        names std {\n'
+                    '          {\n'
+                    '            name name {\n'
+                    '              last "Zhang",\n'
+                    '              first "Wenda",\n'
+                    '              middle "",\n'
+                    '              initials "",\n'
+                    '              suffix "",\n'
+                    '              title ""\n'
+                    '            }\n'
+                    '          }\n'
+                    '        }\n'
+                    '      },\n'
+                    '      title "Plant virome of Lycium chinense in Ningxia, China"\n'
+                    '    }\n'
+                    '  }\n'
+                    '}\n'
+                    'Seqdesc ::= user {\n'
+                    '  type str "Submission",\n'
+                    '  data {\n'
+                    '    {\n'
+                    '      label str "AdditionalComment",\n'
+                    '      data str "ALT EMAIL:zhangwenda@example.com"\n'
+                    '    }\n'
+                    '  }\n'
+                    '}\n'
+                    'Seqdesc ::= user {\n'
+                    '  type str "Submission",\n'
+                    '  data {\n'
+                    '    {\n'
+                    '      label str "AdditionalComment",\n'
+                    '      data str "Submission Title:None"\n'
+                    '    }\n'
+                    '  }\n'
+                    '}\n'
+                )
+            log.info("  生成 template.sbt")
+
+        comments_file = Path(str(comments_cmt) + ".cmt")  # suvtk 自动加 .cmt
+
+        # 5. suvtk table2asn → .sqn
+        if reoriented_fna and reoriented_fna.exists() and updated_tbl and os.path.exists(updated_tbl):
+            if not comments_file.exists():
+                log.warning("  comments.cmt 不存在, 跳过 suvtk table2asn")
+            elif not sbt_file.exists():
+                log.warning("  template.sbt 不存在, 跳过 suvtk table2asn")
+            else:
+                sqn_cmd = (
+                    f"suvtk table2asn "
+                    f"-i {reoriented_fna} "
+                    f"-o {sv_dir}/submission "
+                    f"-s {src_file} "
+                    f"-f {updated_tbl} "
+                    f"-t {sbt_file} "
+                    f"-c {comments_file}"
+                )
+                if run(sqn_cmd, log, "suvtk table2asn"):
+                    sqn_output = sv_dir / "submission.sqn"
+                    if sqn_output.is_file() and sqn_output.stat().st_size > 0:
+                        log.info("  ✓ submission.sqn 已生成 (%d KB)", sqn_output.stat().st_size // 1024)
+                    else:
+                        log.warning("  submission.sqn 未生成, 请检查")
+        else:
+            missing = []
+            if not reoriented_fna or not reoriented_fna.exists(): missing.append("reoriented.fna")
+            if not updated_tbl or not os.path.exists(updated_tbl): missing.append("featuretable.tbl")
+            log.warning("  缺少输入文件, 跳过 table2asn: %s", ", ".join(missing))
 
     if args.mode in ('sequin', 'both'):
         log.info("─" * 40 + "\n  Sequin 模式: 生成 .fsa + .tbl + .cmt (Cenote-Taker3 风格)\n" + "─" * 40)
@@ -912,9 +1205,7 @@ def main():
             # analysis pipeline: 自己测序, 可能做了病毒富集
             params = pipe_params.copy()
 
-        # 输出到 work_dir 平级，不污染分析目录
-        sub_out = work_dir.parent / f"submission_{args.run_title}"
-        sub_out.mkdir(parents=True, exist_ok=True)
+        # sub_out 已在上方定义
 
         meta_script = SCRIPT_DIR / "unified_metadata.py"
         cmd = (
