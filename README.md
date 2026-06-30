@@ -1,8 +1,8 @@
-# MMPV-RNA v3.0
+# MMPV v3.0 — Massive Meta-mining of Plant Viruses
 
-**Macro-metavirome Plant Virus Discovery & Analysis Platform**
+**大规模宏植物病毒挖掘与分析平台**
 
-> 端到端植物病毒组发现与分析平台 — 从原始 RNA-seq reads 到 HQ vOTU catalog 的完整闭环，含公共数据挖掘、新病毒发现、已知病毒定量/变异/进化深度分析。
+> 从公共测序数据中高通量鉴定植物病毒及其他病毒的完整闭环 — 含公共数据挖掘、新病毒发现、已知病毒定量/变异/进化深度分析。
 
 [![Python](https://img.shields.io/badge/python-3.10-blue.svg)](https://www.python.org/)
 [![R](https://img.shields.io/badge/R-4.2-blue.svg)](https://www.r-project.org/)
@@ -293,6 +293,6 @@ MMPV-RNA/
 
 ## 引用 / Citation
 
-Zhang W. et al. **MMPV-RNA: Macro-metavirome Plant Virus Discovery and Analysis Platform**. 2026.
+Zhang W. et al. **MMPV: Massive Meta-mining of Plant Viruses**. 2026.
 
-> If you use MMPV-RNA in your research, please cite the above reference.
+> If you use MMPV in your research, please cite the above reference.
