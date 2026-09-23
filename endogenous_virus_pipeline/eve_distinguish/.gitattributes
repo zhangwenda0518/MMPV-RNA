@@ -1,0 +1,7 @@
+# 本目录的脚本/数据会被 bash 直接读取: CRLF 会让 `read -r sample code dir`
+# 把 \r 吞进最后一个字段, 或让 bash 报 "command not found\r".
+* text=auto eol=lf
+*.sh text eol=lf
+*.py text eol=lf
+*.tsv text eol=lf
+*.md text eol=lf

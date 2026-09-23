@@ -1,39 +1,73 @@
 # ==============================================================================
-# MMPV-RNA v2.3 管道配置文件
+# MMPV = Massive Meta-mining of Plant Viruses — 管道配置文件
 # ==============================================================================
 # 用法:
 #   python virome_pipeline.py --profile default --output_dir out/
 #   python virome_pipeline.py --config my_config.yaml --profile plant
 #   python virome_pipeline.py --profile default --output_dir out/ --threads 120
 #     (CLI 参数覆盖配置文件, 优先级: CLI > profile > default)
+#
+# 【换环境怎么改】路径支持 ${环境变量:-默认值}，无需改本文件：
+#   MMPV_DB_ROOT      数据库根（默认 /home/zhangwenda/database）← 覆盖它即可迁移整批数据库
+#   MMPV_HOST_DB      宿主库根（默认 {MMPV_DB_ROOT}/host_db/）
+#   MMPV_VIRUS_DB     病毒库根（默认 {MMPV_DB_ROOT}/virus-db/）
+#   MMPV_KRAKEN2_DB   Kraken2 宿主库
+#   MMPV_CHECKV_DB    CheckV 数据库
+#   MMPV_PLANT_VIRUS_DB  植物病毒参考库根（默认 /home/zhangwenda/plant_virus_db）
+#   MMPV_SALMON / MMPV_DIAMOND / MMPV_RAGTAG / MMPV_VIRBOT  工具可执行文件
+#   MMPV_EVE_REF_DB / MMPV_EVE_PV_DB / MMPV_EVE_ID2DIV / MMPV_EVE_RVDB_DB
+#                         EVE 筛查四库（默认见 databases.eve_* 行）
+# 例: MMPV_DB_ROOT=/data/db python virome_pipeline.py --profile plant ...
+#
+# 【profile 继承】plant/downstream 用 YAML 锚点继承 default，只写差异项；
+#   新增 profile 请同样继承，避免复制导致配置漂移（历史问题：plant 曾缺
+#   deplete.* / tools.ragtag / taxonomy.* 等 10 个键）。
 # ==============================================================================
 
 profiles:
 
   # ── 默认配置 (通用) ──
   default: &default
-    databases:
-      checkv_db:    /home/zhangwenda/database/virus-db/checkv-db-v1.7
-      genomad_db:   /home/zhangwenda/database/virus-db/genomad_db/
-      mmseqs_db:    /home/zhangwenda/database/virus-db/RVDB-30/RVDB.mmseqs
-      virus_db:     /home/zhangwenda/database/virus-db/
-      uniprot_db:   /home/zhangwenda/database/virus-db/RVDB-30/U-RVDBv30_prot.dmnd
-      host_db:           /home/zhangwenda/database/host_db/
-      blast_db:          /home/zhangwenda/database/virus-db/ncbi-virus_ref/ncbi-virus_ref.blast.db
-      nr_db:             /home/zhangwenda/database/nr_diamond/nr.dmnd
-      db_dir:            /home/zhangwenda/database/virus-db/
-      viralverify_hmm:   /home/zhangwenda/database/virus-db/viralverify_db/nbc_hmms.hmm
+    databases: &db_default
+      db_dir:            ${MMPV_VIRUS_DB:-${MMPV_DB_ROOT:-/home/zhangwenda/database}/virus-db}/
+      virus_db:          ${MMPV_VIRUS_DB:-${MMPV_DB_ROOT:-/home/zhangwenda/database}/virus-db}/
+      # -- 鉴定工具数据库 --
+      genomad_db:        ${MMPV_VIRUS_DB:-${MMPV_DB_ROOT:-/home/zhangwenda/database}/virus-db}/genomad_db/
+      virus_protein_db:  ${MMPV_VIRUS_DB:-${MMPV_DB_ROOT:-/home/zhangwenda/database}/virus-db}/RVDB-v31/RVDB_viroids.diamond_db/U-RVDBv31.0-prot_unique.dmnd
+      uniprot_db:        ${MMPV_DB_ROOT:-/home/zhangwenda/database}/uniport_db/uniref90/uniref90.dmnd
+      nr_db:             ${MMPV_DB_ROOT:-/home/zhangwenda/database}/nr_db/nr.dmnd              # 待构建: diamond makedb --in nr.fa -d nr.dmnd
+      virsorter_db:      ${MMPV_VIRUS_DB:-${MMPV_DB_ROOT:-/home/zhangwenda/database}/virus-db}/virsorter2_db
+      viralverify_hmm:   ${MMPV_VIRUS_DB:-${MMPV_DB_ROOT:-/home/zhangwenda/database}/virus-db}/viralverify_db/nbc_hmms.hmm
+      metabuli_db:       ${MMPV_VIRUS_DB:-${MMPV_DB_ROOT:-/home/zhangwenda/database}/virus-db}/RVDB-v31/RVDB_viroids.metabuli_db
+      viroids_db:        ${MMPV_VIRUS_DB:-${MMPV_DB_ROOT:-/home/zhangwenda/database}/virus-db}/viroids-db/viroids.fasta
+      # -- 内源性病毒 (EVE) 筛查数据库 (endogenous_virus_pipeline) --
+      eve_ref_db:        ${MMPV_EVE_REF_DB:-${MMPV_VIRUS_DB:-${MMPV_DB_ROOT:-/home/zhangwenda/database}/virus-db}/ncbi-virus_ref/ncbi-virus_ref.pep.dmnd}
+      eve_pv_db:         ${MMPV_EVE_PV_DB:-${MMPV_DB_ROOT:-/home/zhangwenda/database}/uniport_db/hybrid/plant_virus_final.dmnd}
+      eve_id2div:        ${MMPV_EVE_ID2DIV:-${MMPV_DB_ROOT:-/home/zhangwenda/database}/uniport_db/hybrid/id2div_final.tsv}
+      eve_rvdb_db:       ${MMPV_EVE_RVDB_DB:-${MMPV_VIRUS_DB:-${MMPV_DB_ROOT:-/home/zhangwenda/database}/virus-db}/RVDB-v31/U-RVDBv31.0-prot.EX.acc.tax2.dmnd}
+      # -- 分类 / 聚类 / 宿主数据库 --
+      mmseqs_db:         ${MMPV_VIRUS_DB:-${MMPV_DB_ROOT:-/home/zhangwenda/database}/virus-db}/RVDB-30/RVDB.mmseqs
+      blast_db:          ${MMPV_VIRUS_DB:-${MMPV_DB_ROOT:-/home/zhangwenda/database}/virus-db}/ncbi-virus_ref/ncbi-virus_ref.blast.db
+      host_db:           ${MMPV_HOST_DB:-${MMPV_DB_ROOT:-/home/zhangwenda/database}/host_db}/
       checkv_threshold: 90
 
-    tools:
-      salmon:   ~/mambaforge/envs/Virseqimprover/bin/salmon
-      diamond:  /home/zhangwenda/biosoft/binary/diamond
-      ragtag:   ~/mambaforge/bin/ragtag.py
+    tools: &tools_default
+      salmon:   ${MMPV_SALMON:-~/MMPV-RNA/biosoft/salmon-2.5.1/bin/salmon}
+      diamond:  ${MMPV_DIAMOND:-/home/zhangwenda/biosoft/binary/diamond}
+      samtools: ${MMPV_SAMTOOLS:-}   # EVE 抽序列 (samtools faidx); 空 = 用 PATH
+      ragtag:   ${MMPV_RAGTAG:-~/mambaforge/bin/ragtag.py}
+      virbot:   ${MMPV_VIRBOT:-/home/zhangwenda/biosoft/virus/VirBot/VirBot.py}
 
-    runtime:
+    runtime: &runtime_default
       threads:  60
       jobs:     10
       tax_jobs: 4
+
+    deplete: &deplete_default
+      kraken2_db:   ${MMPV_KRAKEN2_DB:-/home/zhangwenda/database/kraken2/k2_pluspfp_20260226}
+      keep_taxids:  10239    # 从 Kraken2 classified 池中救回病毒 reads; 设空字符串关闭
+      vmtouch:      false    # 将 Kraken2 数据库锁定到 page cache 加速 I/O
+      confidence:   0.2     # Kraken2 分类置信度阈值 (默认: 0.2)
 
     assembly:
       assembler: megahit
@@ -45,13 +79,13 @@ profiles:
     cobra:
       cobra_jobs: 0               # 0=自动 (jobs//2), >0 显式指定
 
-    cluster:
+    cluster: &cluster_default
       min_length: 500
       ani: 0.95
       qcov: 0.85
       ref_genomes:
-        - /home/zhangwenda/plant_virus_db/3.final-ref-virus.db/final.complete_ref.fasta
-        - /home/zhangwenda/database/virus-db/ncbi-virus_ref/viral.1.1.genomic.fna
+        - ${MMPV_PLANT_VIRUS_DB:-/home/zhangwenda/plant_virus_db}/3.final-ref-virus.db/final.complete_ref.fasta
+        - ${MMPV_VIRUS_DB:-${MMPV_DB_ROOT:-/home/zhangwenda/database}/virus-db}/ncbi-virus_ref/viral.1.1.genomic.fna
 
     taxonomy:
       tax_sample_name: Votus  # 分类输出样本名
@@ -61,10 +95,19 @@ profiles:
       host_filter:
         - Plant
 
-    rescue:
+    rescue: &rescue_default
       checkv_threshold: 90
       max_vsi_samples: 10
       min_vsi_len:     2000
+
+    # 内源性病毒 (EVE) 筛查参数 (endogenous_virus_pipeline/eve_screen.py; CLI 可覆盖)
+    eve:
+      window:         50000   # Stage1 滑窗宽度 (nt)
+      merge_distance: 300     # 位点合并间隔 (nt)
+      evalue:         "1e-5"  # blastx e-value
+      host_bs:        50      # Stage2 植物侧判定阈值 (bitscore)
+      viral_bs:       50      # Stage2 病毒侧判定阈值 (bitscore)
+      cmd_timeout:    0       # 单条外部命令超时 (秒); 0=不限 (防工具挂死占核)
 
   # ── 仅下游阶段 (已有 clusters, 跳过 00-03) ──
   downstream:
@@ -81,45 +124,90 @@ profiles:
       skip_identification: true
 
   # ── 植物病毒专用 (高灵敏度) ──
+  # 只写与 default 的差异；其余（deplete/tools/taxonomy/cobra/rescue/host_filter 等）自动继承
   plant:
-    databases:
-      checkv_db:  /home/zhangwenda/database/virus-db/checkv-db-v1.7
-      genomad_db: /home/zhangwenda/database/virus-db/genomad_db/
-      mmseqs_db:  /home/zhangwenda/database/virus-db/RVDB-30/RVDB.mmseqs
-      virus_db:   /home/zhangwenda/database/virus-db/
-      host_db:    /home/zhangwenda/database/host_db/
-      blast_db:   /home/zhangwenda/database/virus-db/ncbi-virus_ref/ncbi-virus_ref.blast.db
-      nr_db:      /home/zhangwenda/database/nr_diamond/nr.dmnd
-      db_dir:     /home/zhangwenda/database/virus-db/
+    <<: *default
 
-    tools:
-      salmon:  ~/mambaforge/envs/Virseqimprover/bin/salmon
-      diamond: /home/zhangwenda/biosoft/binary/diamond
+    databases:
+      <<: *db_default
+      checkv_db: ${MMPV_CHECKV_DB:-${MMPV_DB_ROOT:-/home/zhangwenda/database}/virus-db}/checkv-db-v1.7
 
     runtime:
-      threads:  60
-      jobs:     10
+      <<: *runtime_default
       tax_jobs: 8
 
     assembly:
       assembler: rnaviralspades
 
-    identification:
-      virus_mode: filter
-      blast_mode: both
-
     cluster:
+      <<: *cluster_default
       min_length: 300
-      ani: 0.95
       qcov: 0.80
       ref_genomes:
-        - /home/zhangwenda/plant_virus_db/3.final-ref-virus.db/final.complete_ref.fasta
+        - ${MMPV_PLANT_VIRUS_DB:-/home/zhangwenda/plant_virus_db}/3.final-ref-virus.db/final.complete_ref.fasta
 
-    host:
-      host_filter:
-        - Plant
+  # ── 已知病毒分析管线 (auto_known_virus.py) ──
+  analysis:
+    runtime:
+      threads: 60
+      jobs: 4
+      align_threads: 8
 
-    rescue:
-      checkv_threshold: 90
-      max_vsi_samples: 20
-      min_vsi_len:     2000
+    detect:
+      tool: salmon
+      batch_size: 20
+      coverage: 10.0
+      ratio: 0.3
+      meandepth: 0.5
+      min_tpm: 1.0
+      min_uniq_reads: 10
+      sp_thresh: 95.0
+      use_coverm: false
+      min_aln_len: 80
+      min_aln_prop: 0.85
+      min_pid: 0.90
+      single_end: false
+
+    filter:
+      enabled: true
+      filter_cov: 50.0
+      filter_depth: 5.0
+      filter_reads: 100.0
+
+    variants:
+      variant_caller: ivar
+      snpeff: true
+      snpgenie: true
+      vc_qual: 20
+      vc_depth: 5
+      vc_freq: 0.5
+
+    assembly:
+      assembly_tools: all
+      min_covered: 10.0
+      extra_args: "--iter 3 --vc-min-depth 1"
+      iter: 3
+
+    extract:
+      extract_target: "11.Ultimate_Circular_Result.fasta"
+      max_n_genome: 5.0
+      min_length: 150
+
+    post:
+      post_min_dp: 50
+      post_min_af: 0.05
+
+    capheine:
+      capheine_code: "1"
+
+    similarity:
+      sim_mode: filter
+      sim_cdhit: false
+
+    dvg:
+      dvg_seed: 25
+      dvg_mindel: 15
+      dvg_min_cov: 80.0
+
+    report:
+      report_ai: false
