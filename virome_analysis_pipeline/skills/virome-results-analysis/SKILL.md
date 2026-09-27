@@ -81,7 +81,7 @@ The MMPV-RNA Nature Communications manuscript (`D:\桌面\文章写作\MMPV_plat
 - ★★ potentially novel: ≥70% protein identity but <90% nucleotide identity
 - ★★★ truly novel: <70% protein identity to any reference
 
-**Terminology**: ten-stage discovery workflow; four pipelines (Public Data, Virome Discovery, Virome Analysis, Virome Submission); vOTU catalog from centroids; HQ vOTUs after cascaded rescue. Family-level claims should cite ICTV VMR MSL41-derived reference database.
+**Terminology**: 15-stage discovery workflow; seven pipelines (Public Data, Preprocessing, Discovery, Analysis, Phylo, EVE, Submission); vOTU catalog from centroids; HQ vOTUs after cascaded rescue. Family-level claims should cite ICTV VMR MSL41-derived reference database.
 
 **Where results data plugs into the paper**: ident_summary/clusters → Fig. survey vOTU counts and novelty tiers; integrated_classification → family composition panels; evidence chain verdicts → novel-virus characterization paragraphs; CheckV/rescue yields → extension/rescue improvement claims (paper reserves these as [TBD] slots — analysis deliverables should fill them with file-cited numbers).
 
