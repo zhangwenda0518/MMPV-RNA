@@ -5,6 +5,15 @@ from collections import Counter
 import pandas as pd
 import os
 
+# pyhmmer 加速 HMM 搜索 (替代 hmmsearch)
+try:
+    import pyhmmer
+    from pyhmmer.easel import SequenceFile
+    from pyhmmer.plan7 import HMMFile
+    PYHMMER = True
+except ImportError:
+    PYHMMER = False
+
 VirBot_path = str(os.path.dirname(os.path.abspath(__file__)))
 
 global positive_cluster
@@ -359,9 +368,27 @@ if __name__ == "__main__":
     subprocess.run(f"prodigal -i {args.input} -a {temp_dir}/protein.faa -p meta", shell=True, stdout=FNULL, stderr=subprocess.STDOUT)
     print("Proteins prediction finished.")
 
-    # run HMMER
+    # run HMMER (pyhmmer 加速版, 回退到标准 hmmsearch)
     print("Scanning the protein by hmmsearch...")
-    subprocess.run(f"hmmsearch --tblout {temp_dir}/VB_hmmer.out --noali -E 0.001 --cpu {args.threads} {VirBot_path}/ref/VirBot.hmm {temp_dir}/protein.faa", shell=True, stdout=FNULL)
+    hmm_db = f"{VirBot_path}/ref/VirBot.hmm"
+    prot_faa = f"{temp_dir}/protein.faa"
+    tblout = f"{temp_dir}/VB_hmmer.out"
+    
+    if PYHMMER:
+        print("  [pyhmmer accelerated]")
+        with open(tblout, 'w') as fout:
+            with pyhmmer.plan7.HMMFile(hmm_db) as hmms:
+                with pyhmmer.easel.SequenceFile(prot_faa, digital=True) as seq_file:
+                    seqs = seq_file.read_block()
+                    for hits in pyhmmer.hmmer.hmmsearch(hmms, seqs, cpus=int(args.threads)):
+                        query = hits.query.name
+                        for hit in hits:
+                            if hit.included:
+                                # 模拟 hmmsearch --tblout 格式
+                                fout.write(f"{hit.name}\t-\t{query}\t-\t{hit.evalue:.2e}\t{hit.score:.1f}\n")
+    else:
+        print("  [fallback: hmmsearch binary]")
+        subprocess.run(f"hmmsearch --tblout {tblout} --noali -E 0.001 --cpu {args.threads} {hmm_db} {prot_faa}", shell=True, stdout=FNULL)
     print("HMMER finshed.")
 
     # run DIAMOND (in sensitive mode)
