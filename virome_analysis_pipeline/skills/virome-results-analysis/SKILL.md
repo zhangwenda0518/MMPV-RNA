@@ -1,6 +1,6 @@
 ---
 name: virome-results-analysis
-description: Analyze MMPV-RNA virome_discovery_pipeline outputs into manuscript-grade Results narratives and diagnostic reports, aligned to the MMPV Nature Communications framework (filter-first paradigm, ★/★★/★★★ novelty tiers). Use when reading pipeline_report.html stage summaries, *_summary.tsv, final_integrated_classification.tsv, ensemble_host_summary.tsv, completeness.tsv, vclust_clusters.tsv, cdd_calls.tsv, rescue_evidence_scored.tsv, or any 00a-10 stage output directory; writing 结果段落/Results sections from virus discovery numbers; auditing funnel consistency, CheckV completeness distribution, clustering redundancy, taxonomy agreement, evidence verdicts; or diagnosing anomalies like candidate-count cliffs, low CDD pass rates, or broken host annotations.
+description: Analyze MMPV-RNA virome_discovery_pipeline outputs into manuscript-grade Results narratives and diagnostic reports, aligned to the MMPV Nature Communications framework (filter-first paradigm, ★/★★/★★★ novelty tiers). Use when reading pipeline_report.html stage summaries, *_summary.tsv, final_integrated_classification.tsv, ensemble_host_summary.tsv, completeness.tsv, vclust_clusters.tsv, cdd_calls.tsv, rescue_evidence_scored.tsv, or any discovery stage output directory (legacy `00a–10_Reports` / standard `03_Discovery` numbering); writing 结果段落/Results sections from virus discovery numbers; auditing funnel consistency, CheckV completeness distribution, clustering redundancy, taxonomy agreement, evidence verdicts; or diagnosing anomalies like candidate-count cliffs, low CDD pass rates, or broken host annotations.
 ---
 
 # Virome Results Analysis
@@ -10,7 +10,7 @@ Analyze outputs of the MMPV-RNA virome discovery pipeline and turn them into
 
 ## When to use
 
-- User provides a pipeline output root (contains `00a_CleanData` … `10_Reports`)
+- User provides a pipeline output root (legacy: `00a_CleanData` … `10_Reports`; standard: `03_Discovery/01…13`)
 - User asks to "分析结果", "写Results", "解读pipeline报告", check numbers, or audit quality
 - Cross-checking funnel counts between stages
 
@@ -27,7 +27,7 @@ Locate these files under the output root before doing anything:
 | `06_HostPrediction/ensemble_host_summary.tsv` | Host assignments by decision tree |
 | `07_Checkv/completeness.tsv` | Completeness / MCP / denominator metrics |
 | `08_Rescue/**` (branch_a-d, merged/all_HQ.fasta) | Rescue yield per branch |
-| `09_Virome_Analysis/integrated_summary.tsv`, `suvtk_taxonomy/taxonomy.tsv`, `featuretable.tbl` | Structural annotation, R-vs-suvtk cross-check |
+| `09_Virome_Analysis/integrated_summary.tsv` (legacy 产物, 生成脚本已归档 — 缺失记 N/A), `suvtk_taxonomy/taxonomy.tsv`, `featuretable.tbl` | Structural annotation, R-vs-suvtk cross-check |
 | `09b_Analysis_Verify/rescue_evidence_scored.tsv`, `final_judgement_table.tsv`, `class_KEEP.fasta` | Five-layer evidence chain verdicts |
 | `viroid_circular_detect*` outputs | Viroid circularization support |
 
@@ -91,5 +91,5 @@ If analysis reveals values inconsistent with the anchors above (e.g., a rerun us
 
 - Light-color, colorblind-safe figures only if plotting is requested (Okabe-Ito palette, ≥300 dpi, English labels).
 - Never fabricate a count: if a file is absent or empty, mark N/A.
-- Version-drift awareness: default parameters correspond to `virome_pipeline.py` v2.3 (see METHODS_Virome_Discovery.md in the pipeline repo). If the user's run used overrides recorded in `run_config.json`/`provenance.json`, prefer those values in prose.
+- Version-drift awareness: default parameters correspond to `virome_pipeline.py` v3.x (see METHODS_Virome_Discovery.md in the pipeline repo). If the user's run used overrides recorded in `run_config.json`/`provenance.json`, prefer those values in prose.
 - Chinese responses should mirror the same structure if the user writes in Chinese; keep file names and tool names in English regardless.

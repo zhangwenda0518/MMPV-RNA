@@ -25,7 +25,7 @@ You own: **Methods §2.3, Results §3.5, Table S3 caption, Fig. 1 (discovery par
 
 ## Anchors / terminology
 
-- "ten-stage discovery workflow"; tools named exactly as in METHODS_TEMPLATE (geNomad, DIAMOND BLASTX, RdRp-Catch, ViraLM, VirBot, VirSorter2, ViralVerify, VirHunter, Metabuli, viroid BLASTN).
+- "15-stage discovery workflow"; tools named exactly as in METHODS_TEMPLATE (geNomad, DIAMOND BLASTX, RdRp-Catch, ViraLM, VirBot, VirSorter2, ViralVerify, VirHunter, Metabuli, viroid BLASTN).
 - vConTACT3 is **opt-in** (`--tools all` runs 7 taxonomy tools) — if the manuscript lists 8-tool ensemble, keep v1's phrasing "eight-tool ensemble" only when the run actually enabled it; otherwise say "seven-tool default ensemble with optional vConTACT3".
 - Verdict terms KEEP/REVIEW/DROP; catalog terms vOTU / HQ vOTU from centroids.
 

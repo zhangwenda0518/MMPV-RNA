@@ -326,17 +326,17 @@ python submission_gui/submission_gui.py
 ```
 MMPV-RNA/
 ├── data_preprocessing_pipeline/    # 数据清洗 (质控 clean-data.py → 去宿主 host_depletion.py; 含一条龙入口)
-├── virome_discovery_pipeline/      # 病毒发现 (de novo, 16+4脚本)
+├── virome_discovery_pipeline/      # 病毒发现 (de novo, 15 阶段)
 │   ├── virome_pipeline.py          # 主编排器
 │   ├── doc.md                      # 完整流程文档
 │   └── utils/                      # 辅助工具 (组装/鉴定/COBRA统计, Sankey)
 │
-├── virome_analysis_pipeline/       # 已知病毒深度分析 (17+11脚本)
+├── virome_analysis_pipeline/       # 已知病毒深度分析 (9 阶段)
 │   ├── auto_known_virus.py         # 分析编排器
 │   ├── doc.md                      # 完整流程文档
 │   └── utils/                      # 辅助工具
 │
-├── public_metadata_pipeline/       # 公共数据获取 (8+2脚本)
+├── public_metadata_pipeline/       # 公共数据获取 (8 阶段)
 │   ├── public_data_pipeline.py     # 公共数据编排器 (检索/元数据/下载/可视化)
 │   ├── build_host_pipeline.py      # 宿主参考编排 (多通道下载/用户FASTA → 四索引)
 │   ├── preprocess_unified.py       # 全链路预处理入口 (convert→clean→hostref→deplete→[bbnorm])
@@ -350,6 +350,9 @@ MMPV-RNA/
 │   ├── views/                      # 主窗口 / 搜索视图 / 表格 / 可视化 / 详情面板
 │   └── utils/                      # 辅助工具
 │
+├── virome_phylo_pipeline/          # 系统发育/进化/群体遗传 (18 stage, 8 大模块)
+│   ├── phylo_pipeline.py           # 总管线 (BEAST 定年 + pypopart + 正选择)
+│   └── doc/ 权威体系 (RUN_GUIDE/STAGE_REFERENCE/METHODS)
 ├── virome_submission_pipeline/     # 提交管线 (GenBank/CNCB)
 │   ├── submission_pipeline.py      # 主编排器
 │   ├── sequin_builder.py           # Sequin 构建器

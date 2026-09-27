@@ -25,6 +25,7 @@ ViReMa    = "0.29"
 #   位置: biosoft/VirBot/VirBot.py
 #   类型: Python — 无需编译
 #   用途: 深度学习病毒鉴定
+#   2026-09-28: 与服务器 8-04 版对齐 (双向同步步骤4)
 VirBot    = "server-2024-03"
 
 ### VirHunter (CPU)

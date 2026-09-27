@@ -106,7 +106,7 @@ MMPV (Massive Meta-mining of Plant Viruses)：从**公共测序档案**（NCBI S
 | `run_all_species.sh` | 功能已在管线参数化（--species/--taxid） | ✅ 无损 |
 
 **真实引用断裂仅 3 处，均为本会话之前已存在**（git 记录佐证）：
-1. `utils/auto_known_virus.py`（旧版 10-stage 编排器，无任何调用方）引用的 `utils/gbk_extractor.py`、`utils/visual_codon_miner.py` —— 这两文件在**更早的 capheine 迁移**中移至 `virome_phylo_pipeline/`（服务器端 R100 记录一致）。旧版编排器保留原地未归档，仅作历史参考。
+1. `utils/auto_known_virus.py`（旧版 10-stage 编排器，无任何调用方）引用的 `utils/gbk_extractor.py`、`utils/visual_codon_miner.py` —— 这两文件在**更早的 capheine 迁移**中移至 `virome_phylo_pipeline/`（服务器端 R100 记录一致）。旧版编排器已于 2026-09-28 归档至 archive/auto_known_virus.orphan_utils_20260915.py。
 2. `submission_gui/sync_client.py` 引用 `sync_sqn_from_csv.py` —— 该文件仅存在于服务器端（本来就要在服务器跑）。
 3. `build_virus_db.py` 的 3 个辅助脚本（SearchAccessionIdToTaxId.py 等）—— 仅在服务器，该工具为独立建库工具，不在主编排链。
 
