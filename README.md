@@ -15,7 +15,7 @@
 ## 📖 平台 Wiki / Documentation
 
 **20 页完整文档** (架构总览 · 七管线逐段解读 · 198 个核心脚本 `--help` 参数库 · 审计体系 · 部署运维):
-👉 [wiki/ 目录](https://github.com/zhangwenda0518/MMPV-RNA/tree/main/wiki) — 从 [Home](https://github.com/zhangwenda0518/MMPV-RNA/blob/main/wiki/Home.md) 进入
+👉 [平台 Wiki](https://github.com/zhangwenda0518/MMPV-RNA/wiki) — 从 [Home](https://github.com/zhangwenda0518/MMPV-RNA/wiki/Home) 进入
 
 ---
 
