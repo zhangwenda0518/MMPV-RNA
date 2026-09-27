@@ -21,22 +21,21 @@ platforms = ["linux-64"]
 # ==============================================================================
 [dependencies]
 # --- 语言运行时 ---
-python = ">=3.10,<3.13"
-R = ">=4.2,<4.5"
-r-base = ">=4.2,<4.5"
+python = ">=3.10,<3.11"                        # 3.10 上限: ribodetector 锁 py<=3.10, rdrpcatch 等走独立 env
+r-base = ">=4.2,<4.5"                          # conda 包名是 r-base (无 R 别名包)
 perl = ">=5.32"
-java-openjdk = ">=21"                         # SnpEff 需要 JRE>=21 (biosoft/snpEff)
+openjdk = ">=21"                               # SnpEff 需要 JRE>=21; conda 包名 openjdk (java-openjdk 不存在)
 
 # --- Python 核心库 ---
 biopython = ">=1.83"
-pandas = ">=2.0"
-numpy = ">=1.24"
+pandas = ">=2.0,<3"
+numpy = ">=1.24,<3"
 matplotlib = ">=3.7"
 seaborn = ">=0.12"
 polars = ">=0.20"
 pysam = ">=0.22"
-plotly = ">=5.14"
-python-kaleido = ">=0.2"                      # plotly 静态导出 (conda-forge 包名 python-kaleido)
+plotly = ">=5.14,<6"
+python-kaleido = ">=0.2,<0.3"                      # plotly 静态导出 (conda-forge 包名 python-kaleido)
 scipy = ">=1.10"
 scikit-learn = ">=1.3"                        # PCA/KMeans (variants/SnpGenie)
 requests = ">=2.28"
@@ -63,7 +62,7 @@ marsilea = ">=0.4"                            # 复合图 (pub_plots)
 
 # --- R 核心包 (CRAN) ---
 r-optparse = ">=1.7"
-r-data.table = ">=1.14"
+"r-data.table" = ">=1.14"
 r-ggplot2 = ">=3.4"
 r-venndiagram = ">=1.7"
 r-ggvenndiagram = ">=1.5"
@@ -121,10 +120,10 @@ bioawk = ">=1.0"                              # rnaviralspades 依赖
 diamond = ">=2.1"                             # BLASTX 蛋白搜索
 blast = ">=2.15"                              # BLASTN 核酸搜索
 genomad = ">=1.7"                             # 病毒鉴定 (geNomad)
-virsorter = ">=2"                             # 病毒分类 (VirSorter2)
+# virsorter bioconda 构建锁死旧 ruamel.yaml(py<3.10), 独立 env 部署: conda create -n vs2 virsorter=2.2.4                             # 病毒分类 (VirSorter2)
 viralverify = ">=1.0"                         # 病毒序列验证
 metabuli = ">=1.0"                            # 宏基因组分类
-rdrpcatch = ">=1.0"                           # RdRp 检测 (conda run -n rdrpcatch)
+# rdrpcatch 独立 env 部署 (代码用 conda run -n rdrpcatch): conda create -n rdrpcatch rdrpcatch                           # RdRp 检测 (conda run -n rdrpcatch)
 checkv = ">=1.0"                              # 完整性评估 (discovery-downstream 默认依赖)
 
 # ==============================================================================
@@ -158,10 +157,9 @@ freebayes = ">=1.3"                           # 变异检测
 ivar = ">=1.4"                                # 病毒变异检测
 lofreq = ">=2.1"                              # 低频变异检测
 snpeff = ">=5.1"                              # 变异注释
-snpgenie = ">=1.0"                            # 群体遗传 (dN/dS)
+# snpgenie 锁死 perl 5.22 与主环境冲突, 独立 env: conda create -n snpgenie snpgenie (shim snpgenie.pl 到 PATH)                            # 群体遗传 (dN/dS)
 viral_consensus = ">=1.0"                     # 共识序列
-bgzip = ">=1.18"                              # (含 tabix) VCF 压缩索引
-tabix = ">=1.18"
+htslib = ">=1.18"                              # (含 tabix) VCF 压缩索引
 
 # ==============================================================================
 # 系统发育 & 选择压力
@@ -169,7 +167,7 @@ tabix = ">=1.18"
 mafft = ">=7.5"                               # 多序列比对
 iqtree = ">=2.3"                              # 系统发育树
 hyphy = ">=2.5"                               # 正选择分析
-cawlign = ">=1.0"                             # 密码子感知比对
+cawlign = ">=0.1"                             # 密码子感知比对
 ragtag = ">=2.1"                              # 参考引导 scaffolding
 
 # ==============================================================================
@@ -180,8 +178,8 @@ kallisto = ">=0.48"                           # 伪比对定量
 bwa = ">=0.7"                                 # 短读段比对
 bwa-mem2 = ">=2.2"
 strobealign = ">=0.12"                        # 快速比对
-pandepth = ">=1.0"                            # 位点深度
-virema = ">=1.0"                              # DVG/重组检测 (另: biosoft/ViReMa 手动版 ViReMa 0.29)
+# pandepth conda 无包, 手动源码安装 (panDepth, GitHub)                            # 位点深度
+# virema bioconda 包要求 bowtie<=1.0 无法求解, DVG 用 biosoft/virema (ViReMa 0.29)                              # DVG/重组检测 (另: biosoft/ViReMa 手动版 ViReMa 0.29)
 bowtie = ">=1.3"                              # bowtie v1 (batch_virema_dvg 比对)
 
 # ==============================================================================
@@ -222,9 +220,9 @@ diamond = ">=2.1"
 blast = ">=2.15"
 mmseqs2 = ">=14"
 genomad = ">=1.7"
-virsorter = ">=2"
+# virsorter bioconda 构建锁死旧 ruamel.yaml(py<3.10), 独立 env 部署: conda create -n vs2 virsorter=2.2.4
 viralverify = ">=1.0"
-rdrpcatch = ">=1.0"
+# rdrpcatch 独立 env 部署 (代码用 conda run -n rdrpcatch): conda create -n rdrpcatch rdrpcatch
 vcontact3 = ">=3.0"
 vitap = ">=1.0"
 acvirus = ">=1.0"
@@ -245,22 +243,21 @@ freebayes = ">=1.3"
 ivar = ">=1.4"
 lofreq = ">=2.1"
 snpeff = ">=5.1"
-snpgenie = ">=1.0"
+# snpgenie 锁死 perl 5.22 与主环境冲突, 独立 env: conda create -n snpgenie snpgenie (shim snpgenie.pl 到 PATH)
 viral_consensus = ">=1.0"
-bgzip = ">=1.18"
-tabix = ">=1.18"
+htslib = ">=1.18"
 mafft = ">=7.5"
 iqtree = ">=2.3"
 hyphy = ">=2.5"
-cawlign = ">=1.0"
+cawlign = ">=0.1"
 strobealign = ">=0.12"
 samtools = ">=1.18"
 bowtie2 = ">=2.5"
 minimap2 = ">=2.24"
 bwa = ">=0.7"
-pandepth = ">=1.0"
-virema = ">=1.0"
-drhip = ">=1.0"                               # DRHIP (capheine_pipeline.py)
+# pandepth conda 无包, 手动源码安装 (panDepth, GitHub)
+# virema bioconda 包要求 bowtie<=1.0 无法求解, DVG 用 biosoft/virema (ViReMa 0.29)
+drhip = ">=0.1"                               # DRHIP (capheine_pipeline.py)
 
 # --- 仅公共数据 (public data) ---
 [feature.publicdata.dependencies]
@@ -370,3 +367,10 @@ R-shell = { cmd = "R --no-save", description = "Start R interactive session" }
 #   4. pixi shell                       # 进入环境
 #   5. pixi run discovery-downstream    # 运行流程
 # ==============================================================================
+
+# ==============================================================================
+# [environments] — 必须把 feature 挂进环境, 否则依赖不解析不安装 (pixi>=0.59 语义)
+# ==============================================================================
+[environments]
+default = { features = ["discovery", "analysis", "publicdata"], solve-group = "default" }
+gpu = { features = ["gpu"], solve-group = "default" }
