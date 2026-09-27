@@ -240,12 +240,27 @@ def main():
     os.makedirs(args.output_dir, exist_ok=True)
     work_dir = os.path.abspath(args.output_dir)
 
-    # 断点续传: 输出文件已存在则跳过
+    # 断点续传: 三产物齐备才算完成, 避免只看 html 导致 TSV/FASTA 静默用旧版
     report_path = os.path.join(work_dir, "validation_report.html")
-    if not args.force and os.path.exists(report_path) and os.path.getsize(report_path) > 100:
+    annot_path = os.path.join(work_dir, "novel_viruses.annotated.tsv")
+    catalog_path = os.path.join(work_dir, "final_virus_catalog.fasta")
+    products = {
+        "novel_viruses.annotated.tsv": annot_path,
+        "final_virus_catalog.fasta": catalog_path,
+        "validation_report.html": report_path,
+    }
+    present = {n: (os.path.exists(p) and os.path.getsize(p) > 100) for n, p in products.items()}
+    if not args.force and all(present.values()):
         logger.info("输出文件已存在, 跳过 (--force 强制重跑)")
-        logger.info("  %s", report_path)
+        for n in products:
+            logger.info("  %s", products[n])
         return
+    missing = [n for n, ok in present.items() if not ok]
+    if missing:
+        logger.info("检测到产物不完整, 将重新生成 (缺失/过小: %s)", ", ".join(missing))
+        if present["validation_report.html"] and len(missing) == 2:
+            logger.warning("  提示: 旧的 validation_report.html 会被覆写, 但它对应的 TSV/FASTA 从未产出"
+                           " (旧版跳过判据只看本文件), 无法据此判断本次结果是否可比")
 
     # 校验输入
     for path, name in [(args.input, "input"), (args.taxonomy, "taxonomy")]:
@@ -466,8 +481,15 @@ def main():
 
     # validation_report.html
     report_out = os.path.join(work_dir, "validation_report.html")
-    generate_html_report(stats, class_df, report_out)
-    logger.info(f"  validation_report.html: {report_out}")
+    try:
+        generate_html_report(stats, class_df, report_out)
+        logger.info(f"  validation_report.html: {report_out}")
+    except Exception as e:
+        # 报告生成失败不应连累已写出的 TSV / FASTA, 但必须显式暴露
+        logger.error(f"  validation_report.html 生成失败: {type(e).__name__}: {e}")
+        logger.error("  已写出的产物仍然有效: novel_viruses.annotated.tsv / final_virus_catalog.fasta")
+        logger.error("  注意: 下次运行将因产物不齐而自动重跑 (三产物齐备才跳过), 无需 --force")
+        raise
 
     # ── 汇总 ──
     logger.info("=" * 60)

@@ -1,0 +1,20 @@
+contig_id	Family	Genus	Determination_Level	Host_ICTV	pred|L1	pred|L2	evidence	Host	Host_NCBI_lineage
+CRR527039_clean_NODE_326_length_1141_cov_4.083333	Discoviridae	Orthodiscovirus	Species(via Species)	Plant				genus:Penicillium	d__Eukaryota;p__Ascomycota;c__Eurotiomycetes;o__Eurotiales;f__Aspergillaceae;g__Penicillium
+CRR527041_clean_NODE_1995_length_1716_cov_23.029215	Mimiviridae	Metavirus	Species(via Species)	Plant				species:Acanthamoeba polyphaga	d__Eukaryota;p__Discosea;c__;o__Longamoebia;f__Acanthamoebidae;g__Acanthamoeba;s__Acanthamoeba polyphaga
+CRR527042_clean_NODE_17018_length_532_cov_1.357298	Draupnirviridae	Malificivirus	Order(via Order)	Plant				-	-
+CRR527046_clean_NODE_4_length_12596_cov_20.826958	Hydriviridae	Alphahydrivirus	Species(via Species)	Plant				species:Acanthamoeba polyphaga	d__Eukaryota;p__Discosea;c__;o__Longamoebia;f__Acanthamoebidae;g__Acanthamoeba;s__Acanthamoeba polyphaga
+CRR527046_clean_NODE_595_length_1800_cov_20.133758	Draupnirviridae	Volantivirus	Order(via Order)	Plant	Invertebrate		pred_low_confidence	-	-
+CRR527046_clean_NODE_749_length_1651_cov_7.928390	Draupnirviridae	Torentivirus	Order(via Order)	Plant				-	-
+CRR527046_clean_NODE_9350_length_621_cov_2.518248	Draupnirviridae	Malificivirus	Order(via Order)	Plant				-	-
+CRR527050_clean_NODE_7310_length_508_cov_0.685057	Discoviridae	Orthodiscovirus	Species(via Species)	Plant				-	-
+CRR527052_clean_NODE_1106_length_586_cov_1.304094	Discoviridae	Orthodiscovirus	Species(via Species)	Plant				-	-
+SRR23107135_clean_NODE_9693_length_1644_cov_258.976448	Iridoviridae	Chloriridovirus	Species(via Species)	Plant				-	-
+SRR23215177_clean_NODE_763_length_1380_cov_1.075746	Iflaviridae	Iflavirus	Species(via Species)	Plant	Invertebrate		pred_high_confidence	-	-
+SRR23215178_clean_NODE_46_length_5699_cov_3.779772	Iflaviridae	Iflavirus	Species(via Species)	Plant	Invertebrate		pred_low_confidence	-	-
+SRR23215179_clean_NODE_2298_length_1028_cov_1.058639	Iflaviridae	Iflavirus	Species(via Species)	Plant	Invertebrate		pred_low_confidence	-	-
+SRR23215179_clean_NODE_5269_length_635_cov_1.153025	Iflaviridae	Iflavirus	Species(via Species)	Plant	Invertebrate		pred_high_confidence	-	-
+SRR23587951_clean_NODE_458_length_901_cov_1.532609	Mimiviridae	Tupanvirus	Species(via Species)	Plant				-	-
+SRR33536652_clean_NODE_329_length_812_cov_0.487145	Mimiviridae	Cotonvirus	Species(via Species)	Plant				-	-
+SRR6206200_clean_NODE_10855_length_549_cov_2.771008	Mimiviridae	Metavirus	Species(via Species)	Plant				-	-
+contig_3578	Pithoviridae	Alphacedratvirus	Species(via Species)	Plant	Invertebrate		pred_low_confidence	species:Alicyclobacillus hesperidum	d__Bacteria;p__Firmicutes;c__Bacilli;o__Bacillales;f__Alicyclobacillaceae;g__Alicyclobacillus;s__Alicyclobacillus hesperidum
+contig_458	Poxviridae	Alphaentomopoxvirus	Species(via Species)	Plant	Fungi		pred_low_confidence	-	-

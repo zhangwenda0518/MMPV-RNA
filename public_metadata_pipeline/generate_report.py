@@ -9,10 +9,19 @@ Usage:
   python generate_report.py -d public_data_pipeline_output/ --ai-key sk-xxx --ai-provider deepseek
 """
 
-import argparse, os, sys, base64, json as _json, re, urllib.request
+import argparse, os, sys, base64, csv, json as _json, re, urllib.request
 from pathlib import Path
 from datetime import datetime
 from collections import Counter
+
+# 跨管线统一 I/O 布局 (mmpv_common/, 仓库根): 目录名随 MMPV_IO_LAYOUT 解析
+# (编排器已 normalize 环境变量, 子进程导入本模块时快照即正确布局)
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+from mmpv_common.io_layout import layout_dirs as _layout_dirs
+_D = _layout_dirs(os.environ.get("MMPV_IO_LAYOUT", "legacy"))
+_HOSTREF_ROOT = str(Path(_D['h_genome']).parent)   # legacy=host_reference / standard=05_HostRef
 
 try:
     import pandas as pd
@@ -21,6 +30,9 @@ except ImportError:
     HAS_PANDAS = False
 
 SCRIPT_DIR = Path(__file__).resolve().parent
+
+if sys.platform == 'win32':
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 
 def safe_read_csv(fp, sep=","):
     """Read CSV/TSV, auto-detect separator."""
@@ -85,13 +97,13 @@ def collect_search_summary(out_dir):
             "species": n_species, "years": years, "path": str(csv_path.relative_to(out)) if csv_path else "?"}
 
 def collect_info_summary(out_dir):
-    """Read Core13 metadata and return field completeness + distributions."""
+    """Read Core14 metadata and return field completeness + distributions."""
     out = Path(out_dir)
     csv_path = None
-    for p in out.rglob("Global_Unified_Metadata_Core13.csv"):
+    for p in out.rglob("Global_Unified_Metadata_Core14.csv"):
         csv_path = p; break
     if not csv_path:
-        for p in out.rglob("*info*/**/Core13*.csv"):
+        for p in out.rglob("*info*/**/Core14*.csv"):
             csv_path = p; break
     if not csv_path: return None
     df = safe_read_csv(csv_path)
@@ -124,6 +136,136 @@ def collect_plot_images(out_dir):
             break
     return images
 
+def collect_download_summary(out_dir):
+    """download_report_*.csv 状态统计 + failed_sra_*.txt 行数 + down/ 目录文件盘点."""
+    out = Path(out_dir)
+    status, methods, n_rows = {}, {}, 0
+    for p in out.rglob("download_report_*.csv"):
+        try:
+            with open(p, encoding="utf-8-sig") as f:
+                for r in csv.DictReader(f):
+                    n_rows += 1
+                    st = (r.get("Status") or "?").strip()
+                    me = (r.get("Method") or "?").strip()
+                    status[st] = status.get(st, 0) + 1
+                    methods[me] = methods.get(me, 0) + 1
+        except Exception:
+            continue
+    failed, failed_files = 0, []
+    for p in out.rglob("failed_sra_*.txt"):
+        try:
+            n = sum(1 for line in p.read_text(encoding="utf-8").splitlines() if line.strip())
+        except Exception:
+            n = 0
+        failed += n
+        failed_files.append(p.name)
+    fq = [f for f in out.rglob("*.fastq.gz") if f.is_file()]
+    fq_gb = sum(f.stat().st_size for f in fq) / 1024 ** 3
+    sra_left = sum(1 for f in out.rglob("*.sra") if f.is_file())
+    return {"rows": n_rows, "status": status, "methods": methods, "failed": failed,
+            "failed_files": failed_files[:5], "fastq_count": len(fq),
+            "fastq_gb": fq_gb, "sra_left": sra_left}
+
+RUN_PATTERNS = [
+    re.compile(r"^(?P<acc>.+?)_[12]\.(?:fastq|fq)\.gz$"),
+    re.compile(r"^(?P<acc>.+)\.(?:fastq|fq)\.gz$"),
+]
+
+def write_handoff_manifest(out_dir):
+    """扫描 down/ 的 FASTQ.GZ, 对齐 Core14 元数据, 产出下游交接清单 sample_handoff.csv.
+
+    交棒给 data_preprocessing_pipeline: R1/R2_Path 即 clean-data.py --input 的文件级清单。
+    """
+    out = Path(out_dir)
+    files = {}
+    for f in sorted(out.rglob("*.fastq.gz")) + sorted(out.rglob("*.fq.gz")):
+        if not f.is_file():
+            continue
+        acc = None
+        for pat in RUN_PATTERNS:
+            m = pat.match(f.name)
+            if m:
+                acc = m.group("acc")
+                break
+        if not acc:
+            continue
+        e = files.setdefault(acc, {})
+        if re.search(r"_1\.(?:fastq|fq)\.gz$", f.name):
+            e["r1"] = f
+        elif re.search(r"_2\.(?:fastq|fq)\.gz$", f.name):
+            e["r2"] = f
+        else:
+            e.setdefault("se", f)
+    meta_rows = {}
+    core_csv = next(iter(out.rglob("Global_Unified_Metadata_Core14.csv")), None)
+    if core_csv:
+        try:
+            with open(core_csv, encoding="utf-8-sig") as f:
+                for r in csv.DictReader(f):
+                    run = (r.get("Run") or "").strip()
+                    if run:
+                        meta_rows[run] = r
+        except Exception:
+            pass
+    accs = sorted(set(files) | set(meta_rows))
+    handoff = out / "sample_handoff.csv"
+    with open(handoff, "w", encoding="utf-8-sig", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["Run", "Layout", "R1_Path", "R2_Path", "SE_Path", "Size_MB",
+                    "ScientificName", "Tissue", "Location", "BioProject", "Status"])
+        n_ready = 0
+        for acc in accs:
+            e = files.get(acc, {})
+            r1, r2, se = e.get("r1"), e.get("r2"), e.get("se")
+            size = sum(x.stat().st_size for x in (r1, r2, se) if x is not None) / 1024 ** 2
+            layout = "PE" if (r1 or r2) else ("SE" if se else "?")
+            m = meta_rows.get(acc, {})
+            ready = bool(r1 or r2 or se)
+            if ready:
+                n_ready += 1
+            def _s(p):
+                return str(p.resolve()) if p is not None else ""
+            w.writerow([acc, layout, _s(r1), _s(r2), _s(se), f"{size:.1f}",
+                        m.get("ScientificName", ""), m.get("Tissue", ""), m.get("Location", ""),
+                        m.get("BioProject", ""), "ready" if ready else "missing"])
+    return {"path": str(handoff), "runs": len(accs), "ready": n_ready,
+            "missing": len(accs) - n_ready}
+
+def collect_hostref_summary(out_dir):
+    """扫描 hostref 阶段产物 (work_dir/host_reference/): 基因组 FASTA + 四索引就绪状态."""
+    out = Path(out_dir)
+    hr = None
+    for cand in [out / _HOSTREF_ROOT, out / "build_host_pipeline_output"]:
+        if cand.is_dir():
+            hr = cand
+            break
+    if not hr:
+        for p in out.rglob("hostdb"):
+            if p.is_dir():
+                hr = p.parent
+                break
+    if not hr:
+        return None
+    genome = None
+    for pat in ["all.genome.uniq.fasta", "genome/*.fasta", "genome/*.fna", "*.fasta", "*.fna"]:
+        genome = next(iter(hr.rglob(pat)), None)
+        if genome:
+            break
+    hostdb = hr / "hostdb" if (hr / "hostdb").is_dir() else hr
+
+    def _has(*pats):
+        return any(hostdb.rglob(p) for p in pats)
+
+    idx = {
+        "Kraken2": _has("*.k2d"),
+        "Bowtie2": _has("*.1.bt2", "*.1.bt2l"),
+        "HISAT2": _has("*.1.ht2"),
+        "Minimap2": _has("*.mmi"),
+    }
+    return {"root": str(hr), "genome": str(genome) if genome else None,
+            "genome_mb": round(genome.stat().st_size / 1024 ** 2, 1) if genome else None,
+            "indexes": idx, "built": sum(idx.values())}
+
 # ═══════════════════════════════════════════
 # AI Summary
 # ═══════════════════════════════════════════
@@ -145,7 +287,7 @@ def generate_ai_summary(search_data, info_data, plot_images):
 - 时间跨度: {s.get('years','?')}
 
 ## 元数据质量
-- Core13 统一元数据: {i.get('total','?')} 条记录
+- Core14 统一元数据: {i.get('total','?')} 条记录
 - PMID 覆盖率: {i.get('pmid_coverage','?')} 条有文献链接
 
 ## 元数据字段完整度
@@ -204,9 +346,11 @@ def generate_ai_summary(search_data, info_data, plot_images):
 # HTML Generation
 # ═══════════════════════════════════════════
 
-def generate_html(out_dir, search_data, info_data, plot_images, ai_html="", out_html=None):
+def generate_html(out_dir, search_data, info_data, plot_images, ai_html="", out_html=None,
+                  download_data=None, handoff_data=None, hostref_data=None):
     out = Path(out_dir); now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    s = search_data or {}; i = info_data or {}
+    s = search_data or {}; i = info_data or {}; d = download_data or {}
+    h = handoff_data or {}; hr = hostref_data or {}
 
     # Build stage data JSON for browser AI
     sd = {
@@ -216,8 +360,14 @@ def generate_html(out_dir, search_data, info_data, plot_images, ai_html="", out_
                       "bioprojects": s.get("bioprojects","?"), "species": s.get("species","?"), "years": s.get("years","?")},
         "s2_info": {"total": i.get("total","?"), "pmid_coverage": i.get("pmid_coverage","?"),
                     "fields": {k: v.get("pct","?") for k,v in (i.get("fields",{}) or {}).items()}},
-        "s3_down": {"note": "SRA download stage: fastq.gz files per sample"},
+        "s3_down": {"report_rows": d.get("rows","?"), "status": d.get("status",{}),
+                    "failed": d.get("failed","?"), "fastq_files": d.get("fastq_count","?"),
+                    "fastq_gb": round(d.get("fastq_gb",0),1), "sra_left": d.get("sra_left","?")},
         "s4_plot": {"note": "6-panel SCI landscape figure: temporal trends, database composition, top organizations, tissues, locations, growth stages"},
+        "s5_hostref": {"genome": hr.get("genome"), "genome_mb": hr.get("genome_mb"),
+                       "indexes": hr.get("indexes", {}), "built": hr.get("built", "?")},
+        "s6_handoff": {"runs": h.get("runs","?"), "ready": h.get("ready","?"),
+                       "missing": h.get("missing","?"), "manifest": h.get("path","sample_handoff.csv")},
     }
     stage_data_json = _json.dumps(sd, ensure_ascii=False)
 
@@ -225,7 +375,7 @@ def generate_html(out_dir, search_data, info_data, plot_images, ai_html="", out_
     nav_items = '<li class="nav-item"><a href="#overview" class="nav-link active">Overview</a></li>'
     nav_items += '<li class="nav-header">Pipeline Stages</li>'
     nav_items += '<div class="nav-sub">'
-    for sid, label in [("stage-search","S1: Search"),("stage-info","S2: Info"),("stage-down","S3: Download"),("stage-plot","S4: Plot")]:
+    for sid, label in [("stage-search","S1: Search"),("stage-info","S2: Info"),("stage-down","S3: Download"),("stage-plot","S4: Plot"),("stage-hostref","S5: HostRef"),("stage-handoff","S6: Handoff")]:
         nav_items += f'<li class="nav-item"><a href="#{sid}" class="nav-link stage-toggle" style="font-size:12px;padding-left:24px;font-weight:600">{label}</a></li>'
     nav_items += '</div>'
     nav_items += '<li class="nav-header">Report</li><div class="nav-sub">'
@@ -285,8 +435,24 @@ def generate_html(out_dir, search_data, info_data, plot_images, ai_html="", out_
 
     # ── Stage 3: Download ──
     s3 = f'''<section id="stage-down"><h2>S3: Download <button onclick="runStageAI('s3_down')" class="ai-stage-btn">AI</button></h2>
-    <p style="color:var(--ink-secondary);font-size:13px">Smart SRA downloader: dual-protocol (FTP→HTTP fallback), aria2c/wget/prefetch, progress tracking, failed retry list.</p>
-    <p style="color:var(--ink-secondary);font-size:12px">Check <code>down/</code> directory for downloaded FASTQ files and <code>download_report_*.csv</code> for status.</p></section>'''
+    <p style="color:var(--ink-secondary);font-size:13px">Smart SRA downloader: dual-protocol (aria2c NGDC + prefetch NCBI), progress tracking, failed retry list.</p>'''
+    if d.get("rows") or d.get("fastq_count"):
+        chips = "".join(f'<div class="card"><div class="value">{v}</div><div class="label">Status: {_esc(k)}</div></div>'
+                        for k, v in sorted(d.get("status", {}).items()))
+        s3 += f'<div class="card-row"><div class="card"><div class="value">{d.get("rows","?")}</div><div class="label">Report Rows</div></div>{chips}'
+        s3 += f'<div class="card"><div class="value">{d.get("failed","?")}</div><div class="label">Failed (retry list)</div></div>'
+        s3 += f'<div class="card"><div class="value">{d.get("fastq_count","?")}</div><div class="label">FASTQ.GZ Files</div></div>'
+        s3 += f'<div class="card"><div class="value">{round(d.get("fastq_gb",0),1)}</div><div class="label">Data Size (GB)</div></div>'
+        if d.get("sra_left"):
+            s3 += f'<div class="card"><div class="value" style="color:#d97706">{d["sra_left"]}</div><div class="label">.SRA Not Converted</div></div>'
+        s3 += '</div>'
+        if d.get("methods"):
+            s3 += f'<p style="font-size:12px;color:var(--ink-secondary)">Methods: {_esc(", ".join(f"{k}×{v}" for k, v in sorted(d["methods"].items())))}</p>'
+        if d.get("failed_files"):
+            s3 += f'<p style="font-size:12px;color:var(--ink-secondary)">Retry lists: {_esc(", ".join(d["failed_files"]))}</p>'
+    else:
+        s3 += '<p style="color:var(--ink-secondary)">Download report not found. Run Stage 3 (down) first.</p>'
+    s3 += '</section>'
 
     # ── Stage 4: Plot ──
     s4 = f'''<section id="stage-plot"><h2>S4: Plot <button onclick="runStageAI('s4_plot')" class="ai-stage-btn">AI</button></h2>
@@ -298,6 +464,40 @@ def generate_html(out_dir, search_data, info_data, plot_images, ai_html="", out_
     else:
         s4 += '<p style="color:var(--ink-secondary)">Plot not found. Run Stage 4 (plot) to generate the 6-panel figure.</p>'
     s4 += '</section>'
+
+    # ── Stage 5: HostRef ──
+    s_hr = f'''<section id="stage-hostref"><h2>S5: HostRef 宿主参考基因组</h2>
+    <p style="color:var(--ink-secondary);font-size:13px">Host genome acquisition (datasets / ncbi-genome-download / FTP / gget, or user FASTA)
+    and Kraken2 / Bowtie2 / HISAT2 / Minimap2 index building — consumed by the host-depletion stage downstream.</p>'''
+    if hr:
+        idx = hr.get("indexes", {})
+        genome_mb = hr.get("genome_mb")
+        genome_badge = f" ({genome_mb} MB)" if genome_mb else ""
+        genome_color = "#16a34a" if hr.get("genome") else "#d97706"
+        s_hr += f'<div class="card-row"><div class="card"><div class="value">{hr.get("built","?")}/4</div><div class="label">Indexes Built</div></div>'
+        s_hr += f'<div class="card"><div class="value" style="font-size:14px;color:{genome_color}">{"OK" if hr.get("genome") else "N/A"}</div><div class="label">Genome FASTA{genome_badge}</div></div>'
+        for name, ok in idx.items():
+            color = "#16a34a" if ok else "#d97706"
+            mark = "✓" if ok else "✗"
+            s_hr += f'<div class="card"><div class="value" style="font-size:14px;color:{color}">{mark}</div><div class="label">{_esc(name)}</div></div>'
+        s_hr += '</div>'
+        s_hr += f'<p style="font-size:12px;color:var(--ink-secondary)">Root: <code>{_esc(hr.get("root",""))}</code></p>'
+    else:
+        s_hr += '<p style="color:var(--ink-secondary)">Host reference not found under <code>host_reference/</code>. Run hostref + hostdb stages first, or pass --host-fasta.</p>'
+    s_hr += '</section>'
+
+    # ── Stage 6: Handoff ──
+    s5 = f'''<section id="stage-handoff"><h2>S6: Handoff 交接清单</h2>
+    <p style="color:var(--ink-secondary);font-size:13px">Downstream handoff manifest: Run → FASTQ absolute paths + Core14 metadata.
+    Consumed by <code>data_preprocessing_pipeline/clean-data.py --input</code> as the file-level sample list.</p>'''
+    if h:
+        s5 += f'<div class="card-row"><div class="card"><div class="value">{h.get("runs","?")}</div><div class="label">Runs Total</div></div>'
+        s5 += f'<div class="card"><div class="value" style="color:#16a34a">{h.get("ready","?")}</div><div class="label">Ready (files found)</div></div>'
+        s5 += f'<div class="card"><div class="value" style="color:#d97706">{h.get("missing","?")}</div><div class="label">Missing (metadata only)</div></div></div>'
+        s5 += f'<p style="font-size:12px;color:var(--ink-secondary)">Manifest: <code>{_esc(h.get("path","sample_handoff.csv"))}</code> — 列: Run / Layout / R1_Path / R2_Path / SE_Path / Size_MB / ScientificName / Tissue / Location / BioProject / Status</p>'
+    else:
+        s5 += '<p style="color:var(--ink-secondary)">Handoff manifest not generated (no down/ files and no Core14 metadata found).</p>'
+    s5 += '</section>'
 
     # ── AI Summary area ──
     ai_area = f'<section id="ai-summary-area">{ai_html}</section>' if ai_html else ''
@@ -410,7 +610,7 @@ summary {{cursor:pointer;font-weight:600;color:var(--accent);padding:4px 0;font-
 <nav class="sidebar"><h3>Metadata Pipeline</h3><ul>{nav_items}</ul></nav>
 <main class="main">
   {overview}
-  {s1}{s2}{s3}{s4}
+  {s1}{s2}{s3}{s4}{s_hr}{s5}
   {ai_area}
   <div class="footer">Public Metadata Pipeline — {now}</div>
 </main>
@@ -532,6 +732,22 @@ def main():
     plot_images = collect_plot_images(args.dir)
     print(f"  {'Found' if plot_images else 'Not found'}")
 
+    print("Collecting download summary...")
+    download_data = collect_download_summary(args.dir)
+    print(f"  {download_data.get('rows', 0)} report rows, {download_data.get('fastq_count', 0)} fastq.gz, "
+          f"{download_data.get('failed', 0)} failed, {download_data.get('sra_left', 0)} .sra unconverted")
+
+    print("Writing handoff manifest (sample_handoff.csv)...")
+    handoff_data = write_handoff_manifest(args.dir)
+    print(f"  {handoff_data['ready']}/{handoff_data['runs']} runs ready → {handoff_data['path']}")
+
+    print("Collecting host reference summary...")
+    hostref_data = collect_hostref_summary(args.dir)
+    if hostref_data:
+        print(f"  indexes built: {hostref_data['built']}/4, genome: {'yes' if hostref_data['genome'] else 'no'}")
+    else:
+        print("  Not found (run hostref stage first)")
+
     ai_html = ""
     if getattr(generate_ai_summary, '_api_key', ''):
         print("Generating AI summary...")
@@ -539,7 +755,8 @@ def main():
 
     out_html = Path(args.output) if args.output else out / "Pipeline_Summary_Report.html"
     print("Generating HTML report...")
-    generate_html(args.dir, search_data, info_data, plot_images, ai_html, out_html)
+    generate_html(args.dir, search_data, info_data, plot_images, ai_html, out_html,
+                  download_data, handoff_data, hostref_data)
     print(f"  Report: {out_html} ({out_html.stat().st_size / 1024:.0f} KB)")
 
 if __name__ == "__main__":

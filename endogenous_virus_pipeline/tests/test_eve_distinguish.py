@@ -9,7 +9,7 @@ test_eve_distinguish.py — eve_distinguish 子模块装配测试
   或: python endogenous_virus_pipeline/tests/test_eve_distinguish.py
 
 锁两层:
-  1. s4_filter.py 的 verdict -> action 映射。s3 的 12 种 verdict 必须全在 ACTIONS 表里,
+  1. s4_filter.py 的 verdict -> action 映射。s3 的 14 种 verdict 必须全在 ACTIONS 表里,
      否则下游按列过滤会漏; 表外的新值必须按 REVIEW 兜底并返回非零, 不能静默丢行。
   2. run_all.sh 作为独立后运行脚本的装配: 参数解析 / 默认 OUT / 缺 -A 时报错 /
      模块面板复用 / 五个 python 阶段的文件交接 / -D 按发现管道目录约定定位输入。
@@ -78,17 +78,15 @@ exit 0
 """
 
 # s3_verdict.py 写出的表头 (逐列对齐, s4 靠 DictReader 取列), 兼作列名 -> 下标索引
-S3_HDR = ("contig_id\ttax_family\tcategory\tcheckv_completeness\tlocus_ncomp\tlocus_completeness\t"
-          "provirus_scale\tlocus_arch\tlocus_members\tdecay_class\tstop_enrichment\t"
-          "premature_stops_region\tframe_switches\torf_max_fraction\tte_flag\thost_wpid\t"
-          "host_cov\tverdict\tverdict_reason\n")
+# 表头本身从被测模块导入: 本地再抄一份的话, s3 一加列这里就悄悄错位
+from s3_verdict import VERDICT_HDR as S3_HDR, VERDICT_COLS  # noqa: E402
+from s2b_locus_scan import HDR as S2B_HDR_TEXT  # noqa: E402
+
 S3_COL = {name: i for i, name in enumerate(S3_HDR.rstrip('\n').split('\t'))}
 VERDICT_COL = S3_COL['verdict']
 
 # s2b_locus_scan.py / run_all.sh 的 --no-host 分支写出的 s2b 表头
-S2B_HDR = ('contig_id\tsample\thost_scaffold\thost_code\thost_wpid\thost_cov\thost_xeno\t'
-           'comps_contig\tbest_locus_comps\tdecay_class\tte_flag\tlocus_arch\tlocus_ncomp\t'
-           'locus_comps\tlocus_members\tlocus_hint\n').rstrip('\n').split('\t')
+S2B_HDR = S2B_HDR_TEXT.rstrip('\n').split('\t')
 
 QUERY_FA = (
     ">cand_A_length_1200_cov_10.0\n" + ("ATGAAACCCGGGTTTAAACCCGGGTTTAAA" * 40) + "\n"
@@ -114,12 +112,18 @@ def _posix(p):
 
 
 def verdict_rows(verdicts):
-    """按 s3 的表头造若干行; verdict 列在最后一列 (verdict_reason 之前)。"""
+    """按 s3 的表头造若干行; 列值按列名给, 表头加列时不用回来改这里的位置串。"""
     rows = [S3_HDR]
     for i, v in enumerate(verdicts):
-        rows.append(f"cand_{i}\tCaulimoviridae\tDNA_virus\t50\t3\t0.6\tFALSE\t"
-                    f"locus_full\tm1;m2\tdistributed_decay\t2.0\t12\t0\t0.4\tFALSE\t"
-                    f"0\t0\t{v}\treason\n")
+        r = {c: "" for c in VERDICT_COLS}
+        r.update(contig_id=f"cand_{i}", tax_family="Caulimoviridae", category="DNA_virus",
+                 checkv_completeness="50", locus_ncomp="3", locus_completeness="0.6",
+                 provirus_scale="FALSE", locus_arch="locus_full", locus_members="m1;m2",
+                 decay_class="distributed_decay", stop_enrichment="2.0",
+                 premature_stops_region="12", frame_switches="0", orf_max_fraction="0.4",
+                 te_flag="FALSE", host_wpid="0", host_cov="0",
+                 host_scope="own_species", verdict=v, verdict_reason="reason")
+        rows.append("\t".join(r[c] for c in VERDICT_COLS) + "\n")
     return ''.join(rows)
 
 
@@ -134,7 +138,7 @@ def run(args, env=None, cwd=None):
 
 
 class TestS4Filter(unittest.TestCase):
-    """verdict -> action 映射: 12 种全覆盖 + 未知值兜底。"""
+    """verdict -> action 映射: 14 种全覆盖 + 未知值兜底。"""
 
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix='eve_s4_'))
@@ -158,8 +162,9 @@ class TestS4Filter(unittest.TestCase):
         self.assertEqual(len(lines) - 1, len(ACTIONS))
         acts = [ln.split('\t')[-2] for ln in lines[1:]]
         self.assertEqual(set(acts), {'MOVE_EVE', 'KEEP_virus', 'REVIEW', 'REMOVE_host_contamination'})
-        # 6 个 *_review 变体 + review 本身 = 7 行 REVIEW
-        self.assertEqual(acts.count('REVIEW'), 7)
+        # REVIEW 共 9 行 = 6 个 *_review + EVE_suspect + review + v6 起的
+        # host_homology_cross_species / host_conflict_review (后两个旧版会删数据)
+        self.assertEqual(acts.count('REVIEW'), 9)
 
     def test_carry_columns_preserved(self):
         r, out = self._filter(sorted(ACTIONS))
@@ -311,6 +316,34 @@ class TestRunAllPlumbing(unittest.TestCase):
         self.assertEqual(len(lines) - 1, QUERY_FA.count('>'))
         for ln in lines[1:]:
             self.assertEqual(ln.split('\t')[-2], 'REVIEW')
+
+    def test_relative_query_and_evidence_survive_the_cd(self):
+        """相对路径的 -q/-e 必须能用 —— README 里就是这么写的.
+
+        回归: 脚本走到一半会 `cd "$OUT"`, 之后相对路径都相对 OUT 解释, 于是
+        `-q cand.fasta` 变成在 OUT 下面找 cand.fasta, 直接 FileNotFoundError 整批挂掉。
+        修法是在改工作目录之前把所有路径参数解析成绝对路径。
+        """
+        d = self.tmp / 'work'
+        d.mkdir()
+        shutil.copy(str(self.query), str(d / 'cand.fasta'))
+        shutil.copy(str(self.evidence), str(d / 'ev.tsv'))
+        r = run(['-q', 'cand.fasta', '-e', 'ev.tsv', '--no-host', '-o', 'out'],
+                cwd=str(d), env=self.env)
+        self.assertEqual(r.returncode, 0, r.stderr + '\n--- stdout ---\n' + r.stdout)
+        printed = [l for l in r.stdout.splitlines() if l.startswith('[run_all] QUERY=')]
+        self.assertTrue(printed, r.stdout)
+        # 关键: 打印出来的应是**解析后的绝对路径**, 且条数解析成功 (不是空括号).
+        # 只比"是否绝对 + 结尾是否保留相对尾巴", 因为 bash 自己解析出来的是 /tmp/...,
+        # 而 Python 的 tempdir 字符串是 C:/Users/.../Temp/... —— 同一个目录, 两种写法.
+        val = printed[0].split('QUERY=', 1)[1].rsplit(' (', 1)[0]
+        self.assertTrue(val.startswith('/') or (len(val) > 1 and val[1] == ':'),
+                        '应为绝对路径, 实际 %r' % val)
+        self.assertTrue(_posix(val).endswith('/work/cand.fasta'), val)
+        self.assertNotIn('( 条)', printed[0], '相对 -q 必须在 cd 之前就解析掉')
+        self.assertFalse([l for l in r.stdout.splitlines() if l.startswith('grep:')],
+                         '不应出现 grep 找不到文件的报错')
+        self.assertTrue((d / 'out' / 'dna_vs_eve_filter.tsv').is_file())
 
     def test_discovery_dir_resolves_inputs_and_default_out(self):
         # -D 指向一次发现管道输出: query/evidence 按阶段目录约定定位, OUT 默认 08b_EVE_Distinguish

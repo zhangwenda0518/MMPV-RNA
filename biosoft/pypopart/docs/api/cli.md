@@ -1,0 +1,3 @@
+# CLI
+
+::: pypopart.cli.main

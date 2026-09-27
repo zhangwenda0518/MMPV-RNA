@@ -242,11 +242,13 @@ suppressPackageStartupMessages(library(grid))
 
 onco_file <- "{onco_csv}"
 onco_mat <- as.matrix(read.csv(onco_file, row.names=1, check.names=FALSE))
+if (nrow(onco_mat) > 200) onco_mat <- onco_mat[1:200, , drop=FALSE]
 
 col_map <- c(
     "Fixed_Missense" = "#E31A1C",   "Major_Missense" = "#FC4E2A",   "Minor_Missense" = "#FD8D3C",
     "Fixed_Synonymous" = "#1F78B4", "Major_Synonymous"="#41B6C4",   "Minor_Synonymous" = "#A1DAB4",
-    "Fixed_Regulatory" = "#33A02C", "Major_Regulatory"="#74C476",   "Minor_Regulatory" = "#C7E9C0"
+    "Fixed_Regulatory" = "#33A02C", "Major_Regulatory"="#74C476",   "Minor_Regulatory" = "#C7E9C0",
+    "Fixed_Truncating" = "#000000", "Major_Truncating"="#444444",   "Minor_Truncating" = "#888888"
 )
 
 alter_fun = list(
@@ -259,7 +261,10 @@ alter_fun = list(
     Minor_Synonymous = function(x,y,w,h) {{ grid.rect(x,y,w,h*0.4, gp=gpar(fill=col_map["Minor_Synonymous"], col=NA)) }},
     Fixed_Regulatory = function(x,y,w,h) {{ grid.rect(x,y,w,h, gp=gpar(fill=col_map["Fixed_Regulatory"], col=NA)) }},
     Major_Regulatory = function(x,y,w,h) {{ grid.rect(x,y,w,h*0.75, gp=gpar(fill=col_map["Major_Regulatory"], col=NA)) }},
-    Minor_Regulatory = function(x,y,w,h) {{ grid.rect(x,y,w,h*0.4, gp=gpar(fill=col_map["Minor_Regulatory"], col=NA)) }}
+    Minor_Regulatory = function(x,y,w,h) {{ grid.rect(x,y,w,h*0.4, gp=gpar(fill=col_map["Minor_Regulatory"], col=NA)) }},
+    Fixed_Truncating = function(x,y,w,h) {{ grid.rect(x,y,w,h, gp=gpar(fill=col_map["Fixed_Truncating"], col=NA)) }},
+    Major_Truncating = function(x,y,w,h) {{ grid.rect(x,y,w,h*0.75, gp=gpar(fill=col_map["Major_Truncating"], col=NA)) }},
+    Minor_Truncating = function(x,y,w,h) {{ grid.rect(x,y,w,h*0.4, gp=gpar(fill=col_map["Minor_Truncating"], col=NA)) }}
 )
 
 out_pdf <- "{out_pdf}"

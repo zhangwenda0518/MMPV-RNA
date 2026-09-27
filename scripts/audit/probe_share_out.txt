@@ -1,0 +1,70 @@
+输入 /tmp/rc66_count：contig 21630，工具 ACVirus,CAT,VITAP,diamond_lca,genomad,metabuli,mmseqs
+
+计票格次总计 144771（对照补丁日志「阶元计票 144771 格次」）
+  E0 全票一致（share=100%，无人可踢）                        126744  87.55%
+  T 并列票首（n_top>=2，数学上永不 > 0.5，走两级平票裁决）              9789   6.76%
+  E1 过半且有异议（现状真的踢人）                                 7519   5.19%
+  U 唯一票首但不过半（现状不淘汰）                                  719   0.50%
+     其中 share 恰好 50%（唯一最高但卡线）                        694   0.48%
+     其中 share 严格小于 50%                                25   0.02%
+  合计计票 144771；其中「真需要裁决」的格次（有异议）18027：过半踢人 7519 + 并列 9789 + 唯一票首卡线 719
+  工具淘汰事件合计 8523（对照补丁日志「淘汰工具投票权 8523 格次」；单位是 contig×工具 对，不是格次）
+  按阶元 计票 / 全票一致 / 过半踢人 / 并列 / 唯一票首卡线
+    Realm      19015  14742   3354    827     92
+    Kingdom    19142  18123     75    854     90
+    Phylum     19039  17599    375    958    107
+    Class      19457  17822    439   1084    112
+    Order      18028  15478   1314   1148     88
+    Family     17710  15721    439   1448    102
+    Genus      14854  13350    452   1027     25
+    Species    17526  13909   1071   2443    103
+
+U 类票型分布（唯一票首但不过半，共 719 格次）
+  2:1:1 (有值工具 4)                  574   79.8%
+  3:2:1 (有值工具 6)                  106   14.7%
+  2:1:1:1 (有值工具 5)                 25    3.5%
+  3:1:1:1 (有值工具 6)                 14    1.9%
+
+U 类按阶元 × 票型（前 20）
+  Class     精确卡线 50%                    107
+  Phylum    精确卡线 50%                    104
+  Species   精确卡线 50%                    100
+  Species   2:1:1                        99
+  Family    精确卡线 50%                     94
+  Realm     精确卡线 50%                     92
+  Family    2:1:1                        90
+  Kingdom   精确卡线 50%                     90
+  Order     精确卡线 50%                     83
+  Class     2:1:1                        81
+  Order     2:1:1                        80
+  Phylum    2:1:1                        75
+  Realm     2:1:1                        64
+  Kingdom   2:1:1                        62
+  Realm     3:2:1                        28
+  Kingdom   3:2:1                        28
+  Phylum    3:2:1                        26
+  Genus     精确卡线 50%                     24
+  Genus     2:1:1                        23
+  Class     3:2:1                        21
+
+淘汰判据的格次级代价（与补丁日志同口径：淘汰格次 / 淘汰工具投票权）
+  A 现状 share > 0.5         淘汰格次  7519, 工具投票权  8523  (对照 v6.6 日志 7519 / 8523)
+  E 唯一票首且 share >= 0.5  淘汰格次  7698, 工具投票权  8995  (对照 v6.7 日志 7698 / 8995)
+
+规则放宽后的最终值变动（相对 A 现状；Genus/Species 含复刻未跟的后置闸门，仅参考）
+  B 门槛降到 0.40                变动格次 Realm=0 Kingdom=8 Phylum=20 Class=279 Order=335 Family=324 Genus=251 Species=283 | 涉及 contig 487
+  C 唯一票首即定音                  变动格次 Realm=0 Kingdom=1 Phylum=4 Class=3 Order=31 Family=30 Genus=81 Species=66 | 涉及 contig 103
+  D 门槛 0.40 且票首唯一（并列不踢）      变动格次 Realm=0 Kingdom=1 Phylum=4 Class=3 Order=31 Family=30 Genus=78 Species=63 | 涉及 contig 100
+  E 唯一票首且 share>=0.5（只救 694 卡线格次） 变动格次 Realm=0 Kingdom=1 Phylum=4 Class=3 Order=31 Family=30 Genus=78 Species=63 | 涉及 contig 100
+
+U 类抽样（前 10 条，看票势到底明不明确）
+  CRR1126135_clean_NODE_138_length_2279_cov_ Phylum    3:2:1        票首=Nucleocytoviricota       50.0%
+  CRR1126135_clean_NODE_138_length_2279_cov_ Class     3:2:1        票首=Megaviricetes            50.0%
+  CRR1126140_clean_NODE_1214_length_1100_cov Species   2:1:1        票首=Metavirus cladosporii    50.0%
+  CRR1440121_clean_NODE_75_length_1807_cov_1 Genus     2:1:1        票首=Heliosvirus              50.0%
+  CRR1440121_clean_NODE_75_length_1807_cov_1 Species   2:1:1        票首=Heliosvirus raunefjorden 50.0%
+  CRR1440126_clean_NODE_709_length_1902_cov_ Family    2:1:1        票首=Hepaciviridae            50.0%
+  CRR1440126_clean_NODE_709_length_1902_cov_ Genus     2:1:1        票首=Orthohepacivirus         50.0%
+  CRR1440126_clean_NODE_709_length_1902_cov_ Species   2:1:1        票首=Orthohepacivirus hominis 50.0%
+  CRR1440126_clean_NODE_914_length_1792_cov_ Order     2:1:1        票首=Pimascovirales           50.0%
+  CRR1440126_clean_NODE_914_length_1792_cov_ Family    2:1:1        票首=Marseilleviridae         50.0%

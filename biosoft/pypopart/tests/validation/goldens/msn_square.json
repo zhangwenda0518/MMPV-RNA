@@ -1,0 +1,21 @@
+{
+  "description": "MSN keeps all four unit edges of a haplotype square",
+  "derivation": "Hand-traced against AbstractMSN::computeMSN (strict, epsilon=0). Sequences AA, AT, GA, GT: unit-distance pairs are AA-AT, AA-GA, AT-GT, GA-GT; the two diagonals have distance 2. At level 1, all four pairs are cross-component with respect to the pre-level components (each vertex its own component), so all four edges are added before any merging; the graph is then connected (maxValue = 1 + 0) and level 2 breaks the sweep. Ids by sorted sequence: AA->H1, AT->H2, GA->H3, GT->H4.",
+  "algorithm": "msn",
+  "params": { "epsilon": 0 },
+  "sequences": {
+    "s1": "AA",
+    "s2": "AT",
+    "s3": "GA",
+    "s4": "GT"
+  },
+  "expected": {
+    "nodes": ["H1", "H2", "H3", "H4"],
+    "edges": [
+      ["H1", "H2", 1],
+      ["H1", "H3", 1],
+      ["H2", "H4", 1],
+      ["H3", "H4", 1]
+    ]
+  }
+}

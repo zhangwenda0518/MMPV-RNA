@@ -10,7 +10,7 @@ cluster_pipeline.py -- 病毒基因组聚类管道 v3.0
   3. vclust Leiden 聚类 (仅 novel 部分)
   4. 输出 centroids + per-cluster 拆分
 
-后续: taxonomy → host → rescue_pipeline.py (三支路拯救)
+后续: taxonomy → host → rescue_pipeline.py (四支路拯救 A/B/C/D)
 
 依赖: vclust, seqkit
 """
@@ -393,7 +393,7 @@ def compute_cluster_stats(clusters, fasta_info, out_dir):
 # ══════════════════════════════════════════════════════════════
 
 def main():
-    p = argparse.ArgumentParser(description="WVDB 病毒基因组三支路拯救管道 v2.0")
+    p = argparse.ArgumentParser(description="WVDB 病毒基因组拯救管道 v2.0 (参考预聚类 + Leiden 去冗余)")
     p.add_argument("--input-fasta", "-i", required=True, help="输入 FASTA (规范命名后)")
     p.add_argument("--output-dir", "-o", required=True)
     p.add_argument("--threads", "-t", type=int, default=64)
@@ -414,6 +414,13 @@ def main():
                    help="CD-HIT 预聚类 QCOV 阈值 (默认 0.85)")
     p.add_argument("--resume", action="store_true", help="断点续传")
     args = p.parse_args()
+
+    # 进程守护
+    try:
+        import process_guard
+        process_guard.install()
+    except Exception:
+        pass
 
     start = datetime.now()
     print(f"开始: {start.strftime('%Y-%m-%d %H:%M:%S')}")
@@ -472,7 +479,7 @@ def main():
                                                args.threads, args.min_length)
             print(f"  CD-HIT 结果: {n_known_clusters} 个 known 簇有关联 contig, {n_novel} 新颖 contig → vclust Leiden")
             # 保存 association 表到 centroids
-            assoc_out = out / "04_centroids" / "known_association.tsv"
+            assoc_out = out / "4_centroids" / "known_association.tsv"
             assoc_out.parent.mkdir(parents=True, exist_ok=True)
             src_assoc = Path(out) / "2_cdhit" / "known_association.tsv"
             if src_assoc.is_file():
@@ -532,23 +539,45 @@ def main():
         rmdup_ids = None  # 全部保留
     else:
         print(f"\n── Step 3: genome_rmDuplicates 去冗余 ──")
+        # BLAST/makeblastdb 要求序列名 ≤ 50 字符; vclust centroids 名可达 ~70 字符
+        # → 临时替换为短名 (seq000001..), 跑完后从名称映射恢复原名
+        id_map = {}
+        short_fa = d2 / "all.cluster.ref.shortid.fasta"
+        with open(short_fa, "w") as sf:
+            for i, rec in enumerate(SeqIO.parse(global_ref_fa, "fasta"), 1):
+                # makeblastdb 自动把 ID 转大写 → 用全大写避免 Perl 大小写不匹配导致全跳过
+                short_id = f"SEQ{i:07d}"
+                id_map[short_id] = rec.id
+                sf.write(f">{short_id}\n{str(rec.seq)}\n")
+        print(f"  序列名缩写: {len(id_map)} 条 → {short_fa}")
+
         rmdup_cmd = [
             "perl", str(rmdup_script),
             "--length", str(args.rmdup_length),
             "--CPU", str(args.threads),
             "--tmp", str(d3_tmp),
-            str(global_ref_fa)
+            str(short_fa)
         ]
-        with open(d3_rmdup_fa, "w") as rf:
-            result = run(rmdup_cmd, "genome_rmDuplicates", timeout=86400, check=False)
-            if result:
-                if result.stdout:
-                    rf.write(result.stdout)
-                if result.returncode != 0:
-                    print(f"  [WARN] genome_rmDuplicates 退出码 {result.returncode}")
-                    if result.stderr:
-                        for line in result.stderr.strip().split('\n')[-5:]:
-                            print(f"         {line}")
+        result = run(rmdup_cmd, "genome_rmDuplicates", timeout=86400, check=False)
+        if result and result.returncode != 0:
+            print(f"  [WARN] genome_rmDuplicates 退出码 {result.returncode}")
+            if result.stderr:
+                for line in result.stderr.strip().split('\n')[-5:]:
+                    print(f"         {line}")
+
+        # 恢复原名: Perl 输出用短名, 通过 id_map 换回原始名
+        if result and result.stdout:
+            restored_lines = []
+            for line in result.stdout.split('\n'):
+                if line.startswith('>'):
+                    short_id = line[1:].split()[0]
+                    long_id = id_map.get(short_id, short_id)
+                    restored_lines.append(f">{long_id}")
+                else:
+                    restored_lines.append(line)
+            with open(d3_rmdup_fa, "w") as rf:
+                rf.write('\n'.join(restored_lines) + '\n')
+
         if d3_rmdup_fa.is_file() and d3_rmdup_fa.stat().st_size > 0:
             rmdup_ids = set()
             for rec in SeqIO.parse(d3_rmdup_fa, "fasta"):
@@ -571,7 +600,7 @@ def main():
     # 产出 centroids (供 taxonomy/host 阶段读取)
     # final_centroids.fasta = known_linked (有关联 contig 的已知簇) + vclust novel
     # 纯参考簇 (无 contig 关联) 不进入 — 我们的目的是分析样本
-    final_dir = out / "04_centroids"; final_dir.mkdir(parents=True, exist_ok=True)
+    final_dir = out / "4_centroids"; final_dir.mkdir(parents=True, exist_ok=True)
     centroids_fa = final_dir / "final_centroids.fasta"
     known_id_file = final_dir / "known_ids.txt"
 

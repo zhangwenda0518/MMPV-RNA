@@ -1,0 +1,100 @@
+=== mode=legacy ===
+SAME  final_integrated_classification.tsv
+SAME  fill_stats.tsv
+SAME  tool_weights.tsv
+SAME  species_containment_blanked.tsv
+SAME  taxonomy_gate_check.tsv
+DIFF  analysis_summary.txt  282bafc245ae257d9ec4eb12cea77edd -> ecd3e45ec8a57adb91f160ceb800fe86
+SAME  standardized_ACVirus.tsv
+SAME  standardized_CAT.tsv
+SAME  standardized_VITAP.tsv
+SAME  standardized_diamond_lca.tsv
+SAME  standardized_genomad.tsv
+SAME  standardized_metabuli.tsv
+SAME  standardized_mmseqs.tsv
+SAME  agreement_stats.tsv
+SAME  consistency_summary.tsv
+SAME  consistent_summary.tsv
+SAME  intersection_matrix.tsv
+SAME  common_ids.txt
+SAME  upset_data.json
+SAME  comparison_family.tsv
+SAME  comparison_genus.tsv
+SAME  comparison_species.tsv
+SAME  comparison_realm.tsv
+=== mode=cascade ===
+SAME  final_integrated_classification.tsv
+SAME  fill_stats.tsv
+SAME  tool_weights.tsv
+SAME  species_containment_blanked.tsv
+SAME  taxonomy_gate_check.tsv
+DIFF  analysis_summary.txt  3bc90229e4ceef11697681b1d7e28e01 -> 1036c4ba08fb0ca9a60f67e22d29ff3c
+SAME  standardized_ACVirus.tsv
+SAME  standardized_CAT.tsv
+SAME  standardized_VITAP.tsv
+SAME  standardized_diamond_lca.tsv
+SAME  standardized_genomad.tsv
+SAME  standardized_metabuli.tsv
+SAME  standardized_mmseqs.tsv
+SAME  agreement_stats.tsv
+SAME  consistency_summary.tsv
+SAME  consistent_summary.tsv
+SAME  intersection_matrix.tsv
+SAME  common_ids.txt
+SAME  upset_data.json
+SAME  comparison_family.tsv
+SAME  comparison_genus.tsv
+SAME  comparison_species.tsv
+SAME  comparison_realm.tsv
+=== 版本戳 diff（预期仅 script_md5 变） ===
+2c2
+< 6.4	/tmp/virus_classifier_analysis.R.cascade_v64	7ade86fe97e290ca22ef31f71431b0b9	/home/zhangwenda/database/taxonomy/genus_family_ref.tsv	865283b4b1a3a2f3c4c3ac702403c554	20892	2026-09-15 16:30:11
+---
+> 6.4	/tmp/virus_classifier_analysis.R.cascade_v64	8e51cf21b8ef801a1539e09272dd0cb1	/home/zhangwenda/database/taxonomy/genus_family_ref.tsv	865283b4b1a3a2f3c4c3ac702403c554	20892	2026-09-15 16:47:39
+--- cascade ---
+2c2
+< 6.4	/tmp/virus_classifier_analysis.R.cascade_v64	7ade86fe97e290ca22ef31f71431b0b9	/home/zhangwenda/database/taxonomy/genus_family_ref.tsv	865283b4b1a3a2f3c4c3ac702403c554	20892	2026-09-15 16:31:13
+---
+> 6.4	/tmp/virus_classifier_analysis.R.cascade_v64	8e51cf21b8ef801a1539e09272dd0cb1	/home/zhangwenda/database/taxonomy/genus_family_ref.tsv	865283b4b1a3a2f3c4c3ac702403c554	20892	2026-09-15 16:48:40
+=== 日志 diff（预期仅计时标签行） ===
+2,3c2,3
+< [16:29:14] INFO: 共加载 7 个工具数据
+< [16:29:14] INFO: 清理 rank 值...
+---
+> [16:46:41] INFO: 共加载 7 个工具数据
+> [16:46:41] INFO: 清理 rank 值...
+6c6
+< [16:29:15] VIS: 绘制分类数目条形图...
+---
+> [16:46:41] VIS: 绘制分类数目条形图...
+8,10c8,10
+< [16:29:15] VIS: 绘制 ComplexUpset 彩色图 (7 工具)...
+< [16:29:21] VIS: 导出 upset_data.json (21630 元素)
+< [16:29:31] VIS: 绘制各分类等级 Venn 图...
+---
+> [16:46:42] VIS: 绘制 ComplexUpset 彩色图 (7 工具)...
+> [16:46:49] VIS: 导出 upset_data.json (21630 元素)
+> [16:46:58] VIS: 绘制各分类等级 Venn 图...
+25,27c25,27
+< [16:29:50] VIS: 分析一致性分布...
+--- cascade ---
+2,3c2,3
+< [16:30:14] INFO: 共加载 7 个工具数据
+< [16:30:14] INFO: 清理 rank 值...
+---
+> [16:47:42] INFO: 共加载 7 个工具数据
+> [16:47:42] INFO: 清理 rank 值...
+6c6
+< [16:30:14] VIS: 绘制分类数目条形图...
+---
+> [16:47:43] VIS: 绘制分类数目条形图...
+8,10c8,10
+< [16:30:15] VIS: 绘制 ComplexUpset 彩色图 (7 工具)...
+< [16:30:20] VIS: 导出 upset_data.json (21630 元素)
+< [16:30:29] VIS: 绘制各分类等级 Venn 图...
+---
+> [16:47:44] VIS: 绘制 ComplexUpset 彩色图 (7 工具)...
+> [16:47:48] VIS: 导出 upset_data.json (21630 元素)
+> [16:47:57] VIS: 绘制各分类等级 Venn 图...
+25,27c25,27
+< [16:30:47] VIS: 分析一致性分布...

@@ -1,0 +1,20 @@
+装载: 16 张表, 需查参照 name 14072 个
+参照命中 name 13991 个
+
+数据集	口径	行数	Realm-Kingdom	Kingdom-Phylum	Phylum-Class	Class-Order	Order-Family	Family-Genus	Genus-Species	矛盾行	矛盾率
+RNA-Alternaria_alternata_out	online	1728	6	5	4	43	81	167	192	356	20.60%
+RNA-Alternaria_alternata_out	v66f	1728	2	2	41	14	4	1	7	62	3.59%
+RNA-Aphis_gossypii_out	online	2448	68	4	5	90	185	193	111	418	17.08%
+RNA-Aphis_gossypii_out	v66f	2448	3	2	33	10	8	0	4	59	2.41%
+RNA-Fusarium_nematophilum_out	online	1637	2	7	5	67	82	164	99	290	17.72%
+RNA-Fusarium_nematophilum_out	v66f	1637	2	0	31	6	8	1	7	49	2.99%
+RNA-Lycium_amarum_out	online	957	1	1	10	17	64	99	48	167	17.45%
+RNA-Lycium_amarum_out	v66f	957	2	0	6	0	1	0	0	9	0.94%
+RNA-Lycium_barbarum_out	online	20892	57	79	97	536	369	1273	1011	2738	13.11%
+RNA-Lycium_barbarum_out	v66f	20892	35	14	273	64	47	9	62	465	2.23%
+RNA-Lycium_chinense_out	online	11007	16	22	28	220	180	691	292	1258	11.43%
+RNA-Lycium_chinense_out	v66f	11007	16	7	117	48	23	3	36	232	2.11%
+RNA-Lycium_ruthenicum_out	online	15181	69	42	32	430	177	878	644	1838	12.11%
+RNA-Lycium_ruthenicum_out	v66f	15181	32	4	200	49	34	2	23	322	2.12%
+onekp-virus	online	535103	1177	14586	14276	29935	10195	23612	572	71295	13.32%
+onekp-virus	v66f	535103	517	114	12676	3065	4827	313	901	21541	4.03%

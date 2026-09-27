@@ -37,7 +37,8 @@ sequin_builder.py — GenBank Sequin 提交文件构建器 v1.0
       --proteins 2_features/proteins_updated.faa \\
       --fasta 2_features/reoriented_nucleotide_sequences.fna \\
       --miuvig-feat 2_features/miuvig_features.tsv \\
-      --metadata metadata/Global_Unified_Metadata_Core13.tsv \\
+      --metadata metadata/Global_Unified_Metadata_Core14.tsv \\
+      --topology topology.tsv \\
       --run-title ningxiagouqi_plant_virome \\
       --sequencer "Illumina NovaSeq 6000" \\
       --assembler "MEGAHIT v1.2.9" \\
@@ -125,7 +126,7 @@ def load_taxonomy(tax_tsv):
 
 
 def load_metadata(meta_file):
-    """加载 Core13 元数据表, 返回 {SRA: {collection_date, geo_loc_name, ...}}"""
+    """加载 Core14 元数据表, 返回 {SRA: {collection_date, geo_loc_name, ...}}"""
     if not meta_file or not os.path.exists(meta_file):
         return {}
 
@@ -171,6 +172,30 @@ def extract_sra(contig):
     """从 contig 名提取 SRA/CRR 前缀"""
     m = re.match(r'([SC]RR\d+)', contig)
     return m.group(1) if m else 'UNKNOWN'
+
+
+def load_topology(topo_file):
+    """加载 topology.tsv, 返回 {contig: final_topology} (circular/linear)"""
+    if not topo_file or not os.path.exists(topo_file):
+        return {}
+    df = pd.read_csv(topo_file, sep='\t')
+    col_map = {}
+    for c in df.columns:
+        if c.lower() in ('contig', 'seq_id', 'sequence_id'):
+            col_map['contig'] = c
+        elif c.lower() in ('final_topology', 'topology'):
+            col_map['topology'] = c
+    if 'contig' not in col_map:
+        col_map['contig'] = df.columns[0]
+    if 'topology' not in col_map:
+        return {}
+    lookup = {}
+    for _, row in df.iterrows():
+        cid = str(row[col_map['contig']])
+        topo = str(row[col_map['topology']]).strip().lower()
+        if topo in ('circular', 'linear'):
+            lookup[cid] = topo
+    return lookup
 
 
 def build_genome_type(taxonomy):
@@ -223,6 +248,7 @@ class SequinBuilder:
         self.seqs = load_taxonomy(self.tax_tsv)
         self.metadata = load_metadata(args.metadata) if args.metadata else {}
         self.tbl_records = load_featuretable(self.tbl_path)
+        self.topology_map = load_topology(getattr(args, 'topology', None))
 
         # 加载核酸序列
         self.fna_seqs = {}
@@ -363,7 +389,7 @@ class SequinBuilder:
                 # [moltype=cRNA]
                 gcode = 11 if 'ssRNA' in genome_type else 1
                 mol_type = 'cRNA' if 'RNA' in genome_type else 'DNA'
-                topology = 'linear'
+                topology = self.topology_map.get(contig, 'linear')
 
                 header_parts = [contig]
                 header_parts.append(f"[organism={taxonomy}]")
@@ -500,7 +526,8 @@ def main():
       --proteins 2_features/proteins_updated.faa \\
       --fasta 2_features/reoriented_nucleotide_sequences.fna \\
       --miuvig-feat 2_features/miuvig_features.tsv \\
-      --metadata metadata/Global_Unified_Metadata_Core13.tsv \\
+      --metadata metadata/Global_Unified_Metadata_Core14.tsv \\
+      --topology topology.tsv \\
       --run-title my_project \\
       -o ./genbank_submission/
 """
@@ -515,7 +542,8 @@ def main():
     parser.add_argument('--miuvig-feat', required=True, help='miuvig_features.tsv')
 
     # 可选输入
-    parser.add_argument('--metadata', help='Global_Unified_Metadata_Core13.tsv (自动填充元数据)')
+    parser.add_argument('--metadata', help='Global_Unified_Metadata_Core14.tsv (自动填充元数据)')
+    parser.add_argument('--topology', help='topology.tsv (circular/linear, 默认 linear)')
 
     # 运行参数
     parser.add_argument('--run-title', default='viral_submission', help='运行标题 (目录名)')

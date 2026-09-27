@@ -205,6 +205,8 @@ def download_single_ngdc(accession, method, base_out_dir, sample_name, tracker=N
             return False
 
         filename = protocols_to_try[0][1].split('/')[-1]
+        if not filename.endswith('.sra'):
+            filename += '.sra'
         out_path = os.path.join(out_dir, filename)
         success = False
 
@@ -348,14 +350,14 @@ def main():
     if args.srr:
         acc = args.srr.strip().upper()
         original_accessions.append(acc)
-        acc_to_sample[acc] = "Uncategorized"
+        acc_to_sample[acc] = ""
     elif args.list:
         with open(args.list, 'r', encoding='utf-8') as f:
             for line in f:
                 acc = line.strip().upper()
                 if acc and not acc.startswith('#'):
                     original_accessions.append(acc)
-                    acc_to_sample[acc] = "Uncategorized"
+                    acc_to_sample[acc] = ""
     elif args.tsv:
         print(f"📂 正在解析 TSV 实验设计表格: {args.tsv}")
         with open(args.tsv, 'r', encoding='utf-8') as f:

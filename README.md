@@ -52,6 +52,28 @@ virome_submission_pipeline/   → 数据提交
 
 ---
 
+## 统一 I/O 目录布局 / Unified I/O Layout (v3.1)
+
+五条管线默认沿用 v3.0 目录名（`legacy` 布局，checkpoint 兼容）。新项目可切
+`standard` 布局——**每条管线一个独立输出根，根内各自独立编号**：
+
+```
+<项目>/ 01_PublicData/ 02_Preprocessing/ 03_Discovery/ 04_Analysis/ 05_Phylo/ 90_Handoff/
+```
+
+管线边界交接可自动定位（③→④ 桥一条命令；①→⑤ Core14 原生直读）：
+
+```bash
+export MMPV_IO_LAYOUT=standard          # 或各编排器 --io-layout standard
+python virome_discovery_pipeline/utils/discovery2analysis.py \
+    --from-discovery <项目>/03_Discovery --output_prefix <项目>/90_Handoff/analysis
+```
+
+完整项目树、五边界契约、legacy↔standard 映射表与迁移规则见
+**`doc/IO_LAYOUT_DESIGN.md`**。
+
+---
+
 ## 快速开始 / Quick Start
 
 ### 1. 一键部署
@@ -131,11 +153,22 @@ python endogenous_virus_pipeline/eve_screen.py \
     -B batch.tsv -o out/eve/ -t 40 -J 5 --fast
 # -J 并行基因组数, -t 每基因组线程数, 总核数 = J x t (256 核推荐 -J5 -t40)
 
-# 断点续传: 以 04_Summary/<NAME>_eve_summary.tsv 为完成标记, 重发同命令即可
+# 断点续传: 按请求的阶段判定 (阶段产物齐全才算完成), 重发同命令即可续跑
 # 汇总: kingdom_summary.tsv / family_by_genome.tsv (--merge 单独重跑汇总)
 # 抽序列: samtools faidx (需 samtools >= 1.11, 版本不够开跑前体检即报错)
 #          索引写到输出目录, 不依赖参考基因组目录可写
 # 防挂死: --cmd-timeout 7200 (单条外部命令超时秒数, 0=不限)
+```
+
+判明"是宿主基因还是内源病毒化石"，以及判别病毒组组装出的候选 contig 是真 DNA 病毒
+还是退化 EVE，另有两个模块：`eve_screen.py` 做宿主基因组侧的位点发现，
+`eve_distinguish/` 做候选侧的判别（跑完发现管道后单独调用）：
+
+```bash
+# DNA 病毒候选 vs EVE 判别 (详见 endogenous_virus_pipeline/eve_distinguish/README.md)
+bash endogenous_virus_pipeline/eve_distinguish/run_all.sh \
+    -D /path/to/discovery_out -A /path/to/1kp/assemblies -t 32
+#   产物: dna_vs_eve_filter.tsv (每条候选一个 action, 下游按列过滤即可)
 ```
 
 ### 4. 分析管线
@@ -322,12 +355,21 @@ MMPV-RNA/
 │   ├── sequin_builder.py           # Sequin 构建器
 │   └── ...                         # 元数据/报告/拓扑分析
 │
-├── endogenous_virus_pipeline/      # 内源性病毒 (EVE) 筛查 (3+1脚本)
-│   ├── eve_screen.py               # 主编排器 (三阶段: discover→verdict→annotate→merge)
-│   ├── eve_genome_scan.py          # 单基因组 worker (断点续传)
+├── endogenous_virus_pipeline/      # 内源性病毒 (EVE): 宿主基因组筛查 + 候选判别
+│   ├── eve_screen.py               # 筛查主编排器 (三阶段: discover→verdict→annotate→merge)
+│   ├── eve_genome_scan.py          # 单基因组 worker (按阶段产物断点续传)
 │   ├── eve_scan_core.py            # 纯逻辑核心 (坐标还原/位点合并/判定/汇总)
-│   ├── tests/test_eve_core.py      # 37 个纯逻辑单测 (本地可跑)
-│   └── doc.md                      # 完整流程文档
+│   ├── tests/                      # 142 个单测 (核心逻辑/判别逻辑/产物不变量)
+│   ├── doc.md                      # 完整流程文档
+│   └── eve_distinguish/            # ★ 后运行脚本: DNA 病毒候选 vs EVE 判别 (v6.2)
+│       ├── run_all.sh              # 一键入口 (0 面板 → 1 建库 → 2 blastx → 3 结构/域 → 4 寄主 → 5/6 判定)
+│       ├── s1_decay_scan.py        # 结构退化 (终止子富集 + 分布剖面)
+│       ├── s2_domain_scan.py       # 域架构 (MP/CP/AP/RT/RH 组件记功)
+│       ├── s2b_locus_scan.py       # 候选 blastn 回寄主 → 基因座架构
+│       ├── s3_verdict.py           # 退化 × 架构 二维判定 + 寄主否决
+│       ├── s4_filter.py            # verdict → action (REMOVE/MOVE_EVE/KEEP_virus/REVIEW)
+│       ├── build_panel.py          # 参考面板构建 (随模块提交 panel.fasta/baits.fa)
+│       └── README.md               # 方法与踩坑记录 (含逐条实测数字)
 │
 ├── submission_gui/                 # 提交桌面 GUI
 │   └── submission_gui.py           # PySide6 交互式编辑/验证/导出

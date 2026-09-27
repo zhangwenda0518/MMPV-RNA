@@ -1,0 +1,14 @@
+contig_id	Family	Genus	Determination_Level	Host_ICTV	pred|L1	pred|L2	evidence	Host	Host_NCBI_lineage
+CRR527041_clean_NODE_1593_length_1853_cov_4.065169	Mimiviridae	Potyvirus	Species(via Species)	Plant				-	-
+CRR527041_clean_NODE_210_length_3425_cov_6.209726	Pithoviridae	Potexvirus	Genus(via Genus)	Plant	Fungi		pred_low_confidence	-	-
+CRR527046_clean_NODE_1654_length_1235_cov_4.064544	Narnaviridae	Ourmiavirus	Species(via Species)	Plant				-	-
+CRR527046_clean_NODE_4666_length_827_cov_2.824934	Barnaviridae	Sobemovirus	Genus(via Genus)	Plant				-	-
+CRR527046_clean_NODE_8079_length_659_cov_2.486348	Barnaviridae	Enamovirus	Species(via Species)	Plant	Invertebrate		pred_low_confidence	-	-
+CRR527046_clean_NODE_9873_length_607_cov_1.911985	Barnaviridae	Enamovirus	Species(via Species)	Plant				-	-
+CRR732645_clean_NODE_1348_length_531_cov_0.388646	Nimaviridae	Allexivirus	Species(via Species)	Plant	Fungi	Unclassified	BLASTn	-	-
+SRR15037478_clean_NODE_19_length_2111_cov_3.021590	Schizomimiviridae	Betacytorhabdovirus	Species(via Species)	Plant				-	-
+SRR15037506_clean_NODE_696_length_837_cov_1.441099	Papillomaviridae	Tobamovirus	Genus(via Genus)	Plant				species:Pseudomonas formosensis	d__Bacteria;p__Proteobacteria;c__Gammaproteobacteria;o__Pseudomonadales;f__Pseudomonadaceae;g__Pseudomonas;s__Pseudomonas formosensis
+SRR23107141_clean_NODE_11350_length_1254_cov_5.604572	Nimaviridae	Allexivirus	Species(via Species)	Plant	Chordata	Unclassified	BLASTn	-	-
+SRR23215176_clean_NODE_605_length_3594_cov_9.685885	Mimiviridae	Ilarvirus	Species(via Species)	Plant				-	-
+SRR23215177_clean_NODE_19_length_3703_cov_3.512397	Marseilleviridae	Betanucleorhabdovirus	Genus(via Genus)	Plant	Invertebrate		pred_low_confidence	-	-
+SRR33536649_clean_NODE_618_length_2473_cov_9.426250	Astroviridae	Potyvirus	Genus(via Genus)	Plant				-	-

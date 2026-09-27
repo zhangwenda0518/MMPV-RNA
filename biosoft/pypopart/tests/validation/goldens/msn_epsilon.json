@@ -1,0 +1,19 @@
+{
+  "description": "MSN epsilon=1 admits the distance-2 shortcut of a chain",
+  "derivation": "Hand-traced against AbstractMSN::computeMSN (relaxed, epsilon=1). Sequences AAAA, AAAT, AATT: distances H1-H2=1, H2-H3=1, H1-H3=2. Level 1 adds both unit edges (relaxed mode adds all pairs at the level); after merging, the graph is connected, so maxValue = 1 + 1 = 2. Level 2 (<= maxValue) adds H1-H3. Ids by sorted sequence: AAAA->H1, AAAT->H2, AATT->H3.",
+  "algorithm": "msn",
+  "params": { "epsilon": 1 },
+  "sequences": {
+    "s1": "AAAA",
+    "s2": "AAAT",
+    "s3": "AATT"
+  },
+  "expected": {
+    "nodes": ["H1", "H2", "H3"],
+    "edges": [
+      ["H1", "H2", 1],
+      ["H2", "H3", 1],
+      ["H1", "H3", 2]
+    ]
+  }
+}

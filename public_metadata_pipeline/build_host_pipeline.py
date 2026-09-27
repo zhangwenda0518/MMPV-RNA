@@ -27,6 +27,7 @@ import shutil
 import argparse
 import subprocess
 import shlex
+from datetime import datetime
 
 from utils.pipeline_utils import UI, Checkpoint, run_cmd
 
@@ -96,6 +97,22 @@ class BuildHostPipeline:
                 if self.args.ncbi_api:
                     cmd += f' --api-key {shlex.quote(self.args.ncbi_api)}'
                 rc = run_cmd(cmd, s, self.log_dir, timeout=3600, secrets=self._secrets())
+                if rc != 0 and self.args.download_source in ('auto', 'ngd', 'ftp') and self.args.taxid:
+                    # 多通道回退: 交由 download_host_genome.py 走 ncbi-genome-download / FTP 直连
+                    UI.warn("datasets failed, fallback to download_host_genome.py multi-channel...")
+                    sub = (f'python {shlex.quote(self._bin("download_host_genome.py"))} '
+                           f'--species {shlex.quote(self.args.species)} '
+                           f'--outdir {shlex.quote(genome_dir)} '
+                           f'--source {self.args.download_source} '
+                           f'--taxid {self.args.taxid}')
+                    if self.args.ncbi_api:
+                        sub += f' --ncbi-api {shlex.quote(self.args.ncbi_api)}'
+                    rc2 = run_cmd(sub, s, self.log_dir, timeout=7200, secrets=self._secrets())
+                    merged = os.path.join(genome_dir, 'all.genome.uniq.fasta')
+                    if rc2 == 0 and os.path.isfile(merged):
+                        self._genome_fasta = merged
+                        self.ckpt.mark_done(s)
+                        return True
                 if rc != 0:
                     self.ckpt.mark_fail(s, "datasets CLI failed")
                     return False
@@ -250,6 +267,9 @@ examples:
     parser.add_argument('--work-dir', default='./build_host_pipeline_output', help='输出根目录')
     parser.add_argument('--bin-dir', help='脚本目录 (默认自动检测)')
     parser.add_argument('--genome-fasta', help='已有基因组 FASTA 路径 (跳过 genome-down)')
+    parser.add_argument('--download-source', default='auto',
+                        choices=['auto', 'datasets', 'ngd', 'ftp'],
+                        help='基因组下载通道: auto=datasets 失败自动回退 ncbi-genome-download / FTP 直连')
     parser.add_argument('--taxonomy-dir', help='Kraken2 本地 Taxonomy 目录')
     parser.add_argument('--hostdb-tools', default='kraken2,bowtie2,hisat2,minimap2',
                         help='建库工具 (default: kraken2,bowtie2,hisat2,minimap2)')

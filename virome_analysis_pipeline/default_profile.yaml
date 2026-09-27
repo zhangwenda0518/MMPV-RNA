@@ -49,19 +49,16 @@ vc_depth: 5
 vc_freq: 0.5
 vc_ambig: N
 
-# === Stage 4: Full Assembly ===
+# === Stage 5: Full Assembly ===
 assembly_tools: all
 min_covered: 10.0
 extra_args: --iter 3 --vc-min-depth 1
 
-# === Stage 7: Capheine ===
-capheine_code: "1"
-
-# === Stage 8: Similarity ===
+# === Stage 7: Similarity ===
 sim_ref: OR489165.1
 sim_mode: filter
 
-# === Stage 9: DVG ===
+# === Stage 8: DVG ===
 virema_script: ~/biosoft/virus/ViReMa_0.29/ViReMa.py
 # dvg_reads: raw/           # uncomment and set path to raw FASTQ
 dvg_seed: 25
@@ -69,8 +66,9 @@ dvg_mindel: 15
 dvg_min_cov: 80
 dvg_shm: true
 
-# === Stage 10: Report ===
+# === Stage 9: Report ===
 report_ai: true
-ai_api_key: sk-e2a13362b507451e8f3b87dac1375a8b
+# SECURITY: never commit API keys — export DEEPSEEK_API_KEY / AI_API_KEY instead
+# ai_api_key is read from env when absent here (auto_known_virus.py: os.environ)
 ai_model: deepseek-chat
-sim_ref: OR489165.1
+# NOTE: sim_ref was duplicated below stage 8 block previously; single definition kept above

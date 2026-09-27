@@ -23,7 +23,7 @@ Raw FASTQ → clean → deplete → assembly → identification → COBRA → cl
          ↓            ↓           ↓
          └────────────┼───────────┘
                       ↓
-                   rescue (A→C→D 三支路)
+                   rescue (A→B→C→D 四支路)
                       ↓
                   validate
 ```
@@ -60,8 +60,8 @@ HostDepletion → auto_known_virus
 
 | 阶段 | 方法 | 子脚本 |
 |------|------|--------|
-| clean | `run_clean()` | clean-data.py |
-| deplete | `run_depletion()` | host_depletion.py |
+| clean | `run_clean()` | data_preprocessing_pipeline/clean-data.py |
+| deplete | `run_depletion()` | data_preprocessing_pipeline/host_depletion.py |
 | assembly | `run_assembly()` | assembly_pipeline.py |
 | identification | `run_identification()` | virus_identification.py |
 | cobra | `run_cobra()` | cobra_pipeline.py |
@@ -78,11 +78,11 @@ HostDepletion → auto_known_virus
 
 ---
 
-### 2. `clean-data.py` — 数据清洗 (458 行)
+### 2. `clean-data.py` — 数据清洗 (458 行，现位于 `data_preprocessing_pipeline/`)
 
 **角色**: 原始 FASTQ → 清洁 FASTA，三步流水线。
 
-**流程**: Fastp 质控 → Seqkit FASTQ→FASTA 转换 → Clumpify 光学去重
+**流程**: Fastp 质控 → Seqkit FASTQ→FASTA 转换 → Clumpify 聚类重排
 
 **关键类**:
 - `UI`: 终端彩色进度条，线程安全的 `print_lock`
@@ -93,14 +93,14 @@ HostDepletion → auto_known_virus
 **技术细节**:
 - Fastp: `--qualified_quality_phred 20 --length_required 50 -g --poly_g_min_len 10`
 - Seqkit: `fq2fa -w 0` 转换 FASTA (不换行)
-- Clumpify: BBMap 去重，`reorder dedupe subs=0`
+- Clumpify: BBMap k-mer 聚类重排（提升压缩率、加速组装）
 - 内存探针: Linux 下 `/proc/{pid}/statm` 实时监控
 - 中间 FASTQ 自动清理 (节省磁盘)
 - `--remove-raw` 危险选项：成功后删除原始数据
 
 ---
 
-### 3. `host_depletion.py` — 去宿主 + 去 rRNA (918 行)
+### 3. `host_depletion.py` — 去宿主 + 去 rRNA (918 行，现位于 `data_preprocessing_pipeline/`)
 
 **角色**: Kraken2 分类 → 精准比对去宿主 → rRNA 剔除，三阶段混合管道。
 
@@ -283,14 +283,15 @@ align → samtools view -f 12 -F 256 → samtools sort -n → samtools fastq -n
 
 ---
 
-### 12. `rescue_pipeline.py` — 三支路级联拯救 (594 行)
+### 12. `rescue_pipeline.py` — 四支路级联拯救 (v3.0)
 
-**角色**: 独立拯救脚本，接收已聚类的 centroids，执行三支路拯救。
+**角色**: 独立拯救脚本，接收已聚类的 centroids，执行四支路拯救。
 
-**三支路**:
+**四支路**:
 - **分支 A**: CheckV 并行评估 → completeness ≥ 90% → pass
-- **分支 C**: Virseqimprover reads 延伸 (cluster 多样本聚合) → CheckV
-- **分支 D**: BLASTN + CheckV + VSI 最后拯救
+- **分支 B**: Virseqimprover reads 延伸 (cluster 多样本聚合) → CheckV
+- **分支 C**: BLASTN 参考比对 + ragtag 参考引导延伸 → CheckV
+- **分支 D**: genus_len 属水平长度拯救 (同属物种长度 ±15%)
 
 **免拯救**: CD-HIT known + CheckV pass(≥90%)
 
@@ -414,7 +415,7 @@ Order/Class ≠ NA          → ★★★ novel_family/order (新科/目)
 
 ### 19. `preprocess.py` — 数据预处理 (159 行)
 
-**角色**: clean-data + host_depletion 二合一快捷脚本。
+**角色**: clean-data + host_depletion 二合一快捷脚本（三脚本同位于 `data_preprocessing_pipeline/`）。
 
 **两阶段**: 清洗 (Fastp+Seqkit+Clumpify) → 去宿主 (Kraken2+Align+rRNA)
 
@@ -451,7 +452,7 @@ Order/Class ≠ NA          → ★★★ novel_family/order (新科/目)
 ### 数据流设计模式
 
 - **断点续传**: 所有脚本通过 checkpoint/--resume 支持
-- **目录约定**: `00a_CleanData/`, `00b_HostDepletion/`, `01_Assembly/`...
+- **目录约定**: `00a_CleanData/`, `00b_HostDepletion/`, `00c_BBnorm/`(可选), `01_Assembly/`...
 - **样本追踪**: `extract_base_sample()` + `fuzzy_match()` 处理命名差异
 - **资源监控**: 每样本/工具记录 wall_sec/cpu_sec/mem_mb
 - **日志分离**: 主控 INFO → 控制台, DEBUG → 文件, 子进程独立日志
@@ -460,7 +461,7 @@ Order/Class ≠ NA          → ★★★ novel_family/order (新科/目)
 ### 核心创新点
 
 1. **CD-HIT 参考引导预聚类**: 将碎片化 contig 关联到 ICTV/NCBI 完整基因组
-2. **三支路级联拯救**: CheckV → VSI(多样本聚合) → BLASTN+VSI 渐进提升 HQ 产出
+2. **四支路级联拯救**: CheckV≥90% 直通 → VSI(多样本聚合) → BLASTN 参考重建 → 属长兜底，渐进提升 HQ 产出
 3. **Poisson Ratio 建模**: 假阳性精准剔除 (覆盖均匀性检验)
 4. **双轨过滤 (A/B)**: RNA 病毒全基因组+基因区双验证, DNA 病毒单轨
 5. **宿主过滤优化**: 拯救前按宿主分类过滤, 节省 70%+ 计算量
@@ -515,7 +516,7 @@ out/
 ├── 05_Taxonomy/integrated/  # 分类注释
 ├── 06_HostPrediction/       # 宿主预测
 ├── 07_Checkv/               # CheckV 预评估
-├── 08_Rescue/               # 三支路拯救 ★ HQ vOTU
+├── 08_Rescue/               # 四支路拯救 ★ HQ vOTU
 ├── known_viruses/           # 已知病毒分析
 └── 09_Validation/           # 新颖性验证
 ```

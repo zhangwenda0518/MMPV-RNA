@@ -1,0 +1,19 @@
+{
+  "description": "TSW resolves three pairwise-distance-2 haplotypes into a star through one internal vertex",
+  "derivation": "Hand-traced against TightSpanWalker::geodesic. Sequences AAT, ATA, TAA: all pairwise distances 2, and dT(i,j)=2 for every pair (the k==i term |d(i,i)-d(j,i)| dominates). geodesic(H2,H1): the auxiliary graph K has edges (H2,H1) and (H3,H2); seeding greens H1 and BFS greens H3; delta = (dT(f,H3)+dT(f,H1)-d(H3,H1))/2 = 1 < dT(f,g)=2, so internal vertex h with dT-vector (1,1,1) is created and edge H2-h (weight 1) added; continuing from h, delta=1 equals dT(h,H1) and edge h-H1 lands. geodesic(H3,H1) reaches the same memoised dT-vector (1,1,1), adds H3-h, and the final step finds h-H1 already present. Result: a star on the internal vertex with three unit edges. Ids by sorted sequence: AAT->H1, ATA->H2, TAA->H3; the internal vertex is Median_0.",
+  "algorithm": "tsw",
+  "params": {},
+  "sequences": {
+    "s1": "AAT",
+    "s2": "ATA",
+    "s3": "TAA"
+  },
+  "expected": {
+    "nodes": ["H1", "H2", "H3", "Median_0"],
+    "edges": [
+      ["H1", "Median_0", 1],
+      ["H2", "Median_0", 1],
+      ["H3", "Median_0", 1]
+    ]
+  }
+}

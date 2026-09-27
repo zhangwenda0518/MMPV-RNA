@@ -4,13 +4,14 @@
 submission_pipeline.py — MMPV-RNA → NCBI 提交统一入口 v1.0
 ==========================================================
 
-接收上游 MMPV-RNA 管道 (08_Rescue) 的输出, 自动检测已有文件,
+接收上游 MMPV-RNA 管道 9b (analysis_verify) 的 class_KEEP.fasta, 自动检测已有文件,
 按需运行 suvtk taxonomy/features/hypothetical,
 最终生成两种格式的提交文件。
 
 上游输入:
+  09b_Analysis_Verify/class_KEEP.fasta     (默认输入, KEEP 高置信子集 ≥1000bp)
   08_Rescue/
-  ├── all_plant_viruses.fasta         (必需)
+  ├── HQ_plant_viruses.fasta          (回退全集, 未运行 9b 时)
   ├── suvtk.taxonomy_output/          (可选, 已存在则跳过)
   ├── suvtk.features_output/          (可选, 已存在则跳过)
   ├── analyze_hypothetical/           (可选, 已存在则跳过)
@@ -37,6 +38,13 @@ import re
 import sys
 import subprocess
 import logging
+
+# 跨管线统一 I/O 布局 (mmpv_common/, 仓库根): ③ 输出目录名随 MMPV_IO_LAYOUT 解析
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+from mmpv_common.io_layout import layout_dirs as _layout_dirs
+_D = _layout_dirs(os.environ.get("MMPV_IO_LAYOUT", "legacy"))
 from pathlib import Path
 from datetime import datetime
 from Bio import SeqIO
@@ -145,17 +153,46 @@ def run(cmd, log, step_name, check=False):
 
 
 def _find_suvtk_output(work_dir, rel_path, min_size=100):
-    """在 work_dir 及其上级目录的 09_Virome_Analysis 中查找已有 suvtk 输出"""
+    """在 work_dir 及其上级目录的 ③ 分析目录 (布局感知) 中查找已有 suvtk 输出"""
     # 1. work_dir 直接子目录
     candidate = work_dir / rel_path
     if candidate.exists() and os.path.getsize(candidate) > min_size:
         return candidate
     # 2. 上级目录的 09_Virome_Analysis (主流水线输出位置)
     for parent in [work_dir.parent, work_dir.parent.parent]:
-        alt = parent / "09_Virome_Analysis" / rel_path
+        alt = parent / _D["d_analysis"] / rel_path
         if alt.exists() and os.path.getsize(alt) > min_size:
             return alt
     return None
+
+
+def _detect_keep_fasta(work_dir):
+    """定位 9b 的 class_KEEP.fasta (KEEP 高置信子集, ≥1000bp)。
+
+    work_dir 可能是 $OUT 或 $OUT/08_Rescue, 逐层探测:
+      <base>/09b_Analysis_Verify/class_KEEP.fasta   (新目录名)
+      <base>/09b_ACVirus_Analysis/class_KEEP.fasta  (旧目录名)
+    base ∈ {work_dir, work_dir.parent, work_dir.parent.parent}
+    全部未命中时回退到 08_Rescue/HQ_plant_viruses.fasta 全集。
+    """
+    acv_names = [_D["d_verify"], "09b_ACVirus_Analysis"]   # 后者为历史旧名兜底
+    bases = [work_dir, work_dir.parent, work_dir.parent.parent]
+    for base in bases:
+        for acv in acv_names:
+            f = base / (_D["d_verify"] if acv == "09b_Analysis_Verify" else acv) / "class_KEEP.fasta"
+            if f.is_file() and f.stat().st_size > 100:
+                print(f"[*] 自动检测 KEEP FASTA: {f}")
+                return str(f)
+    # 兜底: 08_Rescue 的 HQ 全集 (未运行 9b 时)
+    for base in bases:
+        for hq_rel in [Path("HQ_plant_viruses.fasta"),
+                       Path(_D["d_rescue"]) / "HQ_plant_viruses.fasta"]:
+            hq = base / hq_rel
+            if hq.is_file() and hq.stat().st_size > 100:
+                print(f"[*] 回退 HQ 全集 FASTA: {hq}")
+                return str(hq)
+    return None
+
 
 # ══════════════════════════════════════════════════════════════
 # 自动检测 + 补运行缺失步骤
@@ -277,7 +314,7 @@ def gather_metadata_from_summary(all_summary_path, output_dir, metadata_dir=None
     流程:
       1. 从 all_summary.tsv 提取唯一 SRA/CRR 编号
       2. 运行 gsa_sra.info.py -i <id_list> -o <output_dir>/0_info/
-         → 生成 Global_Unified_Metadata_Full.tsv / Core13.tsv
+         → 生成 Global_Unified_Metadata_Full.tsv / Core14.tsv
       3. 合并额外的 Corrected_Metadata.tsv 和 runinfo.csv (如存在)
       4. 返回合并后的元数据 lookup
 
@@ -357,12 +394,12 @@ def gather_metadata_from_summary(all_summary_path, output_dir, metadata_dir=None
         df_full.columns = [c.lstrip('\ufeff') for c in df_full.columns]
         _ingest(df_full, 'Full', log)
 
-    # Core13
-    core13 = info_out / 'Global_Unified_Metadata_Core13.tsv'
-    if core13.exists():
-        df_core = pd.read_csv(core13, sep=None, engine='python')
+    # Core14
+    core14 = info_out / 'Global_Unified_Metadata_Core14.tsv'
+    if core14.exists():
+        df_core = pd.read_csv(core14, sep=None, engine='python')
         df_core.columns = [c.lstrip('\ufeff') for c in df_core.columns]
-        _ingest(df_core, 'Core13', log)
+        _ingest(df_core, 'Core14', log)
 
     # 4. 额外合并 Corrected_Metadata.tsv 和 runinfo.csv (优先覆盖)
     if metadata_dir and os.path.isdir(metadata_dir):
@@ -682,16 +719,16 @@ def main():
   python submission_pipeline.py discovery --work-dir $OUT/08_Rescue/ --suvtk-db ~/.../suvtk_db/ -t 40
 """)
     p_disc.add_argument('--work-dir', required=True,
-                        help='上游输出目录 (含 all_plant_viruses.fasta)')
+                        help='上游输出目录 ($OUT 或 $OUT/08_Rescue, 自动检测 9b 的 class_KEEP.fasta)')
     p_disc.add_argument('--fasta',
-                        help='输入 FASTA (默认 work-dir/all_plant_viruses.fasta)')
+                        help='输入 FASTA (默认自动检测 9b 的 class_KEEP.fasta)')
     p_disc.add_argument('--suvtk-db', help='suvtk 数据库路径')
     p_disc.add_argument('--rvdb-db', help='RVDB 数据库目录')
     p_disc.add_argument('--run-title', default='viral_submission', help='运行标题')
     p_disc.add_argument('--mode', choices=['suvtk', 'sequin', 'both'], default='both')
     p_disc.add_argument('-t', '--threads', type=int, default=40)
     p_disc.add_argument('--fetch-metadata', action='store_true')
-    p_disc.add_argument('--metadata-dir', help='Core13 元数据目录')
+    p_disc.add_argument('--metadata-dir', help='Core14 元数据目录')
     p_disc.add_argument('--config', help='YAML 配置文件')
     p_disc.add_argument('--interactive', action='store_true')
     p_disc.add_argument('--pipeline-type', choices=['auto', 'discovery', 'analysis'],
@@ -749,24 +786,19 @@ def main():
         sys.exit(0)
 
     work_dir = Path(args.work_dir)
-    fasta = args.fasta or str(work_dir / "all_plant_viruses.fasta")
+    fasta = args.fasta or _detect_keep_fasta(work_dir)
 
-    if not os.path.exists(fasta):
-        # 尝试自动找
-        candidates = list(work_dir.glob("*.fasta")) + list(work_dir.glob("*.fna"))
-        if candidates:
-            fasta = str(candidates[0])
-            print(f"[*] 自动检测 FASTA: {fasta}")
-        else:
-            print(f"[!] 未找到 FASTA 文件: {fasta}")
-            sys.exit(1)
+    if not fasta or not os.path.exists(fasta):
+        print(f"[!] 未找到 KEEP FASTA 文件: {fasta or '(空)'}")
+        print("    请用 --fasta 显式指定, 或先运行 discovery 的 9b (analysis_verify) 阶段")
+        sys.exit(1)
 
     log = setup_logger(str(work_dir))
 
     # ── 自动检测管道类型 ──
     pipeline_type = args.pipeline_type
     if pipeline_type == 'auto':
-        # 检测 discovery pipeline 特征 (Plant/, centroids/, all_plant_viruses.fasta)
+        # 检测 discovery pipeline 特征 (Plant/, centroids/)
         is_discovery = (work_dir / "Plant").exists() or (work_dir / "centroids").exists()
         # 检测 analysis pipeline 特征 (4_assemblies_clean/, known_viruses/)
         is_analysis = (work_dir.parent / "4_assemblies_clean").exists() or \
@@ -864,11 +896,14 @@ def main():
 
     # 2.6. 公共元数据获取 (public_metadata_pipeline)
     meta_dir = args.metadata_dir or str(work_dir / "metadata_output")
-    core13 = Path(meta_dir) / "Global_Unified_Metadata_Full.tsv"
-    if not core13.exists():
-        core13 = Path(meta_dir) / "Global_Unified_Metadata_Core13.tsv"
+    core14 = Path(meta_dir) / "Global_Unified_Metadata_Full.tsv"
+    if not core14.exists():
+        core14 = Path(meta_dir) / "Global_Unified_Metadata_Core14.tsv"
 
-    if args.fetch_metadata and tax_tsv and tax_tsv.exists():
+    # taxonomy.tsv 由步骤 1 产出; 在本函数后段 (步骤 3) 才正式赋值, 此处提前解析
+    tax_tsv_early = (tax_dir / "taxonomy.tsv") if tax_dir else None
+    if args.fetch_metadata and tax_tsv_early and tax_tsv_early.exists():
+        tax_tsv = tax_tsv_early
         log.info("[2.6/5] 获取公共元数据 (NCBI SRA → 自动填 source.src)")
 
         # 提取 SRA/CRR 编号
@@ -883,7 +918,7 @@ def main():
             n_sra = sum(1 for _ in open(srr_list)) if srr_list.exists() else 0
             log.info("  找到 %d 个唯一 SRA/CRR", n_sra)
 
-        if not core13.exists():
+        if not core14.exists():
             log.info("  运行 gsa_sra.info.py 获取元数据 ...")
             gsa_script = work_dir.parent.parent.parent / "MMPV-RNA" / "public_metadata_pipeline" / "gsa_sra.info.py"
             if not gsa_script.exists():
@@ -897,8 +932,8 @@ def main():
             )
             run(cmd, log, "gsa_sra.info", check=False)
 
-    if core13.exists():
-        log.info("  元数据已就绪: %s", core13)
+    if core14.exists():
+        log.info("  元数据已就绪: %s", core14)
     else:
         log.info("  无公共元数据文件")
         if pipeline_type == 'analysis':
@@ -914,7 +949,7 @@ def main():
             log.info("  5. 重新运行 --export-metadata 不带 --fetch-metadata")
             log.info("  ═══════════════════════════════════════════════")
         else:
-            log.info("  公共数据: source.src 从 Core13 自动填, 样本信息已有")
+            log.info("  公共数据: source.src 从 Core14 自动填, 样本信息已有")
         meta_dir = None
 
     # ═══ 步骤 3-5: 生成提交文件 ═══
@@ -1018,8 +1053,11 @@ def main():
         # ref: suvtk docs — Sequence_ID, Organism, Isolate, Collection_date, geo_loc_name, Lat_Lon, ...
         if not src_file.exists():
             # 从 taxonomy 和 ref_info 读取实际数据
-            ref_info_path = work_dir.parent / "09_Virome_Analysis" / "ref_info.tsv"
+            ref_info_path = work_dir.parent / _D["d_analysis"] / "ref_info.tsv"
             has_ref_info = ref_info_path.is_file()
+            # 输入可能是 9b 的 class_KEEP.fasta (HQ 子集), 而 ref_info 覆盖 HQ 全集,
+            # 只保留输入 fasta 中实际存在的序列 ID, 避免 source.src 出现多余行导致 table2asn 对不上
+            fasta_ids = {rec.id for rec in SeqIO.parse(str(fasta), "fasta")}
             with open(src_file, "w") as sf:
                 cols = ["Sequence_ID","Organism","Isolate","Collection_date","geo_loc_name",
                         "Lat_Lon","Bioproject","Biosample","SRA","Segment","Metagenomic","Metagenome_source","Host"]
@@ -1028,7 +1066,7 @@ def main():
                 isolate_counter = 0
                 for row in _read_tsv_simple(ref_info_path) if has_ref_info else []:
                     cid = row.get("Accession", row.get("contig_id", ""))
-                    if not cid: continue
+                    if not cid or cid not in fasta_ids: continue
                     isolate_counter += 1
                     organism = row.get("suvtk_Species", row.get("Species", "unclassified plant virus"))
                     if organism in ("nan", "", "NA", None):
@@ -1173,6 +1211,13 @@ def main():
             if not updated_tbl or not os.path.exists(updated_tbl): missing.append("featuretable.tbl")
             log.warning("  缺少输入文件, 跳过 table2asn: %s", ", ".join(missing))
 
+    # ── 统一生成 topology.tsv (circular/linear, 供 sequin .fsa 头部与报告复用) ──
+    topo_out = sub_out / "topology.tsv"
+    topo_script = SCRIPT_DIR / "viral_topology.py"
+    if tax_tsv and fna and topo_script.exists() and not topo_out.exists():
+        run(f"python {topo_script} --taxonomy {tax_tsv} --fasta {fna} -o {topo_out}",
+            log, "viral_topology")
+
     if args.mode in ('sequin', 'both'):
         log.info("─" * 40 + "\n  Sequin 模式: 生成 .fsa + .tbl + .cmt (Cenote-Taker3 风格)\n" + "─" * 40)
 
@@ -1188,8 +1233,10 @@ def main():
                 f"--fasta {fna} "
                 f"--miuvig-feat {miuvig_feat} "
                 f"--run-title {args.run_title} "
-                f"-o {sub_out}/"
             )
+            if topo_out.exists():
+                cmd += f" --topology {topo_out} "
+            cmd += f"-o {sub_out}/"
             run(cmd, log, "sequin_builder")
 
     # ── 统一元数据 CSV 导出 (SeqSender 兼容) ──
@@ -1221,8 +1268,8 @@ def main():
             f"-o {sub_out}/"
         )
 
-        if core13.exists():
-            cmd += f" --reference-metadata {core13}"
+        if core14.exists():
+            cmd += f" --reference-metadata {core14}"
         if args.config:
             cmd += f" --config {args.config}"
         if args.interactive:
@@ -1230,14 +1277,7 @@ def main():
 
         run(cmd, log, "unified_metadata")
 
-        # ── 病毒拓扑判断 ──
-        if fna and tax_tsv:
-            topo_script = SCRIPT_DIR / "viral_topology.py"
-            topo_out = sub_out / "topology.tsv"
-            cmd_topo = (
-                f"python {topo_script} --taxonomy {tax_tsv} --fasta {fna} -o {topo_out}"
-            )
-            run(cmd_topo, log, "viral_topology")
+        # ── 病毒拓扑判断 (复用上方统一生成的 topology.tsv) ──
 
         # ── 交互式 HTML 报告 ──
         csv_path = sub_out / "unified_metadata.csv"
@@ -1254,6 +1294,8 @@ def main():
                 cmd_report += f" --miuvig {miuvig_path}"
             if asm_path.exists():
                 cmd_report += f" --assembly {asm_path}"
+            if topo_out.exists():
+                cmd_report += f" --topology {topo_out}"
             run(cmd_report, log, "report_html")
 
     # ═══ 最终报告 ═══

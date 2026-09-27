@@ -1,0 +1,117 @@
+Family	Genus	Rows_goji	Rows_onekp	Plant_tsv_records	Genus_HP_Predicted_Host	Genus_HP_Plant_Records	Genus_HP_Total_Records	Genus_HP_Confidence	Current_Blacklist	Verdict
+Artoviridae	Peropuvirus	0	9	0	Insecta	0	14	Medium	False	E3 非植物属-候选黑名单
+Artoviridae	Hexartovirus	0	2	0	Animal_other	0	5	Medium	False	E3 非植物属-候选黑名单
+Chrysoviridae	Alphachrysovirus	2	94	0	Fungi	0	165	High	False	E3 非植物属-候选黑名单
+Chrysoviridae	Betachrysovirus	4	16	0	Fungi	0	142	High	False	E3 非植物属-候选黑名单
+Chrysoviridae	Chrysovirus	0	1	0	Fungi	0	131	High	False	E3 非植物属-候选黑名单
+Chrysoviridae	Margaeryvirus	0	1	0	Bacteria	0	4	Medium	False	E3 非植物属-候选黑名单
+Genomoviridae	Gemycircularvirus	8	34	0	Fungi	0	8	Medium	False	E3 非植物属-候选黑名单
+Genomoviridae	Gemykibivirus	0	7	0	无条目	-1	-1	NA	False	E4 证据不足-不动
+Genomoviridae	Gemygorvirus	0	5	0	无条目	-1	-1	NA	False	E4 证据不足-不动
+Genomoviridae	Gemykolovirus	3	1	0	无条目	-1	-1	NA	False	E4 证据不足-不动
+Genomoviridae	Gemytondvirus	1	1	0	无条目	-1	-1	NA	False	E4 证据不足-不动
+Genomoviridae	Begomovirus	0	1	25168	Plant	25169	25196	High	False	E1/E2 植物属-白名单
+Genomoviridae	Efemunavirus	0	1	0	Bacteria	0	4	Medium	False	E3 非植物属-候选黑名单
+Genomoviridae	Gemykrogvirus	0	1	0	无条目	-1	-1	NA	False	E4 证据不足-不动
+Genomoviridae	Gemyduguivirus	0	1	0	无条目	-1	-1	NA	False	E4 证据不足-不动
+Genomoviridae	Gemykroznavirus	0	1	0	无条目	-1	-1	NA	False	E4 证据不足-不动
+Kanorauviridae	Shabtayvirus	6	43	0	无条目	-1	-1	NA	False	E4 证据不足-不动
+Kanorauviridae	Ninurtavirus	0	8	0	无条目	-1	-1	NA	False	E4 证据不足-不动
+Kanorauviridae	Shanivirus	0	4	0	无条目	-1	-1	NA	False	E4 证据不足-不动
+Kanorauviridae	Kajamanuvirus	0	2	0	无条目	-1	-1	NA	False	E4 证据不足-不动
+Kanorauviridae	Kaiwanvirus	0	1	0	无条目	-1	-1	NA	False	E4 证据不足-不动
+Kanorauviridae	Doseivirus	0	1	0	无条目	-1	-1	NA	False	E4 证据不足-不动
+Kanorauviridae	Phainonvirus	0	1	0	无条目	-1	-1	NA	False	E4 证据不足-不动
+Kanorauviridae	Sakkuthvirus	0	1	0	无条目	-1	-1	NA	False	E4 证据不足-不动
+Kanorauviridae	Circovirus	0	1	0	Fungi	0	1	Low (Singleton/Rare)	False	E3 非植物属-候选黑名单
+Kanorauviridae	Scythevirus	0	1	0	无条目	-1	-1	NA	False	E4 证据不足-不动
+Kanorauviridae	Sickelvirus	0	1	0	无条目	-1	-1	NA	False	E4 证据不足-不动
+Mitoviridae	Mitovirus	58	819	0	Fungi	0	747	High	False	E3 非植物属-候选黑名单
+Mitoviridae	Dagavirus	2	199	0	Bacteria	0	2	Low (Singleton/Rare)	False	E3 非植物属-候选黑名单
+Mitoviridae	Duamitovirus	8	80	0	Fungi	0	135	High	False	E3 非植物属-候选黑名单
+Mitoviridae	Prasinovirus	0	9	0	Algae	0	272	High	True	E3 非植物属-候选黑名单
+Mitoviridae	Kratosvirus	0	6	0	无条目	-1	-1	NA	True	E4 证据不足-不动
+Mitoviridae	Lentivirus	0	5	0	Human	0	1460246	High	False	E3 非植物属-候选黑名单
+Mitoviridae	Unuamitovirus	0	3	0	Fungi	0	632	High	False	E3 非植物属-候选黑名单
+Mitoviridae	Alphahydrivirus	2	0	0	无条目	-1	-1	NA	False	E4 证据不足-不动
+Mitoviridae	Gammaretrovirus	1	0	0	Mammalia	0	5280	High	True	E3 非植物属-候选黑名单
+Mitoviridae	Amboselivirus	1	0	0	Bacteria	0	1	Low (Singleton/Rare)	False	E3 非植物属-候选黑名单
+Mitoviridae	Pithovirus	0	1	0	Protist	0	1	Low (Singleton/Rare)	False	E3 非植物属-候选黑名单
+Mitoviridae	Pandoravirus	0	1	0	Protist	0	35	High	False	E3 非植物属-候选黑名单
+Mitoviridae	Rotavirus	0	1	0	Human	0	146900	Medium	False	E3 非植物属-候选黑名单
+Mitoviridae	Orthohepadnavirus	0	1	0	Human	0	138593	Medium	False	E3 非植物属-候选黑名单
+Mitoviridae	Orthohepacivirus	0	1	0	Animal_other	0	2	Low (Singleton/Rare)	False	E3 非植物属-候选黑名单
+Mitoviridae	Totivirus	0	1	41	Fungi	41	219	Medium	False	E1/E2 植物属-白名单
+Mitoviridae	Phietavirus	0	1	0	Bacteria	0	123	High	False	E3 非植物属-候选黑名单
+Mitoviridae	Kobuvirus	0	1	0	Mammalia	0	4700	High	False	E3 非植物属-候选黑名单
+Mitoviridae	Orthoreovirus	0	1	0	Aves	0	13923	Medium	True	E3 非植物属-候选黑名单
+Mitoviridae	Alphapithovirus	0	1	0	Protist	0	2	Low (Singleton/Rare)	True	E3 非植物属-候选黑名单
+Mitoviridae	Cotesia sesamiae bracovirus	0	1	0	无条目	-1	-1	NA	False	E4 证据不足-不动
+Mitoviridae	Triamitovirus	0	1	0	Fungi	0	17	High	False	E3 非植物属-候选黑名单
+Mitoviridae	Orthotospovirus	0	1	3519	Plant	3519	3632	High	False	E1/E2 植物属-白名单
+Mitoviridae	Virus	0	1	0	无条目	-1	-1	NA	False	E4 证据不足-不动
+Mitoviridae	Cyvirus	0	1	0	Animal_other	0	847	High	False	E3 非植物属-候选黑名单
+Mitoviridae	Hokovirus	0	1	0	无条目	-1	-1	NA	True	E4 证据不足-不动
+Mitoviridae	Maculavirus	0	1	552	Plant	552	552	High	False	E1/E2 植物属-白名单
+Mitoviridae	Percavirus	0	1	0	Mammalia	0	1596	High	False	E3 非植物属-候选黑名单
+Ourmiaviridae	Ourmiavirus	2	6	40	Plant	40	40	High	False	E1/E2 植物属-白名单
+Ourmiaviridae	Betaourmiavirus	0	2	0	无条目	-1	-1	NA	False	E4 证据不足-不动
+Ourmiaviridae	Iotaourmiavirus	1	0	0	无条目	-1	-1	NA	False	E4 证据不足-不动
+Ourmiaviridae	Epsilonourmiavirus	0	1	0	无条目	-1	-1	NA	False	E4 证据不足-不动
+Pestiviridae	Orthopestivirus	20	318	0	Mammalia	0	1	Low (Singleton/Rare)	False	E3 非植物属-候选黑名单
+Pestiviridae	Boletivirus	1	53	0	无条目	-1	-1	NA	False	E4 证据不足-不动
+Pestiviridae	Pestivirus	1	5	0	Mammalia	0	32769	High	False	E3 非植物属-候选黑名单
+Pestiviridae	Hatfieldvirus	0	3	0	无条目	-1	-1	NA	True	E4 证据不足-不动
+Pestiviridae	Chlorovirus	0	2	0	Algae	0	453	High	True	E3 非植物属-候选黑名单
+Pestiviridae	Virus	0	2	0	无条目	-1	-1	NA	False	E4 证据不足-不动
+Pestiviridae	Tupanvirus	1	0	0	Protist	0	4	Medium	True	E3 非植物属-候选黑名单
+Pestiviridae	Fadolivirus	1	0	0	Protist	0	4	Medium	False	E3 非植物属-候选黑名单
+Pestiviridae	Kaumoebavirus	0	1	0	无条目	-1	-1	NA	False	E4 证据不足-不动
+Pestiviridae	Koshovirus	0	1	0	无条目	-1	-1	NA	False	E4 证据不足-不动
+Pseudoviridae	Pseudovirus	183	0	0	无条目	-1	-1	NA	False	E4 证据不足-不动
+Pseudoviridae	Sirevirus	33	0	0	无条目	-1	-1	NA	False	E4 证据不足-不动
+Pseudoviridae	Hemivirus	18	0	0	无条目	-1	-1	NA	False	E4 证据不足-不动
+Pseudoviridae	Lentivirus	0	10	0	Human	0	1460246	High	False	E3 非植物属-候选黑名单
+Pseudoviridae	Cotesia sesamiae bracovirus	0	6	0	无条目	-1	-1	NA	False	E4 证据不足-不动
+Pseudoviridae	Pandoravirus	0	3	0	Protist	0	35	High	False	E3 非植物属-候选黑名单
+Pseudoviridae	Baylorvirus	0	2	0	Bacteria	0	10	High	False	E3 非植物属-候选黑名单
+Pseudoviridae	Paslahepevirus	0	2	0	Human	0	12025	Medium	False	E3 非植物属-候选黑名单
+Pseudoviridae	Moumouvirus	0	1	0	Protist	0	23	High	False	E3 非植物属-候选黑名单
+Pseudoviridae	Tungrovirus	0	1	159	Plant	159	159	High	False	E1/E2 植物属-白名单
+Pseudoviridae	Hatfieldvirus	0	1	0	无条目	-1	-1	NA	True	E4 证据不足-不动
+Pseudoviridae	Caulimovirus	0	1	1080	Plant	1080	1080	High	False	E1/E2 植物属-白名单
+Pseudoviridae	Betabaculovirus	0	1	0	Insecta	0	891	High	False	E3 非植物属-候选黑名单
+Pseudoviridae	Orthopicobirnavirus	0	1	0	Mammalia	0	3314	High	False	E3 非植物属-候选黑名单
+Pseudoviridae	Mamastrovirus	0	1	0	Human	0	6712	Medium	False	E3 非植物属-候选黑名单
+Pseudoviridae	Morbillivirus	0	1	0	Human	0	35222	Medium	False	E3 非植物属-候选黑名单
+Pseudoviridae	Kobuvirus	0	1	0	Mammalia	0	4700	High	False	E3 非植物属-候选黑名单
+Spiciviridae	Spicivirus	0	22	0	无条目	-1	-1	NA	False	E4 证据不足-不动
+Tomosaviridae	Virtovirus	0	1	53	Plant	53	53	High	False	E1/E2 植物属-白名单
+Virgaviridae	Tobamovirus	5	88	4738	Plant	4739	4739	High	False	E1/E2 植物属-白名单
+Virgaviridae	Tobravirus	3	33	353	Plant	353	353	High	False	E1/E2 植物属-白名单
+Virgaviridae	Pomovirus	0	22	562	Plant	562	562	High	False	E1/E2 植物属-白名单
+Virgaviridae	Furovirus	0	12	222	Plant	222	222	High	False	E1/E2 植物属-白名单
+Virgaviridae	Negevirus	1	4	0	Insecta	0	299	High	False	E3 非植物属-候选黑名单
+Virgaviridae	Pecluvirus	0	4	26	Plant	26	26	High	False	E1/E2 植物属-白名单
+Virgaviridae	Pandoravirus	2	1	0	Protist	0	35	High	False	E3 非植物属-候选黑名单
+Virgaviridae	Goravirus	1	1	4	Plant	4	4	Medium	False	E1/E2 植物属-白名单
+Virgaviridae	Hordeivirus	0	2	141	Plant	141	141	High	False	E1/E2 植物属-白名单
+Virgaviridae	Chlorovirus	0	2	0	Algae	0	453	High	True	E3 非植物属-候选黑名单
+Virgaviridae	Alphacedratvirus	1	0	0	Protist	0	2	Low (Singleton/Rare)	False	E3 非植物属-候选黑名单
+Virgaviridae	Cilevirus	1	0	775	Plant	775	779	High	False	E1/E2 植物属-白名单
+Virgaviridae	Llyrvirus	0	1	0	Bacteria	0	2	Low (Singleton/Rare)	False	E3 非植物属-候选黑名单
+Virgaviridae	Betabaculovirus	0	1	0	Insecta	0	891	High	False	E3 非植物属-候选黑名单
+Virgaviridae	Donellivirus	0	1	0	Bacteria	0	4	Medium	False	E3 非植物属-候选黑名单
+Virgaviridae	Lymphocryptovirus	0	1	0	Human	0	13347	High	False	E3 非植物属-候选黑名单
+Virgaviridae	Grisebachstrassevirus	0	1	0	Bacteria	0	12	High	True	E3 非植物属-候选黑名单
+Virgaviridae	Fadolivirus	0	1	0	Protist	0	4	Medium	False	E3 非植物属-候选黑名单
+Virgaviridae	Bievrevirus	0	1	0	Bacteria	0	7	Medium	False	E3 非植物属-候选黑名单
+Virgaviridae	Lentivirus	0	1	0	Human	0	1460246	High	False	E3 非植物属-候选黑名单
+Virgaviridae	Alphapithovirus	0	1	0	Protist	0	2	Low (Singleton/Rare)	True	E3 非植物属-候选黑名单
+Solemoviridae	Polerovirus	15	314	5615	Plant	5615	5615	High	False	E1/E2 植物属-白名单
+Solemoviridae	Enamovirus	1	94	284	Plant	284	284	High	False	E1/E2 植物属-白名单
+Solemoviridae	Sobemovirus	4	23	1787	Plant	1787	1787	High	False	E1/E2 植物属-白名单
+Solemoviridae	Pandoravirus	0	2	0	Protist	0	35	High	False	E3 非植物属-候选黑名单
+Solemoviridae	Hubsclerovirus	0	1	0	无条目	-1	-1	NA	True	E4 证据不足-不动
+Solemoviridae	Potyvirus	0	1	30348	Plant	30348	30349	High	False	E1/E2 植物属-白名单
+Solemoviridae	Polemovirus	0	1	9	Plant	9	9	High	False	E1/E2 植物属-白名单

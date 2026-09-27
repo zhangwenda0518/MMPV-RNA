@@ -1,0 +1,20 @@
+{
+  "description": "Star: one central haplotype with three singleton satellites",
+  "derivation": "Hand-traced. Center AAAA differs by 1 from each satellite (TAAA, ATAA, AATA); satellites differ by 2 from each other. The unique MST is the star on the center with three unit edges. Ids by sorted sequence: AAAA->H1? sorted(['AAAA','AATA','ATAA','TAAA']) = AAAA, AATA, ATAA, TAAA -> H1..H4; center is H1.",
+  "algorithm": "mst",
+  "params": {},
+  "sequences": {
+    "center": "AAAA",
+    "satA": "TAAA",
+    "satB": "ATAA",
+    "satC": "AATA"
+  },
+  "expected": {
+    "nodes": ["H1", "H2", "H3", "H4"],
+    "edges": [
+      ["H1", "H2", 1],
+      ["H1", "H3", 1],
+      ["H1", "H4", 1]
+    ]
+  }
+}

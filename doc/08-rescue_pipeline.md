@@ -1,6 +1,6 @@
-# rescue_pipeline.py — 三支路级联拯救 / Three-Branch Cascade Rescue
+# rescue_pipeline.py — 四支路级联拯救 / Four-Branch Cascade Rescue
 
-> Branch A (CheckV) → Branch C (Virseqimprover VSI) → Branch D (BLASTN+VSI). Multi-sample read aggregation, final vclust dedup.
+> Branch A (CheckV ≥90% 直通) → Branch B (Virseqimprover VSI) → Branch C (BLASTN+ragtag 参考引导重建) → Branch D (genus-length 兜底). Multi-sample read aggregation, final vclust dedup.
 
 ## 流程 / Workflow
 
@@ -11,15 +11,18 @@
 分支 A: CheckV 并行评估 → completeness ≥ 90% → pass
     │ fail
     ▼
-分支 C: Virseqimprover reads 迭代延伸
+分支 B: Virseqimprover reads 迭代延伸
     Salmon 定量 → BBMap 提取 → SPAdes 组装 → 串联重复检测 → CheckV
     (自动聚合 cluster 内所有样本的 reads)
     │ fail
     ▼
-分支 D: BLASTN 参考搜索 + CheckV + VSI 最后拯救
+分支 C: BLASTN 参考搜索 + ragtag 参考引导延伸 → CheckV
+    │ fail
+    ▼
+分支 D: genus_len 属水平长度拯救 (同属物种长度 ±15%)
     │
     ▼
-合并 (A+C+D) + vclust 最终去重 → HQ vOTU
+合并 (A+B+C+D) + vclust 最终去重 → HQ vOTU
 ```
 
 ## 用法

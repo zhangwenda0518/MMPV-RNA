@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
     QMenuBar, QToolBar, QStatusBar, QLabel, QLineEdit, QPushButton,
     QComboBox, QGroupBox, QFormLayout, QFileDialog, QMessageBox,
     QSplitter, QSizePolicy, QTextEdit, QProgressBar, QTabBar,
+    QCheckBox, QPlainTextEdit,
 )
 from PySide6.QtCore import Qt, QAbstractTableModel, QModelIndex, Signal, QSettings, QSize
 from PySide6.QtGui import QAction, QColor, QBrush, QFont
@@ -324,6 +325,30 @@ class MainWindow(QMainWindow):
         self._restore_state()
 
     # ── Menu ──────────────────────────────────────────
+    @staticmethod
+    def _sample_dir():
+        """Resolve samples directory (works in dev and PyInstaller)."""
+        if getattr(sys, 'frozen', False):
+            return os.path.join(sys._MEIPASS, 'samples')
+        return os.path.join(os.path.dirname(__file__), 'samples')
+
+    def _load_sample(self, name):
+        path = os.path.join(self._sample_dir(), name)
+        if not os.path.exists(path):
+            QMessageBox.warning(self, "Missing", f"Sample file not found:\n{path}")
+            return
+        self._load_file(str(path))
+
+    def _load_file(self, path):
+        store = SubmissionStore()
+        if store.load(path):
+            self._add_file_tab(path, store)
+            parent = os.path.dirname(path)
+            if os.path.isfile(os.path.join(parent, "source.src")):
+                self._preview_dir_input.setText(parent)
+        else:
+            QMessageBox.warning(self, "Error", f"Failed to load: {path}")
+
     def _setup_menu(self):
         mb = self.menuBar()
 
@@ -336,8 +361,15 @@ class MainWindow(QMainWindow):
         fm.addSeparator()
         fm.addAction("&Quit\tCtrl+Q", self.close)
 
+        sm = mb.addMenu("&Samples")
+        sm.addAction("Public Data (with SRR)", lambda: self._load_sample("sample_public.csv"))
+        sm.addAction("Self-sequenced (No SRR)", lambda: self._load_sample("sample_selfseq.csv"))
+
         em = mb.addMenu("&Edit")
         em.addAction("&Find...\tCtrl+F", self._on_find)
+
+        ym = mb.addMenu("S&ync")
+        ym.addAction("Copy Sync Command", self._on_copy_sync_cmd)
 
     # ── Toolbar ───────────────────────────────────────
     def _setup_toolbar(self):
@@ -369,6 +401,29 @@ class MainWindow(QMainWindow):
             f"{s['total']} records | {s['filled']}/{s['cells']} filled ({s['pct']:.1f}%){mod}{multi}")
 
     # ── Active store helpers ───────────────────────────
+    DATASET_RE = re.compile(r"submission_(\w+?)_virome")
+
+    def _on_copy_sync_cmd(self):
+        """从激活 tab 文件名猜数据集, 拼一键回写命令并复制到剪贴板"""
+        idx = self._active_idx
+        if idx < 0 or idx >= len(self._stores):
+            QMessageBox.warning(self, "No Table", "Open a CSV file first")
+            return
+        name = self._file_tabs.tabText(idx)
+        m = self.DATASET_RE.search(name)
+        if not m:
+            QMessageBox.warning(
+                self, "Cannot Detect Dataset",
+                f"Tab name '{name}' does not match 'submission_<dataset>_virome'.\n"
+                "Rename the CSV or run the sync command manually:")
+            return
+        ds = m.group(1)
+        cmd = (f'ssh -o BatchMode=yes zhangwenda@202.119.189.246 '
+               f'"python3 /home/zhangwenda/MMPV-RNA/virome_submission_pipeline/'
+               f'sync_sqn_from_csv.py {ds}"')
+        QApplication.clipboard().setText(cmd)
+        self.statusBar().showMessage(f"Sync command for '{ds}' copied to clipboard", 8000)
+
     @property
     def store(self):
         if 0 <= self._active_idx < len(self._stores):
@@ -415,7 +470,8 @@ class MainWindow(QMainWindow):
         # model change → update status
         model.data_changed.connect(self._update_status)
 
-        self._file_tabs.addTab(table, tab_name)
+        self._table_stack.addTab(table, tab_name)
+        self._file_tabs.addTab(tab_name)
         self._file_tabs.setCurrentIndex(idx)
         if not filepath and not store.is_loaded:
             self._load_demo_data_into(len(self._stores) - 1)
@@ -437,6 +493,7 @@ class MainWindow(QMainWindow):
             elif r == QMessageBox.Cancel:
                 return
         self._file_tabs.removeTab(idx)
+        self._table_stack.removeTab(idx)
         del self._stores[idx]
         del self._models[idx]
         del self._tables[idx]
@@ -497,6 +554,7 @@ class MainWindow(QMainWindow):
 
         tools.addTab(self._build_batch_fill_tab(), "Batch Fill")
         tools.addTab(self._build_sbt_gen_tab(), "Generate SBT")
+        tools.addTab(self._build_biosample_export_tab(), "BioSample Export")
         tools.addTab(self._build_validate_tab(), "Validate")
         tools.addTab(self._build_preview_tab(), "Preview")
         tools.addTab(self._build_info_tab(), "Column Info")
@@ -510,6 +568,7 @@ class MainWindow(QMainWindow):
         if idx < 0 or idx >= len(self._stores):
             return
         self._active_idx = idx
+        self._table_stack.setCurrentIndex(idx)
         self._update_status()
         self._update_info()
 
@@ -569,6 +628,105 @@ class MainWindow(QMainWindow):
         lay.addStretch()
         return w
 
+    # ── BioSample Export tab ──────────────────────
+    def _build_biosample_export_tab(self) -> QWidget:
+        w = QWidget()
+        lay = QVBoxLayout(w)
+
+        g = QGroupBox("Export BioSample Registration TSV")
+        fl = QVBoxLayout(g)
+        info = QLabel(
+            "Exports the active table as an NCBI BioSample registration TSV.\n"
+            "Columns: sample_name, organism, plus available attributes\n"
+            "(collected date, geo loc, host, isolate, ...).\n"
+            "Placeholder rows (XXXX/SAMNXXXX...) are skipped.")
+        info.setWordWrap(True)
+        fl.addWidget(info)
+
+        self._bs_include_placeholders = QCheckBox("Include placeholder rows")
+        self._bs_include_placeholders.setChecked(False)
+        fl.addWidget(self._bs_include_placeholders)
+
+        btn = QPushButton("Export TSV...")
+        btn.setStyleSheet("QPushButton { font-weight: bold; padding: 8px; }")
+        btn.clicked.connect(self._do_export_biosample_tsv)
+        fl.addWidget(btn)
+        lay.addWidget(g)
+        lay.addStretch()
+        return w
+
+    # NCBI BioSample 固定前两列 + 常用属性映射: csv_col -> bs_attr_name
+    _BS_ATTR_MAP = [
+        ("collection_date", "collection_date"),
+        ("src-geo_loc_name", "geo_loc_name"),
+        ("src-Host", "host"),
+        ("src-Isolate", "isolate"),
+        ("src-Isolation-source", "isolation_source"),
+        ("src-Tissue_type", "tissue_type"),
+        ("src-Collected_by", "collected_by"),
+        ("src-Cultivar", "cultivar"),
+        ("src-Dev_stage", "dev_stage"),
+        ("bioproject", "bioproject_accession"),
+    ]
+    _BS_PLACEHOLDER = re.compile(
+        r"XXXX|SAMNXX|PRJNAXX|^$", re.IGNORECASE)
+
+    def _do_export_biosample_tsv(self):
+        idx = self._active_idx
+        if idx < 0 or idx >= len(self._stores):
+            QMessageBox.warning(self, "No Table", "Open a CSV file first")
+            return
+        store = self._stores[idx]
+        if not store.is_loaded:
+            QMessageBox.warning(self, "Empty", "The active table is empty")
+            return
+        df = store.df
+        name_col = "sequence_name"
+        if name_col not in df.columns:
+            QMessageBox.warning(self, "Missing Column",
+                                f"'{name_col}' column not found")
+            return
+        skip_ph = not self._bs_include_placeholders.isChecked()
+
+        header = ["sample_name", "organism"]
+        attr_cols = [(c, a) for c, a in self._BS_ATTR_MAP if c in df.columns]
+        header += [a for _, a in attr_cols]
+
+        rows, skipped = [], 0
+        for _, r in df.iterrows():
+            sample = str(r.get(name_col, "")).strip()
+            org = str(r.get("organism", "")).strip()
+            if skip_ph and (self._BS_PLACEHOLDER.search(sample)
+                            or self._BS_PLACEHOLDER.search(org)):
+                skipped += 1
+                continue
+            vals = [sample, org]
+            for c, _ in attr_cols:
+                v = str(r.get(c, "") or "").strip()
+                vals.append("" if self._BS_PLACEHOLDER.match(v) else v)
+            rows.append(vals)
+        if not rows:
+            QMessageBox.warning(self, "Nothing to export",
+                                "All rows are placeholders")
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export BioSample TSV",
+            f"biosample_{self._file_tabs.tabText(idx)}.tsv",
+            "TSV files (*.tsv);;All files (*)")
+        if not path:
+            return
+        with open(path, "w", encoding="utf-8", newline="") as fh:
+            fh.write("\t".join(header) + "\n")
+            for vals in rows:
+                fh.write("\t".join(vals) + "\n")
+        self.statusBar().showMessage(
+            f"BioSample TSV exported: {len(rows)} samples, {skipped} placeholder(s) skipped", 8000)
+        QMessageBox.information(
+            self, "Export Complete",
+            f"Saved {len(rows)} samples to:\n{path}\n\n"
+            f"Skipped {skipped} placeholder row(s).\nUpload via BioSample portal "
+            "(Submit > Microbe/Virus > 'Batch submission with tab-delimited file').")
+
     # ── Generate SBT tab ──────────────────────────────
     def _build_sbt_gen_tab(self) -> QWidget:
         w = QWidget()
@@ -587,7 +745,7 @@ class MainWindow(QMainWindow):
             ("State/Province", "sub", "Ningxia"),
             ("Country *", "country", "China"),
             ("Street", "street", ""),
-            ("Email *", "email", "zhangwenda@example.com"),
+            ("Email *", "email", "zhangwenda05@163.com"),
             ("Postal Code", "postal", "750021"),
         ]:
             inp = QLineEdit()
@@ -602,6 +760,14 @@ class MainWindow(QMainWindow):
         self._sbt_title.setText("Plant virome of Lycium chinense in Ningxia, China")
         fl2.addRow("Title:", self._sbt_title)
         lay.addWidget(g2)
+        g3 = QGroupBox("Additional Authors (one per line: Last, First Middle)")
+        v3 = QVBoxLayout(g3)
+        self._sbt_extra_authors = QPlainTextEdit()
+        self._sbt_extra_authors.setPlaceholderText(
+            "Optional - one author per line, e.g.:\n  Li, Ming\n  Wang, Fang Hua")
+        self._sbt_extra_authors.setMaximumHeight(80)
+        v3.addWidget(self._sbt_extra_authors)
+        lay.addWidget(g3)
 
         btn_row = QHBoxLayout()
         gen_btn = QPushButton("Generate template.sbt")
@@ -624,62 +790,84 @@ class MainWindow(QMainWindow):
         lay.addWidget(save_btn)
         return w
 
+    def _parse_authors(self):
+        """返回 [(last, first, middle), ...]; 首位为通讯作者 (contact 表单字段)"""
+        f = self._sbt_fields
+        out = [(f["last"].text().strip(), f["first"].text().strip(),
+                f["middle"].text().strip())]
+        for ln in self._sbt_extra_authors.toPlainText().splitlines():
+            ln = ln.strip().rstrip(';')
+            if not ln:
+                continue
+            if ',' in ln:
+                last, _, rest = ln.partition(',')
+                toks = rest.strip().split()
+            else:
+                toks = ln.split()
+                last, toks = toks[0], toks[1:]
+            out.append((last.strip(), toks[0] if toks else '', ' '.join(toks[1:])))
+        return out
+
     def _do_generate_sbt(self):
         f = self._sbt_fields
-        # validate required fields
         for key in ["last", "first", "affil", "city", "country", "email"]:
             if not f[key].text().strip():
                 QMessageBox.warning(self, "Missing Field",
                     f"'{key}' is required for template.sbt")
                 f[key].setFocus()
                 return
+        authors = self._parse_authors()
+
+        def esc(s):
+            return str(s).replace('"', "'")
+
+        def nm_fields(a, d):
+            return (f'{d}last "{esc(a[0])}",\n'
+                    f'{d}first "{esc(a[1])}",\n'
+                    f'{d}middle "{esc(a[2])}",\n'
+                    f'{d}initials "",\n'
+                    f'{d}suffix "",\n'
+                    f'{d}title ""')
+
+        def entry(a, brace_ind):
+            ni = brace_ind + '  '
+            return (f'{brace_ind}{{\n{ni}name name {{\n'
+                    + nm_fields(a, ni + '  ') + f'\n{ni}}}\n{brace_ind}}}')
+
+        affil_c = '      affil std {\n' + '\n'.join(
+            [f'        affil "{f["affil"].text()}",',
+             f'        div "{f["div"].text()}",',
+             f'        city "{f["city"].text()}",',
+             f'        sub "{f["sub"].text()}",',
+             f'        country "{f["country"].text()}",',
+             f'        street "{f["street"].text()}",',
+             f'        email "{f["email"].text()}",',
+             f'        postal-code "{f["postal"].text()}"']) + '\n      }'
+        affil_p = '      affil std {\n' + '\n'.join(
+            [f'        affil "{f["affil"].text()}",',
+             f'        div "{f["div"].text()}",',
+             f'        city "{f["city"].text()}",',
+             f'        sub "{f["sub"].text()}",',
+             f'        country "{f["country"].text()}",',
+             f'        street "{f["street"].text()}",',
+             f'        postal-code "{f["postal"].text()}"']) + '\n      }'
+        title_text = self._sbt_title.text().strip() or 'Untitled submission'
+
         template = (
             'Submit-block ::= {\n'
             '  contact {\n'
             '    contact {\n'
             '      name name {\n'
-           f'        last "{f["last"].text()}",\n'
-           f'        first "{f["first"].text()}",\n'
-           f'        middle "{f["middle"].text()}",\n'
-           f'        initials "",\n'
-           f'        suffix "",\n'
-           f'        title ""\n'
-            '      },\n'
-            '      affil std {\n'
-           f'        affil "{f["affil"].text()}",\n'
-           f'        div "{f["div"].text()}",\n'
-           f'        city "{f["city"].text()}",\n'
-           f'        sub "{f["sub"].text()}",\n'
-           f'        country "{f["country"].text()}",\n'
-           f'        street "{f["street"].text()}",\n'
-           f'        email "{f["email"].text()}",\n'
-           f'        postal-code "{f["postal"].text()}"\n'
-            '      }\n'
+            + nm_fields(authors[0], '        ') + '\n      },\n'
+            + affil_c + '\n'
             '    }\n'
             '  },\n'
             '  cit {\n'
             '    authors {\n'
             '      names std {\n'
-            '        {\n'
-            '          name name {\n'
-           f'            last "{f["last"].text()}",\n'
-           f'            first "{f["first"].text()}",\n'
-           f'            middle "{f["middle"].text()}",\n'
-           f'            initials "",\n'
-           f'            suffix "",\n'
-           f'            title ""\n'
-            '          }\n'
-            '        }\n'
+            + ',\n'.join(entry(a, '        ') for a in authors) + '\n'
             '      },\n'
-            '      affil std {\n'
-           f'        affil "{f["affil"].text()}",\n'
-           f'        div "{f["div"].text()}",\n'
-           f'        city "{f["city"].text()}",\n'
-           f'        sub "{f["sub"].text()}",\n'
-           f'        country "{f["country"].text()}",\n'
-           f'        street "{f["street"].text()}",\n'
-           f'        postal-code "{f["postal"].text()}"\n'
-            '      }\n'
+            + affil_p + '\n'
             '    }\n'
             '  },\n'
             '  subtype new\n'
@@ -690,19 +878,10 @@ class MainWindow(QMainWindow):
             '      cit "unpublished",\n'
             '      authors {\n'
             '        names std {\n'
-            '          {\n'
-            '            name name {\n'
-           f'              last "{f["last"].text()}",\n'
-           f'              first "{f["first"].text()}",\n'
-           f'              middle "{f["middle"].text()}",\n'
-           f'              initials "",\n'
-           f'              suffix "",\n'
-           f'              title ""\n'
-            '            }\n'
-            '          }\n'
+            + ',\n'.join(entry(a, '          ') for a in authors) + '\n'
             '        }\n'
             '      },\n'
-           f'      title "{self._sbt_title.text()}"\n'
+            f'      title "{esc(title_text)}"\n'
             '    }\n'
             '  }\n'
             '}\n'
@@ -711,7 +890,7 @@ class MainWindow(QMainWindow):
             '  data {\n'
             '    {\n'
             '      label str "AdditionalComment",\n'
-           f'      data str "ALT EMAIL:{f["email"].text()}"\n'
+            f'      data str "ALT EMAIL:{f["email"].text()}"\n'
             '    }\n'
             '  }\n'
             '}\n'
@@ -720,13 +899,15 @@ class MainWindow(QMainWindow):
             '  data {\n'
             '    {\n'
             '      label str "AdditionalComment",\n'
-            '      data str "Submission Title:None"\n'
+            f'      data str "Submission Title:{esc(title_text)}"\n'
             '    }\n'
             '  }\n'
-            '}\n'
-        )
+            '}\n')
+        assert template.count('{') == template.count('}'), 'braces unbalanced!'
         self._sbt_output.setPlainText(template)
-        self.statusBar().showMessage("template.sbt generated — click 'Save to file' to export", 5000)
+        self.statusBar().showMessage(
+            f"template.sbt generated ({len(authors)} authors) — click "
+            f"'Save to file' to export", 5000)
 
     def _do_load_sbt(self):
         path, _ = QFileDialog.getOpenFileName(
@@ -854,16 +1035,8 @@ class MainWindow(QMainWindow):
         paths, _ = QFileDialog.getOpenFileNames(
             self, "Open unified_metadata.csv", "",
             "CSV (*.csv);;TSV (*.tsv *.txt);;Excel (*.xlsx);;All (*)")
-        if paths:
-            for path in paths:
-                store = SubmissionStore()
-                if store.load(path):
-                    self._add_file_tab(path, store)
-                    parent = os.path.dirname(path)
-                    if os.path.isfile(os.path.join(parent, "source.src")):
-                        self._preview_dir_input.setText(parent)
-                else:
-                    QMessageBox.warning(self, "Error", f"Failed to load: {path}")
+        for path in paths:
+            self._load_file(path)
 
     def _on_save(self):
         store = self.store

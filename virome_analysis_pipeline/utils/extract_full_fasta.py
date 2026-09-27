@@ -194,6 +194,16 @@ def main():
     short_fail_count = 0
     n_filled_count = 0
 
+    # 显式状态清单: 每样本一行 (virus, sample, status, reason, seq_len, n_pct)
+    status_records = []
+
+    def _record(virus, sample, status, reason, seq_len=None, n_pct=None):
+        status_records.append({
+            'virus': virus, 'sample': sample, 'status': status, 'reason': reason,
+            'seq_len': seq_len if seq_len is not None else '',
+            'n_pct': round(n_pct, 2) if n_pct is not None else '',
+        })
+
     for tax_dir in sorted(in_base.iterdir()):
         if not tax_dir.is_dir():
             continue
@@ -210,6 +220,7 @@ def main():
             target_files = list(sample_dir.rglob(args.target_file))
             if not target_files:
                 missing_count += 1
+                _record(tax_dir.name, sample_dir.name, 'missing_target', f'no {args.target_file} in assembly dir')
                 continue
 
             for target_file in target_files:
@@ -222,9 +233,11 @@ def main():
 
                 if not longest_seq:
                     empty_count += 1
+                    _record(tax_dir.name, sample_dir.name, 'empty_target', 'target file empty or unreadable')
                     continue
 
                 seq_len = len(longest_seq)
+                out_path_this = str(out_tax_dir / f"{sample_accession.replace('_', '.')}.full.fasta")
 
                 # ---------- FILL MODE ----------
                 if args.fill:
@@ -237,6 +250,8 @@ def main():
                         # RNA: fill only if N < max_n_genome
                         if n_ratio >= args.max_n_genome:
                             n_fail_count += 1
+                            _record(tax_dir.name, sample_dir.name, 'skipped_rna_n_over',
+                                    f'N={n_ratio:.1f}% >= max_n_genome={args.max_n_genome}%')
                             print(f"⏭️ RNA N超标不填补 (N={n_ratio:.1f}% ≥ {args.max_n_genome}%): {tax_dir.name}/{out_name}")
                             continue
                     else:
@@ -265,18 +280,23 @@ def main():
                             fout.write(f">{sample_accession}\n")
                             fout.write(f"{longest_seq}\n")
                         success_count += 1
+                        filled_mark = ' (N-filled)' if n_ratio > 0 else ''
+                        _record(tax_dir.name, sample_dir.name, 'extracted', filled_mark, seq_len, n_ratio)
                     except Exception as e:
+                        _record(tax_dir.name, sample_dir.name, 'write_fail', str(e), seq_len, n_ratio)
                         print(f"⚠️ 写入 {out_path} 时出错: {e}")
                     continue
 
                 # ---------- FILTER MODE ----------
                 if seq_len < args.min_len:
                     short_fail_count += 1
+                    _record(tax_dir.name, sample_dir.name, 'skipped_short', f'{seq_len}bp < min_len={args.min_len}', seq_len, n_ratio)
                     print(f"⏭️ 太短 ({seq_len}bp < {args.min_len}): {tax_dir.name}/{out_name}")
                     continue
 
                 if n_ratio > args.max_n:
                     n_fail_count += 1
+                    _record(tax_dir.name, sample_dir.name, 'skipped_n_over', f'N={n_ratio:.1f}% > max_n={args.max_n}%', seq_len, n_ratio)
                     print(f"⏭️ N超标 (N={n_ratio:.1f}% > {args.max_n}%): {tax_dir.name}/{out_name}")
                     continue
 
@@ -285,8 +305,10 @@ def main():
                         fout.write(f">{sample_accession}\n")
                         fout.write(f"{longest_seq}\n")
                     success_count += 1
+                    _record(tax_dir.name, sample_dir.name, 'extracted', '', seq_len, n_ratio)
                     print(f"✅ {tax_dir.name}/{out_name}  ({seq_len} bp, N={n_ratio:.1f}%)")
                 except Exception as e:
+                    _record(tax_dir.name, sample_dir.name, 'write_fail', str(e), seq_len, n_ratio)
                     print(f"⚠️ 写入 {out_path} 时出错: {e}")
 
     print("-" * 60)
@@ -294,6 +316,18 @@ def main():
         print(f"提取+填补完成！成功: {success_count} | 填补: {n_filled_count} | N超标跳过: {n_fail_count} | 缺失: {missing_count} | 空: {empty_count}")
     else:
         print(f"提取完成！成功: {success_count} | N超标: {n_fail_count} | 太短: {short_fail_count} | 缺失: {missing_count} | 空: {empty_count}")
+
+    # ── 写显式状态清单 ──
+    if status_records:
+        import csv as _csv
+        status_path = out_base / 'extraction_status.tsv'
+        with open(status_path, 'w', newline='', encoding='utf-8') as sf:
+            w = _csv.writer(sf, delimiter='\t')
+            w.writerow(['virus', 'sample', 'status', 'reason', 'seq_len', 'n_pct'])
+            for r in status_records:
+                w.writerow([r['virus'], r['sample'], r['status'], r['reason'], r['seq_len'], r['n_pct']])
+        print(f"📋 状态清单已写入: {status_path} ({len(status_records)} 条)")
+
     print(f"{out_base.absolute()}")
 
     # ── Assembly stats plot ──

@@ -30,9 +30,15 @@ SUBRANK_SUFFIX <- c("viricotina","viricetidae","virineae","virinae")
 RANK_DEPTH_WEIGHTS <- c(Realm=1, Kingdom=2, Phylum=4, Class=8, Order=16, Family=32, Genus=64, Species=128)
 TOOL_BIAS <- c(ACVirus=1.2, VITAP=1.1, mmseqs=1.0, metabuli=1.0, CAT=0.9, genomad=0.9, diamond_lca=0.8, vcontact3=0.7, contigtax=0.6, BASTA=0.6, PhaGCN3=0.8)
 
+# 逐级相容性参照表（属 -> 定型科）。由 scripts/audit/build_genus_family_ref.py 离线生成，
+# 参照列：NCBI_Family（NCBI taxdump rankedlineage.dmp 首次出现的科）/ VMR_Family（ACVirus 库 taxa.txt，MSL41）。
+# 环境变量 MMPV_GENUS_FAMILY_REF 可覆盖路径；文件不存在时该约束自动跳过（fail-safe）。
+GENUS_FAMILY_REF <- Sys.getenv("MMPV_GENUS_FAMILY_REF",
+                               unset = file.path(Sys.getenv("HOME"), "database", "taxonomy", "genus_family_ref.tsv"))
+
 setup_threads <- function(cores = NULL) {
   avail <- availableCores()
-  use <- if (is.null(cores)) max(2, min(avail - 1, 8)) else min(cores, avail)
+  use <- if (is.null(cores)) max(2, min(avail - 1, 64)) else min(cores, avail)
   setDTthreads(use)
   cat(sprintf("[System] %d 核心, 使用 %d 线程进行 data.table 极速 C 运算\n", avail, use))
 }
@@ -172,7 +178,7 @@ parse_vitap <- function(file) {
       else if (grepl("viridae$", p, ignore.case=TRUE)) { dt[i, Family := p] }
       else if (grepl("virus$", p, ignore.case=TRUE) && !grepl("viridae$|virinae$", p, ignore.case=TRUE) && !any(sapply(SUBRANK_SUFFIX, function(s) grepl(paste0(s,"$"), p, ignore.case=TRUE)))) {
         if (is.na(dt[i, Genus]) || dt[i, Genus]=="") { dt[i, Genus := p] }
-        else if (is.na(dt[i, Species]) || dt[i, Species]=="") { dt[i, Species := p] }
+        # 不填充 Species(ICTV Subgenus 也以 virus 结尾, 会误填)
       } else if (!any(sapply(SUBRANK_SUFFIX, function(s) grepl(paste0(s,"$"), p, ignore.case=TRUE)))) { dt[i, Species := p] }
     }
   }
@@ -224,13 +230,144 @@ compute_tool_weights <- function(data_list, consensus_stats=NULL) {
 
 harmonize_genus_species <- function(result_dt) {
   if (nrow(result_dt) == 0) return(result_dt)
-  result_dt[, genus_from_sp := tstrsplit(as.character(Species), " ", keep = 1L)]
-  valid_genus <- result_dt[!is.na(genus_from_sp) & grepl("virus$", genus_from_sp, ignore.case=TRUE) & !grepl("viridae$|virinae$", genus_from_sp, ignore.case=TRUE)]
-  for (sfx in SUBRANK_SUFFIX) valid_genus <- valid_genus[!grepl(paste0(sfx, "$"), genus_from_sp, ignore.case=TRUE)]
+  # Only extract Genus from Species when Species is a proper binomial (Genus species).
+  # Single-word Species may be a Subgenus mistakenly placed in Species slot by old parser, ignore.
+  sp_char <- as.character(result_dt$Species)
+  result_dt[, genus_from_sp := fifelse(grepl(" ", sp_char, fixed=TRUE),
+                                       tstrsplit(sp_char, " ", keep = 1L, type.convert = FALSE)[[1]], NA_character_)]
+  sfx_pat <- paste0("(", paste(SUBRANK_SUFFIX, collapse="|"), ")$")
+  valid_genus <- result_dt[!is.na(genus_from_sp) & grepl("virus$", genus_from_sp, ignore.case=TRUE) & !grepl("viridae$|virinae$", genus_from_sp, ignore.case=TRUE) & !grepl(sfx_pat, genus_from_sp, ignore.case=TRUE)]
   valid_genus <- valid_genus[!is.na(Genus) & tolower(genus_from_sp) != tolower(Genus)]
   if (nrow(valid_genus) > 0) result_dt[valid_genus, on = "contig_id", Genus := i.genus_from_sp]
   result_dt[, genus_from_sp := NULL]
   return(result_dt)
+}
+
+# 科-属校准：Genus 必须能追溯到「自报 Family == 共识 Family」的工具所报的属
+#   候选集 = 这些工具报出的属（权重与该工具在投票引擎里的 Genus 层权重同口径）
+#   当前属不在候选集 -> 换成候选集里的票首属；候选集为空 -> 由 blank_orphan 决定是否置空
+#   无共识科的 contig 缺参照系（没有工具在科这一层达成一致），一律不动
+#   本行的双名 Species 不作为豁免证据：属与种常出自同一工具的同一行谱系，属自证而非独立佐证
+harmonize_family_genus <- function(result_dt, stacked, tool_weights, blank_orphan = TRUE) {
+  if (is.null(result_dt) || nrow(result_dt) == 0) return(result_dt)
+  if (is.null(stacked) || nrow(stacked) == 0) return(result_dt)
+  if (!all(c("contig_id","Family","Genus") %in% names(result_dt))) return(result_dt)
+  if (is.null(tool_weights) || length(tool_weights) == 0) return(result_dt)
+
+  # 1) 各工具在 Genus 层的权重（与 compute_tool_weights 同口径）
+  gw <- vapply(names(tool_weights), function(tn) {
+    v <- tool_weights[[tn]]
+    if (is.null(v) || !("Genus" %in% names(v)) || is.na(v[["Genus"]])) 0 else as.numeric(v[["Genus"]])
+  }, numeric(1))
+
+  # 2) 工具侧证据：只保留「自报科 == 共识科」的工具行，取它报出的属
+  ev <- stacked[is_valid_value_vec(Family) & is_valid_value_vec(Genus),
+                .(contig_id, Tool, t_fam = as.character(Family), t_gen = as.character(Genus))]
+  ev <- merge(ev, result_dt[, .(contig_id, c_fam = as.character(Family))], by = "contig_id", all.x = TRUE)
+  ev <- ev[!is.na(c_fam) & t_fam == c_fam]
+  if (nrow(ev) == 0) return(result_dt)
+  ev[, w := gw[Tool]]
+  ev[is.na(w), w := 0]
+
+  cand <- ev[, .(w = sum(w)), by = .(contig_id, t_gen)]
+  setorder(cand, contig_id, -w)
+  best <- unique(cand, by = "contig_id")[, .(contig_id, new_gen = t_gen)]
+
+  # 3) 当前属是否已在候选集内（忽略大小写）；无共识科的行不参与校准
+  elig <- result_dt[is_valid_value_vec(Family), contig_id]
+  cur <- result_dt[!is.na(Genus) & contig_id %in% elig, .(contig_id, c_gen_l = tolower(as.character(Genus)))]
+  canon <- unique(cand[, .(contig_id, c_gen_l = tolower(t_gen))])
+  cur[, in_cand := FALSE]
+  cur[canon, on = .(contig_id, c_gen_l), in_cand := TRUE]
+  cur <- cur[in_cand == FALSE]
+
+  # 4) 有候选 -> 换成票首属；无候选 -> 置空
+  fix <- merge(cur[, .(contig_id)], best, by = "contig_id")
+  blanked <- merge(cur[, .(contig_id)], unique(cand[, .(contig_id, has_cand = TRUE)]),
+                   by = "contig_id", all.x = TRUE)[is.na(has_cand), contig_id]
+
+  n_fix <- nrow(fix); n_blank <- if (isTRUE(blank_orphan)) length(blanked) else 0L
+  if (n_fix > 0) result_dt[fix, on = "contig_id", Genus := i.new_gen]
+  if (n_blank > 0) result_dt[contig_id %in% blanked, Genus := NA_character_]
+  if (n_fix > 0 || n_blank > 0)
+    log_msg("INFO", "科-属校准(自洽工具集): 替换 %d 行, 置空 %d 行", n_fix, n_blank)
+  return(result_dt)
+}
+
+# 逐级相容性约束（科-属）：行内 Genus 主张必须与行内 Family 相容。
+#   判据：两张定型表（NCBI rankedlineage.dmp / VMR MSL41 taxa.txt）都收录该属，
+#         且两张给出的科都与行内 Family 不同 -> 判为不相容，置空 Genus 与 Species。
+#   只做这一种动作。单侧判据（只有一张收录、或一张相容一张不相容）一律不动：
+#   这类绝大多数是分类学版本漂移（例：MSL41 已把原 Mimiviridae 拆出新科 Hydriviridae，
+#   而工具自带库仍在用老科名），或参照版本领先/滞后，置空会误伤正确主张。
+#   Species 依赖 Genus，置空 Genus 后一并清掉；*_agree 列保留校准前的投票记录，便于回溯。
+#   参照表缺失/为空/缺列/读取失败 -> 记一条 INFO 后原样返回（fail-safe，不改变既有行为）。
+#   参照表由 scripts/audit/build_genus_family_ref.py 生成，路径可用 MMPV_GENUS_FAMILY_REF 覆盖。
+enforce_rank_containment <- function(result_dt, ref_file = GENUS_FAMILY_REF, blank_species = TRUE) {
+  if (is.null(result_dt) || nrow(result_dt) == 0) return(result_dt)
+  if (!all(c("contig_id", "Family", "Genus") %in% names(result_dt))) return(result_dt)
+  if (is.null(ref_file) || length(ref_file) == 0 || is.na(ref_file[1]) || !file.exists(ref_file[1])) {
+    log_msg("INFO", "逐级相容性约束: 参照表不可用, 跳过 (path=%s)",
+            if (is.null(ref_file) || length(ref_file) == 0) "NULL" else as.character(ref_file[1]))
+    return(result_dt)
+  }
+
+  ref <- tryCatch(fread(ref_file[1], sep = "\t", quote = "", colClasses = "character", showProgress = FALSE),
+                  error = function(e) NULL)
+  if (is.null(ref) || nrow(ref) == 0) {
+    log_msg("INFO", "逐级相容性约束: 参照表为空或读取失败, 跳过")
+    return(result_dt)
+  }
+  if (!all(c("Genus", "NCBI_Family", "VMR_Family") %in% names(ref))) {
+    log_msg("INFO", "逐级相容性约束: 参照表缺 Genus/NCBI_Family/VMR_Family 列, 跳过")
+    return(result_dt)
+  }
+
+  # 与 scripts/audit/apply_calib_A.py 同口径：去引号/星号/首尾空白，空与 NA/N/A/- 一律视为「未知」
+  # 不用 x[x == ""| ...] <- NA 的写法：逻辑下标含 NA 时 R 会报「NAs are not allowed in subscripted assignments」
+  # （被置空过的表读回来正好是 NA，会当场炸），改用 nzchar 与 %in% 两个不会产生 NA 的判定
+  norm_tax <- function(x) {
+    x <- trimws(gsub("[\"*]", "", as.character(x)))
+    x[!nzchar(x)] <- NA_character_
+    x[toupper(x) %in% c("NA", "N/A", "-")] <- NA_character_
+    x
+  }
+  vmr_raw <- tolower(norm_tax(ref$VMR_Family))
+  ncbi_n  <- if ("NCBI_n" %in% names(ref)) suppressWarnings(as.integer(ref$NCBI_n)) else rep(NA_integer_, nrow(ref))
+  ref_dt <- data.table(
+    g_l      = tolower(norm_tax(ref$Genus)),
+    ncbi_fam = tolower(norm_tax(ref$NCBI_Family)),
+    vmr_pad  = ifelse(is.na(vmr_raw), NA_character_,
+                      paste0(";", gsub("[[:space:]]+", "", vmr_raw), ";")),
+    ncbi_n   = ncbi_n
+  )
+  ref_dt <- unique(ref_dt[!is.na(g_l) & !(is.na(ncbi_fam) & is.na(vmr_pad))], by = "g_l")
+
+  cur <- data.table(contig_id = as.character(result_dt$contig_id),
+                    fam_l = tolower(norm_tax(result_dt$Family)),
+                    g_l   = tolower(norm_tax(result_dt$Genus)))
+  cur <- cur[!is.na(fam_l) & !is.na(g_l)]
+  if (nrow(cur) == 0) return(result_dt)
+
+  cur <- merge(cur, ref_dt, by = "g_l", all.x = TRUE)
+  cur[, fam_c := gsub("[[:space:]]+", "", fam_l)]
+  cur[, ncbi_hit := !is.na(ncbi_fam)]
+  cur[, vmr_hit  := !is.na(vmr_pad)]
+  cur[, ncbi_bad := ncbi_hit & fam_c != ncbi_fam]
+  cur[, vmr_bad  := vmr_hit & !mapply(function(p, f) grepl(paste0(";", f, ";"), p, fixed = TRUE),
+                                      vmr_pad, fam_c)]
+  hit    <- cur[ncbi_bad == TRUE & vmr_bad == TRUE, contig_id]
+  n_hit  <- length(hit)
+  n_side <- nrow(cur[ncbi_bad != vmr_bad])
+
+  if (n_hit > 0) {
+    if (isTRUE(blank_species)) result_dt[contig_id %in% hit, `:=`(Genus = NA_character_, Species = NA_character_)]
+    else result_dt[contig_id %in% hit, Genus := NA_character_]
+  }
+  n_amb <- nrow(cur[contig_id %in% hit & !is.na(ncbi_n) & ncbi_n > 1])
+  log_msg("INFO", "逐级相容性约束(科-属): 双参照一致反驳 %d 行已置空; 单侧判据 %d 行仅记录不动; 被处置行中 NCBI 同名多科 %d 行",
+          n_hit, n_side, n_amb)
+  result_dt[]
 }
 
 build_consensus <- function(data_list, tool_weights) {
@@ -300,6 +437,12 @@ build_consensus <- function(data_list, tool_weights) {
   wide[is.na(primary_tool), primary_tool := "consensus"]
 
   wide <- harmonize_genus_species(wide)
+  # 科-属校准放在最后，保证最终表里 Genus 一定能追溯到「自报科 == 共识科」的工具
+  # blank_orphan=FALSE 时只替换不置空（保留孤立属，与 harmonize_genus_species 的保守取向一致）
+  wide <- harmonize_family_genus(wide, stacked, tool_weights)
+  # 逐级相容性约束：属级主张必须与行内科级相容（NCBI 与 VMR 两参照一致反驳才置空）
+  # 放在科-属校准之后：先清掉「自报科与共识科不一致」的属，再做跨参照相容性收尾
+  wide <- enforce_rank_containment(wide, GENUS_FAMILY_REF)
 
   # ── 6. 🚀 极致多维宽长转换: Agree列拼接 ──
   tot_dt <- long[, .(n_tot = .N), by=.(contig_id, Rank)]
@@ -327,6 +470,13 @@ build_consensus <- function(data_list, tool_weights) {
 
   agree_cols <- paste0(TAX_LEVELS, "_agree")
   setcolorder(wide, c("contig_id","primary_tool","completeness","confidence", TAX_LEVELS, agree_cols))
+  # Final validation: clear mis-placed rank names after gap-filling
+  wide[!is.na(Class) & !grepl("viricetes$", Class, ignore.case=TRUE), Class := NA_character_]
+  wide[!is.na(Order) & !grepl("virales$", Order, ignore.case=TRUE), Order := NA_character_]
+  wide[!is.na(Family) & !grepl("viridae$", Family, ignore.case=TRUE), Family := NA_character_]
+  wide[!is.na(Genus) & grepl("viridae$|virinae$", Genus, ignore.case=TRUE), Genus := NA_character_]
+  wide[!is.na(Species) & grepl("(inae|idae|ales|icetes|viricota)$", Species, ignore.case=TRUE), Species := NA_character_]
+  for (col in TAX_LEVELS) for (sfx in SUBRANK_SUFFIX) wide[grepl(paste0(sfx,"$"), get(col), ignore.case=TRUE), (col) := NA_character_]
   return(wide[])
 }
 
@@ -375,6 +525,16 @@ plot_intersection_diagram <- function(data_list, output_dir) {
     all_ids <- unique(unlist(id_lists))
     bin_mat <- as.data.frame(lapply(names(id_lists), function(tn) as.integer(all_ids %in% id_lists[[tn]])))
     colnames(bin_mat) <- names(id_lists)
+
+    # 导出 UpSet.js 交互式数据 (JSON): elems = [{name, sets}]
+    if (requireNamespace("jsonlite", quietly=TRUE)) {
+      elems <- lapply(seq_along(all_ids), function(i) {
+        hit <- names(id_lists)[which(bin_mat[i, names(id_lists)] == 1)]
+        list(name = all_ids[i], sets = hit)
+      })
+      jsonlite::write_json(elems, file.path(output_dir, "upset_data.json"), auto_unbox=TRUE)
+      log_msg("VIS", "导出 upset_data.json (%d 元素)", length(elems))
+    }
 
     tryCatch({
       bin_mat$degree <- rowSums(bin_mat[, names(id_lists)])

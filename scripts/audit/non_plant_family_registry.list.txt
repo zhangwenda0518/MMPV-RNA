@@ -1,0 +1,199 @@
+    'Ackermannviridae',  # 05:g5/o8 plant:g0/o0 | Vapseptimavirus, Kuttervirus
+    'Adamaviridae',  # 05:g0/o12 plant:g0/o0 | Dolmedivirus, Harfovirus
+    'Adomaviridae',  # 05:g0/o23 plant:g0/o0 | 
+    'Ahmunviridae',  # 05:g2/o32 plant:g0/o0 | Yumkaaxvirus
+    'Aliceevansviridae',  # 05:g9/o324 plant:g0/o0 | Brussowvirus, Moineauvirus
+    'Aliusviridae',  # 05:g0/o19 plant:g0/o0 | Ollusvirus, Obscuruvirus
+    'Alphaormycoviridae',  # 05:g0/o18 plant:g0/o0 | Phormycovirus, Dormycovirus
+    'Alphatetraviridae',  # 05:g4/o44 plant:g0/o0 | Omegatetravirus, Betatetravirus
+    'Alternaviridae',  # 05:g2/o87 plant:g0/o0 | Alternavirus
+    'Amnoonviridae',  # 05:g1/o7 plant:g0/o0 | Tilapinevirus
+    'Anamaviridae',  # 05:g0/o1 plant:g0/o0 | Tsukubavirus
+    'Andersonviridae',  # 05:g7/o8 plant:g0/o0 | Mooglevirus, Felixounavirus
+    'Anelloviridae',  # 05:g219/o6863 plant:g0/o0 | Alphatorquevirus, Betatorquevirus
+    'Aoguangviridae',  # 05:g1/o10 plant:g0/o0 | Aobingvirus
+    'Apasviridae',  # 05:g125/o412 plant:g0/o0 | Agnivirus
+    'Arenbergviridae',  # 05:g9/o149 plant:g0/o0 | Wroclawvirus
+    'Arteriviridae',  # 05:g12/o422 plant:g0/o0 | Betaarterivirus, Alphaarterivirus
+    'Artiviridae',  # 05:g0/o12 plant:g0/o0 | Artivirus
+    'Artoviridae',  # 05:g0/o11 plant:g0/o0 | Peropuvirus, Hexartovirus
+    'Ascoviridae',  # 05:g64/o407 plant:g0/o0 | Toursvirus, Ascovirus
+    'Asfarviridae',  # 05:g7/o165 plant:g0/o0 | Asfivirus
+    'Assiduviridae',  # 05:g0/o3 plant:g0/o0 | Cebadecemvirus, Cellubavirus
+    'Autographiviridae',  # 05:g5/o703 plant:g0/o0 | Votkovvirus, Gyeongsanvirus
+    'Autonotataviridae',  # 05:g1/o1 plant:g0/o0 | Pollyceevirus
+    'Autoscriptoviridae',  # 05:g9/o3 plant:g0/o0 | Kantovirus, Actinidiaevirus
+    'Autosignataviridae',  # 05:g4/o23 plant:g0/o0 | Kaohsiungvirus, Ulipvirus
+    'Autotranscriptaviridae',  # 05:g0/o11 plant:g0/o0 | Przondovirus, Kayfunavirus
+    'Bacilladnaviridae',  # 05:g1/o16 plant:g0/o0 | Protobacilladnavirus, Kieseladnavirus
+    'Barnaviridae',  # 05:g5/o45 plant:g3/o0 | Barnavirus, Enamovirus
+    'Belpaoviridae',  # 05:g1/o0 plant:g0/o0 | Semotivirus
+    'Berryhillviridae',  # 05:g1/o14 plant:g0/o0 | Eastwestvirus, Vibakivirus
+    'Betaormycoviridae',  # 05:g2/o1 plant:g0/o0 | Vormycovirus, Stormycovirus
+    'Bidnaviridae',  # 05:g0/o12 plant:g0/o0 | Bidensovirus
+    'Birnaviridae',  # 05:g2/o48 plant:g0/o0 | Avibirnavirus, Aquabirnavirus
+    'Blumeviridae',  # 05:g0/o1 plant:g0/o0 | 
+    'Bornaviridae',  # 05:g2/o21 plant:g0/o0 | Orthobornavirus, Cultervirus
+    'Botybirnaviridae',  # 05:g17/o25 plant:g0/o0 | Botybirnavirus
+    'Buchnerviridae',  # 05:g0/o1 plant:g0/o0 | Vieuvirus
+    'Caliciviridae',  # 05:g27/o713 plant:g0/o0 | Norovirus, Sapovirus
+    'Carmotetraviridae',  # 05:g0/o2 plant:g0/o0 | Alphacarmotetravirus
+    'Casidaviridae',  # 05:g1/o1 plant:g0/o0 | Baileybluvirus, Yangvirus
+    'Casjensviridae',  # 05:g3/o8 plant:g0/o0 | Gediminasvirus, Ahduovirus
+    'Chaseviridae',  # 05:g2/o13 plant:g0/o0 | Carltongylesvirus
+    'Chimalliviridae',  # 05:g25/o697 plant:g0/o0 | Miltoncavirus, Pawinskivirus
+    'Chrysoviridae',  # 05:g7/o128 plant:g0/o0 | Alphachrysovirus, Betachrysovirus
+    'Chuviridae',  # 05:g14/o118 plant:g0/o0 | Mivirus, Nigecruvirus
+    'Circoviridae',  # 05:g4/o257 plant:g0/o0 | Circovirus, Cyclovirus
+    'Clermontviridae',  # 05:g0/o1 plant:g0/o0 | Ventrumvirus
+    'Colingsworthviridae',  # 05:g1/o4 plant:g0/o0 | Shaekyvirus, Tigunavirus
+    'Connertonviridae',  # 05:g1/o10 plant:g0/o0 | Fletchervirus, Firehammervirus
+    'Coronaviridae',  # 05:g46/o807 plant:g0/o0 | Betacoronavirus, Alphacoronavirus
+    'Cremegaviridae',  # 05:g0/o3 plant:g0/o0 | Pontunivirus, Sicregavirus
+    'Crevaviridae',  # 05:g0/o1 plant:g0/o0 | Kingevirus
+    'Cruciviridae',  # 05:g0/o2 plant:g0/o0 | 
+    'Cruliviridae',  # 05:g0/o4 plant:g0/o0 | Lincruvirus
+    'Curvulaviridae',  # 05:g2/o26 plant:g0/o0 | Orthocurvulavirus
+    'Darmviridae',  # 05:g0/o4 plant:g0/o0 | Chuhaivirus
+    'Deltaormycoviridae',  # 05:g0/o1 plant:g0/o0 | Bormycovirus
+    'Demerecviridae',  # 05:g7/o86 plant:g0/o0 | Tequintavirus, Epseptimavirus
+    'Discoviridae',  # 05:g17/o2 plant:g3/o0 | Orthodiscovirus
+    'Dishuiviroviridae',  # 05:g0/o3 plant:g0/o0 | Essdubovirus
+    'Draupnirviridae',  # 05:g6/o12 plant:g4/o2 | Malificivirus, Torentivirus
+    'Drexlerviridae',  # 05:g0/o12 plant:g0/o0 | Loudonvirus, Julespiccardvirus
+    'Dumbiviridae',  # 05:g0/o2 plant:g0/o0 | Orthodumbivirus
+    'Duneviridae',  # 05:g7/o10 plant:g0/o0 | Unahavirus
+    'Ehrlichviridae',  # 05:g0/o1 plant:g0/o0 | 
+    'Endolinaviridae',  # 05:g0/o4 plant:g0/o0 | Hudisavirus, Camdisavirus
+    'Epsomviridae',  # 05:g9/o1 plant:g0/o0 | Wendovervirus
+    'Eupolintoviridae',  # 05:g3/o20 plant:g0/o0 | Betadintovirus
+    'Euroniviridae',  # 05:g1/o2 plant:g0/o0 | Paguronivirus, Charybnivirus
+    'Fervensviridae',  # 05:g10/o0 plant:g0/o0 | Deepoceanvirus
+    'Fiersviridae',  # 05:g18/o0 plant:g0/o0 | Cintrevirus, Kuhshuvirus
+    'Filamentoviridae',  # 05:g31/o41 plant:g0/o0 | Betafilamentovirus, Alphafilamentovirus
+    'Filoviridae',  # 05:g2/o47 plant:g0/o0 | Tapjovirus, Orthoebolavirus
+    'Fusariviridae',  # 05:g6/o104 plant:g0/o0 | Alphafusarivirus, Betafusarivirus
+    'Fuselloviridae',  # 05:g1/o0 plant:g0/o0 | Betafusellovirus
+    'Gammaormycoviridae',  # 05:g2/o2 plant:g0/o0 | Tormycovirus, Hormycovirus
+    'Giardiaviridae',  # 05:g0/o1 plant:g0/o0 | Giardiavirus
+    'Graaviviridae',  # 05:g10/o3 plant:g0/o0 | Beejeyvirus
+    'Grimontviridae',  # 05:g1/o6 plant:g0/o0 | Crifsvirus, Lahexavirus
+    'Hadakaviridae',  # 05:g1/o0 plant:g0/o0 | Hadakavirus
+    'Hafunaviridae',  # 05:g1/o24 plant:g0/o0 | Mincapvirus, Haloferacalesvirus
+    'Haloferuviridae',  # 05:g3/o29 plant:g0/o0 | Retbasiphovirus, Dpdavirus
+    'Halomagnusviridae',  # 05:g1/o4 plant:g0/o0 | Hagravirus
+    'Halspiviridae',  # 05:g1/o0 plant:g0/o0 | Salterprovirus
+    'Hantaviridae',  # 05:g17/o160 plant:g0/o0 | Orthohantavirus, Mobatvirus
+    'Helgolandviridae',  # 05:g0/o1 plant:g0/o0 | Leefvirus
+    'Hepadnaviridae',  # 05:g20/o513 plant:g0/o0 | Orthohepadnavirus, Avihepadnavirus
+    'Hepeviridae',  # 05:g27/o1253 plant:g0/o0 | Paslahepevirus, Rocahepevirus
+    'Hodgkinviridae',  # 05:g1/o14 plant:g0/o0 | Fuzzbustervirus, Quhwahvirus
+    'Hydriviridae',  # 05:g236/o0 plant:g1/o0 | Alphahydrivirus
+    'Hytrosaviridae',  # 05:g22/o241 plant:g0/o0 | Muscavirus, Glossinavirus
+    'Iflaviridae',  # 05:g25/o990 plant:g4/o0 | Iflavirus
+    'Inoviridae',  # 05:g4/o1 plant:g0/o0 | 
+    'Inseviridae',  # 05:g1/o35 plant:g0/o0 | Insevirus
+    'Intestiviridae',  # 05:g0/o4 plant:g0/o0 | Hacihdavirus, Rudgehvirus
+    'Itzamnaviridae',  # 05:g1/o0 plant:g0/o0 | Pletoitzamnavirus
+    'Jeanschmidtviridae',  # 05:g5/o181 plant:g0/o0 | Kikimoravirus, Marchewkavirus
+    'Kanorauviridae',  # 05:g6/o64 plant:g1/o0 | Shabtayvirus, Ninurtavirus
+    'Kirkoviridae',  # 05:g0/o6 plant:g0/o0 | Aglavirus, Ossirvirus
+    'Kleczkowskaviridae',  # 05:g5/o210 plant:g0/o0 | Cuauhnahuacvirus
+    'Kolmioviridae',  # 05:g16/o282 plant:g0/o0 | Deltavirus, Perideltavirus
+    'Konodaiviridae',  # 05:g1/o0 plant:g0/o0 | Shienvirus
+    'Krittikaviridae',  # 05:g1/o14 plant:g0/o0 | Velanvirus
+    'Kyanoviridae',  # 05:g120/o2728 plant:g0/o0 | Haifavirus, Yellowseavirus
+    'Lakviridae',  # 05:g53/o1060 plant:g0/o0 | Amboselivirus, Hatfieldvirus
+    'Lebotiviridae',  # 05:g0/o1 plant:g0/o0 | Lebotivirus
+    'Leishbuviridae',  # 05:g0/o13 plant:g0/o0 | Shilevirus
+    'Lindbergviridae',  # 05:g3/o26 plant:g0/o0 | Myosmarvirus, Carpasinavirus
+    'Lipothrixviridae',  # 05:g9/o55 plant:g0/o0 | Betalipothrixvirus
+    'Lispiviridae',  # 05:g5/o48 plant:g0/o0 | Arlivirus, Usmuvirus
+    'Ludisviridae',  # 05:g0/o1 plant:g0/o0 | Ludisvirus
+    'Malacoherpesviridae',  # 05:g13/o322 plant:g0/o0 | Ostreavirus, Aurivirus
+    'Marnaviridae',  # 05:g25/o414 plant:g0/o0 | Sogarnavirus, Salisharnavirus
+    'Matonaviridae',  # 05:g5/o254 plant:g0/o0 | Rubivirus
+    'Medioniviridae',  # 05:g2/o53 plant:g0/o0 | Turrinivirus, Bolenivirus
+    'Megabirnaviridae',  # 05:g0/o17 plant:g0/o0 | Megabirnavirus
+    'Megatotiviridae',  # 05:g4/o7 plant:g0/o0 | Megatotivirus
+    'Mesoniviridae',  # 05:g6/o91 plant:g0/o0 | Alphamesonivirus, Nasenivirus
+    'Mesyanzhinovviridae',  # 05:g2/o21 plant:g0/o0 | Vojvodinavirus, Bosavirus
+    'Metaviridae',  # 05:g133/o5333 plant:g6/o102 | Metavirus, Errantivirus
+    'Microviridae',  # 05:g2/o1 plant:g0/o0 | 
+    'Monocitiviridae',  # 05:g0/o1 plant:g0/o0 | Monocitivirus
+    'Mononiviridae',  # 05:g0/o3 plant:g0/o0 | Alphamononivirus
+    'Mtkvariviridae',  # 05:g0/o2 plant:g0/o0 | Kuravirus
+    'Mycoalphaviridae',  # 05:g1/o18 plant:g0/o0 | Betasclernavirus
+    'Mymonaviridae',  # 05:g20/o79 plant:g0/o0 | Botrytimonavirus, Sclerotimonavirus
+    'Nairoviridae',  # 05:g62/o1386 plant:g0/o0 | Orthonairovirus, Ocetevirus
+    'Nanghoshaviridae',  # 05:g0/o8 plant:g0/o0 | Chimshavirus
+    'Nanhypoviridae',  # 05:g0/o4 plant:g0/o0 | Sajorinivirus
+    'Narnaviridae',  # 05:g67/o1069 plant:g1/o0 | Narnavirus, Ourmiavirus
+    'Naryaviridae',  # 05:g1/o2 plant:g0/o0 | Nauglamirvirus, Nimphelosvirus
+    'Natareviridae',  # 05:g0/o1 plant:g0/o0 | Charybdivirus
+    'Nenyaviridae',  # 05:g24/o835 plant:g0/o0 | Galvornvirus, Mazarbulvirus
+    'Nipumfusiviridae',  # 05:g1/o0 plant:g0/o0 | Marefusivirus
+    'Nodaviridae',  # 05:g18/o460 plant:g0/o0 | Alphanodavirus, Betanodavirus
+    'Noraviridae',  # 05:g0/o3 plant:g0/o0 | Orthonoravirus
+    'Nyamiviridae',  # 05:g2/o89 plant:g0/o0 | Nyavirus, Crustavirus
+    'Oomyviridae',  # 05:g0/o9 plant:g0/o0 | Avoomyvirus, Nicoomyvirus
+    'Ootiviridae',  # 05:g0/o7 plant:g0/o0 | Ootivirus
+    'Orthomyxoviridae',  # 05:g22/o496 plant:g0/o0 | Alphainfluenzavirus, Quaranjavirus
+    'Ouroboviridae',  # 05:g0/o4 plant:g0/o0 | Demetevirus, Eurynomevirus
+    'Pachyviridae',  # 05:g1/o0 plant:g0/o0 | Gundelvirus
+    'Parahypoviridae',  # 05:g1/o18 plant:g0/o0 | Betahypovirus
+    'Paramyxoviridae',  # 05:g51/o605 plant:g0/o0 | Jeilongvirus, Orthoavulavirus
+    'Parvoviridae',  # 05:g37/o1399 plant:g0/o0 | Bocaparvovirus, Protoparvovirus
+    'Pecoviridae',  # 05:g0/o2 plant:g0/o0 | Capamivirus, Quillavirus
+    'Permutotetraviridae',  # 05:g5/o75 plant:g0/o0 | Alphapermutotetravirus
+    'Pestiviridae',  # 05:g25/o427 plant:g0/o0 | Orthopestivirus, Boletivirus
+    'Phasmaviridae',  # 05:g0/o56 plant:g0/o0 | Orthophasmavirus, Feravirus
+    'Phlegiviridae',  # 05:g1/o30 plant:g0/o0 | Phlegivirus
+    'Phypoliviridae',  # 05:g0/o6 plant:g0/o0 | Tetrivirus
+    'Pneumoviridae',  # 05:g4/o138 plant:g0/o0 | Orthopneumovirus, Metapneumovirus
+    'Polycipiviridae',  # 05:g4/o70 plant:g0/o0 | Sopolycivirus, Chipolycivirus
+    'Polymycoviridae',  # 05:g22/o51 plant:g0/o0 | Polymycovirus, Multimycovirus
+    'Polyomaviridae',  # 05:g9/o266 plant:g0/o0 | Thetapolyomavirus, Alphapolyomavirus
+    'Pootjesviridae',  # 05:g1/o151 plant:g0/o0 | Emnonavirus, Innesvirus
+    'Pseudototiviridae',  # 05:g21/o342 plant:g0/o0 | Victorivirus, Trichomonasvirus
+    'Pyrstoviridae',  # 05:g1/o0 plant:g0/o0 | Hatrivirus
+    'Quadriviridae',  # 05:g0/o2 plant:g0/o0 | Quadrivirus
+    'Redondoviridae',  # 05:g0/o3 plant:g0/o0 | Torbevirus
+    'Rhizouliviridae',  # 05:g0/o5 plant:g0/o0 | Rhizoulivirus
+    'Roniviridae',  # 05:g1/o75 plant:g0/o0 | Okavirus, Nimanivirus
+    'Rountreeviridae',  # 05:g0/o1 plant:g0/o0 | Fischettivirus
+    'Salasmaviridae',  # 05:g0/o2 plant:g0/o0 | Beecentumtrevirus, Bahkauvirus
+    'Sarkviridae',  # 05:g1/o10 plant:g0/o0 | Jerseyvirus, Cornellvirus
+    'Schitoviridae',  # 05:g8/o31 plant:g0/o0 | Yonginvirus, Waedenswilvirus
+    'Shortaselviridae',  # 05:g2/o0 plant:g0/o0 | Lonfivirus
+    'Sinhaliviridae',  # 05:g4/o64 plant:g0/o0 | Sinaivirus
+    'Smacoviridae',  # 05:g6/o92 plant:g0/o0 | Porprismacovirus, Felismacovirus
+    'Solinviviridae',  # 05:g2/o22 plant:g0/o0 | Invictavirus, Nyfulvavirus
+    'Spiciviridae',  # 05:g0/o22 plant:g0/o0 | Spicivirus
+    'Splipalmiviridae',  # 05:g9/o14 plant:g0/o0 | Delepalmivirus, Jakapalmivirus
+    'Sputniviroviridae',  # 05:g0/o3 plant:g0/o0 | Sputnikvirus
+    'Stackebrandtviridae',  # 05:g2/o1 plant:g0/o0 | Wizardvirus, Clownvirus
+    'Stanwilliamsviridae',  # 05:g10/o18 plant:g0/o0 | Karimacvirus, Wakandavirus
+    'Steigviridae',  # 05:g8/o4 plant:g0/o0 | Akihdevirus, Pipoluvirus
+    'Steitzviridae',  # 05:g52/o0 plant:g0/o0 | Hodnevirus, Huhbevirus
+    'Straboviridae',  # 05:g14/o1106 plant:g0/o0 | Biquartavirus, Dhakavirus
+    'Sunviridae',  # 05:g0/o1 plant:g0/o0 | Sunshinevirus
+    'Suoliviridae',  # 05:g2/o10 plant:g0/o0 | Buchavirus, Besingivirus
+    'Tectiviridae',  # 05:g1/o5 plant:g0/o0 | Betatectivirus
+    'Tobaniviridae',  # 05:g14/o141 plant:g0/o0 | Torovirus, Infratovirus
+    'Toyamaviridae',  # 05:g0/o1 plant:g0/o0 | Totsukavirus
+    'Trimbiviridae',  # 05:g0/o3 plant:g0/o0 | Orthotrimbivirus
+    'Tulasviridae',  # 05:g1/o8 plant:g0/o0 | Paratulasvirus, Orthotulasvirus
+    'Vandenendeviridae',  # 05:g1/o2 plant:g0/o0 | Torinovirus, Chemalvirus
+    'Vertoviridae',  # 05:g0/o1 plant:g0/o0 | Myohalovirus
+    'Vilmaviridae',  # 05:g1/o25 plant:g0/o0 | Wildcatvirus, Faithunavirus
+    'Winoviridae',  # 05:g0/o8 plant:g0/o0 | Pippivirus
+    'Wupedeviridae',  # 05:g0/o1 plant:g0/o0 | Wumivirus
+    'Xinmoviridae',  # 05:g13/o32 plant:g0/o0 | Anphevirus, Gordisvirus
+    'Yadokariviridae',  # 05:g0/o5 plant:g0/o0 | Alphayadokarivirus
+    'Yangangviridae',  # 05:g1/o4 plant:g0/o0 | Nohelivirus, Mathaucavirus
+    'Yaraviridae',  # 05:g1/o46 plant:g0/o0 | Yaravirus
+    'Yueviridae',  # 05:g0/o78 plant:g0/o0 | 
+    'Zierdtviridae',  # 05:g0/o2 plant:g0/o0 | Ceetrepovirus
+    'Zimmerviridae',  # 05:g19/o221 plant:g0/o0 | Jouyvirus, Bievrevirus
+    'Zobellviridae',  # 05:g0/o2 plant:g0/o0 | Icepovirus, Paundecimvirus

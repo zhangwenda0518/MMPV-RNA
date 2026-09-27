@@ -327,15 +327,30 @@ class MainWindow(QMainWindow):
             "<p>Dual pipeline: Search (gsa_sra.search.py) + Info (gsa_sra.info.py).</p>")
 
     # ── State ─────────────────────────────────────
+    def _load_real_data(self) -> bool:
+        """尝试自动发现并加载真实元数据 (Core14 + Full)。
+        成功返回 True；失败返回 False (调用方回退 demo)。
+        """
+        try:
+            from controllers.metadata_controller import MetadataController
+            if not MetadataController(self.search_store).load_default_data():
+                return False
+            # Info 流复用同一发现逻辑，保证两个面板都有数据
+            MetadataController(self.info_store).load_default_data()
+            return True
+        except Exception:
+            return False
+
     def _restore_state(self):
         geo = self._settings.value("geometry")
         if geo: self.restoreGeometry(geo)
         state = self._settings.value("windowState")
         if state: self.restoreState(state)
 
-        # Load demo data for both pipelines (same 13-column format)
-        self._load_search_demo()
-        self._load_info_demo()
+        # 优先加载真实元数据，找不到则回退到 demo 数据
+        if not self._load_real_data():
+            self._load_search_demo()
+            self._load_info_demo()
 
         self._active_store = self.search_store
         self._update_row_label()

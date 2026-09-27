@@ -1,0 +1,19 @@
+{
+  "description": "MJN infers the central median of three pairwise-distance-2 haplotypes",
+  "derivation": "Hand-traced against MedJoinNet::computeMJN (epsilon=0). Sequences AAT, ATA, TAA are pairwise distance 2 with no pattern-equivalent columns (weights all 1). Iteration 1: the relaxed MSN adds all three distance-2 edges; the threshold graph (distance < 2) has no merges, so all are feasible links. Pass 1 finds the quasi-median of the triplet: per position the majority character gives AAA, cost d(AAT,AAA)+d(ATA,AAA)+d(TAA,AAA)=3 = minCost. Pass 2 adds AAA (cost <= minCost + 0). Iteration 2: distances sample-median are 1; the MSN connects as a star at level 1 (all feasible, threshold graph empty below 1), the direct distance-2 edges fall beyond maxValue=1. No new medians (u=AAA triplets regenerate AAA). Final phase keeps the star. Ids by sorted sequence: AAT->H1, ATA->H2, TAA->H3; the median is Median_0.",
+  "algorithm": "mjn",
+  "params": { "epsilon": 0 },
+  "sequences": {
+    "s1": "AAT",
+    "s2": "ATA",
+    "s3": "TAA"
+  },
+  "expected": {
+    "nodes": ["H1", "H2", "H3", "Median_0"],
+    "edges": [
+      ["H1", "Median_0", 1],
+      ["H2", "Median_0", 1],
+      ["H3", "Median_0", 1]
+    ]
+  }
+}

@@ -1,0 +1,218 @@
+/tmp/rc66_count/final_integrated_classification.tsv
+vs /tmp/rc67_count/final_integrated_classification.tsv
+行数 20892 / 20892
+
+| 阶元 | 非空 v66 | 非空 v67 | 变动行 | 有->空 | 空->有 | 值变 |
+|---|---|---|---|---|---|---|
+| Realm | 19015 | 19015 | 0 | 0 | 0 | 0 |
+| Kingdom | 19142 | 19142 | 1 | 0 | 0 | 1 |
+| Phylum | 19039 | 19039 | 4 | 0 | 0 | 4 |
+| Class | 19457 | 19457 | 3 | 0 | 0 | 3 |
+| Order | 18028 | 18007 | 31 | 21 | 0 | 10 |
+| Family | 17710 | 17691 | 30 | 19 | 0 | 11 |
+| Genus | 14658 | 14643 | 31 | 19 | 4 | 8 |
+| Species | 17239 | 17230 | 43 | 23 | 14 | 6 |
+
+涉及 contig 合计 57
+
+变化行全清单（57 行 × 8 阶元，只列有差异的阶元）
+  CRR1440126_clean_NODE_914_length_1792_cov_3.429319
+      Species: [空] -> [Marseillevirus LCMAC201]
+  CRR1440127_clean_NODE_1826_length_1513_cov_2.226389
+      Phylum: [Uroviricota] -> [Nucleocytoviricota]
+      Family: [Lakviridae] -> [空]
+      Genus: [Hatfieldvirus] -> [空]
+      Species: [Hatfieldvirus porci] -> [空]
+  CRR1440135_clean_NODE_1407_length_2079_cov_2.588734
+      Order: [Chitovirales] -> [空]
+      Family: [Poxviridae] -> [空]
+      Genus: [Orthopoxvirus] -> [空]
+      Species: [Orthopoxvirus abatinomacacapox] -> [空]
+  CRR1440135_clean_NODE_533_length_3173_cov_5.616452
+      Order: [Ortervirales] -> [Imitervirales]
+      Family: [Retroviridae] -> [Mimiviridae]
+      Genus: [Gammaretrovirus] -> [空]
+      Species: [Gammaretrovirus momursar] -> [空]
+  CRR1440136_clean_NODE_104_length_5812_cov_10.086600
+      Kingdom: [Bamfordvirae] -> [Pararnavirae]
+      Phylum: [Nucleocytoviricota] -> [Artverviricota]
+      Class: [Megaviricetes] -> [Revtraviricetes]
+      Order: [Imitervirales] -> [Ortervirales]
+      Family: [Mimiviridae] -> [Retroviridae]
+      Genus: [Mimivirus] -> [Gammaretrovirus]
+      Species: [Mimivirus lagoaense] -> [Gammaretrovirus felleu]
+  CRR1440136_clean_NODE_624_length_3330_cov_12.028861
+      Family: [Phycodnaviridae] -> [Iridoviridae]
+      Genus: [Prasinovirus] -> [空]
+      Species: [空] -> [Iridovirus LCIVAC01]
+  CRR1440136_clean_NODE_660_length_3237_cov_6.432364
+      Order: [Herpesvirales] -> [空]
+  CRR1440137_clean_NODE_331_length_3793_cov_4.064516
+      Family: [Retroviridae] -> [Mimiviridae]
+      Genus: [Gammaretrovirus] -> [Megavirus]
+      Species: [Gammaretrovirus felleu] -> [Megavirus baoshanense]
+  CRR527041_clean_NODE_3581_length_1328_cov_4.446215
+      Family: [Lakviridae] -> [Mimiviridae]
+      Genus: [Hatfieldvirus] -> [空]
+      Species: [Hatfieldvirus porci] -> [空]
+  CRR527042_clean_NODE_5653_length_1018_cov_0.923810
+      Species: [空] -> [Botourmiaviridae sp.]
+  CRR527046_clean_NODE_12_length_5924_cov_4.956076
+      Order: [Imitervirales] -> [空]
+      Family: [Mimiviridae] -> [空]
+      Genus: [Tupanvirus] -> [Casadabanvirus]
+  CRR527049_clean_NODE_19_length_1964_cov_5.403490
+      Phylum: [Uroviricota] -> [Nucleocytoviricota]
+      Class: [Caudoviricetes] -> [Megaviricetes]
+      Order: [Grandevirales] -> [Imitervirales]
+      Family: [Epsomviridae] -> [空]
+      Genus: [Wendovervirus] -> [空]
+      Species: [Wendovervirus sonii] -> [空]
+  CRR732645_clean_NODE_843_length_629_cov_0.962230
+      Order: [Ortervirales] -> [空]
+  CRR732648_clean_NODE_129_length_1770_cov_0.454920
+      Species: [空] -> [Homavirus sp.]
+  CRR732658_clean_NODE_649_length_1619_cov_3.294839
+      Order: [Grandevirales] -> [Imitervirales]
+      Family: [Lakviridae] -> [空]
+      Genus: [Hatfieldvirus] -> [空]
+      Species: [Hatfieldvirus porci] -> [空]
+  CRR732659_clean_NODE_111_length_3139_cov_3.162541
+      Order: [Imitervirales] -> [空]
+      Family: [Mimiviridae] -> [空]
+      Genus: [空] -> [Minunavirus]
+  CRR732660_clean_NODE_890_length_1772_cov_4.904287
+      Order: [Rowavirales] -> [空]
+      Family: [Adenoviridae] -> [空]
+      Genus: [空] -> [Minunavirus]
+  SRR22742698_clean_NODE_106_length_3051_cov_11.358630
+      Species: [Alphahydrivirus permafrostis] -> [空]
+  SRR22742698_clean_NODE_351_length_2304_cov_2.368445
+      Species: [Fowlmouthvirus fowlmouth] -> [空]
+  SRR22742703_clean_NODE_3089_length_2049_cov_14.607794
+      Order: [Rowavirales] -> [空]
+      Family: [Mimiviridae] -> [空]
+      Genus: [Cotonvirus] -> [Donellivirus]
+  SRR22742703_clean_NODE_379_length_4121_cov_273.851532
+      Species: [Moumouvirus moumou] -> [空]
+  SRR23107135_clean_NODE_5930_length_1983_cov_2.289529
+      Species: [空] -> [Marseillevirus LCMAC101]
+  SRR23107136_clean_NODE_10946_length_1901_cov_9.572757
+      Family: [Phycodnaviridae] -> [Retroviridae]
+      Genus: [Phaeovirus] -> [空]
+      Species: [Phaeovirus irregularis] -> [空]
+  SRR23107136_clean_NODE_11332_length_1876_cov_5.837493
+      Order: [Ortervirales] -> [空]
+      Family: [Metaviridae] -> [空]
+      Genus: [Metavirus] -> [空]
+      Species: [Metavirus tatarabidopsis] -> [空]
+  SRR23107136_clean_NODE_15801_length_1650_cov_3.041852
+      Order: [Ortervirales] -> [空]
+      Family: [Mamonoviridae] -> [Chimalliviridae]
+      Genus: [Medusavirus] -> [Pawinskivirus]
+      Species: [Medusavirus medusae] -> [Pawinskivirus PS119XW]
+  SRR23107136_clean_NODE_19769_length_1501_cov_7.815126
+      Order: [Ortervirales] -> [空]
+      Family: [Retroviridae] -> [空]
+      Genus: [Alpharetrovirus] -> [空]
+      Species: [Alpharetrovirus aviY73sar] -> [空]
+  SRR23107136_clean_NODE_3141_length_2817_cov_8.642857
+      Species: [空] -> [Hokovirus HKV1]
+  SRR23107136_clean_NODE_36_length_8125_cov_8.986587
+      Order: [Pantevenvirales] -> [空]
+  SRR23107136_clean_NODE_61_length_7172_cov_33.377800
+      Order: [Imitervirales] -> [空]
+      Family: [Mimiviridae] -> [空]
+      Genus: [空] -> [Donellivirus]
+  SRR23107136_clean_NODE_8515_length_2083_cov_25.679602
+      Genus: [Tupanvirus] -> [Klosneuvirus]
+      Species: [Tupanvirus altamarinense] -> [Klosneuvirus KNV1*]
+  SRR23107139_clean_NODE_27096_length_836_cov_1.195282
+      Family: [Phycodnaviridae] -> [Mimiviridae]
+      Genus: [Chlorovirus] -> [空]
+      Species: [Chlorovirus americanus] -> [空]
+  SRR23107139_clean_NODE_624_length_3376_cov_9.882834
+      Order: [Rowavirales] -> [空]
+      Family: [Adenoviridae] -> [空]
+      Genus: [空] -> [Donellivirus]
+  SRR23107139_clean_NODE_9624_length_1420_cov_67.623608
+      Species: [空] -> [Pithovirus LCPAC302]
+  SRR23107141_clean_NODE_19550_length_947_cov_4.060641
+      Order: [Herpesvirales] -> [空]
+  SRR23107141_clean_NODE_2181_length_2301_cov_3.107271
+      Order: [Pantevenvirales] -> [Pimascovirales]
+      Family: [Kyanoviridae] -> [Pithoviridae]
+      Genus: [Serangoonvirus] -> [空]
+      Species: [Jenstvirus jenst] -> [空]
+  SRR23107141_clean_NODE_6330_length_1615_cov_4.101816
+      Phylum: [Uroviricota] -> [Nucleocytoviricota]
+      Class: [Caudoviricetes] -> [Megaviricetes]
+      Order: [Grandevirales] -> [Imitervirales]
+      Family: [Lakviridae] -> [空]
+      Genus: [Hatfieldvirus] -> [空]
+      Species: [Hatfieldvirus porci] -> [空]
+  SRR23215178_clean_NODE_553_length_3101_cov_3.135403
+      Order: [Imitervirales] -> [空]
+  SRR23215181_clean_NODE_46_length_5800_cov_3.527851
+      Family: [Hydriviridae] -> [空]
+      Genus: [Alphahydrivirus] -> [空]
+      Species: [Alphahydrivirus permafrostis] -> [空]
+  SRR23215184_clean_NODE_15_length_4151_cov_2.613046
+      Order: [Imitervirales] -> [空]
+  SRR23215185_clean_NODE_13869_length_624_cov_1.030853
+      Genus: [Gordisvirus] -> [Tecephavirus]
+      Species: [Gordisvirus californiense] -> [Tecephavirus sydneyense*]
+  SRR23561022_clean_NODE_10_length_2836_cov_7.384003
+      Order: [Ortervirales] -> [空]
+      Family: [Metaviridae] -> [空]
+      Genus: [Metavirus] -> [空]
+      Species: [Metavirus tatarabidopsis] -> [空]
+  SRR23561026_clean_NODE_52_length_1702_cov_1.798649
+      Order: [Ortervirales] -> [空]
+      Family: [Metaviridae] -> [空]
+      Genus: [Metavirus] -> [空]
+      Species: [Metavirus tatarabidopsis] -> [空]
+  SRR24305226_clean_NODE_105_length_11093_cov_45.764065
+      Species: [空] -> [Varicellovirus bovinealpha1]
+  SRR33528971_clean_NODE_41_length_2125_cov_2.102827
+      Species: [空] -> [Fadolivirus algeromassiliense]
+  SRR33536649_clean_NODE_1376_length_1959_cov_8.021739
+      Order: [Grandevirales] -> [空]
+  SRR33536649_clean_NODE_2228_length_1653_cov_43.568987
+      Order: [Imitervirales] -> [空]
+      Family: [Mimiviridae] -> [空]
+      Genus: [Theiavirus] -> [空]
+      Species: [Theiavirus salishense] -> [空]
+  SRR33536649_clean_NODE_824_length_2278_cov_10.892063
+      Species: [空] -> [Edafosvirus sp.]
+  SRR33536650_clean_NODE_256_length_3131_cov_11.801504
+      Species: [空] -> [Fadolivirus algeromassiliense]
+  SRR35911579_clean_NODE_503_length_5689_cov_39.668269
+      Species: [空] -> [Otarine gammaherpesvirus 4]
+  contig_1398
+      Order: [Rowavirales] -> [空]
+  contig_1778
+      Species: [空] -> [Cheiracanthium unicum nidovirus]
+  contig_2626
+      Order: [Cryppavirales] -> [Imitervirales]
+      Family: [Mitoviridae] -> [空]
+      Genus: [Mitovirus] -> [空]
+      Species: [Mitovirus sp.] -> [空]
+  contig_3178
+      Order: [Ortervirales] -> [Pimascovirales]
+      Family: [Metaviridae] -> [Pithoviridae]
+      Genus: [Metavirus] -> [Alphacedratvirus*]
+      Species: [Metavirus tatarabidopsis] -> [空]
+  contig_4222
+      Order: [Herpesvirales] -> [Imitervirales]
+      Family: [Orthoherpesviridae] -> [Schizomimiviridae]
+      Species: [Minunavirus Min1] -> [Mimiviridae sp. ChoanoV1]
+  contig_4689
+      Order: [Cryppavirales] -> [Imitervirales]
+      Family: [Mitoviridae] -> [空]
+      Genus: [Mitovirus] -> [空]
+      Species: [Mitovirus sp.] -> [空]
+  contig_4895
+      Species: [Ambivirus sp.] -> [空]
+  contig_4916
+      Species: [空] -> [Otarine gammaherpesvirus 4]

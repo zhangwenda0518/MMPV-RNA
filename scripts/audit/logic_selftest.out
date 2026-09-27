@@ -1,0 +1,230 @@
+[提取] 补丁=/tmp/virus_classifier_analysis.R.cascade_v64
+[提取] 函数 32 个; 常量 12/12 缺失=
+[环境] TAX_LEVELS=Realm>Kingdom>Phylum>Class>Order>Family>Genus>Species | CASCADE_MIN_SHARE=0.5 | CONSENSUS_MODE=cascade | RATE_FLOOR=0.25
+
+== A. build_cascade_winners ==
+[18:04:07] INFO: 逐级淘汰: 阶元计票 3 格次, 淘汰工具投票权 0 格次 (票首门槛 0.50)
+[18:04:07] INFO: 逐级淘汰: 阶元计票 2 格次, 淘汰工具投票权 0 格次 (票首门槛 0.50)
+[18:04:07] INFO: 逐级淘汰: 阶元计票 1 格次, 淘汰工具投票权 1 格次 (票首门槛 0.50)
+[18:04:07] INFO: 逐级淘汰: 阶元计票 1 格次, 淘汰工具投票权 2 格次 (票首门槛 0.50)
+[18:04:07] INFO: 逐级淘汰: 阶元计票 1 格次, 淘汰工具投票权 0 格次 (票首门槛 0.50)
+[18:04:07] INFO: 逐级淘汰: 阶元计票 1 格次, 淘汰工具投票权 0 格次 (票首门槛 0.50)
+[18:04:07] INFO: 逐级淘汰: 阶元计票 1 格次, 淘汰工具投票权 2 格次 (票首门槛 0.50)
+[18:04:07] INFO: 逐级淘汰: 阶元计票 2 格次, 淘汰工具投票权 0 格次 (票首门槛 0.60)
+[18:04:07] INFO: 逐级淘汰: 阶元计票 1 格次, 淘汰工具投票权 1 格次 (票首门槛 0.50)
+[18:04:07] INFO: 逐级淘汰: 阶元计票 1 格次, 淘汰工具投票权 1 格次 (票首门槛 0.50)
+== B. species_conflict_idx / enforce_rank_containment ==
+[18:04:07] INFO: 逐级相容性约束(科-属): 双参照一致反驳 4 行已置空; 单侧判据 2 行仅记录不动; 被处置行中 NCBI 同名多科 4 行
+[18:04:07] INFO: 逐级相容性约束(科-属): 双参照一致反驳 4 行已置空; 单侧判据 2 行仅记录不动; 被处置行中 NCBI 同名多科 4 行
+== C. compute_tool_weights ==
+== D. is_valid_value_vec / species_quality_score_vec ==
+== E. build_consensus 端到端 ==
+[18:04:08] TIME: 阶段1-2 长表构建+权重计算: 0.0 秒
+[18:04:08] INFO: 逐级淘汰: 阶元计票 8 格次, 淘汰工具投票权 0 格次 (票首门槛 0.50)
+[18:04:08] TIME: 阶段3 逐级投票取票首: 0.1 秒
+[18:04:08] INFO: 最完整工具行兜底: cascade 模式已停用（防被淘汰工具复活）
+[18:04:08] TIME: 阶段4 空缺兜底: 0.0 秒
+[18:04:08] TIME: 阶段5 主工具匹配: 0.0 秒
+[18:04:08] TIME: 闸门-由种提属: 0.0 秒
+[18:04:08] TIME: 闸门-科属校准: 0.1 秒
+[18:04:08] INFO: 逐级相容性约束(科-属): 双参照一致反驳 0 行已置空; 单侧判据 0 行仅记录不动; 被处置行中 NCBI 同名多科 0 行
+[18:04:08] TIME: 闸门-科属相容性: 0.0 秒
+[18:04:08] INFO: 科-种相容性约束(科-种): 双参照一致反驳 0 行已置空 Species; 属名可查 1 行; 单侧判据 0 行仅记录不动
+[18:04:08] TIME: 闸门-科种相容性: 0.0 秒
+[18:04:08] TIME: 阶段6 收尾清理+agree/meta重算: 0.0 秒
+[18:04:08] TIME: build_consensus 合计: 0.2 秒
+[18:04:08] TIME: 阶段1-2 长表构建+权重计算: 0.0 秒
+[18:04:08] INFO: 逐级淘汰: 阶元计票 8 格次, 淘汰工具投票权 0 格次 (票首门槛 0.50)
+[18:04:08] TIME: 阶段3 逐级投票取票首: 0.1 秒
+[18:04:08] INFO: 最完整工具行兜底: cascade 模式已停用（防被淘汰工具复活）
+[18:04:08] TIME: 阶段4 空缺兜底: 0.0 秒
+[18:04:08] TIME: 阶段5 主工具匹配: 0.0 秒
+[18:04:08] TIME: 闸门-由种提属: 0.0 秒
+[18:04:08] INFO: 科-属校准(自洽工具集): 替换 1 行, 置空 0 行
+[18:04:08] TIME: 闸门-科属校准: 0.0 秒
+[18:04:08] INFO: 逐级相容性约束(科-属): 双参照一致反驳 0 行已置空; 单侧判据 0 行仅记录不动; 被处置行中 NCBI 同名多科 0 行
+[18:04:08] TIME: 闸门-科属相容性: 0.0 秒
+[18:04:08] INFO: 科-种相容性约束(科-种): 双参照一致反驳 1 行已置空 Species; 属名可查 1 行; 单侧判据 0 行仅记录不动
+[18:04:08] TIME: 闸门-科种相容性: 0.0 秒
+[18:04:08] TIME: 阶段6 收尾清理+agree/meta重算: 0.0 秒
+[18:04:08] TIME: build_consensus 合计: 0.1 秒
+[18:04:08] TIME: 阶段1-2 长表构建+权重计算: 0.0 秒
+[18:04:08] INFO: 逐级淘汰: 阶元计票 8 格次, 淘汰工具投票权 0 格次 (票首门槛 0.50)
+[18:04:08] TIME: 阶段3 逐级投票取票首: 0.1 秒
+[18:04:08] INFO: 最完整工具行兜底: cascade 模式已停用（防被淘汰工具复活）
+[18:04:08] TIME: 阶段4 空缺兜底: 0.0 秒
+[18:04:08] TIME: 阶段5 主工具匹配: 0.0 秒
+[18:04:08] TIME: 闸门-由种提属: 0.0 秒
+[18:04:08] TIME: 闸门-科属校准: 0.0 秒
+[18:04:08] INFO: 逐级相容性约束(科-属): 双参照一致反驳 0 行已置空; 单侧判据 0 行仅记录不动; 被处置行中 NCBI 同名多科 0 行
+[18:04:08] TIME: 闸门-科属相容性: 0.0 秒
+[18:04:08] INFO: 科-种相容性约束(科-种): 双参照一致反驳 0 行已置空 Species; 属名可查 1 行; 单侧判据 0 行仅记录不动
+[18:04:08] TIME: 闸门-科种相容性: 0.0 秒
+[18:04:08] WARN: Kingdom 后缀校验: 置空 1 格（非 -virae 结尾）
+[18:04:08] TIME: 阶段6 收尾清理+agree/meta重算: 0.0 秒
+[18:04:08] TIME: build_consensus 合计: 0.1 秒
+[18:04:08] TIME: 阶段1-2 长表构建+权重计算: 0.0 秒
+[18:04:08] INFO: 逐级淘汰: 阶元计票 8 格次, 淘汰工具投票权 0 格次 (票首门槛 0.50)
+[18:04:08] TIME: 阶段3 逐级投票取票首: 0.1 秒
+[18:04:08] INFO: 最完整工具行兜底: cascade 模式已停用（防被淘汰工具复活）
+[18:04:08] TIME: 阶段4 空缺兜底: 0.0 秒
+[18:04:08] TIME: 阶段5 主工具匹配: 0.0 秒
+[18:04:08] TIME: 闸门-由种提属: 0.0 秒
+[18:04:08] TIME: 闸门-科属校准: 0.0 秒
+[18:04:08] INFO: 逐级相容性约束(科-属): 双参照一致反驳 0 行已置空; 单侧判据 0 行仅记录不动; 被处置行中 NCBI 同名多科 0 行
+[18:04:08] TIME: 闸门-科属相容性: 0.0 秒
+[18:04:08] INFO: 科-种相容性约束(科-种): 双参照一致反驳 0 行已置空 Species; 属名可查 0 行; 单侧判据 0 行仅记录不动
+[18:04:08] TIME: 闸门-科种相容性: 0.0 秒
+[18:04:08] INFO: 占位值清理: Realm 层清空 1 格
+[18:04:08] INFO: 占位值清理: Genus 层清空 1 格
+[18:04:08] INFO: 占位值清理: Species 层清空 1 格
+[18:04:08] TIME: 阶段6 收尾清理+agree/meta重算: 0.0 秒
+[18:04:08] TIME: build_consensus 合计: 0.1 秒
+[18:04:08] TIME: 阶段1-2 长表构建+权重计算: 0.0 秒
+[18:04:08] INFO: 逐级淘汰: 阶元计票 8 格次, 淘汰工具投票权 2 格次 (票首门槛 0.50)
+[18:04:08] TIME: 阶段3 逐级投票取票首: 0.1 秒
+[18:04:08] INFO: 最完整工具行兜底: cascade 模式已停用（防被淘汰工具复活）
+[18:04:08] TIME: 阶段4 空缺兜底: 0.0 秒
+[18:04:08] TIME: 阶段5 主工具匹配: 0.0 秒
+[18:04:08] TIME: 闸门-由种提属: 0.0 秒
+[18:04:08] TIME: 闸门-科属校准: 0.0 秒
+[18:04:08] INFO: 逐级相容性约束(科-属): 双参照一致反驳 0 行已置空; 单侧判据 0 行仅记录不动; 被处置行中 NCBI 同名多科 0 行
+[18:04:08] TIME: 闸门-科属相容性: 0.0 秒
+[18:04:08] INFO: 科-种相容性约束(科-种): 双参照一致反驳 0 行已置空 Species; 属名可查 1 行; 单侧判据 0 行仅记录不动
+[18:04:08] TIME: 闸门-科种相容性: 0.0 秒
+[18:04:08] TIME: 阶段6 收尾清理+agree/meta重算: 0.0 秒
+[18:04:08] TIME: build_consensus 合计: 0.1 秒
+[18:04:08] TIME: 阶段1-2 长表构建+权重计算: 0.0 秒
+[18:04:08] TIME: 阶段3 逐级投票取票首: 0.0 秒
+[18:04:08] INFO: 最完整工具行兜底实际填补 0 格（legacy 下预期 0）
+[18:04:08] TIME: 阶段4 空缺兜底: 0.0 秒
+[18:04:08] TIME: 阶段5 主工具匹配: 0.0 秒
+[18:04:08] TIME: 闸门-由种提属: 0.0 秒
+[18:04:08] TIME: 闸门-科属校准: 0.0 秒
+[18:04:08] INFO: 逐级相容性约束(科-属): 双参照一致反驳 0 行已置空; 单侧判据 0 行仅记录不动; 被处置行中 NCBI 同名多科 0 行
+[18:04:08] TIME: 闸门-科属相容性: 0.0 秒
+[18:04:08] INFO: 科-种相容性约束(科-种): 双参照一致反驳 0 行已置空 Species; 属名可查 1 行; 单侧判据 0 行仅记录不动
+[18:04:08] TIME: 闸门-科种相容性: 0.0 秒
+[18:04:08] TIME: 阶段6 收尾清理+agree/meta重算: 0.0 秒
+[18:04:08] TIME: build_consensus 合计: 0.1 秒
+[18:04:09] TIME: 阶段1-2 长表构建+权重计算: 0.0 秒
+[18:04:09] INFO: 逐级淘汰: 阶元计票 8 格次, 淘汰工具投票权 0 格次 (票首门槛 0.50)
+[18:04:09] TIME: 阶段3 逐级投票取票首: 0.1 秒
+[18:04:09] INFO: 最完整工具行兜底: cascade 模式已停用（防被淘汰工具复活）
+[18:04:09] TIME: 阶段4 空缺兜底: 0.0 秒
+[18:04:09] TIME: 阶段5 主工具匹配: 0.0 秒
+[18:04:09] TIME: 闸门-由种提属: 0.0 秒
+[18:04:09] TIME: 闸门-科属校准: 0.0 秒
+[18:04:09] INFO: 逐级相容性约束(科-属): 双参照一致反驳 0 行已置空; 单侧判据 0 行仅记录不动; 被处置行中 NCBI 同名多科 0 行
+[18:04:09] TIME: 闸门-科属相容性: 0.0 秒
+[18:04:09] INFO: 科-种相容性约束(科-种): 双参照一致反驳 0 行已置空 Species; 属名可查 1 行; 单侧判据 0 行仅记录不动
+[18:04:09] TIME: 闸门-科种相容性: 0.0 秒
+[18:04:09] TIME: 阶段6 收尾清理+agree/meta重算: 0.0 秒
+[18:04:09] TIME: build_consensus 合计: 0.1 秒
+[18:04:09] TIME: 阶段1-2 长表构建+权重计算: 0.0 秒
+[18:04:09] INFO: 逐级淘汰: 阶元计票 8 格次, 淘汰工具投票权 0 格次 (票首门槛 0.50)
+[18:04:09] TIME: 阶段3 逐级投票取票首: 0.1 秒
+[18:04:09] INFO: 最完整工具行兜底: cascade 模式已停用（防被淘汰工具复活）
+[18:04:09] TIME: 阶段4 空缺兜底: 0.0 秒
+[18:04:09] TIME: 阶段5 主工具匹配: 0.0 秒
+[18:04:09] TIME: 闸门-由种提属: 0.0 秒
+[18:04:09] INFO: 科-属校准(自洽工具集): 替换 1 行, 置空 0 行
+[18:04:09] TIME: 闸门-科属校准: 0.0 秒
+[18:04:09] INFO: 逐级相容性约束(科-属): 双参照一致反驳 0 行已置空; 单侧判据 0 行仅记录不动; 被处置行中 NCBI 同名多科 0 行
+[18:04:09] TIME: 闸门-科属相容性: 0.0 秒
+[18:04:09] INFO: 科-种相容性约束(科-种): 双参照一致反驳 0 行已置空 Species; 属名可查 1 行; 单侧判据 0 行仅记录不动
+[18:04:09] TIME: 闸门-科种相容性: 0.0 秒
+[18:04:09] TIME: 阶段6 收尾清理+agree/meta重算: 0.0 秒
+[18:04:09] TIME: build_consensus 合计: 0.1 秒
+== F. 淘汰优先级 / 门槛边界 ==
+[18:04:09] INFO: 逐级淘汰: 阶元计票 2 格次, 淘汰工具投票权 2 格次 (票首门槛 0.50)
+[18:04:09] INFO: 逐级淘汰: 阶元计票 2 格次, 淘汰工具投票权 1 格次 (票首门槛 0.50)
+[18:04:09] INFO: 逐级淘汰: 阶元计票 2 格次, 淘汰工具投票权 1 格次 (票首门槛 0.50)
+[18:04:09] INFO: 逐级淘汰: 阶元计票 2 格次, 淘汰工具投票权 1 格次 (票首门槛 0.50)
+
+================ 自测结果 ================
+[INFO] 参照表 A/B 已写入                      /tmp/Rtmp91dsJz/refA.tsv /tmp/Rtmp91dsJz/refB.tsv
+[PASS] A1 Realm 2/2 全票                          Riboviria
+[PASS] A1 Kingdom 1/2=0.5 不淘汰取行序先到  Orthornavirae
+[PASS] A1 未被淘汰的 C 仍可在细阶元定音 Uroviricota
+[PASS] A2 0.5 取行序先到                       Genusalpha
+[PASS] A2 0.5 未淘汰 B(其种仍可胜出)       Genusbeta spx
+[PASS] A3 0.75>0.5 票首                           Genusalpha
+[PASS] A3 被淘汰工具在细阶元不能复活   NA
+[PASS] A4 1 票 0.9 击败 2 票 0.05+0.05          Genusalpha
+[PASS] A4 两个被淘汰者都不复活            NA
+[PASS] A5 平票行序先到 A                      Genusalpha
+[PASS] A5 换行序后翻转为 B                   Genusbeta
+[PASS] A6 share=0.6 门槛 0.5 时淘汰            NA
+[PASS] A6 share=0.6 门槛 0.6 时不淘汰         Genusbeta
+[PASS] A7 有值阶元照常淘汰                  Alphaviridae
+[PASS] A7 无值阶元留空                        NA
+[PASS] A7 无值阶元不重置活跃集            NA
+[PASS] A8 空 long -> 0 行                         0
+[PASS] A9 零权重工具不得胜                  Genusbeta
+[PASS] A10 >30 工具应报错而非静默          error
+[PASS] B1 互斥行下标                           1 | 7 | 8
+[PASS] B1 属名可查行数                        7
+[PASS] B1 单侧判据行数(XOR)                   2
+[PASS] B2 blank_species=TRUE 互斥行 Genus 置空 NA
+[PASS] B2 blank_species=TRUE 互斥行 Species 一并置空 NA
+[PASS] B2 单侧行不动(r3)                       Mimiviridae     | Orthoflavivirus
+[PASS] B2 单侧行不动(r9)                       Betavirus
+[PASS] B3 blank_species=FALSE 只清 Genus          NA                 | Simplexvirus alpha
+[INFO] B4 科-属闸门处置行                    r1,r2,r7,r8
+[INFO] B5 科-种闸门处置行                    r1,r7,r8
+[INFO] B6 r2(两侧相容)/r4(VMR 相容) 未被判定 r2.Genus=NA r4.Genus=Orthoflavivirus
+[PASS] C1 rate=0 罚到下限 0.25                  12.8
+[PASS] C1 rate=NA 不罚                            102.4
+[PASS] C1 rate=0.4 按 0.4 罚                      10.24
+[PASS] C2 无 rate 条目保持原权重            0.8
+[PASS] C3 未登记 rate 的工具不罚            51.2
+[PASS] C4 未登记工具名默认 bias 0.8         51.2
+[PASS] C6 已登记工具 bias: ACVirus 1.2 / VITAP 1.1 / vcontact3 0.7 / contigtax 0.6 76.8 | 70.4 | 44.8 | 38.4
+[PASS] C5 RATE_FLOOR 旋钮生效(0.1)              5.12
+[PASS] D1 占位字面量全判无效               FALSE | FALSE | FALSE | FALSE | FALSE | FALSE | FALSE | FALSE | FALSE | FALSE | FALSE | FALSE
+[PASS] D1 正常值判有效                        TRUE | TRUE | TRUE
+[PASS] D2 阶元后缀误置判 0 分               0 | 0
+[PASS] D2 双名法升权 1.5                       1.5
+[PASS] D2 单名降权 0.5                          0.5
+[INFO] D3 sp. 写法实际得分（限定词降权与双名法升权叠加） 0.45 | 0.45 | 0.10
+[PASS] D3 unclassified 前缀降权 0.1             0.1
+[PASS] E1 全自洽 -> 8 阶元原样保留         Riboviria          | Heunggongvirae     | Peploviricota      | Herviviricetes     | Herpesvirales      | Herpesviridae      | Simplexvirus       | Simplexvirus alpha
+[PASS] E1 completeness=8                            8
+[PASS] E1 confidence=1                              1
+[PASS] E1 Species_agree 前缀 1/1                  1/1
+[PASS] E2 科-种闸门只清 Species               NA
+[PASS] E2 Genus 不受科-种闸门影响           Tethysvirus
+[PASS] E2 Family 不动                             Mimiviridae
+[PASS] E2 completeness=7                            7
+[PASS] E2 Species_agree 前缀 0/1                  0/1
+[INFO] E2 科-属闸门放行(属与科相容)但科-种闸门拦下并记录 1
+[PASS] E3 非 -virae 王国置空                   NA
+[PASS] E3 其余不动                              Riboviria
+[PASS] E3 completeness=7                            7
+[PASS] E4 Realm 占位(整串)                      NA
+[PASS] E4 Genus 占位(限定词子串)             NA
+[PASS] E4 Species 占位(限定词子串)           NA
+[PASS] E4 completeness=5                            5
+[PASS] E5 cascade Order 3/5=0.6 淘汰 B/C          Herpesvirales
+[PASS] E5 cascade Family 不复活 B/C(其权重 5 vs A 1) Herpesviridae
+[PASS] E5 cascade Genus/Species 随科一致        Tethysvirus       | Tethysvirus alpha
+[PASS] E5 legacy 同输入 Order 同样 A 胜(两家一致) Herpesvirales
+[PASS] E5 legacy Family 被 B/C 权重 5+5 压倒   Mimiviridae
+[PASS] E5 legacy Genus/Species 随权重            Mimivirus      | Mimivirus beta
+[INFO] E5 两模式粗阶元                        cascade=Peploviricota/Herviviricetes legacy=Peploviricota/Herviviricetes
+[PASS] E6 缺值工具不计入该阶元分母(Genus) 2/2
+[PASS] E6 Species 分母只算有值工具          1/1
+[PASS] E6 Species 取唯一有值工具             Simplexvirus alpha
+[INFO] E7 最终 Genus（由种提属 Tethysvirus 被科-属校准改回 Mimivirus） Mimivirus
+[INFO] E7 最终 Species（未与最终 Genus 复核） Tethysvirus alpha
+[INFO] E7 Genus_agree ;; Species_agree              1/1: A ;; 1/1: A
+[INFO] E7 completeness                              8
+[PASS] F1 淘汰优先于权重(细阶元 5 不复活) Herpesviridae
+[PASS] F1 粗阶元 0.6 定音                      Herpesvirales
+[PASS] F2 share 恰 0.5 不淘汰 -> 细阶元权重定音 Mimiviridae
+[PASS] F2 share 恰 0.5 粗阶元取行序先到    Herpesvirales
+[PASS] F3 1:2 时少数 A 被淘汰                 Betaovirales
+[PASS] F3 幸存者 C 细阶元照常定音         Gammaviridae
+
+合计 PASS=72 FAIL=0 INFO=11

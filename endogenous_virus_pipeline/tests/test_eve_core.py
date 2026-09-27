@@ -21,11 +21,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from eve_scan_core import (EveConfig, assign_best_hits, bed_to_regions,
                            check_extracted, check_tools, clean_name,
-                           extract_cmd, family_of, load_id2div, locus_key,
-                           merge_all, merge_loci, restore_coordinates, run,
-                           samtools_too_old, sliding_cmd, summarize_genome,
-                           verdict_loci)
-from eve_genome_scan import parse_stages, resolve_genome_fa
+                           cleanup_stage_files, extract_cmd, family_of,
+                           load_id2div, locus_key, merge_all, merge_loci,
+                           restore_coordinates, run, samtools_too_old,
+                           sliding_cmd, summarize_genome, verdict_loci)
+from eve_genome_scan import genome_done, parse_stages, resolve_genome_fa
 
 
 def write(path, text):
@@ -247,10 +247,13 @@ class TestSummarizeAndMerge(unittest.TestCase):
         lines = summ.read_text().splitlines()
         self.assertEqual(len(lines), 3)  # header + 2 loci
         f = lines[1].split("\t")
-        self.assertEqual(f[:3], ["G1", "chr1:99-700", "viral_supported"])
-        self.assertEqual(f[3], "Geminiviridae")
-        self.assertEqual(f[7], "SP_V")
-        self.assertEqual(f[12], "70")  # rvdb_bitscore
+        # 单基因组 summary 是 12 列, 不含 genome (基因组名在文件名里)
+        self.assertEqual(len(lines[0].split("\t")), 12)
+        self.assertEqual(len(f), 12)
+        self.assertEqual(f[:2], ["chr1:99-700", "viral_supported"])
+        self.assertEqual(f[2], "Geminiviridae")
+        self.assertEqual(f[6], "SP_V")
+        self.assertEqual(f[11], "70")  # rvdb_bitscore
 
     def test_merge_all(self):
         summarize_genome("G1", self.out)
@@ -264,6 +267,99 @@ class TestSummarizeAndMerge(unittest.TestCase):
         fam = (self.out / "family_by_genome.tsv").read_text().splitlines()
         self.assertEqual(fam[0], "family\tG1\tG2")
         self.assertEqual(fam[1], "Geminiviridae\t1\t0")  # 仅 viral_supported 计入
+
+    def test_merged_loci_all_is_rectangular(self):
+        """回归: 汇总表曾写成 14 字段配 13 个表头名.
+
+        单基因组 summary 多写了一列 genome, merge_all 又拼一次 -> 按列名读的
+        消费者 (pandas / csv.DictReader) 每一列都右移一位.
+        """
+        import csv
+        import gzip
+        summarize_genome("G1", self.out)
+        summarize_genome("G2", self.out)
+        merge_all(self.out)
+        with gzip.open(self.out / "kingdom_loci_all.tsv.gz", "rt",
+                       encoding="utf-8") as fh:
+            rows = list(csv.reader(fh, delimiter="\t"))
+        hdr = rows[0]
+        self.assertEqual(len(hdr), 13)
+        self.assertEqual(hdr[:4], ["genome", "locus", "verdict", "ref_family"])
+        for r in rows[1:]:
+            self.assertEqual(len(r), len(hdr), "列数不齐: %r" % (r,))
+        d = dict(zip(hdr, rows[1]))          # 按列名读必须落在正确的列上
+        self.assertEqual(d["genome"], "G1")
+        self.assertEqual(d["locus"], "chr1:99-700")
+        self.assertEqual(d["verdict"], "viral_supported")
+        self.assertEqual(d["ref_family"], "Geminiviridae")
+        self.assertEqual(d["rvdb_bitscore"], "70")
+
+    def test_merge_accepts_legacy_13col_summary(self):
+        """旧布局的 summary (13 列, 首列 genome) 仍要能正确汇总.
+
+        盘上已有的 summary 不会自动重写, 按 12 列索引读会整行错位.
+        """
+        import gzip
+        summarize_genome("G1", self.out)
+        s = self.out / "04_Summary" / "G1_eve_summary.tsv"
+        lines = s.read_text(encoding="utf-8").splitlines()
+        s.write_text("\n".join(["genome\t" + lines[0]]
+                               + ["G1\t" + ln for ln in lines[1:]]) + "\n",
+                     encoding="utf-8")
+        merge_all(self.out)
+        ks = (self.out / "kingdom_summary.tsv").read_text().splitlines()
+        self.assertEqual(ks[1], "G1\t1\t1\t0")   # 不是错位后的 0/0/2
+        with gzip.open(self.out / "kingdom_loci_all.tsv.gz", "rt",
+                       encoding="utf-8") as fh:
+            rows = [ln.split("\t") for ln in fh.read().splitlines()]
+        self.assertEqual(len(rows[0]), 13)
+        self.assertEqual(len(rows[1]), 13)
+        self.assertEqual(rows[1][1], "chr1:99-700")   # 没有重复的 genome 列
+
+    def test_merge_does_not_silently_shift_foreign_summary_width(self):
+        """只在 13 列 (12+genome) 时才丢首列; 别的宽度必须走补齐/告警路径.
+
+        eve_kingdom.py (本模块的移植来源) 写的是 15 列旧格式, 首列也是 locus;
+        若把"比 12 宽就丢首列"当通则, 那种表会被悄悄错位而不是被喊出来.
+        """
+        import gzip
+        summarize_genome("G1", self.out)
+        s = self.out / "04_Summary" / "G1_eve_summary.tsv"
+        lines = s.read_text(encoding="utf-8").splitlines()
+        extra = lines[1] + "\tlca_taxname\tbait_label"      # 15 列, 头尾各加一列
+        s.write_text(lines[0] + "\tlca_taxname\tbait_label\n" + extra + "\n",
+                     encoding="utf-8")
+        calls = []
+        import eve_scan_core as core
+        with mock.patch.object(core, "logmsg", calls.append):
+            merge_all(self.out)
+        self.assertTrue(calls and "列数不是 12" in calls[0])   # 必须告警
+        with gzip.open(self.out / "kingdom_loci_all.tsv.gz", "rt",
+                       encoding="utf-8") as fh:
+            rows = [ln.split("\t") for ln in fh.read().splitlines()]
+        self.assertEqual(len(rows[0]), 13)
+        self.assertEqual(len(rows[1]), 13)
+        # 首列仍是 locus (没有被当成 genome 丢掉), 且没有重复的 genome 列
+        self.assertEqual(rows[1][1], "chr1:99-700")
+
+    def test_merge_pads_truncated_summary(self):
+        """被截断的 summary 行不得让汇总表变成非矩形."""
+        import gzip
+        summarize_genome("G1", self.out)
+        s = self.out / "04_Summary" / "G1_eve_summary.tsv"
+        lines = s.read_text(encoding="utf-8").splitlines()
+        s.write_text(lines[0] + "\n"
+                     + "\t".join(lines[1].split("\t")[:5]) + "\n",
+                     encoding="utf-8")
+        merge_all(self.out)
+        with gzip.open(self.out / "kingdom_loci_all.tsv.gz", "rt",
+                       encoding="utf-8") as fh:
+            rows = [ln.split("\t") for ln in fh.read().splitlines()]
+        self.assertEqual(len(rows[1]), len(rows[0]))
+        self.assertEqual(rows[1][1], "chr1:99-700")
+        self.assertEqual(rows[1][4], "NC_x")      # 前 5 列未错位
+        self.assertEqual(rows[1][5], "95")
+        self.assertEqual(rows[1][6], "")          # 第 6 列起补空, 不是错位
 
 
 class TestLocusKeyJoin(unittest.TestCase):
@@ -300,11 +396,111 @@ class TestLocusKeyJoin(unittest.TestCase):
     def test_summary_joins_sanitized_keys(self):
         summ = summarize_genome("G", self.out)
         f = summ.read_text().splitlines()[1].split("\t")
-        self.assertEqual(f[1], "chr1:50-699")   # 展示保持 loci.bed 原名
-        self.assertEqual(f[2], "viral_supported")
-        self.assertEqual(f[7], "SP_V")
-        self.assertEqual(f[11], "Geminiviridae sp. [RVDB]")
-        self.assertEqual(f[12], "70")
+        self.assertEqual(f[0], "chr1:50-699")   # 展示保持 loci.bed 原名
+        self.assertEqual(f[1], "viral_supported")
+        self.assertEqual(f[6], "SP_V")
+        self.assertEqual(f[10], "Geminiviridae sp. [RVDB]")
+        self.assertEqual(f[11], "70")
+
+
+class TestCleanupStageFiles(unittest.TestCase):
+    """--cleanup: 六条规则都要真的生效, 且终表永不被删.
+
+    历史上护栏扩展名被硬编码成 .tsv, 而 s1_hits / loci_bed 是 .bed —— 那两条
+    护栏永远不存在, s1_raw.tsv 与 s1_hits.bed (最大的两个中转文件) 从未被删.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.out = Path(self.tmp.name) / "out"
+        self.name = "G1"
+        self.ld = self.out / "01_Loci" / self.name
+        self.vd = self.out / "02_Verdict" / self.name
+        self.rd = self.out / "03_RVDB" / self.name
+        for d in (self.ld, self.vd, self.rd):
+            d.mkdir(parents=True, exist_ok=True)
+        # 按 loci_paths / stage 函数真实落盘的命名造全套文件
+        for f in ("chunks.fna", "s1_raw.tsv", "s1_hits.bed", "loci.bed",
+                  "loci.fa", "s1_best.tsv", "genome.fai"):
+            write(self.ld / f"{self.name}.{f}", "x" * 100)
+        for f in ("s2_raw.tsv", "s2_verdict.tsv"):
+            write(self.vd / f"{self.name}.{f}", "x" * 100)
+        for f in ("cand3.fa", "cand3.bed", "s3_rvdb.tsv"):
+            write(self.rd / f"{self.name}.{f}", "x" * 100)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_all_victims_removed_and_finals_kept(self):
+        freed = cleanup_stage_files(self.out, self.name)
+        self.assertEqual(freed, 600)          # 6 个中转文件 × 100 字节
+        left = sorted(p.name for p in self.ld.iterdir())
+        self.assertEqual(left, [f"{self.name}.genome.fai", f"{self.name}.loci.bed",
+                                f"{self.name}.loci.fa", f"{self.name}.s1_best.tsv"])
+        for f in ("s2_raw.tsv",):
+            self.assertFalse((self.vd / f"{self.name}.{f}").exists())
+        for f in ("cand3.fa", "cand3.bed"):
+            self.assertFalse((self.rd / f"{self.name}.{f}").exists())
+        # 终表一律留着
+        self.assertTrue((self.vd / f"{self.name}.s2_verdict.tsv").exists())
+        self.assertTrue((self.rd / f"{self.name}.s3_rvdb.tsv").exists())
+
+    def test_guard_missing_keeps_victim(self):
+        """护栏不在就不许删 —— 这是"终表永不被删"的保险, 不能改成只看 victim."""
+        (self.vd / f"{self.name}.s2_verdict.tsv").unlink()
+        freed = cleanup_stage_files(self.out, self.name)
+        self.assertEqual(freed, 500)          # s2_raw 那条规则不生效
+        self.assertTrue((self.vd / f"{self.name}.s2_raw.tsv").exists())
+
+    def test_victim_and_guard_paths_match_real_products(self):
+        """六条规则的 victim/guard 路径都必须指向真实存在的文件.
+
+        这是这次修的根因: 规则里的名字是"逻辑键", 而落盘文件名不同
+        (loci.bed 的主体是 loci, cand3.fa 的主体是 cand3), 早期版本按键拼路径,
+        六条里四条永不生效. 这里逐条对照 stage 函数真正写的文件名.
+        """
+        from eve_scan_core import STAGE_DIRS, _CLEANUP_META, _CLEANUP_STEMS
+        n = self.name
+        real = {self.ld: (f"{n}.chunks.fna", f"{n}.s1_raw.tsv",
+                          f"{n}.s1_hits.bed", f"{n}.loci.bed", f"{n}.loci.fa",
+                          f"{n}.s1_best.tsv"),
+                self.vd: (f"{n}.s2_raw.tsv", f"{n}.s2_verdict.tsv"),
+                self.rd: (f"{n}.cand3.fa", f"{n}.cand3.bed", f"{n}.s3_rvdb.tsv")}
+        for rule in _CLEANUP_STEMS:
+            for which in (0, 1):                  # victim 与 guard 都要查
+                stem = rule[which]
+                fstem, ext, stage = _CLEANUP_META[stem]
+                fname = f"{n}.{fstem}.{ext}"
+                d = self.out / STAGE_DIRS[stage] / n
+                self.assertIn(fname, real[d], f"{stem}: {fname} 不是真实产物名")
+
+
+class TestVerdictWarnsUnmapped(unittest.TestCase):
+    """id2div 表不配套时必须喊出来: 否则全部位点静默落成 undetermined."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.d = Path(self.tmp.name)
+        write(self.d / "raw.tsv",
+              "chr1:1-300\tS1\t90\t50\t1e-9\t100\t80\t90\t100\t40\t1\t100\n"
+              "chr1:1-300\tS2\t90\t50\t1e-9\t100\t80\t90\t100\t45\t1\t100\n")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_warns_only_when_ids_are_missing(self):
+        import eve_scan_core as core
+        calls = []
+        raw = str(self.d / "raw.tsv")
+        with mock.patch.object(core, "logmsg", calls.append):
+            core.verdict_loci(raw, {"S1": "plant", "S2": "plant"},
+                              str(self.d / "v.tsv"), 50, 50)
+        self.assertEqual(calls, [])            # 两个 id 都映射到: 不吵
+        with mock.patch.object(core, "logmsg", calls.append):
+            nv, nh, nu = core.verdict_loci(raw, {}, str(self.d / "v.tsv"), 50, 50)
+        self.assertEqual((nv, nh, nu), (0, 0, 1))
+        self.assertEqual(len(calls), 1)         # 两个 id 都不在表里 -> 1 条告警
+        self.assertIn("2 个 sseqid", calls[0])
 
 
 class TestParseStages(unittest.TestCase):
@@ -620,6 +816,75 @@ class TestRunTimeout(unittest.TestCase):
         with self.assertRaises(RuntimeError) as ctx:
             run(cmd, _Log())
         self.assertIn("exit 3", str(ctx.exception))
+
+
+class TestGenomeDone(unittest.TestCase):
+    """断点判定按"请求的阶段"算, 不是只看 summary.
+
+    回归: summary 曾经是唯一的完成标记, 而它在只跑了部分阶段时也会写出 (整列
+    undetermined) —— 于是 `--stage 1` 之后补跑 `--stage 2,3` 会被整批跳过,
+    冻结的空结果被 merge 当成真的 undetermined 统计, --force 是唯一出路.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.out = Path(self.tmp.name) / "out"
+        self.n = "G1"
+        self.all_stages = {"discover", "verdict", "annotate"}
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _mk(self, rel):
+        p = self.out / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        write(p, "x")
+
+    def test_nothing_done(self):
+        self.assertFalse(genome_done(self.out, self.n, self.all_stages))
+
+    def test_summary_alone_is_not_done(self):
+        """只写了 summary (部分阶段跑过的样子) 不能算完成."""
+        self._mk(f"04_Summary/{self.n}_eve_summary.tsv")
+        self.assertFalse(genome_done(self.out, self.n, self.all_stages))
+
+    def test_stage1_only_does_not_satisfy_later_stages(self):
+        self._mk(f"04_Summary/{self.n}_eve_summary.tsv")
+        self._mk(f"01_Loci/{self.n}/{self.n}.loci.bed")
+        self.assertTrue(genome_done(self.out, self.n, {"discover"}))
+        self.assertFalse(genome_done(self.out, self.n, {"verdict"}))
+        self.assertFalse(genome_done(self.out, self.n, {"annotate"}))
+        self.assertFalse(genome_done(self.out, self.n, self.all_stages))
+
+    def test_all_artifacts_present_is_done(self):
+        self._mk(f"04_Summary/{self.n}_eve_summary.tsv")
+        self._mk(f"01_Loci/{self.n}/{self.n}.loci.bed")
+        self._mk(f"02_Verdict/{self.n}/{self.n}.s2_verdict.tsv")
+        self._mk(f"03_RVDB/{self.n}/{self.n}.s3_rvdb.tsv")
+        self.assertTrue(genome_done(self.out, self.n, self.all_stages))
+
+    def test_skip_s3_does_not_require_rvdb_artifact(self):
+        self._mk(f"04_Summary/{self.n}_eve_summary.tsv")
+        self._mk(f"01_Loci/{self.n}/{self.n}.loci.bed")
+        self._mk(f"02_Verdict/{self.n}/{self.n}.s2_verdict.tsv")
+        self.assertTrue(genome_done(self.out, self.n, self.all_stages,
+                                    skip_s3=True))
+        # 但补跑 RVDB (不带 skip_s3) 必须重新干活
+        self.assertFalse(genome_done(self.out, self.n, self.all_stages))
+        self._mk(f"03_RVDB/{self.n}/{self.n}.s3_rvdb.tsv")
+        self.assertTrue(genome_done(self.out, self.n, self.all_stages))
+
+    def test_viroid_layer_is_part_of_completion(self):
+        for rel in (f"04_Summary/{self.n}_eve_summary.tsv",
+                    f"01_Loci/{self.n}/{self.n}.loci.bed",
+                    f"02_Verdict/{self.n}/{self.n}.s2_verdict.tsv",
+                    f"03_RVDB/{self.n}/{self.n}.s3_rvdb.tsv"):
+            self._mk(rel)
+        self.assertFalse(genome_done(self.out, self.n, self.all_stages,
+                                     viroid=True))
+        self._mk(f"04_Summary/{self.n}_viroid.tsv")
+        self.assertTrue(genome_done(self.out, self.n, self.all_stages,
+                                    viroid=True))
 
 
 class TestResolveGenomeFa(unittest.TestCase):

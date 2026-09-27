@@ -25,7 +25,7 @@ python = ">=3.10,<3.13"
 R = ">=4.2,<4.5"
 r-base = ">=4.2,<4.5"
 perl = ">=5.32"
-java-openjdk = ">=11"                         # SnpEff 运行需要
+java-openjdk = ">=21"                         # SnpEff 需要 JRE>=21 (biosoft/snpEff)
 
 # --- Python 核心库 ---
 biopython = ">=1.83"
@@ -36,7 +36,9 @@ seaborn = ">=0.12"
 polars = ">=0.20"
 pysam = ">=0.22"
 plotly = ">=5.14"
+python-kaleido = ">=0.2"                      # plotly 静态导出 (conda-forge 包名 python-kaleido)
 scipy = ">=1.10"
+scikit-learn = ">=1.3"                        # PCA/KMeans (variants/SnpGenie)
 requests = ">=2.28"
 tqdm = ">=4.65"
 psutil = ">=5.9"
@@ -45,6 +47,19 @@ xmltodict = ">=0.13"
 openai = ">=1.0"
 urllib3 = ">=2.0"
 upsetplot = ">=0.8"
+venn = ">=0.1"                                # 韦恩图 (virus_identification)
+networkx = ">=3.0"                            # 单倍型网络 (haplotype/build_haplo)
+openpyxl = ">=3.1"                            # 读 xlsx (元数据/VMR 表)
+pyhmmer = ">=0.10"                            # HMMER 蛋白域搜索
+
+# --- GUI (metadata_gui / submission_gui / virome_submission_pipeline/submission_gui.py) ---
+pyside6 = ">=6.5"
+
+# --- 系统发育辅助 (virome_phylo_pipeline Python 侧) ---
+treetime = ">=0.9"                            # RTT 定年门禁
+cartopy = ">=0.22"                            # 地图可视化 (sample_plot)
+geopy = ">=2.4"                               # 地理坐标 (virphy_bridge)
+marsilea = ">=0.4"                            # 复合图 (pub_plots)
 
 # --- R 核心包 (CRAN) ---
 r-optparse = ">=1.7"
@@ -66,16 +81,24 @@ r-httr = ">=1.4"
 r-viridis = ">=0.6"
 r-upsetr = ">=1.4"
 r-gridextra = ">=2.3"
+r-ape = ">=5.7"                               # 系统发育 (popgen_r_backend.R)
+r-pegas = ">=1.2"                             # 群体遗传 (popgen_r_backend.R)
+r-ggpubr = ">=0.6"                            # 统计标注 (panvirome_suite.R)
+r-zoo = ">=1.8"                               # 滑窗 (panvirome_suite.R)
+r-fs = ">=1.6"                                # 文件操作 (panvirome_suite.R)
 
 # --- R Bioconductor ---
 bioconductor-maftools = ">=2.18"
+bioconductor-complexheatmap = ">=2.18"        # oncoprint 热图 (panvirome_oncoprint.R)
 
 # ==============================================================================
 # 数据清洗 & 宿主去除 (Stage 0a-0c)
 # ==============================================================================
 fastp = ">=0.23"                              # QC + trimming
 seqkit = ">=2.6"                              # FASTA/Q 操作
+seqtk = ">=1.4"                               # subseq 提取
 bbmap = ">=39.0"                              # BBNorm, clumpify, bbmap
+bedtools = ">=2.31"                           # getfasta (Virseqimprover VSI 拯救)
 bowtie2 = ">=2.5"                             # 宿主比对
 hisat2 = ">=2.2"                              # 宿主比对 (splice-aware)
 minimap2 = ">=2.24"                           # 长读段比对
@@ -85,24 +108,24 @@ ribodetector = ">=0.3"                        # rRNA 检测去除
 # ==============================================================================
 # 组装 (Stage 1: Assembly)
 # ==============================================================================
+# 注意: penguin / refinec / flye 为源码自编译安装 (bioconda 无包), 见文末手动安装区
 megahit = ">=1.2"                             # 宏基因组组装
 spades = ">=3.15"                             # (含 rnaviralspades.py)
-penguin = ">=1.0"                             # 引导组装
-refinec = ">=1.0"                             # 组装优化
+bioawk = ">=1.0"                              # rnaviralspades 依赖
 
 # ==============================================================================
-# 病毒鉴定 (Stage 2: Identification — 11 工具)
+# 病毒鉴定 (Stage 2: Identification)
 # ==============================================================================
+# 注意: VirHunter / VirBot / ViraLM 走独立 conda env (virhunter/viralm) + biosoft 手动拷贝
+#       (bioconda 无包), 见文末手动安装区
 diamond = ">=2.1"                             # BLASTX 蛋白搜索
 blast = ">=2.15"                              # BLASTN 核酸搜索
 genomad = ">=1.7"                             # 病毒鉴定 (geNomad)
 virsorter = ">=2"                             # 病毒分类 (VirSorter2)
 viralverify = ">=1.0"                         # 病毒序列验证
 metabuli = ">=1.0"                            # 宏基因组分类
-virhunter = ">=1.0"                           # DL 病毒检测
-virbot = ">=1.0"                              # 病毒检测
-viralm = ">=1.0"                              # 病毒检测 (ViralM)
-rdrpcatch = ">=1.0"                           # RdRp 检测
+rdrpcatch = ">=1.0"                           # RdRp 检测 (conda run -n rdrpcatch)
+checkv = ">=1.0"                              # 完整性评估 (discovery-downstream 默认依赖)
 
 # ==============================================================================
 # 病毒分类 (Stage 5: Taxonomy — 6 工具)
@@ -114,22 +137,18 @@ vitap = ">=1.0"                               # 病毒分类
 acvirus = ">=1.0"                             # 病毒分类 (ACVirus)
 
 # ==============================================================================
-# 病毒聚类 (Stage 4: Cluster)
+# 病毒聚类 / 宿主预测 (Stage 4/6)
 # ==============================================================================
 vclust = ">=1.0"                              # 病毒聚类去冗余
+cd-hit = ">=4.8"                              # CD-HIT 参考引导预聚类
+rnavirhost = ">=1.0"                          # RNA 病毒宿主预测 (用户修改版在 mambaforge)
+# 注意: PhaBOX2/CHERRY 为 GitHub 手动安装 (bioconda 无包), 见文末手动安装区
 
 # ==============================================================================
-# COBRA 延伸 (Stage 3)
+# COBRA 延伸 (Stage 3, 实际 = bwa-mem2 组装)
 # ==============================================================================
 samtools = ">=1.18"                           # BAM 处理
 coverm = ">=0.6"                              # 覆盖度计算
-
-# ==============================================================================
-# 宿主预测 (Stage 6)
-# ==============================================================================
-rnavirhost = ">=1.0"                          # RNA 病毒宿主预测
-phabox2 = ">=1.0"                             # 噬菌体宿主预测
-cherry = ">=1.0"                              # CHERRY 宿主预测
 
 # ==============================================================================
 # 变异检测 & 注释 (Virome Analysis)
@@ -162,7 +181,8 @@ bwa = ">=0.7"                                 # 短读段比对
 bwa-mem2 = ">=2.2"
 strobealign = ">=0.12"                        # 快速比对
 pandepth = ">=1.0"                            # 位点深度
-virema = ">=1.0"                              # DVG/重组检测
+virema = ">=1.0"                              # DVG/重组检测 (另: biosoft/ViReMa 手动版 ViReMa 0.29)
+bowtie = ">=1.3"                              # bowtie v1 (batch_virema_dvg 比对)
 
 # ==============================================================================
 # SRA 公共数据获取
@@ -198,18 +218,12 @@ kraken2 = ">=2.1"
 ribodetector = ">=0.3"
 megahit = ">=1.2"
 spades = ">=3.15"
-penguin = ">=1.0"
-refinec = ">=1.0"
 diamond = ">=2.1"
 blast = ">=2.15"
 mmseqs2 = ">=14"
-checkv = ">=1.0"
 genomad = ">=1.7"
 virsorter = ">=2"
 viralverify = ">=1.0"
-virhunter = ">=1.0"
-virbot = ">=1.0"
-viralm = ">=1.0"
 rdrpcatch = ">=1.0"
 vcontact3 = ">=3.0"
 vitap = ">=1.0"
@@ -223,8 +237,6 @@ salmon = ">=1.10"
 kallisto = ">=0.48"
 bwa = ">=0.7"
 rnavirhost = ">=1.0"
-phabox2 = ">=1.0"
-cherry = ">=1.0"
 
 # --- 仅分析流程 (analysis) ---
 [feature.analysis.dependencies]
@@ -248,6 +260,7 @@ minimap2 = ">=2.24"
 bwa = ">=0.7"
 pandepth = ">=1.0"
 virema = ">=1.0"
+drhip = ">=1.0"                               # DRHIP (capheine_pipeline.py)
 
 # --- 仅公共数据 (public data) ---
 [feature.publicdata.dependencies]
@@ -284,7 +297,7 @@ discovery-downstream = { cmd = "python virome_discovery_pipeline/virome_pipeline
 analysis-detect = { cmd = "python virome_analysis_pipeline/auto_known_virus.py --stage detect", description = "Known virus rapid detection" }
 
 # 转换 discovery → analysis
-discovery2analysis = { cmd = "python virome_discovery_pipeline/discovery2analysis.py", description = "Convert discovery centroids to analysis reference format" }
+discovery2analysis = { cmd = "python virome_discovery_pipeline/utils/discovery2analysis.py", description = "Convert discovery centroids to analysis reference format" }
 
 # 搜索公共 SRA 数据
 public-search = { cmd = "python public_metadata_pipeline/public_data_pipeline.py --stage search", description = "Search SRA/GSA for a species" }
@@ -292,15 +305,32 @@ public-search = { cmd = "python public_metadata_pipeline/public_data_pipeline.py
 # 构建宿主数据库
 build-hostdb = { cmd = "python public_metadata_pipeline/build_host_pipeline.py --stage hostdb", description = "Build Kraken2/Bowtie2/HISAT2/Minimap2 host DB" }
 
+# 内源性病毒 (EVE) 三阶段筛查 (宿主基因组 FASTA 输入)
+eve-screen = { cmd = "python endogenous_virus_pipeline/eve_screen.py", description = "EVE screening: discover→verdict→annotate→merge on host genomes" }
+
+# EVE 核心逻辑单元测试 (本地无 diamond/seqkit 也可跑)
+eve-test = { cmd = "python -m unittest discover -s endogenous_virus_pipeline/tests -v", description = "Run EVE core unit tests" }
+
 # R 交互环境
 R-shell = { cmd = "R --no-save", description = "Start R interactive session" }
 
-# 批量运行 (需要配置 sample list)
-batch-all = { cmd = "bash run_all_species.sh", description = "Batch run all species through discovery pipeline" }
-
 # ==============================================================================
-# 手动安装 (不在 bioconda/conda-forge 中)
+# 手动安装 (bioconda/conda-forge 无包, 见 DATABASE_SETUP.md 与 SOFTWARE_VERSIONS.txt)
 # ==============================================================================
+# penguin (PenguiN 组装器) — 官方源码自编译
+#   版本 commit ac83d8fa, 位于 mambaforge/bin/penguin
+#
+# refineC (组装优化) — 源码编译, bioconda 无包
+#
+# flye — biosoft 源码版 2.9-b1779 (biosoft/Flye)
+#
+# PhaBOX2 (噬菌体宿主预测) — https://github.com/KennthShang/PhaBOX + phabox_db_v2_2
+# CHERRY  (宿主预测)       — https://github.com/core-analytics/cherry
+# VirHunter               — 独立 env: conda run -n virhunter + biosoft/virhunter/predict_cpu.py
+# VirBot                  — biosoft/VirBot/VirBot.py (手动拷贝)
+# ViraLM                  — 独立 env: conda env create -f envs/viralm.yaml -n viralm
+#                           模型: gdown 1EQVPmFbpLGrBLU0xCtZBpwvXrtrRxic1 → ~/database/virus-db/viralm_db/
+#
 # VCF2Dis — 遗传距离矩阵
 #   git clone https://github.com/hewm2008/VCF2Dis.git
 #   cd VCF2Dis && make && chmod +x VCF2Dis && sudo cp VCF2Dis /usr/local/bin/

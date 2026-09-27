@@ -1,0 +1,43 @@
+==============================================================================
+探针 1: 参照表内部空白（归一化不对称的规模）
+==============================================================================
+  文件: /home/zhangwenda/database/taxonomy/genus_family_ref.tsv
+  行数: 234804 ; 列: Genus,NCBI_Family,NCBI_n,VMR_Family,VMR_n,Domain
+  NCBI_Family 含内部空白: 0 行 
+  VMR_Family 含内部空白: 0 行 
+  VMR_Family 含 ';'（一属多科）: 0 行
+  结论: NCBI_Family 无内部空白 -> 不对称当前无实际触发，属潜伏风险
+
+==============================================================================
+探针 2: 最终 Genus 与 Species 首词（独立属主张）不一致的规模
+==============================================================================
+  live_v62产物    /home/zhangwenda/MMPV-paper/goji-virome/02_novel_virus/RNA-Lycium_barbarum_out/05_Taxonomy/Votus.integrated/final_integrated_classification.tsv
+    总行数 20892 ; 双名法 Species 行 14764 ; 属主张与最终 Genus 不一致 1246 行 (8.44% of 双名法)
+    其中 Species_agree 仍为 1/1 的 107 行（占比 8.6%）；双名法行里 Species_agree=1/1 共 8251 行
+    样例: contig_id | Family | Genus | Species | Genus_agree | Species_agree | completeness
+      CRR1126135_clean_NODE_110_length_2415_cov_7.631512 | NA | Immutovirus | Virus NIOZ-UU157 | 1/1: ACVirus | 3/4: CAT,diamond_lca,metabuli | 6
+      CRR1126135_clean_NODE_138_length_2279_cov_4.769266 | Mimiviridae | Nitunavirus | Simplexvirus macacinealpha1 | 2/3: ACVirus,VITAP | 1/5: metabuli | 8
+      CRR1126135_clean_NODE_152_length_2226_cov_13.373897 | Mimiviridae | Alphahydrivirus | Orthopestivirus bovis | 1/5: ACVirus | 1/4: metabuli | 8
+      CRR1126135_clean_NODE_239_length_1906_cov_2.064375 | Mimiviridae | Alphahydrivirus | Coltivirus dermacentoris | 1/2: ACVirus | 1/3: metabuli | 8
+      CRR1126135_clean_NODE_325_length_1694_cov_3.832202 | Hepaciviridae | Fadolivirus | Orthohepacivirus hominis | 1/4: ACVirus | 2/3: CAT,diamond_lca | 8
+
+  v64 legacy      /tmp/rc64b_legacy/final_integrated_classification.tsv
+    总行数 20892 ; 双名法 Species 行 13528 ; 属主张与最终 Genus 不一致 301 行 (2.23% of 双名法)
+    其中 Species_agree 仍为 1/1 的 60 行（占比 19.9%）；双名法行里 Species_agree=1/1 共 8057 行
+    样例: contig_id | Family | Genus | Species | Genus_agree | Species_agree | completeness
+      CRR1126135_clean_NODE_152_length_2226_cov_13.373897 | Mimiviridae | Hokovirus | Orthopestivirus bovis | 3/5: CAT,diamond_lca,mmseqs | 1/4: metabuli | 8
+      CRR1126135_clean_NODE_499_length_1449_cov_2.359012 | Mimiviridae | Fadolivirus | Mimivirus LCMiAC01 | 1/1: ACVirus | 1/2: metabuli | 8
+      CRR1126135_clean_NODE_81_length_2695_cov_19.808924 | Marseilleviridae | Marseillevirus | Tokyovirus A1 | 2/2: ACVirus,metabuli | 1/2: metabuli | 8
+      CRR1126139_clean_NODE_139_length_1504_cov_21.106918 | Marseilleviridae | Marseillevirus | Tokyovirus A1 | 1/1: metabuli | 1/1: metabuli | 8
+      CRR1126140_clean_NODE_353_length_1978_cov_2.952231 | Phycodnaviridae | Chlorovirus | Thornevirus SP15 | 1/2: CAT | 1/2: ACVirus | 8
+
+  v64 cascade     /tmp/rc64b_cascade/final_integrated_classification.tsv
+    总行数 20892 ; 双名法 Species 行 14138 ; 属主张与最终 Genus 不一致 97 行 (0.69% of 双名法)
+    其中 Species_agree 仍为 1/1 的 25 行（占比 25.8%）；双名法行里 Species_agree=1/1 共 7881 行
+    样例: contig_id | Family | Genus | Species | Genus_agree | Species_agree | completeness
+      CRR1126135_clean_NODE_29_length_3464_cov_4.068711 | Kyanoviridae | Acionnavirus | Llyrvirus SSKS1 | 1/2: VITAP | 1/3: ACVirus | 8
+      CRR1126135_clean_NODE_499_length_1449_cov_2.359012 | Mimiviridae | Fadolivirus | Mimivirus LCMiAC01 | 1/1: ACVirus | 1/2: metabuli | 8
+      CRR1126135_clean_NODE_81_length_2695_cov_19.808924 | Marseilleviridae | Marseillevirus | Tokyovirus A1 | 2/2: ACVirus,metabuli | 1/2: metabuli | 8
+      CRR1126139_clean_NODE_139_length_1504_cov_21.106918 | Marseilleviridae | Marseillevirus | Tokyovirus A1 | 1/1: metabuli | 1/1: metabuli | 8
+      CRR1126140_clean_NODE_619_length_1514_cov_2.606523 | Picobirnaviridae | Orthopicobirnavirus | Picobirnavirus sp. | 1/1: metabuli | 1/1: metabuli | 8
+

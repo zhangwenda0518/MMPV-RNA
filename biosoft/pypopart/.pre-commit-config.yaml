@@ -1,0 +1,52 @@
+# See https://pre-commit.com for more information
+# See https://pre-commit.com/hooks.html for more hooks
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-added-large-files
+        args: [--maxkb=515, --enforce-all]
+      - id: check-ast
+      - id: check-executables-have-shebangs
+      - id: check-json
+      - id: check-merge-conflict
+      - id: check-symlinks
+      - id: check-toml
+      - id: check-yaml
+      - id: debug-statements
+      - id: end-of-file-fixer
+        exclude: "^src/pypopart/gui/assets/fonts/"
+      - id: name-tests-test
+        args: [--pytest-test-first]
+      - id: trailing-whitespace
+        # Vendored font licence: must stay byte-identical to upstream.
+        exclude: "^src/pypopart/gui/assets/fonts/"
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.6
+    hooks:
+      - id: ruff-check
+        args: [--fix, --exit-non-zero-on-fix, --show-fixes]
+      - id: ruff-format
+  - repo: https://github.com/numpy/numpydoc
+    rev: v1.11.0rc0
+    hooks:
+      - id: numpydoc-validation
+        exclude: "^(tests/.*|docs/.*)$"
+  - repo: https://github.com/rhysd/actionlint
+    rev: v1.7.12
+    hooks:
+      - id: actionlint
+  - repo: https://github.com/google/yamlfmt
+    rev: v0.21.0
+    hooks:
+      - id: yamlfmt
+  - repo: https://github.com/pre-commit/mirrors-prettier
+    rev: v4.0.0-alpha.8
+    hooks:
+      - id: prettier
+        exclude: "(\\.ipynb$|^src/pypopart/gui/assets/fonts/)"
+#- repo: https://github.com/pre-commit/mirrors-mypy
+#  rev: v1.18.2
+#  hooks:
+#    - id: mypy
+#      additional_dependencies: [types-all]

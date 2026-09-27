@@ -1,0 +1,474 @@
+==============================================================================
+[insert] 旧 42-41 (0 行)  ->  新 42-50 (9 行)
+     38|                       "undefined", "no hit", "no hits", "not assigned", "unassigned")
+     39| RANK_DEPTH_WEIGHTS <- c(Realm=1, Kingdom=2, Phylum=4, Class=8, Order=16, Family=32, Genus=64, Species=128)
+     40| TOOL_BIAS <- c(ACVirus=1.2, VITAP=1.1, mmseqs=1.0, metabuli=1.0, CAT=0.9, genomad=0.9, diamond_lca=0.8, vcontact3=0.7, contigtax=0.6, BASTA=0.6, PhaGCN3=0.8)
+     41| 
++    42| # v6.4: 工具权重下限（环境变量 MMPV_RATE_FLOOR 覆盖）。
++    43| # consensus_stats 里的 rate = 「该工具在该阶元与朴素多数共识的一致占比」(0~1)，见文件尾部权重校准块。
++    44| # 原实现 `if (rate > 0) w <- w * rate` 把 rate == 0（该阶元从不与共识一致）当成「无数据」免罚，
++    45| # 结果表现最差的工具保底拿全额权重，而 rate = 0.01 的工具被削到 1%，权重与表现倒挂。
++    46| # 现统一乘 max(rate, RATE_FLOOR)：rate 缺失（NULL/NA）才是真正的无数据，维持原权重。
++    47| RATE_FLOOR <- suppressWarnings(as.numeric(Sys.getenv("MMPV_RATE_FLOOR", unset = "0.25")))
++    48| if (is.na(RATE_FLOOR) || RATE_FLOOR < 0) RATE_FLOOR <- 0.25
++    49| if (RATE_FLOOR > 1) RATE_FLOOR <- 1
++    50| 
+     42| # 逐级相容性参照表（属 -> 定型科）。由 scripts/audit/build_genus_family_ref.py 离线生成，
+     43| # 参照列：NCBI_Family（NCBI taxdump rankedlineage.dmp 首次出现的科）/ VMR_Family（ACVirus 库 taxa.txt，MSL41）。
+     44| # 环境变量 MMPV_GENUS_FAMILY_REF 可覆盖路径；文件不存在时该约束自动跳过（fail-safe）。
+     45| GENUS_FAMILY_REF <- Sys.getenv("MMPV_GENUS_FAMILY_REF",
+==============================================================================
+[replace] 旧 54-54 (1 行)  ->  新 63-65 (3 行)
+     50| # 戳缺失或版本 < 管线所需版本 -> 强制重跑 R 共识，禁止 SKIP。
+     51| # 6.1 = harmonize_family_genus + enforce_rank_containment 首次上线
+     52| # 6.2 = 新增跑完自检 verify_family_genus_consistency + 自检台账 taxonomy_gate_check.tsv
+     53| # 6.3 = 共识引擎新增「逐级淘汰异议工具」(CONSENSUS_MODE=cascade, 默认) + 占位值多词形式清理
+-    54| TAX_GATE_VERSION <- "6.3"
++    63| # 6.4 = 新增种级相容性闸门 enforce_species_containment；*_agree 与 completeness/confidence 改为
++    64| #       在闸门与收尾清理之后重算；工具权重 rate=0 倒挂修复；占位值清理扩到 8 个阶元 + Kingdom 后缀校验
++    65| TAX_GATE_VERSION <- "6.4"
+     55| 
+     56| # 共识模式（环境变量 MMPV_CONSENSUS_MODE 覆盖，便于同一输入跑 A/B 对账）：
+     57| #   cascade = 逐级淘汰（默认）。自 Realm 向 Species 递降，每个阶元只在「尚未被淘汰」的工具之间取票；
+     58| #             某阶元票首占比 > CASCADE_MIN_SHARE 时，在该阶元报了其它取值的工具退出后续投票。
+==============================================================================
+[replace] 旧 268-268 (1 行)  ->  新 279-279 (1 行)
+    264| 
+    265| # ==============================================================================
+    266| # 核心业务逻辑: 加权投票引擎 (极度调优纯 C 向量化版本)
+    267| # ==============================================================================
+-   268| compute_tool_weights <- function(data_list, consensus_stats=NULL) {
++   279| compute_tool_weights <- function(data_list, consensus_stats=NULL, out_dir=NULL) {
+    269|   weights <- list()
+    270|   for (tn in names(data_list)) {
+    271|     wvec <- numeric(length(TAX_LEVELS)); names(wvec) <- TAX_LEVELS
+    272|     for (lvl in TAX_LEVELS) {
+==============================================================================
+[replace] 旧 276-276 (1 行)  ->  新 287-289 (3 行)
+    272|     for (lvl in TAX_LEVELS) {
+    273|       w <- RANK_DEPTH_WEIGHTS[lvl] * ifelse(tn %in% names(TOOL_BIAS), TOOL_BIAS[tn], 0.8)
+    274|       if (!is.null(consensus_stats) && tn %in% names(consensus_stats)) {
+    275|         rate <- consensus_stats[[tn]][[lvl]]
+-   276|         if (!is.null(rate) && is.numeric(rate) && rate > 0) w <- w * rate
++   287|         # v6.4: 原为 `if (rate > 0) w <- w * rate`，rate == 0 被误判成「无数据」而免罚（倒挂）。
++   288|         # 现改为「有 rate 就乘，下限 RATE_FLOOR」；rate 为 NULL/NA 才维持原权重。
++   289|         if (!is.null(rate) && is.numeric(rate) && !is.na(rate)) w <- w * max(rate, RATE_FLOOR)
+    277|       }
+    278|       wvec[lvl] <- w
+    279|     }
+    280|     weights[[tn]] <- wvec
+==============================================================================
+[insert] 旧 281-280 (0 行)  ->  新 294-301 (8 行)
+    277|       }
+    278|       wvec[lvl] <- w
+    279|     }
+    280|     weights[[tn]] <- wvec
++   294|   }
++   295|   # v6.4: 权重落盘台账，便于事后核对 rate 惩罚是否真的生效（此前权重只在内存里，无法追溯）
++   296|   if (!is.null(out_dir) && length(weights) > 0) {
++   297|     wdt <- rbindlist(lapply(names(weights), function(tn) {
++   298|       data.table(Tool = tn, Rank = names(weights[[tn]]), Weight = as.numeric(weights[[tn]]))
++   299|     }))
++   300|     wdt <- dcast(wdt, Tool ~ Rank, value.var = "Weight")
++   301|     fwrite(wdt, file.path(out_dir, "tool_weights.tsv"), sep = "\t")
+    281|   }
+    282|   return(weights)
+    283| }
+    284| 
+==============================================================================
+[insert] 旧 408-407 (0 行)  ->  新 429-429 (1 行)
+    404|   add("rows_total", n_total, "-", "INFO")
+    405|   if (n_total == 0 || !all(c("Family", "Genus") %in% names(result_dt))) {
+    406|     add("dual_ref_conflict", 0L, "0", "PASS")
+    407|     add("single_ref_conflict", 0L, "-", "INFO")
++   429|     add("species_dual_ref_conflict", 0L, "0", "PASS")
+    408|     return(invisible(checks))
+    409|   }
+    410|   norm_tax <- function(x) {
+    411|     x <- trimws(gsub("[\"*]", "", as.character(x)))
+==============================================================================
+[insert] 旧 424-423 (0 行)  ->  新 446-446 (1 行)
+    420|   add("genus_filled", n_gen, "-", "INFO")
+    421|   if (is.null(ref_dt)) {
+    422|     add("dual_ref_conflict", 0L, "0", "SKIP_REF_MISSING")
+    423|     add("single_ref_conflict", 0L, "-", "SKIP_REF_MISSING")
++   446|     add("species_dual_ref_conflict", 0L, "0", "SKIP_REF_MISSING")
+    424|     if (!is.null(out_dir)) fwrite(checks, file.path(out_dir, "taxonomy_gate_check.tsv"), sep = "\t")
+    425|     log_msg("WARN", "科-属自检: 参照表不可用, 自检降级为 SKIP")
+    426|     return(invisible(checks))
+    427|   }
+==============================================================================
+[insert] 旧 440-439 (0 行)  ->  新 463-476 (14 行)
+    436|   add("genus_ref_known", nrow(cur), "-", "INFO")
+    437|   add("dual_ref_consistent", n_ok, "-", "INFO")
+    438|   add("dual_ref_conflict", n_dual_conf, "0", if (n_dual_conf == 0) "PASS" else "FAIL")
+    439|   add("single_ref_conflict", n_single_conf, "unfixable_by_design", "INFO")
++   463|   # v6.4: 种级自检 —— Species 首词（属名）的双参照定型科与行内 Family 互斥的行数，闸门后期望 0。
++   464|   # 与闸门共用同一判据函数，台账为 0 就等于「闸门动作列表已清空」，不会出现「自检口径与闸门口径不一致」。
++   465|   ref_dual <- load_genus_family_ref_dual(ref_file, tag = "科-种自检")
++   466|   if (!is.null(ref_dual)) {
++   467|     sp_ck <- species_conflict_idx(result_dt, ref_dual)
++   468|     n_sp_conf <- length(sp_ck$idx)
++   469|     add("species_dual_ref_conflict", n_sp_conf, "0", if (n_sp_conf == 0) "PASS" else "FAIL")
++   470|     add("species_ref_known", sp_ck$n_known, "-", "INFO")
++   471|     add("species_single_ref_conflict", sp_ck$n_side, "unfixable_by_design", "INFO")
++   472|   } else {
++   473|     add("species_dual_ref_conflict", 0L, "0", "SKIP_REF_MISSING")
++   474|     add("species_ref_known", 0L, "-", "SKIP_REF_MISSING")
++   475|     add("species_single_ref_conflict", 0L, "-", "SKIP_REF_MISSING")
++   476|   }
+    440|   if (!is.null(out_dir)) {
+    441|     fwrite(checks, file.path(out_dir, "taxonomy_gate_check.tsv"), sep = "\t")
+    442|   }
+    443|   if (n_dual_conf > 0) {
+==============================================================================
+[insert] 旧 448-447 (0 行)  ->  新 485-488 (4 行)
+    444|     log_msg("ERROR", "科-属自检失败: 双参照一致却与行内 Family 互斥的行 %d 条（应为 0）", n_dual_conf)
+    445|   } else {
+    446|     log_msg("INFO", "科-属自检通过: 双参照一致冲突 0 条; 单侧冲突 %d 条（设计内不动）; 双参照一致相容 %d 条",
+    447|             n_single_conf, n_ok)
++   485|   }
++   486|   if (!is.null(ref_dual)) {
++   487|     if (n_sp_conf > 0) log_msg("ERROR", "科-种自检失败: Species 首词属名的双参照定型科与行内 Family 互斥 %d 条（应为 0）", n_sp_conf)
++   488|     else log_msg("INFO", "科-种自检通过: 双参照互斥 0 条; 单侧冲突 %d 条（设计内不动）", sp_ck$n_side)
+    448|   }
+    449|   invisible(checks)
+    450| }
+    451| 
+==============================================================================
+[replace] 旧 464-480 (17 行)  ->  新 505-507 (3 行)
+    460| #   参照表由 scripts/audit/build_genus_family_ref.py 生成，路径可用 MMPV_GENUS_FAMILY_REF 覆盖。
+    461| enforce_rank_containment <- function(result_dt, ref_file = GENUS_FAMILY_REF, blank_species = TRUE) {
+    462|   if (is.null(result_dt) || nrow(result_dt) == 0) return(result_dt)
+    463|   if (!all(c("contig_id", "Family", "Genus") %in% names(result_dt))) return(result_dt)
+-   464|   if (is.null(ref_file) || length(ref_file) == 0 || is.na(ref_file[1]) || !file.exists(ref_file[1])) {
+-   465|     log_msg("INFO", "逐级相容性约束: 参照表不可用, 跳过 (path=%s)",
+-   466|             if (is.null(ref_file) || length(ref_file) == 0) "NULL" else as.character(ref_file[1]))
+-   467|     return(result_dt)
+-   468|   }
+-   469| 
+-   470|   ref <- tryCatch(fread(ref_file[1], sep = "\t", quote = "", colClasses = "character", showProgress = FALSE),
+-   471|                   error = function(e) NULL)
+-   472|   if (is.null(ref) || nrow(ref) == 0) {
+-   473|     log_msg("INFO", "逐级相容性约束: 参照表为空或读取失败, 跳过")
+-   474|     return(result_dt)
+-   475|   }
+-   476|   if (!all(c("Genus", "NCBI_Family", "VMR_Family") %in% names(ref))) {
+-   477|     log_msg("INFO", "逐级相容性约束: 参照表缺 Genus/NCBI_Family/VMR_Family 列, 跳过")
+-   478|     return(result_dt)
+-   479|   }
+-   480| 
++   505|   # v6.4: 参照表解析提取为 load_genus_family_ref_dual()，科-属与科-种两级闸门共用同一解析口径
++   506|   ref_dt <- load_genus_family_ref_dual(ref_file, tag = "逐级相容性约束")
++   507|   if (is.null(ref_dt)) return(result_dt)
+    481|   # 与 scripts/audit/apply_calib_A.py 同口径：去引号/星号/首尾空白，空与 NA/N/A/- 一律视为「未知」
+    482|   # 不用 x[x == ""| ...] <- NA 的写法：逻辑下标含 NA 时 R 会报「NAs are not allowed in subscripted assignments」
+    483|   # （被置空过的表读回来正好是 NA，会当场炸），改用 nzchar 与 %in% 两个不会产生 NA 的判定
+    484|   norm_tax <- function(x) {
+==============================================================================
+[replace] 旧 484-499 (16 行)  ->  新 511-511 (1 行)
+    480| 
+    481|   # 与 scripts/audit/apply_calib_A.py 同口径：去引号/星号/首尾空白，空与 NA/N/A/- 一律视为「未知」
+    482|   # 不用 x[x == ""| ...] <- NA 的写法：逻辑下标含 NA 时 R 会报「NAs are not allowed in subscripted assignments」
+    483|   # （被置空过的表读回来正好是 NA，会当场炸），改用 nzchar 与 %in% 两个不会产生 NA 的判定
+-   484|   norm_tax <- function(x) {
+-   485|     x <- trimws(gsub("[\"*]", "", as.character(x)))
+-   486|     x[!nzchar(x)] <- NA_character_
+-   487|     x[toupper(x) %in% c("NA", "N/A", "-")] <- NA_character_
+-   488|     x
+-   489|   }
+-   490|   vmr_raw <- tolower(norm_tax(ref$VMR_Family))
+-   491|   ncbi_n  <- if ("NCBI_n" %in% names(ref)) suppressWarnings(as.integer(ref$NCBI_n)) else rep(NA_integer_, nrow(ref))
+-   492|   ref_dt <- data.table(
+-   493|     g_l      = tolower(norm_tax(ref$Genus)),
+-   494|     ncbi_fam = tolower(norm_tax(ref$NCBI_Family)),
+-   495|     vmr_pad  = ifelse(is.na(vmr_raw), NA_character_,
+-   496|                       paste0(";", gsub("[[:space:]]+", "", vmr_raw), ";")),
+-   497|     ncbi_n   = ncbi_n
+-   498|   )
+-   499|   ref_dt <- unique(ref_dt[!is.na(g_l) & !(is.na(ncbi_fam) & is.na(vmr_pad))], by = "g_l")
++   511|   norm_tax <- tax_norm
+    500| 
+    501|   cur <- data.table(contig_id = as.character(result_dt$contig_id),
+    502|                     fam_l = tolower(norm_tax(result_dt$Family)),
+    503|                     g_l   = tolower(norm_tax(result_dt$Genus)))
+==============================================================================
+[insert] 旧 525-524 (0 行)  ->  新 537-634 (98 行)
+    521|   }
+    522|   n_amb <- nrow(cur[contig_id %in% hit & !is.na(ncbi_n) & ncbi_n > 1])
+    523|   log_msg("INFO", "逐级相容性约束(科-属): 双参照一致反驳 %d 行已置空; 单侧判据 %d 行仅记录不动; 被处置行中 NCBI 同名多科 %d 行",
+    524|           n_hit, n_side, n_amb)
++   537|   result_dt[]
++   538| }
++   539| 
++   540| # v6.4 新增：分类值归一化（去引号/星号/首尾空白；空与 NA/N/A/- 视为未知）。
++   541| # 与 enforce_rank_containment 内部 norm_tax 同口径，供新增的科-种闸门与自检共用。
++   542| tax_norm <- function(x) {
++   543|   x <- trimws(gsub("[\"*]", "", as.character(x)))
++   544|   x[!nzchar(x)] <- NA_character_
++   545|   x[toupper(x) %in% c("NA", "N/A", "-")] <- NA_character_
++   546|   x
++   547| }
++   548| 
++   549| # v6.4 新增：参照表解析（属 -> 双参照定型科；VMR 侧用 ;科; 包裹，以支持一个属多科的单元格）。
++   550| # 返回 NULL 表示不可用（路径缺失/读取失败/缺列），调用方一律 fail-safe 跳过。
++   551| # 原逻辑内联在 enforce_rank_containment 里，提取后科-属闸门、科-种闸门、跑完自检三处共用。
++   552| load_genus_family_ref_dual <- function(ref_file = GENUS_FAMILY_REF, tag = "参照表") {
++   553|   if (is.null(ref_file) || length(ref_file) == 0 || is.na(ref_file[1]) || !file.exists(ref_file[1])) {
++   554|     log_msg("INFO", "%s: 参照表不可用, 跳过 (path=%s)", tag,
++   555|             if (is.null(ref_file) || length(ref_file) == 0) "NULL" else as.character(ref_file[1]))
++   556|     return(NULL)
++   557|   }
++   558|   ref <- tryCatch(fread(ref_file[1], sep = "\t", quote = "", colClasses = "character", showProgress = FALSE),
++   559|                   error = function(e) NULL)
++   560|   if (is.null(ref) || nrow(ref) == 0) {
++   561|     log_msg("INFO", "%s: 参照表为空或读取失败, 跳过", tag)
++   562|     return(NULL)
++   563|   }
++   564|   if (!all(c("Genus", "NCBI_Family", "VMR_Family") %in% names(ref))) {
++   565|     log_msg("INFO", "%s: 参照表缺 Genus/NCBI_Family/VMR_Family 列, 跳过", tag)
++   566|     return(NULL)
++   567|   }
++   568|   vmr_raw <- tolower(tax_norm(ref$VMR_Family))
++   569|   ncbi_n  <- if ("NCBI_n" %in% names(ref)) suppressWarnings(as.integer(ref$NCBI_n)) else rep(NA_integer_, nrow(ref))
++   570|   ref_dt <- data.table(
++   571|     g_l      = tolower(tax_norm(ref$Genus)),
++   572|     ncbi_fam = tolower(tax_norm(ref$NCBI_Family)),
++   573|     vmr_pad  = ifelse(is.na(vmr_raw), NA_character_,
++   574|                       paste0(";", gsub("[[:space:]]+", "", vmr_raw), ";")),
++   575|     ncbi_n   = ncbi_n
++   576|   )
++   577|   unique(ref_dt[!is.na(g_l) & !(is.na(ncbi_fam) & is.na(vmr_pad))], by = "g_l")
++   578| }
++   579| 
++   580| # v6.4 新增：科-种相容性判据（与科-属闸门同口径，只换「属名从哪来」）。
++   581| #   属名来源 = Species 的首词。ICTV 2020 起病毒种名为「属名 种加词」双名法，
++   582| #   故 Species 自身就携带一条独立的属主张，非双名法（单名/带 sp. 的占位）不判定。
++   583| #   判据：两张定型表都收录该属，且两张给出的科都与行内 Family 不同 -> 判为互斥（两侧都被反驳）。
++   584| #   只一侧收录、或一侧相容 -> 不判定（多为分类学版本漂移，与科-属闸门同一取舍）。
++   585| #   返回 list(idx = 互斥行下标, n_known = 属名可查行数, n_side = 单侧判据行数)
++   586| species_conflict_idx <- function(result_dt, ref_dt) {
++   587|   empty <- list(idx = integer(0), n_known = 0L, n_side = 0L)
++   588|   if (is.null(result_dt) || nrow(result_dt) == 0 || is.null(ref_dt)) return(empty)
++   589|   if (!all(c("Family", "Species") %in% names(result_dt))) return(empty)
++   590|   sp  <- tax_norm(result_dt$Species)
++   591|   fam <- tax_norm(result_dt$Family)
++   592|   g_l <- rep(NA_character_, length(sp))
++   593|   bi  <- !is.na(sp) & grepl(" ", sp, fixed = TRUE)
++   594|   if (any(bi)) g_l[bi] <- tolower(tstrsplit(sp[bi], " ", keep = 1L, type.convert = FALSE)[[1]])
++   595|   cur <- data.table(i = seq_len(nrow(result_dt)), fam_l = tolower(fam), g_l = g_l)
++   596|   cur <- cur[!is.na(fam_l) & !is.na(g_l)]
++   597|   if (nrow(cur) == 0) return(empty)
++   598|   cur <- merge(cur, ref_dt, by = "g_l", all.x = TRUE)
++   599|   cur <- cur[!is.na(ncbi_fam) | !is.na(vmr_pad)]
++   600|   if (nrow(cur) == 0) return(empty)
++   601|   cur[, fam_c := gsub("[[:space:]]+", "", fam_l)]
++   602|   cur[, ncbi_hit := !is.na(ncbi_fam)]
++   603|   cur[, vmr_hit  := !is.na(vmr_pad)]
++   604|   cur[, ncbi_bad := ncbi_hit & fam_c != ncbi_fam]
++   605|   cur[, vmr_bad  := vmr_hit & !mapply(function(p, f) grepl(paste0(";", f, ";"), p, fixed = TRUE),
++   606|                                       vmr_pad, fam_c)]
++   607|   list(idx    = sort(cur[ncbi_bad == TRUE & vmr_bad == TRUE, i]),
++   608|        n_known = nrow(cur),
++   609|        n_side  = nrow(cur[ncbi_bad != vmr_bad]))
++   610| }
++   611| 
++   612| # v6.4 新增：种级相容性闸门。行内 Species 的属名主张必须与行内 Family 相容，否则置空 Species。
++   613| #   为什么属级闸门之后还要单独做一次：科-属校准（harmonize_family_genus）会把「自报科 == 共识科」
++   614| #   的工具报出的属「换」进来，于是 Family+Genus 看起来自洽，而原来的属主张正躺在 Species 里。
++   615| #   例：Family=Mimiviridae、Genus 已按自洽工具集换成 Tethysvirus、Species 仍是 Simplexvirus macacinealpha1，
++   616| #   属级闸门查的是（Family, Genus）这一对，永远看不到 Species 里残留的 herpesvirus 证据。
++   617| #   动作只做「置空 Species」：Family 是更粗、票数更多的阶元，保留；属级证据归科-属闸门管。
++   618| #   被置空的行落盘到 out_dir/species_containment_blanked.tsv 以便逐行复核。
++   619| enforce_species_containment <- function(result_dt, ref_file = GENUS_FAMILY_REF, out_dir = NULL) {
++   620|   if (is.null(result_dt) || nrow(result_dt) == 0) return(result_dt)
++   621|   if (!all(c("contig_id", "Family", "Species") %in% names(result_dt))) return(result_dt)
++   622|   ref_dt <- load_genus_family_ref_dual(ref_file, tag = "科-种相容性约束")
++   623|   if (is.null(ref_dt)) return(result_dt)
++   624|   res <- species_conflict_idx(result_dt, ref_dt)
++   625|   n_hit <- length(res$idx)
++   626|   if (n_hit > 0) {
++   627|     if (!is.null(out_dir)) {
++   628|       fwrite(result_dt[res$idx, .(contig_id, Family, Species)],
++   629|              file.path(out_dir, "species_containment_blanked.tsv"), sep = "\t")
++   630|     }
++   631|     result_dt[res$idx, Species := NA_character_]
++   632|   }
++   633|   log_msg("INFO", "科-种相容性约束(科-种): 双参照一致反驳 %d 行已置空 Species; 属名可查 %d 行; 单侧判据 %d 行仅记录不动",
++   634|           n_hit, res$n_known, res$n_side)
+    525|   result_dt[]
+    526| }
+    527| 
+    528| # ==============================================================================
+==============================================================================
+[replace] 旧 649-650 (2 行)  ->  新 759-761 (3 行)
+    645|     log_msg("INFO", "最完整工具行兜底实际填补 %d 格（legacy 下预期 0）", n_bestfill)
+    646|   }
+    647|   tick_since(.t0, "阶段4 空缺兜底"); .t0 <- Sys.time()
+    648| 
+-   649|   wide[, completeness := rowSums(!is.na(.SD) & .SD!=""), .SDcols=TAX_LEVELS]
+-   650|   wide[, confidence := round(completeness/length(TAX_LEVELS), 2)]
++   759|   # v6.4: completeness/confidence 不再在此计算 —— 闸门与收尾清理还会改值，
++   760|   # 提前算出来的值会「陈旧」（barbarum legacy 实测 1297/20892 行不符，其中 1105 行写着 completeness=8 实际只有 7 个阶元有值）。
++   761|   # 现统一挪到 build_consensus 尾部的收尾清理之后重算，只保留这一个权威赋值点。
+    651| 
+    652|   # ── 5. 哈希匹配主工具 ──
+    653|   cons_long <- melt(wide[, c("contig_id", TAX_LEVELS), with=FALSE], id.vars="contig_id", measure.vars=TAX_LEVELS, variable.name="Rank", value.name="cons_Taxon")
+    654|   cons_long <- cons_long[is_valid_value_vec(cons_Taxon)]
+==============================================================================
+[insert] 旧 684-683 (0 行)  ->  新 795-798 (4 行)
+    680|   # 逐级相容性约束：属级主张必须与行内科级相容（NCBI 与 VMR 两参照一致反驳才置空）
+    681|   # 放在科-属校准之后：先清掉「自报科与共识科不一致」的属，再做跨参照相容性收尾
+    682|   wide <- enforce_rank_containment(wide, GENUS_FAMILY_REF)
+    683|   tick_since(.t0, "闸门-跳参照相容性"); .t0 <- Sys.time()
++   795|   # 种级相容性约束：Species 首词（属名）的双参照定型科必须与行内 Family 相容
++   796|   # 必须放在科-属校准之后：校准会把自洽工具集报出的属换进来，Species 里残留的旧属主张只有这道闸门能看到
++   797|   wide <- enforce_species_containment(wide, GENUS_FAMILY_REF, out_dir)
++   798|   tick_since(.t0, "闸门-种科相容性"); .t0 <- Sys.time()
+    684| 
+    685|   # ── 6. 🚀 极致多维宽长转换: Agree列拼接 ──
+    686|   tot_dt <- long[, .(n_tot = .N), by=.(contig_id, Rank)]
+    687|   ag_dt <- match_dt[match_weight > 0]
+==============================================================================
+[replace] 旧 685-710 (26 行)  ->  新 800-802 (3 行)
+    681|   # 放在科-属校准之后：先清掉「自报科与共识科不一致」的属，再做跨参照相容性收尾
+    682|   wide <- enforce_rank_containment(wide, GENUS_FAMILY_REF)
+    683|   tick_since(.t0, "闸门-跳参照相容性"); .t0 <- Sys.time()
+    684| 
+-   685|   # ── 6. 🚀 极致多维宽长转换: Agree列拼接 ──
+-   686|   tot_dt <- long[, .(n_tot = .N), by=.(contig_id, Rank)]
+-   687|   ag_dt <- match_dt[match_weight > 0]
+-   688|   setorder(ag_dt, contig_id, Rank, Tool)
+-   689|   ag_dt <- ag_dt[, .(n_ag = .N, ag_tools = paste(Tool, collapse=",")), by=.(contig_id, Rank)]
+-   690| 
+-   691|   res <- merge(tot_dt, ag_dt, by=c("contig_id", "Rank"), all.x=TRUE)
+-   692|   res[is.na(n_ag), `:=`(n_ag = 0, ag_tools = "")]
+-   693|   res[, agree_str := fcase(
+-   694|       n_ag > 0, sprintf("%d/%d: %s", n_ag, n_tot, ag_tools),
+-   695|       default = sprintf("0/%d", n_tot)
+-   696|   )]
+-   697| 
+-   698|   agree_wide <- dcast(res, contig_id ~ Rank, value.var="agree_str")
+-   699|   exist_cols <- intersect(TAX_LEVELS, names(agree_wide))
+-   700|   setnames(agree_wide, exist_cols, paste0(exist_cols, "_agree"))
+-   701| 
+-   702|   wide <- merge(wide, agree_wide, by="contig_id", all.x=TRUE)
+-   703|   for (lvl in TAX_LEVELS) {
+-   704|     col <- paste0(lvl, "_agree")
+-   705|     if (!col %in% names(wide)) wide[, (col) := "0/0"]
+-   706|     else wide[is.na(get(col)), (col) := "0/0"]
+-   707|   }
+-   708| 
+-   709|   agree_cols <- paste0(TAX_LEVELS, "_agree")
+-   710|   setcolorder(wide, c("contig_id","primary_tool","completeness","confidence", TAX_LEVELS, agree_cols))
++   800|   # ── 6. *_agree 与 completeness/confidence 延后到收尾清理之后重算（见函数尾部） ──
++   801|   # v6.4: 原实现在此用「闸门前」的 match_dt 计数，闸门置空/替换后 *_agree 仍声称「N 个工具支持」，
++   802|   # 出现「值已置空但 agree 非 0」的陈旧口径（barbarum legacy 实测 Genus 1153 行 / Species 151 行）。
+    711|   # Final validation: clear mis-placed rank names after gap-filling
+    712|   wide[!is.na(Class) & !grepl("viricetes$", Class, ignore.case=TRUE), Class := NA_character_]
+    713|   wide[!is.na(Order) & !grepl("virales$", Order, ignore.case=TRUE), Order := NA_character_]
+    714|   wide[!is.na(Family) & !grepl("viridae$", Family, ignore.case=TRUE), Family := NA_character_]
+==============================================================================
+[insert] 旧 728-727 (0 行)  ->  新 820-822 (3 行)
+    724|   # 现改为「整串命中」并集「占位限定词子串命中」。子串只用确定不会出现在任何合法分类单元里的
+    725|   # 限定词（environmental / uncultured / unclassified / unidentified / unassigned / no hit /
+    726|   # unknown / undefined）；"virus"、"other"、"na"、"samples" 等泛词仍保持整串精确匹配，
+    727|   # 否则会把 Narnavirus 这类正常属名一起清掉。
++   820|   # v6.4: 占位值清理由 Family/Genus/Species 三阶元扩到全 8 阶元。粗阶元同样会被工具塞占位串
++   821|   # （Realm="Viruses"、Phylum="unclassified viruses" 之类）。子串白名单不含 "virus"/"other"/"na"
++   822|   # 这类泛词，故不会误伤 Orthornavirae 这种正常值；
+    728|   PH_QUALIFIER_PAT <- "environmental|uncultured|unclassified|unidentified|unassigned|not assigned|no hit|unknown|undefined"
+    729|   for (col in c("Family", "Genus", "Species")) {
+    730|     if (col %in% names(wide)) {
+    731|       v <- tolower(as.character(wide[[col]]))
+==============================================================================
+[replace] 旧 729-729 (1 行)  ->  新 824-824 (1 行)
+    725|   # 限定词（environmental / uncultured / unclassified / unidentified / unassigned / no hit /
+    726|   # unknown / undefined）；"virus"、"other"、"na"、"samples" 等泛词仍保持整串精确匹配，
+    727|   # 否则会把 Narnavirus 这类正常属名一起清掉。
+    728|   PH_QUALIFIER_PAT <- "environmental|uncultured|unclassified|unidentified|unassigned|not assigned|no hit|unknown|undefined"
+-   729|   for (col in c("Family", "Genus", "Species")) {
++   824|   for (col in TAX_LEVELS) {
+    730|     if (col %in% names(wide)) {
+    731|       v <- tolower(as.character(wide[[col]]))
+    732|       hit <- !is.na(v) & (v %in% PLACEHOLDER_TAXA | grepl(PH_QUALIFIER_PAT, v))
+    733|       if (any(hit)) {
+==============================================================================
+[replace] 旧 739-739 (1 行)  ->  新 834-887 (54 行)
+    735|         log_msg("INFO", "占位值清理: %s 层清空 %d 格", col, sum(hit))
+    736|       }
+    737|     }
+    738|   }
+-   739|   tick_since(.t0, "阶段6 agree列+收尾清理")
++   834| 
++   835|   # v6.4: Kingdom 后缀校验。ICTV 王国名一律以 -virae 结尾（Orthornavirae/Bamfordvirae...），
++   836|   # 不合规即说明该值是被工具塞进王国槽的其它阶元，置空。其余阶元同理，但只记诊断不置空，
++   837|   # 因为 Genus（个别老属名不以 -virus 结尾）、Realm（历史名不以 -viria 结尾）存在合法例外，
++   838|   # 先积累实测分布再决定是否收紧。
++   839|   RANK_SUFFIX_PAT <- c(Realm="viria$", Kingdom="virae$", Phylum="viricota$", Class="viricetes$",
++   840|                        Order="virales$", Family="viridae$", Genus="virus$")
++   841|   if ("Kingdom" %in% names(wide)) {
++   842|     kbad <- !is.na(wide$Kingdom) & !grepl(RANK_SUFFIX_PAT[["Kingdom"]], wide$Kingdom, ignore.case = TRUE)
++   843|     if (any(kbad)) {
++   844|       log_msg("WARN", "Kingdom 后缀校验: 置空 %d 格（非 -virae 结尾）", sum(kbad))
++   845|       wide[kbad, Kingdom := NA_character_]
++   846|     }
++   847|   }
++   848|   for (lvl in names(RANK_SUFFIX_PAT)) {
++   849|     if (!lvl %in% names(wide)) next
++   850|     v <- wide[[lvl]]
++   851|     nbad <- sum(!is.na(v) & !grepl(RANK_SUFFIX_PAT[[lvl]], v, ignore.case = TRUE))
++   852|     if (nbad > 0) log_msg("INFO", "后缀诊断(仅记录): %s 层 %d 格不以 %s 结尾", lvl, nbad, RANK_SUFFIX_PAT[[lvl]])
++   853|   }
++   854| 
++   855|   # v6.4: 收尾之后重算 completeness/confidence，与最终表逐行一致
++   856|   wide[, completeness := rowSums(!is.na(.SD) & .SD!=""), .SDcols=TAX_LEVELS]
++   857|   wide[, confidence := round(completeness/length(TAX_LEVELS), 2)]
++   858| 
++   859|   # v6.4: *_agree 对「最终值」重算。口径：n_tot = 该阶元有取值的工具数（不变），
++   860|   # n_ag = 取值与最终值（大小写无关）相同的工具数，被闸门置空的阶元一律 0/N。
++   861|   cons_final <- melt(wide[, c("contig_id", TAX_LEVELS), with=FALSE], id.vars="contig_id",
++   862|                      measure.vars=TAX_LEVELS, variable.name="Rank", value.name="cons_Taxon")
++   863|   cons_final <- cons_final[is_valid_value_vec(cons_Taxon)]
++   864|   ag_src <- merge(long[, .(contig_id, Tool, Rank, Taxon)], cons_final, by=c("contig_id", "Rank"))
++   865|   ag_src <- ag_src[tolower(as.character(Taxon)) == tolower(as.character(cons_Taxon))]
++   866|   setorder(ag_src, contig_id, Rank, Tool)
++   867|   ag_dt <- ag_src[, .(n_ag = .N, ag_tools = paste(Tool, collapse=",")), by=.(contig_id, Rank)]
++   868|   tot_dt <- long[, .(n_tot = .N), by=.(contig_id, Rank)]
++   869|   res <- merge(tot_dt, ag_dt, by=c("contig_id", "Rank"), all.x=TRUE)
++   870|   res[is.na(n_ag), `:=`(n_ag = 0, ag_tools = "")]
++   871|   res[, agree_str := fcase(
++   872|       n_ag > 0, sprintf("%d/%d: %s", n_ag, n_tot, ag_tools),
++   873|       default = sprintf("0/%d", n_tot)
++   874|   )]
++   875|   agree_wide <- dcast(res, contig_id ~ Rank, value.var="agree_str")
++   876|   exist_cols <- intersect(TAX_LEVELS, names(agree_wide))
++   877|   setnames(agree_wide, exist_cols, paste0(exist_cols, "_agree"))
++   878|   wide <- merge(wide, agree_wide, by="contig_id", all.x=TRUE)
++   879|   for (lvl in TAX_LEVELS) {
++   880|     col <- paste0(lvl, "_agree")
++   881|     if (!col %in% names(wide)) wide[, (col) := "0/0"]
++   882|     else wide[is.na(get(col)), (col) := "0/0"]
++   883|   }
++   884|   agree_cols <- paste0(TAX_LEVELS, "_agree")
++   885|   setcolorder(wide, c("contig_id","primary_tool","completeness","confidence", TAX_LEVELS, agree_cols))
++   886| 
++   887|   tick_since(.t0, "阶段6 收尾清理+agree/meta重算")
+    740|   tick_since(.t_all, "build_consensus 合计")
+    741|   return(wide[])
+    742| }
+    743| 
+==============================================================================
+[replace] 旧 1135-1135 (1 行)  ->  新 1283-1283 (1 行)
+   1131|     }
+   1132|   }
+   1133| }
+   1134| 
+-  1135| tool_weights <- compute_tool_weights(all_data, consensus_stats)
++  1283| tool_weights <- compute_tool_weights(all_data, consensus_stats, opt$output)
+   1136| 
+   1137| log_msg("INFO", "逐 rank 加权投票计算共识...")
+   1138| final_result <- build_consensus(all_data, tool_weights, opt$output)
+   1139| 
+==============================================================================
+合计改动块 19 个；删除 67 行，新增 215 行；旧 1195 行 -> 新 1343 行

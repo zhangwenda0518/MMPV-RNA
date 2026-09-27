@@ -188,6 +188,7 @@ window.addEventListener('DOMContentLoaded',()=>{
   makeEditableTable('bsTable');
   makeEditableTable('miuvigTable');
   makeEditableTable('asmTable');
+  makeEditableTable('topoTable');
   updateStats();
 });
 """
@@ -206,6 +207,7 @@ HTML = """<!DOCTYPE html><html lang="zh"><head><meta charset="UTF-8">
 <div class="stat warn"><div class="num" id="missingCount">-</div><div class="label">Missing</div></div>
 </div>
 <div class="progress"><div class="progress-bar" id="completeBar"></div></div>
+<div class="suvtk-summary" style="background:#f5f5f5;padding:10px 16px;border-radius:6px;font-size:13px;color:#555;margin-top:10px">{suvtk_summary}</div>
 </div>
 
 <div class="container">
@@ -264,6 +266,15 @@ MIUVIG Parameters (miuvig.tsv) — Advanced
 <tbody>{miuvig_body}</tbody></table>
 </div></div>
 
+<div class="section" id="topoSection">
+<div class="section-title" onclick="toggleSection('topoSection')">
+Viral Topology (topology.tsv) — {topo_summary}
+<span style="font-size:10px;color:#999">Linear/Circular genome determination</span>
+</div>
+<div class="section-body">
+<table id="topoTable"><thead><tr>{topo_header}</tr></thead><tbody>{topo_body}</tbody></table>
+</div></div>
+
 <div class="section collapsed" id="asmSection">
 <div class="section-title" onclick="toggleSection('asmSection')">
 Assembly Parameters (assembly.tsv)
@@ -314,12 +325,44 @@ def load_table(tsv_path):
     return list(df.columns), [list(df.iloc[i]) for i in range(len(df))]
 
 
-def generate_html(csv_path, run_title, output_path, miuvig_path=None, asm_path=None, log=None):
+def generate_html(csv_path, run_title, output_path, miuvig_path=None, asm_path=None,
+                   suvtk_tax_path=None, suvtk_feat_path=None, hypo_path=None,
+                   topo_path=None, gb_dir=None, log=None):
     """Generate the full interactive report"""
 
     df = pd.read_csv(csv_path)
     n_seqs = len(df)
     n_viruses = df['organism'].nunique() if 'organism' in df.columns else 0
+
+    # ── suvtk summary stats ──
+    suvtk_summary_parts = []
+    if suvtk_tax_path and os.path.isfile(suvtk_tax_path):
+        with open(suvtk_tax_path) as f:
+            n_tax = sum(1 for _ in f) - 1
+        suvtk_summary_parts.append(f'suvtk taxonomy: {n_tax} sequences classified')
+    if suvtk_feat_path and os.path.isfile(suvtk_feat_path):
+        n_cds = sum(1 for l in open(suvtk_feat_path) if l.strip().split()[-1:] == ['CDS'])
+        suvtk_summary_parts.append(f'suvtk features: {n_cds} CDS annotated')
+    if hypo_path and os.path.isfile(hypo_path):
+        n_hypo = sum(1 for l in open(hypo_path) if 'hypothetical' in l.lower())
+        n_anno = sum(1 for l in open(hypo_path) if 'inference\talignment' in l)
+        suvtk_summary_parts.append(f'hypothetical proteins: {n_anno} annotated, {n_hypo} remaining')
+    if topo_path and os.path.isfile(topo_path):
+        rows = []
+        with open(topo_path) as f:
+            hdr = f.readline().strip().split('\t')
+            for line in f:
+                cols = line.strip().split('\t')
+                if len(cols) >= len(hdr):
+                    rows.append(dict(zip(hdr, cols)))
+        n_linear = sum(1 for r in rows if 'linear' in r.get('final_topology', '').lower())
+        n_circular = len(rows) - n_linear
+        suvtk_summary_parts.append(f'topology: {n_linear} linear / {n_circular} circular')
+    if gb_dir and os.path.isdir(gb_dir):
+        n_gb = len([f for f in os.listdir(gb_dir) if f.endswith('.gb')])
+        if n_gb:
+            suvtk_summary_parts.append(f'GenBank files: {n_gb} .gb ready')
+    suvtk_summary = ' | '.join(suvtk_summary_parts) if suvtk_summary_parts else '<span style="color:#999">suvtk not run (optional)</span>'
 
     # --- source.src table ---
     src_cols = [c for c in df.columns if not c.startswith('cmt-') and not c.startswith('bs-')]
@@ -349,6 +392,38 @@ def generate_html(csv_path, run_title, output_path, miuvig_path=None, asm_path=N
     asm_header = '<th>Parameter</th><th>Value</th>'
     asm_body_str = '\n'.join(f'<tr><td>{r[0]}</td><td>{r[1] if len(r)>1 else ""}</td></tr>' for r in asm_rows)
 
+    # --- topology table ---
+    topo_header = '<th>Contig</th><th>Taxonomy</th><th>Rule</th><th>Final</th><th>Length</th><th>DTR</th><th>Evidence</th>'
+    topo_body_str = '<tr><td colspan="7" style="color:#999;text-align:center">No topology data</td></tr>'
+    topo_summary = 'No data'
+    if topo_path and os.path.isfile(topo_path):
+        topo_rows = []
+        with open(topo_path) as f:
+            topo_hdr = f.readline().strip().split('\t')
+            for line in f:
+                cols = line.strip().split('\t')
+                if len(cols) >= len(topo_hdr):
+                    topo_rows.append(dict(zip(topo_hdr, cols)))
+        if topo_rows:
+            n_linear = sum(1 for r in topo_rows if 'linear' in r.get('final_topology','').lower())
+            n_circular = sum(1 for r in topo_rows if 'circular' in r.get('final_topology','').lower())
+            topo_summary = f'{len(topo_rows)} seqs: {n_linear} linear / {n_circular} circular'
+            topo_body_str = ''
+            for row in topo_rows:
+                topo = row.get('final_topology','').lower()
+                cls = 'filled' if 'linear' in topo else ('missing' if 'circular' not in topo else '')
+                dtr_flag = '&#10003;' if row.get('dtr_detected','False').lower() == 'true' else ''
+                topo_body_str += (
+                    f'<tr>'
+                    f'<td>{row.get("contig","")}</td>'
+                    f'<td>{row.get("taxonomy","")}</td>'
+                    f'<td>{row.get("rule_topology","")}</td>'
+                    f'<td class="{cls}">{row.get("final_topology","")}</td>'
+                    f'<td style="text-align:right">{row.get("seq_length","")}</td>'
+                    f'<td style="text-align:center">{dtr_flag}</td>'
+                    f'<td style="font-size:10px;color:#888">{row.get("evidence","")}</td>'
+                    f'</tr>\n')
+
     # --- checklist ---
     chk = [
         ('done', 'suvtk taxonomy — ICTV classification complete'),
@@ -373,6 +448,8 @@ def generate_html(csv_path, run_title, output_path, miuvig_path=None, asm_path=N
         bs_header=bs_header, bs_body=bs_body_str,
         miuvig_header=miuvig_header, miuvig_body=miuvig_body_str,
         asm_header=asm_header, asm_body=asm_body_str,
+        topo_header=topo_header, topo_body=topo_body_str, topo_summary=topo_summary,
+        suvtk_summary=suvtk_summary,
         checklist=chk_html,
         css=CSS, js=JS_EDITABLE,
     )
@@ -389,14 +466,22 @@ def generate_html(csv_path, run_title, output_path, miuvig_path=None, asm_path=N
 
 
 def main():
-    parser = argparse.ArgumentParser(description="report_html.py v2.0 — Full interactive submission report")
+    parser = argparse.ArgumentParser(description="report_html.py v2.1 — Full interactive submission report")
     parser.add_argument('--csv', required=True, help='unified_metadata.csv')
     parser.add_argument('--miuvig', help='miuvig.tsv')
     parser.add_argument('--assembly', help='assembly.tsv')
+    parser.add_argument('--suvtk-tax', help='suvtk taxonomy.tsv')
+    parser.add_argument('--suvtk-feat', help='suvtk featuretable.tbl')
+    parser.add_argument('--hypo', help='analyze_hypothetical featuretable_updated.tbl')
+    parser.add_argument('--topology', help='topology.tsv')
+    parser.add_argument('--gb-dir', help='virus-annotations directory')
     parser.add_argument('--run-title', default='viral_submission')
     parser.add_argument('-o', '--output', default='report.html')
     args = parser.parse_args()
-    generate_html(args.csv, args.run_title, args.output, args.miuvig, args.assembly)
+    generate_html(args.csv, args.run_title, args.output,
+                  args.miuvig, args.assembly,
+                  args.suvtk_tax, args.suvtk_feat, args.hypo,
+                  args.topology, args.gb_dir)
 
 
 if __name__ == '__main__':

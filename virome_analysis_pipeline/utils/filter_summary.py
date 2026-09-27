@@ -134,6 +134,7 @@ def main():
     parser.add_argument("--dry-run", action="store_true", help="仅打印统计不写文件")
     parser.add_argument("--plot", action="store_true", help="生成过滤摘要图")
     parser.add_argument("--summary", help="输出每样本/每病毒统计 TSV 前缀")
+    parser.add_argument("--ref_info", help="参考库 info TSV (final.cluster.ref_info.tsv), 用于节段病毒完整性判定 + is_segmented 列")
 
     args = parser.parse_args()
 
@@ -217,8 +218,60 @@ def main():
     passed = df.filter(mask)
     failed = df.filter(~mask)
 
+    # ── 节段病毒完整性规则 (--ref_info): 节段病毒所有段都必须检出, 只有一段不合格 ──
+    seg_note = ""
+    seg_map = {}
+    if args.ref_info and os.path.exists(args.ref_info) and 'Adjusted_Species' in passed.columns:
+        try:
+            import re as _re
+            import csv as _csv
+            def _norm(s):
+                return _re.sub(r'\s+', '', str(s).upper())
+            with open(args.ref_info, newline='', encoding='utf-8', errors='replace') as f:
+                for r in _csv.DictReader(f, delimiter='\t'):
+                    sp = (r.get('Species_NCBI') or r.get('Species_ICTV') or '').strip()
+                    seg = (r.get('Segment') or '').strip()
+                    if sp and seg:
+                        seg_map.setdefault(sp, set()).add(_norm(seg))
+            def _detected(acc, seg):
+                segs = set()
+                for part in str(acc or '').split(','):
+                    part = part.strip()
+                    if ':' in part:
+                        segs.add(_norm(part.split(':', 1)[0]))
+                if seg and str(seg).strip():
+                    segs.add(_norm(seg))
+                return segs
+            import pandas as _pd
+            p = passed.to_pandas()
+            p['is_segmented'] = [len(seg_map.get(str(s), set())) > 1 for s in p['Adjusted_Species']]
+            drop_idx = []
+            n_partial = 0
+            for (sample, species), g in p.groupby(['Sample', 'Adjusted_Species'], dropna=False):
+                sp_segs = seg_map.get(str(species))
+                if not sp_segs or len(sp_segs) < 2:
+                    continue
+                got = set()
+                for _, r in g.iterrows():
+                    got |= _detected(r.get('Segment_Accessions'), r.get('Segment'))
+                if sp_segs - got:
+                    n_partial += len(g)
+                    drop_idx.extend(g.index.tolist())
+            if drop_idx:
+                dropped_seg = p.loc[drop_idx].copy()
+                p = p.drop(index=drop_idx)
+                if len(failed) > 0:
+                    failed = pl.concat([failed, pl.from_pandas(dropped_seg)], how='diagonal_relaxed')
+                else:
+                    failed = pl.from_pandas(dropped_seg)
+            passed = pl.from_pandas(p)
+            seg_note = (f" | 节段规则: 节段病毒要求全段检出, {n_partial} 条 partial-segment 移至 discarded"
+                        if n_partial else " | 节段规则: 无 partial-segment")
+        except Exception as e:
+            seg_note = f" | [节段规则未生效: {e}]"
+
     print(f"\n  Result: {len(passed)} passed / {len(failed)} discarded "
-          f"({n_initial - len(passed) - len(failed)} dropped as invalid)")
+          f"({n_initial - len(passed) - len(failed)} dropped as invalid){seg_note}")
 
     if args.dry_run:
         print("\n  DRY-RUN mode: no files written.")

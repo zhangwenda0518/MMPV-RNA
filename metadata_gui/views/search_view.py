@@ -21,11 +21,12 @@ class SearchWorker(QThread):
     finished = Signal(dict)
     progress = Signal(str)
 
-    def __init__(self, db: str, query: str, source: str):
+    def __init__(self, db: str, query: str, source: str, gsa_workers: int = 5):
         super().__init__()
         self._db = db
         self._query = query
         self._source = source
+        self._gsa_workers = gsa_workers
 
     def run(self):
         from controllers.search_bridge import search_sra, search_gsa, search_both
@@ -42,7 +43,9 @@ class SearchWorker(QThread):
                 self.progress.emit(f"SRA found: {len(r_sra.get('df', pd.DataFrame()))} runs")
             if self._db in ("gsa", "both"):
                 self.progress.emit("Querying CNCB GSA...")
-                r_gsa = search_gsa(self._query, self._source, outdir)
+                r_gsa = search_gsa(self._query, self._source, outdir,
+                                   progress_cb=lambda n,t,msg: self.progress.emit(msg),
+                                   max_workers=self._gsa_workers)
                 self.progress.emit(f"GSA found: {len(r_gsa.get('df', pd.DataFrame()))} runs")
             if self._db == "sra":
                 r_sra["db"] = "sra"; self.finished.emit(r_sra)
@@ -180,6 +183,19 @@ class SearchPanel(QWidget):
         self._source_combo.addItems(["TRANSCRIPTOMIC", "All", "GENOMIC", "METAGENOMIC", "OTHER"])
         self._source_combo.setCurrentText("TRANSCRIPTOMIC")
         r1.addWidget(self._source_combo, 1)
+
+        from PySide6.QtWidgets import QSpinBox
+        from PySide6.QtCore import QSettings
+        r1.addWidget(QLabel("GSA workers:"))
+        self._workers_spin = QSpinBox()
+        self._workers_spin.setRange(1, 20)
+        self._workers_spin.setFixedWidth(60)
+        self._workers_spin.setToolTip("Parallel crawlers for GSA (higher = faster, but may trigger rate limits)")
+        # Load persisted value
+        saved = QSettings("MMPV-RNA", "MetadataManager").value("gsa_workers", 5)
+        self._workers_spin.setValue(int(saved) if saved else 5)
+        self._workers_spin.valueChanged.connect(lambda v: QSettings("MMPV-RNA", "MetadataManager").setValue("gsa_workers", v))
+        r1.addWidget(self._workers_spin)
 
         r1.addWidget(QLabel("DB:"))
         self._db_combo = QComboBox()
@@ -339,8 +355,9 @@ class SearchPanel(QWidget):
 
         db = self._db_combo.currentText()
         src = self._source_combo.currentText().strip()
-        self._search_log.append(f"  DB: {db.upper()}, Source: {src or 'All'}")
-        self._worker = SearchWorker(db, species, src)
+        workers = self._workers_spin.value()
+        self._search_log.append(f"  DB: {db.upper()}, Source: {src or 'All'}, Workers: {workers}")
+        self._worker = SearchWorker(db, species, src, gsa_workers=workers)
         self._worker.progress.connect(self._on_search_progress)
         self._worker.finished.connect(self._on_search_done)
         self._worker.start()
@@ -372,6 +389,11 @@ class SearchPanel(QWidget):
         if db == "both":
             sra = result.get("sra", {})
             gsa = result.get("gsa", {})
+            # Check per-database errors
+            if not sra.get("ok", True):
+                self._search_log.append(f"  SRA ERROR: {sra.get('error', '')}")
+            if not gsa.get("ok", True):
+                self._search_log.append(f"  GSA ERROR: {gsa.get('error', '')}")
             sra_n = len(sra.get("df", pd.DataFrame()))
             gsa_n = len(gsa.get("df", pd.DataFrame()))
             self._search_log.append(f"  SRA: {sra_n} runs, GSA: {gsa_n} runs")

@@ -1,0 +1,30 @@
+输入: ACVirus      行   9015  contig   9015
+输入: CAT          行   9634  contig   9634
+输入: VITAP        行   6886  contig   6886
+输入: diamond_lca  行  10203  contig  10203
+输入: genomad      行   1719  contig   1719
+输入: metabuli     行  12428  contig  12428
+输入: mmseqs       行   9714  contig   9714
+工具 7 个（ASCII 序）: ACVirus,CAT,VITAP,diamond_lca,genomad,metabuli,mmseqs
+
+==== 逐格复算 *_agree：比对 167136 格，一致 167136 格，不一致 0 格 ====
+Rank            格数      不一致     最终值空
+Realm        20892        0     1877
+Kingdom      20892        0     1750
+Phylum       20892        0     1854
+Class        20892        0     1440
+Order        20892        0     3098
+Family       20892        0     3380
+Genus        20892        0     6198
+Species      20892        0     3633
+
+格式自检: 非 a/b 结构的格子 0 个
+
+产物 contig 20892 个
+  ACVirus      覆盖产物 contig 缺口中 11878 个（该工具无此行）
+  CAT          覆盖产物 contig 缺口中 11259 个（该工具无此行）
+  VITAP        覆盖产物 contig 缺口中 14006 个（该工具无此行）
+  diamond_lca  覆盖产物 contig 缺口中 10706 个（该工具无此行）
+  genomad      覆盖产物 contig 缺口中 19173 个（该工具无此行）
+  metabuli     覆盖产物 contig 缺口中 8844 个（该工具无此行）
+  mmseqs       覆盖产物 contig 缺口中 11543 个（该工具无此行）

@@ -16,8 +16,8 @@ flowchart TB
     end
 
     subgraph Preprocess["预处理层"]
-        CL["1. Clean<br/>clean-data.py<br/>Fastp → Seqkit → Clumpify<br/>-t 120 -j 20"]
-        DP["2. Deplete<br/>host_depletion.py<br/>Kraken2 → Bowtie2 → rRNA<br/>--host_db ~/database/host_db/<br/>--rrna -t 120 -j 20"]
+        CL["1. Clean<br/>data_preprocessing_pipeline/clean-data.py<br/>Fastp → Seqkit → Clumpify<br/>-t 120 -j 20"]
+        DP["2. Deplete<br/>data_preprocessing_pipeline/host_depletion.py<br/>Kraken2 → Bowtie2 → rRNA<br/>--host_db ~/database/host_db/<br/>--rrna -t 120 -j 20"]
     end
 
     subgraph Core["核心分析层"]
@@ -28,10 +28,10 @@ flowchart TB
     end
 
     subgraph Postprocess["后处理层"]
-        TX["7. Taxonomy<br/>virus_classifier.py + R<br/>9工具分类 → R共识<br/>--virus_db + 全DB路径<br/>-t 60"]
+        TX["7. Taxonomy<br/>virus_classifier.py + R<br/>8工具分类 → R共识<br/>--virus_db + 全DB路径<br/>-t 60"]
         HO["8. Host<br/>run_host_prediction.py<br/>ICTV > RNAVirHost > PhaBOX2<br/>-t 120"]
         CV["9. CheckV<br/>checkv completeness<br/>按宿主预评估<br/>--checkv_db checkv-db-v1.7<br/>-t 120"]
-        RE["10. Rescue<br/>rescue_pipeline.py<br/>三支路A→C→D级联拯救<br/>--host-filter Plant<br/>-t 20 -j 10"]
+        RE["10. Rescue<br/>rescue_pipeline.py<br/>四支路A→B→C→D级联拯救<br/>--host-filter Plant<br/>-t 20 -j 10"]
     end
 
     subgraph Output["输出层"]
@@ -108,7 +108,7 @@ flowchart LR
     subgraph S7["20:31 — Stage: taxonomy"]
         direction TB
         c7["python virome_pipeline.py --stage taxonomy<br/>--output_dir $OUT/ --virus_db ~/database/virus-db/<br/>--uniprot_db ... --genomad_db ... --metabuli_db ...<br/>--cat_db ... --cat_tax ... --mmseqs_db ...<br/>--vitap_db ... --acvirus_db ... --vcontact3_db ...<br/>-t 60"]
-        c7_sub["→ virus_classifier.py + R consensus<br/>9工具并行 → 8级taxonomy"]
+        c7_sub["→ virus_classifier.py + R consensus<br/>8工具并行 → 8级taxonomy"]
         c7 --> c7_sub
     end
 
@@ -129,7 +129,7 @@ flowchart LR
     subgraph S10["23:15 — Stage: rescue"]
         direction TB
         c10["python virome_pipeline.py --stage rescue<br/>--output_dir $OUT/<br/>--input_reads $OUT/00b_HostDepletion/<br/>--checkv_db ~/database/virus-db/checkv-db-v1.7<br/>--blast-db $DB/ref.fasta<br/>--host-filter Plant -t 20 -j 10"]
-        c10_sub["→ rescue_pipeline.py<br/>三支路 A→C→D → HQ vOTU"]
+        c10_sub["→ rescue_pipeline.py<br/>四支路 A→B→C→D → HQ vOTU"]
         c10 --> c10_sub
     end
 
@@ -164,7 +164,7 @@ flowchart TB
 
     subgraph StageParams["阶段专用参数组"]
         direction TB
-        SP1["Clean<br/>--dedup --no_compress<br/>--clumpify_memory --clean_debug"]
+        SP1["Clean<br/>--dedup(默认关) --no_compress<br/>--clumpify_memory --clean_debug"]
         SP2["Deplete<br/>--kraken2_confidence --keep_rrna<br/>--rrna_chunk_size --deplete_steps<br/>--align_config --deplete_debug"]
         SP3["Assembly<br/>--refinec_threads --refinec_min_id<br/>--refinec_min_cov --asm_tmp_dir<br/>--asm_keep_temp"]
         SP4["Identification<br/>--nr_db --skip_uniprot_filter<br/>--skip_nr_filter --skip_id_plots<br/>--clean_failed --ident_ext<br/>--virus_protein_db --uniprot_db<br/>--viroids_db --virsorter_db<br/>--viralverify_hmm --metabuli_db<br/>--virus_taxid --virhunter_path<br/>--virhunter_weights --virbot_path<br/>--viralm_path --blast_mode"]
@@ -227,13 +227,13 @@ flowchart TB
 ```mermaid
 flowchart LR
     accTitle: Clean 阶段内部流程
-    accDescr: clean-data.py 内部三步流水线 Fastp 质控 → Seqkit 转FASTA → Clumpify 去重
+    accDescr: clean-data.py 内部三步流水线 Fastp 质控 → Seqkit 转FASTA → Clumpify 聚类重排
 
     subgraph Clean["run_clean()"]
         direction LR
         A1["1. Fastp<br/>--qualified_quality_phred 20<br/>-g --poly_g_min_len 10<br/>--length_required 50"]
         A2["2. Seqkit fq2fa<br/>FASTQ → FASTA<br/>-w 0 (不换行)"]
-        A3["3. Clumpify<br/>BBMap 光学去重<br/>--skip-clumpify 跳过"]
+        A3["3. Clumpify<br/>k-mer 聚类重排<br/>--skip-clumpify 跳过"]
         A1 --> A2 --> A3
     end
 
@@ -373,49 +373,59 @@ flowchart TB
     class Cluster clu
 ```
 
-### 4.7 Rescue 阶段 (三支路级联)
+### 4.7 Rescue 阶段 (四支路级联)
 
 ```mermaid
 flowchart TB
-    accTitle: Rescue 三支路级联拯救
-    accDescr: A路 CheckV评估 → C路 VSI延伸 → D路 BLASTN+VSI 三级联拯救
+    accTitle: Rescue 四支路级联拯救
+    accDescr: A路 CheckV评估 ≥90% 直通 → B路 VSI延伸 → C路 BLASTN参考引导重建 → D路 genus-length 兜底
 
-    subgraph Rescue["run_rescue() — 三支路级联拯救"]
+    subgraph Rescue["run_rescue() — 四支路级联拯救"]
         direction TB
         HOSTFILTER["宿主过滤<br/>--host-filter Plant<br/>CD-HIT known + CheckV pass → 免拯救"]
-        
+
         subgraph BranchA["分支 A: CheckV"]
             A1["checkv completeness<br/>分块并行评估 centroids"]
             A2["completeness ≥ 90%<br/>→ pass"]
-            A3["< 90% → 进入分支 C"]
+            A3["< 90% → 进入分支 B"]
             A1 --> A2
             A1 --> A3
         end
 
-        subgraph BranchC["分支 C: Virseqimprover"]
-            C1["cluster 多样本 reads 聚合<br/>Salmon 定量 → BBMap 提取"]
-            C2["SPAdes 组装 → CheckV"]
+        subgraph BranchB["分支 B: Virseqimprover"]
+            B1["cluster 多样本 reads 聚合<br/>Salmon 定量 → BBMap 提取"]
+            B2["SPAdes 组装 → CheckV"]
+            B3["pass → 输出"]
+            B4["fail → 进入分支 C"]
+            B1 --> B2 --> B3
+            B2 --> B4
+        end
+
+        subgraph BranchC["分支 C: BLASTN 参考引导重建"]
+            C1["BLASTN megablast<br/>--blast-db ref.fasta"]
+            C2["ragtag 参考引导延伸 + CheckV"]
             C3["pass → 输出"]
             C4["fail → 进入分支 D"]
             C1 --> C2 --> C3
             C2 --> C4
         end
 
-        subgraph BranchD["分支 D: BLASTN + VSI"]
-            D1["BLASTN megablast<br/>--blast-db ref.fasta"]
-            D2["CheckV + VSI"]
-            D3["pass → 输出"]
-            D1 --> D2 --> D3
+        subgraph BranchD["分支 D: genus-length 兜底"]
+            D1["属内物种平均长度比对<br/>同属长度 ±15%"]
+            D2["接受为最低完整性基因组"]
+            D1 --> D2
         end
 
-        MERGE["合并 A+C+D pass<br/>vclust 最终去重<br/>→ HQ vOTU"]
-        
+        MERGE["合并 A+B+C+D pass<br/>vclust 最终去重<br/>→ HQ vOTU"]
+
         HOSTFILTER --> BranchA
-        A3 --> BranchC
+        A3 --> BranchB
+        B4 --> BranchC
         C4 --> BranchD
         A2 --> MERGE
+        B3 --> MERGE
         C3 --> MERGE
-        D3 --> MERGE
+        D2 --> MERGE
     end
 
     OUT7[/"08_Rescue/{host}/<br/>centroids/final_centroids.fasta ★"/]
@@ -536,10 +546,10 @@ flowchart TB
 ```mermaid
 mindmap
     accTitle: MMPV-RNA 双流水线对比
-    accDescr: virome_pipeline.py 10阶段新病毒发现 vs auto_known_virus.py 3阶段已知病毒分析
+    accDescr: virome_pipeline.py 15阶段病毒发现 vs auto_known_virus.py 9阶段已知病毒分析
 
     MMPV-RNA_v2.3
-        virome_pipeline.py[新病毒发现]
+        virome_pipeline.py[病毒发现]
             预处理
                 Clean::icon(fa fa-broom)
                 Deplete::icon(fa fa-filter)
@@ -574,17 +584,18 @@ mindmap
 
 ---
 
-## 八、Rescue 三支路详细序列
+## 八、Rescue 四支路详细序列
 
 ```mermaid
 sequenceDiagram
-    accTitle: Rescue 三支路执行序列
-    accDescr: 宿主过滤后依次执行分支A CheckV、分支C VSI、分支D BLASTN+VSI, 最后合并去重
+    accTitle: Rescue 四支路执行序列
+    accDescr: 宿主过滤后依次执行分支A CheckV、分支B VSI、分支C BLASTN参考引导重建、分支D genus-length兜底, 最后合并去重
 
     participant Orch as virome_pipeline<br/>run_rescue()
     participant A as 分支A<br/>CheckV
-    participant C as 分支C<br/>Virseqimprover
-    participant D as 分支D<br/>BLASTN+VSI
+    participant B as 分支B<br/>Virseqimprover
+    participant C as 分支C<br/>BLASTN参考引导重建
+    participant D as 分支D<br/>genus-length兜底
     participant Merge as vclust合并
 
     Note over Orch: 加载宿主预测 + centroids
@@ -599,24 +610,31 @@ sequenceDiagram
     A->>A: completeness ≥ 90% → pass
     A->>A: < 90% → fail → 分支 C
 
-    Note over Orch,C: 分支 C: Virseqimprover reads延伸
-    Orch->>C: branchA_fail centroids
-    C->>C: cluster多样本reads聚合
-    C->>C: Salmon定量 → BBMap提取
-    C->>C: SPAdes组装 → CheckV
+    Note over Orch,B: 分支 B: Virseqimprover reads延伸
+    Orch->>B: branchA_fail centroids
+    B->>B: cluster多样本reads聚合
+    B->>B: Salmon定量 → BBMap提取
+    B->>B: SPAdes组装 → CheckV
+    B->>B: pass → 输出
+    B->>B: fail → 分支 C
+
+    Note over Orch,C: 分支 C: BLASTN 参考引导重建
+    Orch->>C: branchB_fail centroids
+    C->>C: BLASTN megablast ref.fasta 定属
+    C->>C: ragtag 参考引导延伸 → CheckV
     C->>C: pass → 输出
     C->>C: fail → 分支 D
 
-    Note over Orch,D: 分支 D: BLASTN 最后拯救
-    Orch->>D: branchB_fail centroids
-    D->>D: BLASTN megablast ref.fasta
-    D->>D: CheckV → VSI
-    D->>D: pass → 输出
+    Note over Orch,D: 分支 D: genus-length 兜底
+    Orch->>D: branchC_fail centroids
+    D->>D: 同属物种平均长度比对 (±15%)
+    D->>D: 接受为最低完整性基因组 → 输出
 
     Note over Orch,Merge: 合并 + 最终去重
     A-->>Merge: branchA_pass
-    C-->>Merge: branchB_pass
-    D-->>Merge: branchC_pass
+    B-->>Merge: branchB_pass
+    C-->>Merge: branchC_pass
+    D-->>Merge: branchD_pass
     Merge->>Merge: vclust prefilter→align→cluster
     Merge-->>Orch: final_centroids.fasta ★
     Orch->>Orch: CheckV 质量报告 汇总

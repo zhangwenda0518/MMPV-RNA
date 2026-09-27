@@ -1,0 +1,71 @@
+name: CI
+on:
+  push:
+    branches: [main, "refactor/**"]
+  pull_request:
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - uses: pre-commit/action@v3.0.1
+  typecheck:
+    # Advisory for now: the mypy config predates enforcement and the
+    # codebase has a known backlog. Tighten once it goes clean.
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Run mypy
+        run: |
+          pip install -e ".[gui,viz,speed]" mypy
+          mypy src/pypopart || true
+  docs:
+    # --strict fails on any warning, which keeps the docstrings parseable
+    # now that the numpydoc backlog is cleared.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Build docs
+        run: |
+          pip install -e ".[docs,gui,viz,speed]"
+          zensical build --clean --strict
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # hatch-vcs needs tags for versioning
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install package
+        run: pip install -e ".[dev,gui,viz,speed]"
+      - name: Run tests
+        run: pytest --cov=pypopart --cov-branch --cov-report=xml --cov-report=term
+      - name: Upload coverage
+        if: matrix.python-version == '3.12'
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-xml
+          path: coverage.xml

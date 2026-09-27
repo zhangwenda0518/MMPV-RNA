@@ -142,28 +142,31 @@ def extract_allele_frequency(vcf_path, out_tsv):
             chrom = cols[0]
             pos = cols[1]
             ref = cols[3]
-            alt = cols[4]
+            alts = cols[4].split(',')   # 多等位拆分, 与 AF/AO 一一对应
             info = cols[7]
             
-            freq = 0.0
-            af_match = re.search(r'\bAF=([\d\.]+)', info)
-            
-            if af_match: 
-                freq = float(af_match.group(1))
+            af_match = re.search(r'\bAF=([\d\.,]+)', info)
+            if af_match:
+                # freebayes 等多等位 AF 逗号分隔; 逐 ALT 记录, 零频率跳过
+                # (旧版只取第一个值, 多等位首位常为 0, 导致整个位点丢失)
+                freqs = [float(x) for x in af_match.group(1).split(',')]
+                for alt, f in zip(alts, freqs):
+                    if f > 0:
+                        records.append(f"{chrom}\t{pos}\t{ref}\t{alt}\t{f:.4f}")
             else:
                 ao_match = re.search(r'\bAO=([\d,]+)', info)
                 dp_match = re.search(r'\bDP=([\d]+)', info)
                 if ao_match and dp_match:
                     try:
-                        ao = max([int(x) for x in ao_match.group(1).split(',')])
+                        aos = [int(x) for x in ao_match.group(1).split(',')]
                         dp = int(dp_match.group(1))
-                        if dp > 0: 
-                            freq = ao / dp
+                        if dp > 0:
+                            for alt, ao in zip(alts, aos):
+                                f = ao / dp
+                                if f > 0:
+                                    records.append(f"{chrom}\t{pos}\t{ref}\t{alt}\t{f:.4f}")
                     except Exception: 
                         pass
-                    
-            if freq > 0:
-                records.append(f"{chrom}\t{pos}\t{ref}\t{alt}\t{freq:.4f}")
                 
     if records:
         with open(out_tsv, 'w') as f:

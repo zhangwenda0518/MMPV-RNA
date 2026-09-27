@@ -11,13 +11,17 @@
 
 import os
 import sys
-if sys.platform == 'win32':
-    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+if sys.platform == 'win32' and sys.stdout is not None:
+    try:
+        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+    except Exception:
+        pass
 
 import re
 import math
 import argparse
 import textwrap
+import numpy as np
 import pandas as pd
 import matplotlib
 matplotlib.use('Agg')  # non-interactive backend, avoids Tk memory issues
@@ -57,7 +61,7 @@ def plot_sci_landscape(csv_path, output_dir="SCI_Figures_Output"):
     print(f"📥 正在读取数据: {csv_path}")
     df = pd.read_csv(csv_path)
 
-    # 兼容不同来源的列名 (info Core13 / search 旧版 / search 新版)
+    # 兼容不同来源的列名 (info Core14 / search 旧版 / search 新版)
     if 'Database' not in df.columns and 'Run' in df.columns:
         df['Database'] = df['Run'].astype(str).str.extract(r'^([A-Za-z]+)')[0].map(
             {'SRR': 'SRA', 'ERR': 'SRA', 'DRR': 'SRA'}).fillna('GSA')
@@ -74,6 +78,7 @@ def plot_sci_landscape(csv_path, output_dir="SCI_Figures_Output"):
         orgs = df['Organization_CenterName'].astype(str).str.strip().str.title()
         orgs = orgs.str.replace('Unversity', 'University', flags=re.IGNORECASE)
         orgs = orgs.str.replace('&Amp;', '&', flags=re.IGNORECASE)
+        orgs = orgs.str.replace(r'\s+', ' ', regex=True)  # collapse whitespace
         df['Organization_CenterName'] = orgs
 
     if 'Tissue' in df.columns:
@@ -99,8 +104,9 @@ def plot_sci_landscape(csv_path, output_dir="SCI_Figures_Output"):
 
     # ==========================================
     # 2. 动态构建总画布 (3x2 完美布局)
+    #    显示 dpi 150; 保存时 PNG 600 / PDF 矢量 (出版要求 ≥300dpi)
     # ==========================================
-    fig, axes = plt.subplots(3, 2, figsize=(14, 16), dpi=150)
+    fig, axes = plt.subplots(3, 2, figsize=(16, 20), dpi=150)
     ax_list = axes.flatten()
     colors_db = {'SRA': '#4C72B0', 'GSA': '#C44E52'} 
     plot_idx = 0
@@ -123,49 +129,51 @@ def plot_sci_landscape(csv_path, output_dir="SCI_Figures_Output"):
     for x, y in zip(year_counts.index, year_counts.values):
         ax.text(x, y + (max(year_counts.values)*0.03), str(y), ha='center', va='bottom', fontsize=13, fontweight='bold', color='#333333')
         
-    ax.set_title('A. Temporal Distribution of Sequencing Data', loc='left', fontsize=20, fontweight='bold')
-    ax.set_xlabel('Release Year', fontsize=16)
-    ax.set_ylabel('Number of Runs', fontsize=16)
-    ax.tick_params(axis='x', rotation=45, labelsize=13)
+    ax.set_title('A. Temporal Distribution of Sequencing Data', loc='left', fontsize=18, fontweight='bold')
+    ax.set_xlabel('Release Year', fontsize=14)
+    ax.set_ylabel('Number of Runs', fontsize=14, labelpad=12,
+                  rotation=0, ha='right', va='center')
+    ax.yaxis.set_label_coords(-0.12, 0.5)
+    ax.tick_params(axis='x', rotation=45, labelsize=12)
     ax.set_xticks(year_counts.index)
     plot_idx += 1
 
     # ------------------------------------------
-    # Panel B: Database Proportion (强制圈内标记版)
+    # Panel B: Database Proportion (自适应标签大小)
     # ------------------------------------------
     print("📊 绘制 B: 数据库比例环形图...")
     ax = ax_list[plot_idx]
     db_counts = df['Database'].value_counts()
-    
-    # 手动拼装多行文字：名称 + 比例 + 数量
-    custom_labels = []
     total = db_counts.sum()
-    for name, val in db_counts.items():
-        pct = val / total * 100
-        custom_labels.append(f"{name}\n{pct:.1f}%\n(n={val})")
 
-    # 绘制甜甜圈（不放外部标签，手动定位到环形中心）
     wedges, _ = ax.pie(
         db_counts,
         labels=None,
         startangle=140,
         colors=[colors_db.get(x, '#555555') for x in db_counts.index],
         wedgeprops=dict(width=0.55, edgecolor='w', linewidth=3),
-        radius=1.3, center=(0, 0),
+        radius=1.0,
     )
 
-    # 将标签精确放置在每个楔形的环形中心
-    ring_center = 1.0 - 0.55 / 2  # 环形中心 = 外半径 - 环宽/2
-    label_r = ring_center * 1.3    # 实际径向距离
+    # Place labels at ring center, font size scaled to wedge arc
+    ring_center = 1.0 - 0.55 / 2
+    label_r = ring_center * 0.95
 
     for i, wedge in enumerate(wedges):
         ang = math.radians((wedge.theta1 + wedge.theta2) / 2)
-        x = label_r * math.cos(ang)
-        y = label_r * math.sin(ang)
-        ax.text(x, y, custom_labels[i], ha='center', va='center',
-                fontsize=15, fontweight='bold', color='white')
+        arc_deg = abs(wedge.theta2 - wedge.theta1)
+        # Scale font: full size for >= 180°, minimum 9pt for thin wedges
+        fs = max(9, min(14, arc_deg * 0.06))
+        name = db_counts.index[i]
+        val = db_counts.values[i]
+        pct = val / total * 100
+        label = f"{name}\n{pct:.1f}%  (n={val})"
+        ax.text(label_r * math.cos(ang), label_r * math.sin(ang),
+                label, ha='center', va='center',
+                fontsize=fs, fontweight='bold', color='white',
+                linespacing=1.2)
 
-    ax.set_title('B. Proportion of Data Origin', loc='left', fontsize=20, fontweight='bold', pad=40)
+    ax.set_title('B. Proportion of Data Origin', loc='left', fontsize=18, fontweight='bold', pad=30)
     plot_idx += 1
 
     # ------------------------------------------
@@ -174,15 +182,17 @@ def plot_sci_landscape(csv_path, output_dir="SCI_Figures_Output"):
     print("📊 绘制 C: 核心贡献机构...")
     ax = ax_list[plot_idx]
     org_counts = clean_series(df['Organization_CenterName']).value_counts().head(10).sort_values(ascending=True)
-    wrapped_org_index = wrap_labels(org_counts.index, width=35)
-    
-    ax.hlines(y=wrapped_org_index, xmin=0, xmax=org_counts.values, color='skyblue', linewidth=4)
-    ax.plot(org_counts.values, wrapped_org_index, "o", markersize=12, color='royalblue')
-    add_bar_labels(ax, org_counts.values, is_horizontal=True)
-    
-    ax.set_title('C. Top 10 Contributing Organizations', loc='left', fontsize=20, fontweight='bold')
-    ax.set_xlabel('Number of Runs', fontsize=16)
-    ax.tick_params(axis='y', labelsize=12)
+    n = len(org_counts)
+    y_pos = range(n)
+    ax.barh(y_pos, org_counts.values, height=0.65, color='#4C72B0')
+    for i, v in enumerate(org_counts.values):
+        ax.text(v + max(org_counts.values)*0.02, i, str(v), va='center', fontsize=11)
+    ax.set_yticks(list(y_pos))
+    ax.set_yticklabels(org_counts.index, fontsize=10, linespacing=1.4)
+    ax.set_title('C. Top 10 Contributing Organizations', loc='left', fontsize=16, fontweight='bold')
+    ax.set_xlabel('Number of Runs', fontsize=14)
+    ax.invert_yaxis()
+    fig_height_inches = max(3, n * 0.45)
     plot_idx += 1
 
     # ------------------------------------------
@@ -191,15 +201,19 @@ def plot_sci_landscape(csv_path, output_dir="SCI_Figures_Output"):
     print("📊 绘制 D: 研究部位偏好...")
     ax = ax_list[plot_idx]
     if 'Tissue' in df.columns:
-        tissue_counts = clean_series(df['Tissue']).value_counts().head(10).sort_values(ascending=False)
+        tissue_counts = clean_series(df['Tissue']).value_counts().head(10).sort_values(ascending=True)
         if not tissue_counts.empty:
-            wrapped_tissue_index = wrap_labels(tissue_counts.index, width=25)
-            sns.barplot(x=tissue_counts.values, y=wrapped_tissue_index, hue=wrapped_tissue_index, palette="magma", legend=False, ax=ax)
-            add_bar_labels(ax, tissue_counts.values, is_horizontal=True)
-    
-    ax.set_title('D. Top Investigated Biological Tissues', loc='left', fontsize=20, fontweight='bold')
-    ax.set_xlabel('Number of Runs', fontsize=16)
-    ax.tick_params(axis='y', labelsize=13)
+            n = len(tissue_counts)
+            y_pos = range(n)
+            # 分类条目统一主色 (不用顺序色图映射分类, 期刊惯例), 深浅以亮度梯度区分
+            ax.barh(y_pos, tissue_counts.values, height=0.65, color='#4C72B0', edgecolor='white')
+            for i, v in enumerate(tissue_counts.values):
+                ax.text(v + max(tissue_counts.values)*0.02, i, str(v), va='center', fontsize=11)
+            ax.set_yticks(list(y_pos))
+            ax.set_yticklabels(tissue_counts.index, fontsize=10)
+            ax.invert_yaxis()
+    ax.set_title('D. Top Investigated Biological Tissues', loc='left', fontsize=16, fontweight='bold')
+    ax.set_xlabel('Number of Runs', fontsize=14)
     plot_idx += 1
 
     # ------------------------------------------
@@ -208,16 +222,18 @@ def plot_sci_landscape(csv_path, output_dir="SCI_Figures_Output"):
     print("📊 绘制 E: 采样地理分布...")
     ax = ax_list[plot_idx]
     if 'Location_Clean' in df.columns:
-        country_counts = clean_series(df['Location_Clean']).value_counts().head(10).sort_values(ascending=True)
-        if not country_counts.empty:
-            wrapped_country_index = wrap_labels(country_counts.index, width=30)
-            ax.hlines(y=wrapped_country_index, xmin=0, xmax=country_counts.values, color='lightcoral', linewidth=4)
-            ax.plot(country_counts.values, wrapped_country_index, "o", markersize=12, color='firebrick')
-            add_bar_labels(ax, country_counts.values, is_horizontal=True)
-    
-    ax.set_title('E. Top Sample Collection Regions', loc='left', fontsize=20, fontweight='bold')
-    ax.set_xlabel('Number of Runs', fontsize=16)
-    ax.tick_params(axis='y', labelsize=13)
+        loc_counts = clean_series(df['Location_Clean']).value_counts().head(10).sort_values(ascending=True)
+        if not loc_counts.empty:
+            n = len(loc_counts)
+            y_pos = range(n)
+            ax.barh(y_pos, loc_counts.values, height=0.65, color='#C44E52')
+            for i, v in enumerate(loc_counts.values):
+                ax.text(v + max(loc_counts.values)*0.02, i, str(v), va='center', fontsize=11)
+            ax.set_yticks(list(y_pos))
+            ax.set_yticklabels(loc_counts.index, fontsize=10)
+            ax.invert_yaxis()
+    ax.set_title('E. Top Sample Collection Regions', loc='left', fontsize=16, fontweight='bold')
+    ax.set_xlabel('Number of Runs', fontsize=14)
     plot_idx += 1
     
     # ------------------------------------------
@@ -226,25 +242,29 @@ def plot_sci_landscape(csv_path, output_dir="SCI_Figures_Output"):
     print("📊 绘制 F: 发育时期偏好...")
     ax = ax_list[plot_idx]
     if 'Age_GrowthStage_Clean' in df.columns:
-        stage_counts = clean_series(df['Age_GrowthStage_Clean']).value_counts().head(10).sort_values(ascending=False)
+        stage_counts = clean_series(df['Age_GrowthStage_Clean']).value_counts().head(10).sort_values(ascending=True)
         if not stage_counts.empty:
-            wrapped_stage_index = wrap_labels(stage_counts.index, width=35)
-            sns.barplot(x=stage_counts.values, y=wrapped_stage_index, hue=wrapped_stage_index, palette="crest", legend=False, ax=ax)
-            add_bar_labels(ax, stage_counts.values, is_horizontal=True)
-    
-    ax.set_title('F. Top Developmental Stages / Ages', loc='left', fontsize=20, fontweight='bold')
-    ax.set_xlabel('Number of Runs', fontsize=16)
-    ax.tick_params(axis='y', labelsize=12)
+            n = len(stage_counts)
+            y_pos = range(n)
+            # 分类条目统一主色 (crest 顺序色图为版本敏感依赖, 弃用)
+            ax.barh(y_pos, stage_counts.values, height=0.65, color='#55A868', edgecolor='white')
+            for i, v in enumerate(stage_counts.values):
+                ax.text(v + max(stage_counts.values)*0.02, i, str(v), va='center', fontsize=11)
+            ax.set_yticks(list(y_pos))
+            ax.set_yticklabels(stage_counts.index, fontsize=10, linespacing=1.2)
+            ax.invert_yaxis()
+    ax.set_title('F. Top Developmental Stages / Ages', loc='left', fontsize=16, fontweight='bold')
+    ax.set_xlabel('Number of Runs', fontsize=14)
 
     # 整体排版调优
-    plt.tight_layout(pad=4.0, h_pad=6.0, w_pad=4.0)
+    plt.tight_layout(pad=2.0, h_pad=3.0, w_pad=3.0)
 
-    # 4. 输出总拼图
+    # 4. 输出总拼图 (PDF 矢量 + PNG 600dpi, 满足期刊 ≥300dpi 要求)
     out_pdf = os.path.join(output_dir, "Combined_Landscape_Full.pdf")
     out_png = os.path.join(output_dir, "Combined_Landscape_Full.png")
-    
+
     fig.savefig(out_pdf, format='pdf', bbox_inches='tight')
-    fig.savefig(out_png, format='png', dpi=150, bbox_inches='tight')
+    fig.savefig(out_png, format='png', dpi=600, bbox_inches='tight')
     
     print(f"\n🎉 完美收工！所有图表已存放至文件夹: [ {output_dir}/ ]")
 

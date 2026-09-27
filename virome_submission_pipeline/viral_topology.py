@@ -36,10 +36,12 @@ from tqdm import tqdm
 CIRCULAR_TAXA = {
     # ssDNA 环状
     'geminiviridae', 'nanoviridae', 'circoviridae', 'anelloviridae',
-    'bidnaviridae', 'parvoviridae',  # Parvoviridae 线性的, 排除
+    'bidnaviridae',
     'genomoviridae', 'smacoviridae', 'redondoviridae',
     # dsDNA 环状 (部分)
     'polyomaviridae', 'papillomaviridae',
+    # dsDNA 环状 pararetrovirus (Caulimoviridae)
+    'caulimoviridae', 'badnavirus', 'caulimovirus', 'soymovirus',
     # 类病毒
     'pospiviroidae', 'avsunviroidae',
     # 环状 RNA 病毒 (部分)
@@ -61,9 +63,10 @@ LINEAR_TAXA = {
     'narnaviridae', 'mitoviridae', 'botourmiaviridae',
     'ourmiavirus', 'tobravirus', 'carlavirus', 'potexvirus',
     'vitivirus', 'foveavirus', 'capillovirus', 'trichovirus',
-    'ampelovirus', 'badnavirus', 'caulimovirus', 'soymovirus',
-    'prunevirus', 'solemoviridae', 'nodaviridae',
+    'ampelovirus', 'solemoviridae', 'nodaviridae',
     'ilarvirus', 'alphavirus',
+    # ssDNA 线性 (末端发夹, 非环状)
+    'parvoviridae',
 }
 
 

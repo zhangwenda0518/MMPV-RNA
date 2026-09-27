@@ -187,10 +187,10 @@ flowchart LR
 <div class="mermaid">
 flowchart LR
     A["📂 物种 + TaxID"] --> B["search<br/>SRA + GSA 双引擎检索"]
-    B --> C["info<br/>13列元数据提取<br/>+ AI文献溯源"]
+    B --> C["info<br/>14列元数据提取<br/>+ AI文献溯源"]
     C --> D["down<br/>aria2c / prefetch<br/>双协议下载"]
     D --> E["plot<br/>SCI 六图可视化"]
-    E --> F["✅ FASTQ<br/>+ Core13.csv<br/>+ 可视化 PDF"]
+    E --> F["✅ FASTQ<br/>+ Core14.csv<br/>+ 可视化 PDF"]
 
     A --> G["📂 物种 + TaxID<br/><small>宿主库构建</small>"]
     G --> H["genome-down<br/>NCBI datasets<br/>参考基因组"]
@@ -213,7 +213,7 @@ flowchart LR
   <tr>
     <td>info</td>
     <td><code>gsa_sra.info.py</code></td>
-    <td>SRA XML 解析 + GSA Excel 爬虫，13 核心字段提取（Tissue / Age / Location / CollectionDate 等），BioProject → PubMed 文献追溯，datavzrd 交互报告</td>
+    <td>SRA XML 解析 + GSA Excel 爬虫，14 核心字段提取（Tissue / Age / Location / CollectionDate 等），BioProject → PubMed 文献追溯，datavzrd 交互报告</td>
   </tr>
   <tr>
     <td>down</td>
@@ -227,12 +227,12 @@ flowchart LR
   </tr>
   <tr>
     <td>genome-down</td>
-    <td><code>download_host_genome.py</code></td>
+    <td><code>public_metadata_pipeline/download_host_genome.py</code></td>
     <td>NCBI datasets 下载核基因组 + GFF3，可选叶绿体/线粒体，seq-report 去重</td>
   </tr>
   <tr>
     <td>hostdb</td>
-    <td><code>build_hostbase.py</code></td>
+    <td><code>public_metadata_pipeline/build_hostbase.py</code></td>
     <td>Kraken2 (含标准库 + TaxID 注入) + Bowtie2 + HISAT2 + Minimap2 四索引并行构建</td>
   </tr>
 </table>

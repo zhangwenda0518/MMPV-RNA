@@ -157,7 +157,7 @@ def main():
                    help="FASTA file with contig sequences (optional)")
     p.add_argument("-o", "--output_dir", default="classified/",
                    help="Output directory for classified .fasta and .tsv files")
-    p.add_argument("--prob_dir", default="cross_analysis/",
+    p.add_argument("--prob_dir", default="database/cross_analysis/",
                    help="Directory containing C7 output (*_host_probability.tsv)")
     p.add_argument("--mode", default="medium", choices=["all", "medium", "high"],
                    help="Output mode: all, medium (High+Medium), high (High only)")

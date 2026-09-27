@@ -12,6 +12,7 @@ import json
 import shutil
 import subprocess
 from datetime import datetime
+from typing import Any, Dict, List, Optional, Iterable
 
 if sys.platform == 'win32':
     sys.stdout.reconfigure(encoding='utf-8', errors='replace')
@@ -28,14 +29,14 @@ class UI:
     }
 
     @staticmethod
-    def banner(title):
+    def banner(title: str) -> None:
         print(f"""{UI.C['purple']}{UI.C['bold']}
   =============================================================
     {title}
   ============================================================={UI.C['reset']}""")
 
     @classmethod
-    def stage(cls, name, status="start"):
+    def stage(cls, name: str, status: str = "start") -> None:
         sym = {'start': '[>>>]', 'skip': '[---]', 'done': '[OK]', 'fail': '[FAIL]'}
         color = {'start': cls.C['cyan'], 'skip': cls.C['gray'],
                  'done': cls.C['green'], 'fail': cls.C['red']}
@@ -45,19 +46,19 @@ class UI:
         print(f"{c}{cls.C['bold']}{'=' * 60}{cls.C['reset']}\n")
 
     @classmethod
-    def ok(cls, msg):
+    def ok(cls, msg: str) -> None:
         print(f"  {cls.C['green']}[OK]{cls.C['reset']} {msg}")
 
     @classmethod
-    def warn(cls, msg):
+    def warn(cls, msg: str) -> None:
         print(f"  {cls.C['yellow']}[WARN]{cls.C['reset']} {msg}")
 
     @classmethod
-    def err(cls, msg):
+    def err(cls, msg: str) -> None:
         print(f"  {cls.C['red']}[ERR]{cls.C['reset']} {msg}")
 
     @classmethod
-    def info(cls, msg):
+    def info(cls, msg: str) -> None:
         print(f"  {cls.C['gray']}> {msg}{cls.C['reset']}")
 
 
@@ -65,42 +66,44 @@ class UI:
 # Checkpoint
 # ==========================================
 class Checkpoint:
-    def __init__(self, work_dir):
-        self.dir = os.path.join(work_dir, '.checkpoints')
-        os.makedirs(self.dir, exist_ok=True)
-        self.file = os.path.join(self.dir, 'state.json')
-        self.state = self._load()
+    """JSON-based checkpoint manager for pipelined stage resumption."""
 
-    def _load(self):
+    def __init__(self, work_dir: str) -> None:
+        self.dir: str = os.path.join(work_dir, '.checkpoints')
+        os.makedirs(self.dir, exist_ok=True)
+        self.file: str = os.path.join(self.dir, 'state.json')
+        self.state: Dict[str, Any] = self._load()
+
+    def _load(self) -> Dict[str, Any]:
         if os.path.exists(self.file):
             with open(self.file, 'r') as f:
                 return json.load(f)
         return {'stages': {}}
 
-    def _save(self):
+    def _save(self) -> None:
         with open(self.file, 'w') as f:
             json.dump(self.state, f, indent=2, ensure_ascii=False)
 
-    def is_done(self, stage):
+    def is_done(self, stage: str) -> bool:
         return self.state.get('stages', {}).get(stage, {}).get('status') == 'done'
 
-    def mark_start(self, stage):
+    def mark_start(self, stage: str) -> None:
         self.state['stages'][stage] = {'status': 'running', 'started': datetime.now().isoformat()}
         self._save()
 
-    def mark_done(self, stage):
+    def mark_done(self, stage: str) -> None:
         self.state['stages'][stage] = {'status': 'done', 'completed': datetime.now().isoformat()}
         self._save()
 
-    def mark_fail(self, stage, err=''):
+    def mark_fail(self, stage: str, err: str = '') -> None:
         self.state['stages'][stage] = {'status': 'failed', 'error': str(err)[:200]}
         self._save()
 
-    def reset(self):
+    def reset(self) -> None:
         self.state['stages'] = {}
         self._save()
 
-    def summary(self, stage_order):
+    def summary(self, stage_order: List[str]) -> str:
         lines = []
         for s in stage_order:
             info = self.state.get('stages', {}).get(s, {})
@@ -113,7 +116,13 @@ class Checkpoint:
 # ==========================================
 # Shell execution
 # ==========================================
-def run_cmd(cmd, stage_name, log_dir, timeout=86400, secrets=None):
+def run_cmd(
+    cmd: str,
+    stage_name: str,
+    log_dir: str,
+    timeout: int = 86400,
+    secrets: Optional[Iterable[str]] = None,
+) -> int:
     """Execute a shell command with output logging.
 
     Args:

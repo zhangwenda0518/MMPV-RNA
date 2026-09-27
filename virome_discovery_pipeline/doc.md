@@ -5,11 +5,10 @@
 ```
 Raw FASTQ
   │
-[00a_CleanData]  ← clean-data.py     (fastp → seqkit → clumpify)
+[00a_CleanData]  ← data_preprocessing_pipeline/clean-data.py     (fastp → seqkit → clumpify)
   │
-[00b_HostDepletion] ← host_depletion.py (kraken2 → align → rrna)
+[00b_HostDepletion] ← data_preprocessing_pipeline/host_depletion.py (kraken2 → align → rrna)
   │
-[00c_BBnorm]  ← run_bbnorm.py      (可选, co-assembly 前归一化)
   │
 [01_Assembly] ← assembly_pipeline.py (megahit / rnaviralspades / penguin)
   │
@@ -48,10 +47,9 @@ Raw FASTQ
 |------|--------|------|
 | `--input_reads` | — | 原始 FASTQ 目录 |
 | `--output_dir` / `-o` | 必需 | 项目输出根目录 |
-| `--stage` | `all` | 阶段选择: all,clean,deplete,bbnorm,assembly,identification,cobra,cluster,taxonomy,host,checkv,rescue,report |
+| `--stage` | `all` | 阶段选择: all,clean,deplete,assembly,identification,cobra,cluster,taxonomy,host,checkv,rescue,report |
 | `--config` / `--profile` | `default` | YAML 配置文件和 profile |
 | `--coassembly` | False | 合并所有样本 reads 进行共组装 |
-| `--bbnorm` | False | 启用 BBNorm 归一化 |
 | `--assembler` | `penguin` | 组装工具: megahit, rnaviralspades, penguin |
 | `--aligner` | `bowtie2` | 宿主比对工具: bowtie2, hisat2, minimap2 |
 | `--host-filter` | `Plant` | 宿主过滤类型 (Plant/Animal/Fungi/Bacteria) |
@@ -73,7 +71,6 @@ Raw FASTQ
 {output_dir}/
   00a_CleanData/         ← 清洗后数据
   00b_HostDepletion/     ← 去宿主后 reads
-  00c_BBnorm/            ← 归一化 reads (可选)
   01_Assembly/           ← {sample}/{sample}_{tool}.contig.fasta
   02_Identification/     ← {sample}_virus.all.candidate.fasta
   03_COBRA/              ← {sample}.{tool}.cobra.fa
@@ -87,9 +84,9 @@ Raw FASTQ
 
 ---
 
-## 2. clean-data.py — 数据清洗
+## 2. clean-data.py — 数据清洗（`data_preprocessing_pipeline/`）
 
-**用途:** RNA-seq 数据清洗: fastp (QC+去接头) → seqkit (FASTQ→FASTA) → clumpify (光学去重)。自动识别 PE/SE。
+**用途:** RNA-seq 数据清洗: fastp (QC+去接头) → seqkit (FASTQ→FASTA) → clumpify (聚类重排，提升压缩率)。自动识别 PE/SE。
 
 ### 参数
 
@@ -112,7 +109,7 @@ Raw FASTQ
 {output}/
   1.fastp_tmp/        ← 临时清洗 FASTQ
   2.fasta/            ← 转换后的 FASTA
-  3.clumpify/         ← 去重后 FASTA
+  3.clumpify/         ← 聚类重排后 FASTA
   logs/               ← 日志 + fastp HTML/JSON
   .clean_checkpoints  ← 断点续传
 ```
@@ -121,7 +118,7 @@ Raw FASTQ
 
 ---
 
-## 3. host_depletion.py — 宿主去除
+## 3. host_depletion.py — 宿主去除（`data_preprocessing_pipeline/`）
 
 **用途:** 三阶段混合去宿主: Kraken2 分类 → 比对工具 (Bowtie2/HISAT2/Minimap2) 精细过滤 → Ribodetector rRNA 去除。支持 FASTA/FASTQ, PE/SE。
 
@@ -156,28 +153,17 @@ FASTA/FASTQ 目录；Kraken2 宿主库；Bowtie2/HISAT2/Minimap2 宿主索引
 
 ---
 
-## 4. run_bbnorm.py — 覆盖度归一化
+## 4. BBNorm 覆盖度归一化（不在本管线，跨管线引用）
 
-**用途:** BBNorm k-mer 覆盖度归一化，降低高覆盖度序列偏差。自动识别 PE/SE。
-
-### 参数
-
-| 参数 | 默认值 | 说明 |
-|------|--------|------|
-| `-i` / `--input` | 必需 | 输入 reads 目录 |
-| `-o` / `--output` | 必需 | 输出目录 |
-| `-t` / `--threads` | 16 | 线程数/样本 |
-| `-j` / `--jobs` | 1 | 并行样本数 |
-| `--target` | 70 | 目标覆盖度 |
-| `--mindepth` | 2 | 最低 k-mer 深度 |
-
-### 输入
-去宿主后 reads 目录
-
-### 输出
-`{output}/*_norm_R1.fq.gz`, `*_norm_R2.fq.gz`, `*_norm_SE.fq.gz`
-
-**工具依赖:** bbnorm.sh
+> 本管线（`virome_pipeline.py`）**没有 bbnorm 阶段**（`:3580` stage_order 无该项），
+> 脚本 `run_bbnorm.py` 已迁至 `data_preprocessing_pipeline/run_bbnorm.py`。
+> 作为数据预处理管线的**可选阶段**，两个入口均默认不跑、输出统一为 `00c_BBnorm/`：
+> - `data_preprocessing_pipeline/data_preprocessing.py --stage bbnorm`（`--stage all` 不含）
+> - `public_metadata_pipeline/preprocess_unified.py --bbnorm`（从 .sra 起步的公共数据入口）
+>
+> 用途: 多样本深度差异大时、共组装前的覆盖度归一化（target=70, mindepth=2）。
+> 产出目录可直接作为本管线 `--input_reads`；若与预处理共用输出根目录，
+> `report_pipeline.py` 会在报告里顺带展示该阶段（仅当目录存在）。
 
 ---
 
@@ -424,9 +410,9 @@ Centroids FASTA + taxonomy TSV
 
 ---
 
-## 12. rescue_pipeline.py — 三支路病毒抢救
+## 12. rescue_pipeline.py — 四支路病毒抢救
 
-**用途:** A 支路: CheckV 质控 (completeness > threshold)。B 支路: Virseqimprover reads 延伸。C 支路: BLASTN 参考引导延伸。三路 HQ 序列 vclust 去重。
+**用途:** A 支路: CheckV 质控 (completeness > 90% 直通)。B 支路: Virseqimprover reads 延伸。C 支路: BLASTN 参考比对 + ragtag 参考引导延伸。D 支路: genus_len 属水平长度拯救 (±15%)。四路 HQ 序列 vclust 去重。
 
 ### 参数
 
@@ -495,11 +481,67 @@ Centroids FASTA + clusters.tsv + split_fastas/ + reads 目录
 
 | 脚本 | 用途 | 类型 |
 |------|------|------|
-| `preprocess.py` | 清洗+去宿主轻量包装 | 独立运行 |
-| `data_preprocessing.py` | 清洗+去宿主可配置版 | 独立运行 |
+| `data_preprocessing_pipeline/preprocess.py` | 清洗+去宿主轻量包装 | 独立运行 |
+| `data_preprocessing_pipeline/data_preprocessing.py` | 清洗+去宿主可配置版 | 独立运行 |
 | `viroid_circular_detect.py` | 类病毒环状检测 (self-BLASTN) | 独立运行 |
 | `Virseqimprover.py` | reads 级别迭代延伸病毒基因组 | 被 rescue 调用 |
 | `../virome_submission_pipeline/virome_submission_pipeline.py` | GenBank 提交准备 | 独立运行 |
 | `utils/classify_contigs.py` | ICTV 参考分类查找 | 被 run_host_prediction 调用 |
 | `utils/discovery2analysis.py` | centroids → analysis 格式转换 | 桥接脚本 |
 | `utils/validate_novel_viruses.py` | 基于分类层级判断新病毒 | 独立运行 |
+| `terminal_repeats.py` | 末端重复检测 (DTR/ITR) + 环形判断 + 起点归一 | 独立运行 |
+
+### 09b 证据链脚本（analysis_verify 阶段）
+
+「一道门 + 两次补票 + 整合」结构：
+
+| 环节 | 脚本 | 说明 |
+|---|---|---|
+| 门 | `validate_rescue_cdd.py` | CDD curated 结构域验证（覆盖窄、特异性高） |
+| 补票 1 | `gen_final_judgement.py` | blast 身份注释（known / new） |
+| 补票 2 | `hmm_ct3_evidence.py` | CT3 五库全长 profile（覆盖宽），模型名六桶分级 + `VIRAL_CLUSTER_TOKENS` 支系识别 |
+| 整合 | `integrate_rescue_evidence.py` | 五层证据加权 → `rescue_evidence_scored.tsv`；打分 `0.3*blastn+0.3*blastx+0.4*domain`，域证据层 `domain = max(cdd, hmm)`（HMM 进分默认开，`--no-hmm-in-score` 回退纯 CDD；同为 profile 证据取 max 防双重计分，CDD 盲区由 HMM 补上） |
+
+> ⚠️ **CT3 不是纯病毒库，不能「命中即病毒」**：`phrogs_for_ct` 是噬菌体专属；`Useful_Annotation` 含大量
+> `cdd_cluster`（COG/PHA 噬菌体结构蛋白）与 `baits_missed`（噬菌体尾部/门户）；`DNA_rep` 含
+> `circular_genetic_element` / `plasmid` 这类非病毒环状元件。因此按**模型名**分六桶：
+> VIRAL_FAMILY / VIRAL_CLUSTER / VIRAL_FUNCTION / AMBIGUOUS / PHAGE / OTHER，前三类合起来才算非噬菌体病毒证据。
+>
+> 早期曾用 RVDB-prot-HMM（`hmm_rvdb_evidence.py` + `_tools/build_famtax.py`）作补票 2，已由 CT3 路径取代
+> （2026-09-14）：CT3 五库覆盖面更广，且两者一为二进制 `.h3m`、一为已 press 的文本，物理合并需转文本重压
+> 且混两套命名体系，得不偿失。RVDB 两个脚本归档保留于 `archive/server_local_diff_20260922/server_only_scripts/`，**不接入流程**。
+
+
+### terminal_repeats.py 说明
+
+逐条 contig 检测末端重复: 5' 端拷贝出现在后半段且一直延伸到 3' 端 → 末端重复
+(DTR, 环状装配的标记), 修剪掉冗余拷贝; 两端互为反向互补 → 反向重复 (ITR)。
+判定逻辑与 Cenote-Taker3 的 `terminal_repeats.py` 逐行一致 (已实测 120 条合成
+contig 600 格零差异), 另加容错 DTR 模式与基于完整 ORF 的起点归一。
+
+```bash
+python terminal_repeats.py -i contigs.fasta -o out_dir -t 8 \
+    --method auto --rotation repeat
+```
+
+关键参数
+
+| 参数 | 默认 | 说明 |
+|------|------|------|
+| `--method` | auto | `exact` 只有完全一致; `auto` 先 exact 再容错 (min-identity 0.90); `fuzzy` 只容错 |
+| `--rotation` | repeat | `repeat` 修剪后起点即末端重复处 (位移 0); `orf` 起点归一到最长完整 ORF 起始密码子 (CT3 实际做法); `none` 只修剪 |
+| `--min-dtr` / `--max-itr` | 20 / 1000 | DTR 最短长度 / ITR 最长长度 |
+| `--max-length` | 1e6 | 超过此长度的 contig 不做 DTR 判定 (置 NA), 与 CT3 一致 |
+| `--circ-file` | 无 | 用户直接声明环状的 contig 名单 (id / description / 完整 header 均可) |
+| `--header` | full | 输出 FASTA 写完整 header; `id` 只写 id |
+
+输出: `trimmed_contigs.fasta` (修剪/旋转后序列)、`terminal_repeats_summary.tsv`
+(前 5 列与 CT3 同名同序, 追加 dtr_length/dtr_identity/dtr_method/itr_length/
+topology/rotated/rotation_offset/rotation_mode)、`circular_contigs.txt`。
+
+注意: ITR 单独不作为环状证据 (`topology` 只取 `circular_DTR` / `circular_user` /
+`undetermined`)。CT3 的 `--circ-file` 只比对 description 去掉 id (见其源码
+`fmt_desc`), 与其帮助文本「names of contigs (header line sans '>')」相悖, 本实现
+同时接受 id / description / 完整 header。
+
+自测: `python tests/test_terminal_repeats.py` (44 项断言)。

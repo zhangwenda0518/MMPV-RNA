@@ -1,0 +1,19 @@
+# 参考基因组清单 (s2c 参考基因组通道的输入, 模块 v6.3 新增; 制表符分隔, 三列)
+#
+#   列1  4位物种代码    必须与 host_sample_map.tsv 第二列一致 (如 GBCQ); 候选按
+#                      样本号 -> 4位代码 -> 本清单 找到"自身参考基因组"
+#   列2  物种目录名/注释 仅人读, 不参与匹配 (与 host_sample_map 第三列同款写法即可)
+#   列3  参考基因组路径  染色体级fasta: .fa/.fasta/.fna 或 .gz; 建议绝对路径
+#
+# 用法约定:
+#   * 现成基因组有什么就填什么; **没有参考基因组的物种不要写行** —— 通道对它们
+#     一律记 no_ref_genome (跳过, 不产生任何结论, 也绝不因此判"真病毒").
+#   * 同一代物代码只取第一行, 重复行记入 refgenome_errors.log (#DUPLICATE).
+#   * 参考基因组找不到/解压失败/超体积闸门分别记 #NOGENOME / #GUNZIP_FAIL /
+#     #TOOBIG, 对应物种的候选同样只记 genome_absent, 不进任何判定.
+#   * 证据是单向的: 比对上 (两端宿主侧翼同一位点 / 宿主外显子嵌合) 才可能支持
+#     EVE; 比不上不定案. 见 README "参考基因组通道" 一节.
+#
+# 示例 (去掉行首 "# " 后使用):
+# GBCQ	GBCQ-Aerva_persica-juvenile_leaf	/references/Aerva_persica/genome.fa
+# EZZT	EZZT-Passiflora_edulis	/references/Passiflora_edulis/genome.fa.gz

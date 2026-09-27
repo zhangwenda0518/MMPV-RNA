@@ -1,0 +1,20 @@
+{
+  "description": "Unique-MST chain of four haplotypes, one mutation apart",
+  "derivation": "Hand-traced. Pairwise Hamming distances: s1-s2=1, s2-s3=1, s3-s4=1, s1-s3=2, s2-s4=2, s1-s4=3. The unique MST is the chain H1-H2-H3-H4 with unit edges (any other spanning tree has total weight > 3). Haplotype ids follow identify_haplotypes_from_alignment ordering (sorted by sequence string): AAAAA->H1, AAAAT->H2, AAATT->H3, AATTT->H4.",
+  "algorithm": "mst",
+  "params": {},
+  "sequences": {
+    "s1": "AAAAA",
+    "s2": "AAAAT",
+    "s3": "AAATT",
+    "s4": "AATTT"
+  },
+  "expected": {
+    "nodes": ["H1", "H2", "H3", "H4"],
+    "edges": [
+      ["H1", "H2", 1],
+      ["H2", "H3", 1],
+      ["H3", "H4", 1]
+    ]
+  }
+}

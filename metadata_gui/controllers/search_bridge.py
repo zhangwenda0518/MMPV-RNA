@@ -5,22 +5,53 @@ import os
 import importlib.util
 from typing import Optional, List
 
-_GUI_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-_PROJECT_DIR = os.path.dirname(_GUI_DIR)
-_PIPELINE_DIR = os.path.join(_PROJECT_DIR, "public_metadata_pipeline")
+if getattr(sys, 'frozen', False):
+    # PyInstaller: data files are under sys._MEIPASS (temp extraction dir)
+    _PIPELINE_DIR = os.path.join(sys._MEIPASS, "public_metadata_pipeline")
+else:
+    # Source: pipeline dir is sibling to metadata_gui/
+    _GUI_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    _PROJECT_DIR = os.path.dirname(_GUI_DIR)
+    _PIPELINE_DIR = os.path.join(_PROJECT_DIR, "public_metadata_pipeline")
 _SEARCH_PATH = os.path.join(_PIPELINE_DIR, "gsa_sra.search.py")
 
 
 def _load_search_module():
-    spec = importlib.util.spec_from_file_location("gsa_sra_search", _SEARCH_PATH)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
+    import traceback
+    # PyInstaller GUI mode (console=False) sets sys.stdout/stderr to None.
+    # The pipeline scripts use print(), tqdm, and emoji chars which crash
+    # on Windows GBK codec. Redirect to devnull with UTF-8 encoding.
+    if sys.stdout is None:
+        sys.stdout = open(os.devnull, "w", encoding="utf-8", errors="replace")
+    if sys.stderr is None:
+        sys.stderr = open(os.devnull, "w", encoding="utf-8", errors="replace")
+    try:
+        spec = importlib.util.spec_from_file_location("gsa_sra_search", _SEARCH_PATH)
+        if spec is None:
+            raise FileNotFoundError(f"spec_from_file_location returned None for {_SEARCH_PATH}")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+    except Exception as e:
+        # Log to a known location for debugging
+        diag = os.path.join(os.path.expanduser("~"), "mm_search_diag.log")
+        try:
+            with open(diag, "a", encoding="utf-8") as f:
+                f.write(f"[{__import__('datetime').datetime.now()}] _load_search_module FAILED\n")
+                f.write(f"  _SEARCH_PATH={_SEARCH_PATH}\n")
+                f.write(f"  exists={os.path.isfile(_SEARCH_PATH)}\n")
+                f.write(f"  frozen={getattr(sys, 'frozen', False)}\n")
+                f.write(f"  _MEIPASS={getattr(sys, '_MEIPASS', 'N/A')}\n")
+                f.write(f"  error={e}\n")
+                f.write(traceback.format_exc() + "\n")
+        except: pass
+        raise
 
 
 def search_sra(query: str, source: str = "", outdir: str = "",
                detailed: bool = True, ncbi_api: str = None) -> dict:
     import pandas as pd
+    import traceback
     # Normalize "All" to no filter
     src = None if (not source or source.strip().lower() == "all") else source
     try:
@@ -36,6 +67,14 @@ def search_sra(query: str, source: str = "", outdir: str = "",
                     lambda x: f"{float(x)/1024:.1f}" if pd.notna(x) and str(x).replace('.','').isdigit() else "")
         return {"ok": True, "df": df if not df.empty else pd.DataFrame(), "error": ""}
     except Exception as e:
+        # Log to diagnostic file
+        diag = os.path.join(os.path.expanduser("~"), "mm_search_diag.log")
+        try:
+            with open(diag, "a", encoding="utf-8") as f:
+                f.write(f"[{__import__('datetime').datetime.now()}] search_sra FAILED\n")
+                f.write(f"  query={query} source={source}\n")
+                f.write(traceback.format_exc() + "\n")
+        except: pass
         return {"ok": False, "df": pd.DataFrame(), "error": str(e)}
 
 
@@ -176,18 +215,27 @@ def _extract_gsa_filesizes(outdir: str, df) -> None:
 
 
 def search_gsa(query: str, source: str = "", outdir: str = "",
-               detailed: bool = True) -> dict:
+               detailed: bool = True, progress_cb=None, max_workers: int = 5) -> dict:
     import pandas as pd
     try:
         mod = _load_search_module()
         engine = mod.GSAEngine(query, source or None, outdir or os.getcwd(),
-                               detailed=detailed)
+                               detailed=detailed, max_workers=max_workers,
+                               progress_cb=progress_cb)
         df = engine.fetch_gsa()
         if not df.empty:
             df["Database"] = "GSA"
             _extract_gsa_filesizes(outdir, df)
         return {"ok": True, "df": df if not df.empty else pd.DataFrame(), "error": ""}
     except Exception as e:
+        import traceback
+        diag = os.path.join(os.path.expanduser("~"), "mm_search_diag.log")
+        try:
+            with open(diag, "a", encoding="utf-8") as f:
+                f.write(f"[{__import__('datetime').datetime.now()}] search_gsa FAILED\n")
+                f.write(f"  query={query} source={source}\n")
+                f.write(traceback.format_exc() + "\n")
+        except: pass
         return {"ok": False, "df": pd.DataFrame(), "error": str(e)}
 
 
@@ -238,7 +286,7 @@ def deep_extract(run_ids: List[str], outdir: str = "",
             return {"ok": False, "tsv_path": "", "full_path": "",
                     "error": result.stderr[-500:] or "Unknown error"}
 
-        tsv = os.path.join(out, "Global_Unified_Metadata_Core13.tsv")
+        tsv = os.path.join(out, "Global_Unified_Metadata_Core14.tsv")
         full = os.path.join(out, "Global_Unified_Metadata_Full.tsv")
         if os.path.isfile(tsv):
             return {"ok": True, "tsv_path": tsv, "full_path": full, "error": ""}

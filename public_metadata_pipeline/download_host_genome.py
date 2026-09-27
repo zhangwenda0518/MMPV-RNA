@@ -4,7 +4,10 @@
 """
 📥 宿主参考基因组下载器 v1.0
 ============================
-基于 NCBI datasets CLI，自动下载指定物种的：
+多通道下载指定物种的参考基因组：
+通道 datasets (NCBI datasets CLI) → ngd (ncbi-genome-download) →
+ftp (E-utilities 定位 + HTTPS 直连) → gget (Ensembl/Ensembl Plants)；
+--genome-fasta / 用户提供 FASTA 可完全跳过下载。
   - 核基因组 (genome)
   - 注释文件 (GFF3)
   - 序列报告 (seq-report)
@@ -82,14 +85,14 @@ def check_datasets_cli() -> bool:
 
 
 def open_fasta(path: str):
-    """智能打开 FASTA 文件（支持 .gz 压缩）"""
+    """Context-managed opener for FASTA files (supports .gz compression)."""
     if path.endswith('.gz'):
         return gzip.open(path, 'rt', encoding='utf-8')
     return open(path, 'r', encoding='utf-8')
 
 
 def collect_fasta_files(directory: str) -> List[str]:
-    """递归收集目录下所有 FASTA 文件"""
+    """Recursively collect all FASTA/FA/FNA files (plain or .gz) under a directory."""
     fasta_exts = {'.fna', '.fasta', '.fa', '.fna.gz', '.fasta.gz', '.fa.gz'}
     files = []
     for root, _, filenames in os.walk(directory):
@@ -106,7 +109,7 @@ def collect_fasta_files(directory: str) -> List[str]:
 
 
 def count_sequences(fasta_path: str) -> int:
-    """快速统计 FASTA 文件中的序列数"""
+    """Count sequences in a FASTA file by counting '>' header lines."""
     count = 0
     try:
         with open_fasta(fasta_path) as f:
@@ -289,6 +292,146 @@ def download_organelle_genome(species: str, organelle: str, out_dir: str,
         return None
 
 
+
+
+def chan_datasets(args) -> bool:
+    """通道 1: NCBI datasets CLI (官方首选)"""
+    if args.skip_datasets:
+        UI.warn("datasets 通道已禁用 (--skip-datasets)")
+        return False
+    if not check_datasets_cli():
+        return False
+    genome_zip = os.path.join(args.outdir, 'genome_down.zip')
+    if os.path.isfile(genome_zip) and os.path.getsize(genome_zip) > 1000:
+        UI.ok(f"基因组压缩包已存在: {genome_zip}")
+        return True
+    cmd = [
+        'datasets', 'download', 'genome', 'taxon', args.species,
+        '--filename', genome_zip,
+        '--include', 'genome,gff3,seq-report'
+    ]
+    if args.ncbi_api:
+        cmd.extend(['--api-key', args.ncbi_api])
+    UI.info(f"执行: {' '.join(cmd)}")
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=3600)
+    if result.returncode == 0:
+        UI.ok("datasets 下载成功")
+        return True
+    UI.err(f"datasets 下载失败: {result.stderr[:300]}")
+    return False
+
+
+def chan_ngd(args, extracted_dir) -> bool:
+    """通道 2: ncbi-genome-download (Python, 按 TaxID 过滤、并行)"""
+    import shutil as _sh
+    exe = _sh.which('ncbi-genome-download')
+    if not exe:
+        UI.warn("ngd 通道不可用: 未安装 ncbi-genome-download (pip install ncbi-genome-download)")
+        return False
+    if not args.taxid:
+        UI.warn("ngd 通道需要 --taxid")
+        return False
+    cmd = [exe, 'all', '--taxid', str(args.taxid), '-F', 'fasta',
+           '-o', extracted_dir, '--flat-output', '-p', '4', '-s', 'refseq']
+    UI.info(f"执行: {' '.join(cmd)}")
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=7200)
+    if result.returncode == 0 and collect_fasta_files(extracted_dir):
+        UI.ok("ngd 下载成功")
+        return True
+    UI.err(f"ngd 下载失败: {result.stderr[:300]}")
+    return False
+
+
+def chan_ftp(args, extracted_dir) -> bool:
+    """通道 3: E-utilities 定位组装 → NCBI HTTPS 直连下载 (无第三方依赖)"""
+    try:
+        import requests
+    except ImportError:
+        UI.warn("ftp 通道不可用: 缺 requests")
+        return False
+    UI.info("E-utilities 定位参考组装...")
+    api_key_param = f'&api_key={args.ncbi_api}' if args.ncbi_api else ''
+    term = f'"{args.species}"[Organism] AND refseq[filter]'
+    r = requests.get(
+        'https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi',
+        params={'db': 'assembly', 'term': term, 'retmax': 1, 'retmode': 'json'},
+        timeout=30)
+    ids = r.json().get('esearchresult', {}).get('idlist', [])
+    if not ids:
+        UI.err("未找到组装")
+        return False
+    r2 = requests.get(
+        'https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi',
+        params={'db': 'assembly', 'id': ids[0], 'retmode': 'json'}, timeout=30)
+    doc = r2.json().get('result', {}).get(ids[0], {})
+    acc = doc.get('assemblyaccession', '')
+    asm = re.sub(r'[^A-Za-z0-9._-]', '_', doc.get('asmname', 'assembly'))
+    m = re.match(r'GC[FA]_(\d{9})', acc)
+    if not acc or not m:
+        UI.err(f"组装信息异常: {acc!r}")
+        return False
+    dg = m.group(1)
+    base = ("https://ftp.ncbi.nlm.nih.gov/genomes/all/"
+            f"{acc.split('_')[0]}/{dg[:3]}/{dg[3:6]}/{dg[6:9]}")
+    for name in (f"{acc}_{asm}", acc):
+        listing = requests.get(f"{base}/{name}/", timeout=30)
+        if listing.status_code == 200:
+            target = [h for h in re.findall(r'href="([^"]+)"', listing.text)
+                      if h.endswith("_genomic.fna.gz")]
+            if target:
+                fna_url = f"{base}/{name}/{target[0]}"
+                local = os.path.join(extracted_dir, os.path.basename(target[0]))
+                UI.info(f"直连下载: {fna_url}")
+                with requests.get(fna_url, stream=True, timeout=600) as resp:
+                    resp.raise_for_status()
+                    with open(local, 'wb') as out:
+                        for chunk in resp.iter_content(1 << 20):
+                            out.write(chunk)
+                UI.ok(f"已下载: {local}")
+                return True
+    UI.err("FTP 直连未命中 _genomic.fna.gz")
+    return False
+
+
+def chan_gget(args, extracted_dir) -> bool:
+    """通道 4: gget ref (Ensembl / Ensembl Plants, 适合 NCBI 缺物种)"""
+    import json as _json
+    import shutil as _sh
+    if not _sh.which('gget'):
+        UI.warn("gget 通道不可用: 未安装 gget (pip install gget)")
+        return False
+    UI.info("gget ref 检索 Ensembl...")
+    search_json = os.path.join(args.outdir, 'gget_ref.json')
+    cmd1 = ['gget', 'ref', '--search', args.species, '-w', 'dna', '-o', search_json]
+    if args.ensembl_release:
+        cmd1 += ['-r', str(args.ensembl_release)]
+    subprocess.run(cmd1, capture_output=True, text=True, timeout=1800)
+    if not os.path.isfile(search_json):
+        UI.err("gget ref 检索失败")
+        return False
+    ident = None
+    try:
+        info = _json.load(open(search_json, encoding='utf-8'))
+        for v in (info.values() if isinstance(info, dict) else []):
+            if isinstance(v, dict) and v.get('ensembl_species'):
+                ident = v['ensembl_species']
+                break
+    except Exception:
+        pass
+    if not ident:
+        UI.err("gget ref 未命中 Ensembl 物种")
+        return False
+    cmd2 = ['gget', 'ref', '-i', ident, '-w', 'dna', '--download', '-o', extracted_dir]
+    if args.ensembl_release:
+        cmd2 += ['-r', str(args.ensembl_release)]
+    result = subprocess.run(cmd2, capture_output=True, text=True, timeout=7200)
+    if result.returncode == 0 and collect_fasta_files(extracted_dir):
+        UI.ok("gget 下载成功")
+        return True
+    UI.err(f"gget 下载失败: {result.stderr[:300]}")
+    return False
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="📥 宿主参考基因组下载器 — NCBI datasets 封装",
@@ -320,6 +463,14 @@ def main():
     parser.add_argument('--skip-datasets', action='store_true',
                         help='跳过 NCBI datasets 步骤 (使用已有文件)')
 
+    parser.add_argument('--source', default='auto',
+                        choices=['auto', 'datasets', 'ngd', 'ftp', 'gget'],
+                        help="下载通道: auto=datasets→ngd→FTP 自动回退; gget 走 Ensembl")
+    parser.add_argument('--taxid', type=int,
+                        help='物种 NCBI TaxID (ngd/ftp 通道过滤与定位组装)')
+    parser.add_argument('--ensembl-release', type=int,
+                        help='Ensembl release (仅 gget 通道)')
+
     args = parser.parse_args()
 
     UI.header(f"宿主参考基因组下载: {args.species}")
@@ -345,48 +496,30 @@ def main():
                 UI.warn("未找到任何基因组文件")
         return
 
-    # 步骤 1: 使用 NCBI datasets 下载
-    if not args.skip_datasets:
-        if not check_datasets_cli():
-            UI.warn("datasets CLI 不可用，尝试回退方案...")
+    # 步骤 1: 参考基因组多通道下载
+    # --source auto: datasets → ncbi-genome-download (ngd) → FTP 直连 依次回退;
+    # --source gget 走 Ensembl; --genome-fasta 用户提供时上游已跳过下载。
+    extracted_dir = os.path.join(args.outdir, 'extracted')
+    have_local = os.path.isdir(extracted_dir) and collect_fasta_files(extracted_dir)
+
+    order = ([args.source] if args.source != 'auto'
+             else ([] if args.skip_datasets else ['datasets', 'ngd', 'ftp']))
+    for ch in order:
+        if have_local:
+            break
+        if ch == 'datasets':
+            ok = chan_datasets(args)
+        elif ch == 'ngd':
+            ok = chan_ngd(args, extracted_dir)
+        elif ch == 'ftp':
+            ok = chan_ftp(args, extracted_dir)
+        elif ch == 'gget':
+            ok = chan_gget(args, extracted_dir)
         else:
-            genome_zip = os.path.join(args.outdir, 'genome_down.zip')
-
-            if os.path.isfile(genome_zip) and os.path.getsize(genome_zip) > 1000:
-                UI.ok(f"基因组压缩包已存在: {genome_zip}")
-            else:
-                UI.header("步骤 1/3: NCBI datasets 下载")
-                cmd = [
-                    'datasets', 'download', 'genome', 'taxon', args.species,
-                    '--filename', genome_zip,
-                    '--include', 'genome,gff3,seq-report'
-                ]
-                if args.ncbi_api:
-                    cmd.extend(['--api-key', args.ncbi_api])
-
-                UI.info(f"执行: {' '.join(cmd)}")
-                result = subprocess.run(cmd, capture_output=True, text=True, timeout=3600)
-
-                if result.returncode != 0:
-                    UI.err(f"datasets 下载失败: {result.stderr[:500]}")
-                    UI.info("尝试使用 E-utilities 直接搜索...")
-                    # 回退方案：直接用 E-utilities
-                    try:
-                        import requests
-                        search_term = f'"{args.species}"[Organism] AND refseq[filter]'
-                        api_key_param = f'&api_key={args.ncbi_api}' if args.ncbi_api else ''
-                        esearch_url = f'https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=assembly&term={search_term}&retmax=5&retmode=json{api_key_param}'
-                        resp = requests.get(esearch_url, timeout=30)
-                        genome_ids = resp.json().get('esearchresult', {}).get('idlist', [])
-                        if genome_ids:
-                            UI.ok(f"找到 {len(genome_ids)} 个组装: {genome_ids}")
-                        else:
-                            UI.err("E-utilities 也未找到组装")
-                    except Exception as e:
-                        UI.err(f"回退方案失败: {e}")
-                else:
-                    UI.ok("基因组下载成功")
-
+            ok = False
+        if ok and (ch == 'datasets' or collect_fasta_files(extracted_dir)):
+            have_local = True
+            break
     # 步骤 2: 解压
     UI.header("步骤 2/3: 解压基因组")
     genome_zip = os.path.join(args.outdir, 'genome_down.zip')

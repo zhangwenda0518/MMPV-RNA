@@ -69,7 +69,7 @@ DEFAULT_THREADS = 20
 DEFAULT_OUTPUT_DIR = "5.virus_identification"
 DEFAULT_DB_DIR = os.path.expanduser("~/database/virus-db")
 
-LEN_VIRUS_MIN = 500
+LEN_VIRUS_MIN = 1000
 LEN_VIROID_MIN = 200
 LEN_VIROID_MAX = 1000
 
@@ -239,8 +239,8 @@ def validate_args(args):
 
 def check_tools_available(args):
     """[1/3] 工具依赖检查"""
-    target_tools = ["genomad", "blast", "rdrpcatch", "viralm", "virbot", "viroid",
-                    "virsorter2", "viralverify", "virhunter", "metabuli"] \
+    target_tools = ["genomad", "blast", "rdrpcatch", "virbot", "viroid",
+                    "virsorter2", "viralverify", "metabuli"] \
                    if args.identify_tools == "all" else [args.identify_tools]
 
     print("\n[1/3] 🛠️  相关环境工具检查")
@@ -322,7 +322,7 @@ def check_databases_available(args):
     """[2/3] 数据库依赖检查"""
     print("\n[2/3] 🗄️  相关依赖数据库检查")
     all_fatal = False
-    target_tools = ["genomad", "blast", "rdrpcatch", "viralm", "virbot", "viroid", "virsorter2", "viralverify", "virhunter", "metabuli"] if args.identify_tools == "all" else [args.identify_tools]
+    target_tools = ["genomad", "blast", "rdrpcatch", "virbot", "viroid", "viralverify", "metabuli"] if args.identify_tools == "all" else [args.identify_tools]
 
     vp_db = args.virus_protein_db or os.path.join(args.db_dir, "Diamond_VirusProtein_db", "viral_protein.dmnd")
     if not os.path.exists(vp_db): vp_db = os.path.join(args.db_dir, "ncbi-virus_ref", "ncbi-virus_ref.pep.dmnd")
@@ -331,7 +331,7 @@ def check_databases_available(args):
         if "blast" in target_tools: print(f"  ✗ 病毒初筛库 (VP)  : 未找到 (Blast必需)"); all_fatal = True
         else: print(f"  - 病毒初筛库 (VP)  : 忽略")
 
-    nr_db = args.nr_db or os.path.join(args.db_dir, "Diamond_nr_db", "nr.dmnd")
+    nr_db = args.nr_db or os.path.join(os.path.dirname(args.db_dir), "nr_db", "nr.dmnd")
     if os.path.exists(nr_db): print(f"  ✓ NR 总库          : 找到 ({nr_db})")
     elif "blast" in target_tools and args.blast_mode != 'no-filter': print(f"  ⚠️ NR 总库          : 未找到 (将跳过 NR 库抢救验证)")
 
@@ -344,8 +344,22 @@ def check_databases_available(args):
     elif "blast" in target_tools and args.blast_mode != 'no-filter': print(f"  ⚠️ 病毒 TaxID 列表  : 未找到 (将由 taxonkit 生成)")
 
     viroids_db = args.viroids_db or os.path.join(args.db_dir, "viroids-db/viroids.fasta.blast.db")
-    has_viroid = any(os.path.exists(f"{viroids_db}{ext}") for ext in ['.nhr', '.nin', '.nsq'])
-    if not has_viroid and os.path.exists(viroids_db): has_viroid = any(os.path.exists(f"{viroids_db.replace('.fasta.blast.db', '')}{ext}") for ext in ['.nhr', '.nin', '.nsq'])
+    # 尝试多个路径变体 (编排器可能传 viroids.fasta 而非 viroids.fasta.blast.db)
+    candidates = [viroids_db]
+    if viroids_db.endswith('.fasta'):
+        candidates.append(viroids_db + '.blast.db')           # viroids.fasta → viroids.fasta.blast.db
+    elif viroids_db.endswith('.fasta.blast.db'):
+        candidates.append(viroids_db[:-len('.blast.db')])     # viroids.fasta.blast.db → viroids.fasta
+    has_viroid = False
+    for cand in candidates:
+        if any(os.path.exists(f"{cand}{ext}") for ext in ['.nhr', '.nin', '.nsq']):
+            has_viroid = True
+            viroids_db = cand  # 用实际存在的路径
+            break
+        elif os.path.exists(cand):
+            has_viroid = True
+            viroids_db = cand
+            break
     if has_viroid: print(f"  ✓ 类病毒库 (Viroid): 找到 ({viroids_db})")
     else:
         if "viroid" in target_tools: print(f"  ✗ 类病毒库 (Viroid): 未找到"); all_fatal = True
@@ -357,7 +371,7 @@ def check_databases_available(args):
 
     # VirSorter2 数据库检查
     if "virsorter2" in target_tools:
-        vs2_db = args.virsorter_db or os.path.join(args.db_dir, "db")
+        vs2_db = args.virsorter_db or os.path.join(args.db_dir, "virsorter2_db")
         if os.path.isdir(vs2_db) or os.path.exists(vs2_db):
             print(f"  ✓ VirSorter2 数据库: 找到 ({vs2_db})")
         else:
@@ -461,7 +475,15 @@ def consolidate_virus_results(input_original, result_files, sample, base_dir):
         f.write("\n".join(sorted(ids)) + "\n")
             
     if ids:
-        os.system(f"seqkit grep -f '{all_ids_file}' '{input_original}' -w 0 -o '{final_fasta}' > /dev/null 2>&1")
+        try:
+            from Bio import SeqIO
+            with open(final_fasta, 'w') as out:
+                for rec in SeqIO.parse(input_original, "fasta"):
+                    if rec.id in ids:
+                        SeqIO.write(rec, out, "fasta")
+        except Exception as e:
+            safe_print(f"  [{sample}] consolidate FASTA failed: {e}, falling back to seqkit")
+            os.system(f"seqkit grep -f '{all_ids_file}' '{input_original}' -w 0 -o '{final_fasta}' 2>&1")
 
 def read_virus_taxid_file(path):
     t = set()
@@ -553,7 +575,6 @@ def run_post_filter(db_name, db_path, input_fasta, sample, output_dir, args, is_
 
     # ===== 提取 TaxID =====
     if is_uniprot:
-        # 修复: UniProt 标准 tag 是 OX=, TaxID= 也兼容
         df_topn['taxid'] = df_topn['stitle'].astype(str).str.extract(r'(?:OX|TaxID)=(\d+)', expand=False)
     else:
         # NR: 检查 staxids 中所有 taxid
@@ -661,7 +682,7 @@ def run_virsorter2(input_fasta, sample, base_dir, args):
     vs2_dir = os.path.join(base_dir, "virsorter2_output")
     os.makedirs(vs2_dir, exist_ok=True)
 
-    vs2_db = args.virsorter_db or os.path.join(args.db_dir, "db")
+    vs2_db = args.virsorter_db or os.path.join(args.db_dir, "virsorter2_db")
     cmd = (f"virsorter run -w '{vs2_dir}' -i '{input_fasta}' "
            f"--include-groups '{args.virsorter_group}' -j {args.threads} "
            f"all --min-score 0.5 --min-length 300 --keep-original-seq "
@@ -684,23 +705,51 @@ def run_virsorter2(input_fasta, sample, base_dir, args):
     return result_file
 
 
-def run_viralverify(input_fasta, sample, base_dir, args):
-    """ViralVerify HMM 病毒鉴定 (整合自 viralprediction.py)"""
+def run_viralverify_pyhmmer(input_fasta, sample, base_dir, args):
+    """VirSorter2 HMM 加速版: Prodigal + pyhmmer.hmmsearch"""
     result_file = os.path.join(base_dir, f"{sample}_virus.viralverify.result.id")
     if is_file_valid(result_file, 1) and not args.force: return result_file
     vv_dir = os.path.join(base_dir, "viralverify_output")
     os.makedirs(vv_dir, exist_ok=True)
 
     hmm_db = args.viralverify_hmm or os.path.join(args.db_dir, "ViralVerify", "nbc_hmms.h3m")
-    cmd = (f"viralverify -f '{input_fasta}' -o '{vv_dir}' "
-           f"--hmm '{hmm_db}' -t {args.threads}")
+    
+    # Step 1: Prodigal gene prediction
+    faa_file = os.path.join(vv_dir, f"{sample}_proteins.faa")
+    prodigal_cmd = f"prodigal -p meta -c -i '{input_fasta}' -a '{faa_file}' -o /dev/null"
+    ok, _ = run_command(prodigal_cmd, os.path.join(vv_dir, "prodigal.log"))
+    if not ok or not os.path.exists(faa_file) or os.path.getsize(faa_file) == 0:
+        open(result_file, 'w').close()
+        return result_file
 
-    success, _ = run_command(cmd, os.path.join(base_dir, "viralverify.log"))
-
-    # 从 Prediction_results_fasta/*_virus.fasta 提取 ID
-    viral_fas = glob.glob(os.path.join(vv_dir, "Prediction_results_fasta", "*_virus.fasta"))
-    with open(result_file, 'w') as fout:
-        if success and viral_fas:
+    # Step 2: pyhmmer HMM search (replaces hmmscan, ~16x faster)
+    try:
+        import pyhmmer
+        from pyhmmer.easel import SequenceFile
+        from pyhmmer.plan7 import HMMFile
+        
+        viral_ids = set()
+        with pyhmmer.plan7.HMMFile(hmm_db) as hmms:
+            with pyhmmer.easel.SequenceFile(faa_file, digital=True) as seq_file:
+                seqs = seq_file.read_block()
+                for hits in pyhmmer.hmmer.hmmsearch(hmms, seqs, cpus=args.threads):
+                    for hit in hits:
+                        if hit.included:
+                            # hit.name = protein/sequence name: >contigID_geneNum => extract contigID
+                            cid = hit.name.rsplit('_', 1)[0]
+                            viral_ids.add(cid)
+        
+        with open(result_file, 'w') as fout:
+            for cid in sorted(viral_ids):
+                fout.write(cid + '\n')
+    except ImportError:
+        # Fallback: use original viralverify binary
+        safe_print(f"  [{sample}] pyhmmer not available, falling back to viralverify binary")
+        cmd = (f"viralverify -f '{input_fasta}' -o '{vv_dir}' "
+               f"--hmm '{hmm_db}' -t {args.threads}")
+        run_command(cmd, os.path.join(base_dir, "viralverify.log"))
+        viral_fas = glob.glob(os.path.join(vv_dir, "Prediction_results_fasta", "*_virus.fasta"))
+        with open(result_file, 'w') as fout:
             for vf in viral_fas:
                 try:
                     with open(vf) as fin:
@@ -709,7 +758,37 @@ def run_viralverify(input_fasta, sample, base_dir, args):
                                 fout.write(line[1:].strip().split()[0] + '\n')
                 except Exception:
                     pass
+    
     return result_file
+
+
+def run_viralverify(input_fasta, sample, base_dir, args):
+    """ViralVerify HMM: 优先使用 pyhmmer 加速版"""
+    try:
+        import pyhmmer
+        return run_viralverify_pyhmmer(input_fasta, sample, base_dir, args)
+    except ImportError:
+        # Legacy: original viralverify binary
+        result_file = os.path.join(base_dir, f"{sample}_virus.viralverify.result.id")
+        if is_file_valid(result_file, 1) and not args.force: return result_file
+        vv_dir = os.path.join(base_dir, "viralverify_output")
+        os.makedirs(vv_dir, exist_ok=True)
+        hmm_db = args.viralverify_hmm or os.path.join(args.db_dir, "ViralVerify", "nbc_hmms.h3m")
+        cmd = (f"viralverify -f '{input_fasta}' -o '{vv_dir}' "
+               f"--hmm '{hmm_db}' -t {args.threads}")
+        success, _ = run_command(cmd, os.path.join(base_dir, "viralverify.log"))
+        viral_fas = glob.glob(os.path.join(vv_dir, "Prediction_results_fasta", "*_virus.fasta"))
+        with open(result_file, 'w') as fout:
+            if success and viral_fas:
+                for vf in viral_fas:
+                    try:
+                        with open(vf) as fin:
+                            for line in fin:
+                                if line.startswith('>'):
+                                    fout.write(line[1:].strip().split()[0] + '\n')
+                    except Exception:
+                        pass
+        return result_file
 
 
 def run_virhunter(input_fasta, sample, base_dir, args):
@@ -721,7 +800,7 @@ def run_virhunter(input_fasta, sample, base_dir, args):
 
     cmd = (f"conda run -n virhunter python '{args.virhunter_path}' "
            f"--input '{input_fasta}' --weights '{args.virhunter_weights}' "
-           f"--cpu {args.threads} --return_viral --length 500 "
+           f"--cpu {args.threads} --return_viral --length {LEN_VIRUS_MIN} "
            f"--out_dir '{vh_dir}'")
 
     success, _ = run_command(cmd, os.path.join(base_dir, "virhunter.log"))
@@ -782,7 +861,7 @@ def run_metabuli(input_fasta, sample, base_dir, args):
 
 
 def run_viroid_identification(input_fasta, sample, base_dir, args):
-    """类病毒 Blastn 鉴定 (blastn + jcvi best-hit 过滤)"""
+    """类病毒 Blastn 鉴定 (blastn + jcvi best-hit 过滤, 自动建库)"""
     id_out = os.path.join(base_dir, f"{sample}_viroids.result.id")
     if is_file_valid(id_out, 1) and not args.force: return id_out
     viroid_dir = os.path.join(base_dir, "viroid_output")
@@ -790,21 +869,53 @@ def run_viroid_identification(input_fasta, sample, base_dir, args):
 
     txt_out = os.path.join(viroid_dir, f"{sample}_viroids.blastn.result.txt")
 
-    db_path = args.viroids_db or os.path.join(args.db_dir, "viroids-db/viroids.fasta.blast.db")
+    # --- 自动检测/构造类病毒 BLAST DB 路径 ---
+    raw_path = args.viroids_db or os.path.join(args.db_dir, "viroids-db/viroids.fasta.blast.db")
+    # 复用 check_databases_available 的路径探测逻辑: 尝试 .fasta / .fasta.blast.db 变体
+    db_path = None
+    candidates = [raw_path]
+    if raw_path.endswith('.fasta'):
+        candidates.append(raw_path + '.blast.db')
+    elif raw_path.endswith('.fasta.blast.db'):
+        candidates.append(raw_path[:-len('.blast.db')])
+    for cand in candidates:
+        if any(os.path.exists(f"{cand}{ext}") for ext in ['.nhr', '.nin', '.nsq']):
+            db_path = cand; break
+        elif cand.endswith('.fasta') and os.path.exists(cand):
+            # BLAST 索引不存在但有原始 FASTA → 自动建库
+            safe_print(f"  [{sample}] 🔨 自动构建类病毒 BLAST 数据库 ({cand})...")
+            mk_cmd = f"makeblastdb -in '{cand}' -dbtype nucl -title viroids -parse_seqids -out '{cand}.blast.db'"
+            mk_ok, mk_msg = run_command(mk_cmd, os.path.join(viroid_dir, "makeblastdb_viroid.log"))
+            if mk_ok and any(os.path.exists(f"{cand}.blast.db{ext}") for ext in ['.nhr', '.nin', '.nsq']):
+                db_path = cand + '.blast.db'
+                safe_print(f"  [{sample}] ✅ 类病毒 BLAST 数据库构建完成")
+            else:
+                safe_print(f"  [{sample}] ⚠️ 类病毒 BLAST 数据库构建失败: {mk_msg}")
+
+    if db_path is None:
+        safe_print(f"  [{sample}] ⚠️ 类病毒数据库不可用 (试了: {candidates})")
+        open(id_out, 'w').close()
+        return id_out
+
+    # --- BLASTN ---
     cmd = f"blastn -query '{input_fasta}' -db '{db_path}' -evalue {args.blast_evalue} -num_threads {args.threads} -out '{txt_out}' -outfmt 6"
-
     success, msg = run_command(cmd, os.path.join(viroid_dir, "viroid_blastn.log"))
-    if success and os.path.exists(txt_out) and os.path.getsize(txt_out) > 0:
-        # jcvi best-hit 过滤: 每个 query 只保留最优比对 (按 bitscore 降序)
-        run_command(f"python -m jcvi.formats.blast best -n 1 '{txt_out}'",
-                    os.path.join(viroid_dir, "viroid_besthit.log"))
-        # 从 .best 文件提取 ID
-        best_file = txt_out + ".best"
-        src = best_file if os.path.exists(best_file) else txt_out
-        os.system(f"awk '{{print $1}}' '{src}' | sort -u > '{id_out}' 2>/dev/null")
-    else:
-        safe_print(f"  [{sample}] ⚠️ 类病毒 Blastn 异常: {msg}")
+    if not success:
+        safe_print(f"  [{sample}] ⚠️ 类病毒 Blastn 失败: {msg}")
+        open(id_out, 'w').close()
+        return id_out
 
+    # 空结果 = 未检出类病毒, 正常情况, 不报错
+    if not os.path.exists(txt_out) or os.path.getsize(txt_out) == 0:
+        open(id_out, 'w').close()
+        return id_out
+
+    # jcvi best-hit 过滤: 每个 query 只保留最优比对 (按 bitscore 降序)
+    run_command(f"python -m jcvi.formats.blast best -n 1 '{txt_out}'",
+                os.path.join(viroid_dir, "viroid_besthit.log"))
+    best_file = txt_out + ".best"
+    src = best_file if os.path.exists(best_file) else txt_out
+    os.system(f"awk '{{print $1}}' '{src}' | sort -u > '{id_out}' 2>/dev/null")
     return id_out
 
 def run_other_tools(tool_name, input_fasta, sample, base_dir, args):
@@ -833,7 +944,10 @@ def run_other_tools(tool_name, input_fasta, sample, base_dir, args):
         core_dump_cmd = "ulimit -c unlimited && "
         out_subdir = os.path.join(base_dir, "viralm_output")
         viralm_procs = min(args.threads, 8)  # ViralM 多进程内存大户, 限制并发
-        cmd = f"{core_dump_cmd} conda run -n viralm taskset -c 0-60 python '{args.viralm_path}' --database '{args.db_dir}/viralm_db/' -i '{input_fasta}' -o '{out_subdir}' --processes {viralm_procs} -f --batch_size 128 --chunk_size 500 --len {LEN_VIRUS_MIN}"
+        # taskset 仅在可用 CPU 数 > 1 时使用, 且上限随 --threads 走 (避免绑死 0-60 崩溃)
+        ncpu = os.cpu_count() or 1
+        pin = f"taskset -c 0-{max(ncpu - 1, 0)} " if ncpu > 1 else ""
+        cmd = f"{core_dump_cmd} conda run -n viralm {pin}python '{args.viralm_path}' --database '{args.db_dir}/viralm_db/' -i '{input_fasta}' -o '{out_subdir}' --processes {viralm_procs} -f --batch_size 128 --chunk_size 500 --len {LEN_VIRUS_MIN}"
         run_command(cmd, os.path.join(base_dir, "viralm.log"))
         
         virus_fa_out = None
@@ -847,7 +961,12 @@ def run_other_tools(tool_name, input_fasta, sample, base_dir, args):
 
     elif tool_name == "virbot":
         out_subdir = os.path.join(base_dir, "virbot_output")
-        cmd = f"python '{args.virbot_path}' --input '{input_fasta}' --output '{out_subdir}' --sen --threads {args.threads}"
+        virbot_dir = os.path.dirname(args.virbot_path)
+        # VirBot.py 要求输出目录不存在 → 先清理上次残留
+        if os.path.exists(out_subdir):
+            import shutil
+            shutil.rmtree(out_subdir, ignore_errors=True)
+        cmd = f"cd '{virbot_dir}' && python '{args.virbot_path}' --input '{input_fasta}' --output '{out_subdir}' --sen --threads {args.threads}"
         run_command(cmd, os.path.join(base_dir, "virbot.log"))
         
         found = False
@@ -1000,7 +1119,7 @@ def process_sample(filepath, sample, args):
         
     log_step("预过滤")
     has_virus, has_viroid = is_file_valid(virus_fasta, 10), is_file_valid(viroids_fasta, 10)
-    target_tools = ["genomad", "blast", "rdrpcatch", "viralm", "virbot", "viroid", "virsorter2", "viralverify", "virhunter", "metabuli"] if args.identify_tools == "all" else [args.identify_tools]
+    target_tools = ["genomad", "blast", "rdrpcatch", "virbot", "viroid", "viralverify", "metabuli"] if args.identify_tools == "all" else [args.identify_tools]
     tools_ran, virus_results = [], []
     
     def run_timed(tool_name, func, *func_args):
@@ -1112,7 +1231,7 @@ def process_sample(filepath, sample, args):
             if is_file_valid(merged_fasta, 100):
                 filter_jobs = []
                 uni_db = args.uniprot_db or os.path.join(args.db_dir, "Diamond_uniprot_db", "uniprot.dmnd")
-                nr_db = args.nr_db or os.path.join(args.db_dir, "Diamond_nr_db", "nr.dmnd")
+                nr_db = args.nr_db or os.path.join(os.path.dirname(args.db_dir), "nr_db", "nr.dmnd")
                 if os.path.exists(uni_db) and not args.skip_uniprot_filter:
                     filter_jobs.append(("UniProt", uni_db, True))
                 if os.path.exists(nr_db) and not args.skip_nr_filter:
@@ -1147,12 +1266,29 @@ def process_sample(filepath, sample, args):
         log_step("绘图")
 
     open(final_flag, 'w').close()
+
+    # 清理 UniProt blastx 中间文件 (三份副本, 共 ~195M)
+    for sfx in ["", "_filter", "_strict"]:
+        blastx = os.path.join(output_dir, f"uniprot_filter_output{sfx}", "blastx_result.txt")
+        if os.path.isfile(blastx):
+            try:
+                os.remove(blastx)
+            except Exception:
+                pass
+
     return sample, True, "鉴定完毕"
 
 def main():
     set_core_unlimited()
     args = parse_arguments()
     validate_args(args)
+
+    # 进程守护: 停止主命令时连带杀掉所有子孙 (genomad/diamond/rdrpcatch 等), 避免后台残留
+    try:
+        import process_guard
+        process_guard.install()
+    except Exception:
+        pass
 
     print("\n" + "="*70)
     print("🦠 病毒与类病毒全自动鉴定流水线 (v16.0 全工具整合版)")

@@ -51,13 +51,18 @@ class AssemblyPipeline:
         return logging.getLogger(__name__)
     
     def setup_signal_handlers(self):
-        """设置信号处理器，用于优雅退出"""
-        def signal_handler(signum, frame):
-            self.logger.info(f"接收到信号 {signum}，正在优雅退出...")
-            self._stop_flag = True
-            
-        signal.signal(signal.SIGINT, signal_handler)
-        signal.signal(signal.SIGTERM, signal_handler)
+        """设置信号处理器: 停止主命令时连带杀掉所有子孙进程 (spades 等), 避免后台残留"""
+        try:
+            import process_guard
+            process_guard.install(self.logger)
+        except Exception as e:
+            # 守护不可用时退回到仅置停止标志 (至少不再派发新样本)
+            self.logger.warning(f"process_guard 不可用({e}), 退回仅优雅停止")
+            def signal_handler(signum, frame):
+                self.logger.info(f"接收到信号 {signum}，正在优雅退出...")
+                self._stop_flag = True
+            signal.signal(signal.SIGINT, signal_handler)
+            signal.signal(signal.SIGTERM, signal_handler)
     
     def detect_data_type_and_sample(self, input_path: str) -> Dict[str, Any]:
         """
@@ -459,8 +464,8 @@ class AssemblyPipeline:
         # 必需参数
         parser.add_argument('-t', '--tool', 
                           choices=['megahit', 'rnaviralspades', 'penguin', 'all'],
-                          required=True,
-                          help='组装工具选择')
+                          default='rnaviralspades',
+                          help='组装工具选择 (默认: rnaviralspades)')
         parser.add_argument('-i', '--input',
                           required=True,
                           help='输入文件或目录。自动检测单双端数据和样本名(支持 fastq, fq, fasta, fa)')

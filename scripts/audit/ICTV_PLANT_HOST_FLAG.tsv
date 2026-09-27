@@ -1,0 +1,22 @@
+Family	Category	ICTV_Host	Note
+Artoviridae	plant_included	plants, invertebrates	官方 Host 列原文含 plants（MSL41）
+Chrysoviridae	plant_included	fungi, plants, invertebrates	官方 Host 列原文含 plants（MSL41）
+Genomoviridae	plant_included	fungi, plants, invertebrates, vertebrates	官方 Host 列原文含 plants（MSL41）
+Kanorauviridae	plant_included	plants, invertebrates, vertebrates	官方 Host 列原文含 plants（MSL41）
+Mitoviridae	plant_included	fungi, plants	官方 Host 列原文含 plants（MSL41）
+Ourmiaviridae	plant_included	invertebrates, plants	官方 Host 列原文含 plants（MSL41）
+Pestiviridae	plant_included	vertebrates, invertebrates, plants	官方 Host 列原文含 plants（MSL41）
+Pseudoviridae	plant_included	protists, fungi, plants, invertebrates	官方 Host 列原文含 plants（MSL41）
+Spiciviridae	plant_included	plants, invertebrates	官方 Host 列原文含 plants（MSL41）
+Tomosaviridae	plant_included	plants	官方 Host 列原文含 plants（MSL41）
+Virgaviridae	plant_included	plants	官方 Host 列原文含 plants（MSL41）
+Solemoviridae	plant_included	plants	官方 Host 列原文含 plants（MSL41）
+Hydriviridae	host_undetermined	soil (S)	官方 Host 为预测值/环境来源（soil (S)），非确定宿主
+Oomyviridae	host_undetermined	predicted protists	官方 Host 为预测值/环境来源（predicted protists），非确定宿主
+Smacoviridae	host_undetermined	predicted archaea	官方 Host 为预测值/环境来源（predicted archaea），非确定宿主
+Adomaviridae	not_current_family	未收录	MSL41 无此科；系文献提出的 proposed 科名（鱼类/软骨鱼相关 DNA 病毒），未获 ICTV 采纳
+Autographiviridae	not_current_family	未收录	MSL41 无此科；2025 年由科提升为目 Autographivirales（提案 2024.045B，含 4 个新科），原科名不再使用
+Cruciviridae	not_current_family	未收录	MSL41 无此科；系 proposed 科名（CRESS-DNA 病毒类群），未获 ICTV 采纳
+Microviridae	not_current_family	未收录	MSL41 无此科；2025 年已废止并升格为纲 Microviricetes（提案 2025.043B），原亚科升为目 Bullavirales/Gokushovirales
+Pandoraviridae	not_current_family	未收录	MSL41 无此科（全表亦无 Pandoravirus 属）；系 proposed 巨病毒科名，未获 ICTV 采纳
+Reoviridae	not_current_family	未收录	MSL41 无此科；2021 年（MSL36）已拆分为 Sedoreoviridae 与 Spinareoviridae（二者均为现行科）

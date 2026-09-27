@@ -5,10 +5,10 @@
 ## preprocess.py — 预处理独立入口 / Combined Preprocessing
 
 ```bash
-python preprocess.py --input <dir> --output <dir> --threads 40 --jobs 10
+python data_preprocessing_pipeline/preprocess.py --input <dir> --output <dir> --threads 40 --jobs 10
 ```
 
-合并 clean-data.py + host_depletion.py 的独立入口。
+合并 clean-data.py + host_depletion.py 的独立入口（三脚本同位于 `data_preprocessing_pipeline/`）。
 
 ---
 

@@ -1,0 +1,62 @@
+参照表属数: 234804
+  /tmp/rc64b_cascade/final_integrated_classification.tsv
+    可比对行(双名法且 Genus 非空) 12645 ; 冲突 97 行
+      A 同科不同属           16 行 (16.5%)
+          CRR1126135_clean_NODE_499_length_1449_cov_2.35 | F=Mimiviridae | G=Fadolivirus | S=Mimivirus LCMiAC01 | S_agree=1/2: metabuli
+          CRR2703948_clean_NODE_2684_length_1505_cov_5.3 | F=Mimiviridae | G=Fadolivirus | S=Mimivirus LCMiAC02 | S_agree=1/3: metabuli
+          CRR527041_clean_NODE_1603_length_1851_cov_4.72 | F=Polymycoviridae | G=Polymycovirus | S=Plurimycovirus penidigitati | S_agree=1/2: metabuli
+          CRR732639_clean_NODE_88_length_1782_cov_0.3715 | F=Mimiviridae | G=Rheavirus | S=Mimivirus LCMiAC01 | S_agree=1/2: metabuli
+      B 跨科               1 行 (1.0%)
+          SRR23107136_clean_NODE_29173_length_1254_cov_5 | F=Orpheoviridae | G=Alphaorpheovirus | S=Alphahydrivirus permafrostis | S_agree=1/5: ACVirus
+      C 行 Family 空       0 行 (0.0%)
+      D 首词不在参照表         80 行 (82.5%)
+          CRR1126135_clean_NODE_29_length_3464_cov_4.068 | F=Kyanoviridae | G=Acionnavirus | S=Llyrvirus SSKS1 | S_agree=1/3: ACVirus
+          CRR1126135_clean_NODE_81_length_2695_cov_19.80 | F=Marseilleviridae | G=Marseillevirus | S=Tokyovirus A1 | S_agree=1/2: metabuli
+          CRR1126139_clean_NODE_139_length_1504_cov_21.1 | F=Marseilleviridae | G=Marseillevirus | S=Tokyovirus A1 | S_agree=1/1: metabuli
+          CRR1126140_clean_NODE_619_length_1514_cov_2.60 | F=Picobirnaviridae | G=Orthopicobirnavirus | S=Picobirnavirus sp. | S_agree=1/1: metabuli
+      其中带占位限定词(sp./cf./strain 等) 24 行 ; Species_agree 仍写 1/1 的 25 行
+
+  /tmp/rc64b_legacy/final_integrated_classification.tsv
+    可比对行(双名法且 Genus 非空) 12212 ; 冲突 301 行
+      A 同科不同属           16 行 (5.3%)
+          CRR1126135_clean_NODE_499_length_1449_cov_2.35 | F=Mimiviridae | G=Fadolivirus | S=Mimivirus LCMiAC01 | S_agree=1/2: metabuli
+          CRR2703948_clean_NODE_2684_length_1505_cov_5.3 | F=Mimiviridae | G=Fadolivirus | S=Mimivirus LCMiAC02 | S_agree=1/3: metabuli
+          CRR527041_clean_NODE_1603_length_1851_cov_4.72 | F=Polymycoviridae | G=Polymycovirus | S=Plurimycovirus penidigitati | S_agree=1/2: metabuli
+          CRR732639_clean_NODE_88_length_1782_cov_0.3715 | F=Mimiviridae | G=Rheavirus | S=Mimivirus LCMiAC01 | S_agree=1/2: metabuli
+      B 跨科              99 行 (32.9%)
+          CRR1126135_clean_NODE_152_length_2226_cov_13.3 | F=Mimiviridae | G=Hokovirus | S=Orthopestivirus bovis | S_agree=1/4: metabuli
+          CRR1126149_clean_NODE_825_length_567_cov_0.568 | F=Mimiviridae | G=Tupanvirus | S=Criusvirus kaneoense | S_agree=1/2: metabuli
+          CRR1126151_clean_NODE_29_length_2142_cov_0.571 | F=Phycodnaviridae | G=Chlorovirus | S=Orthohepacivirus hominis | S_agree=1/2: diamond_lca
+          CRR1440126_clean_NODE_595_length_1976_cov_1.95 | F=Marseilleviridae | G=Marseillevirus | S=Alphahydrivirus permafrostis | S_agree=1/1: ACVirus
+      C 行 Family 空       0 行 (0.0%)
+      D 首词不在参照表        186 行 (61.8%)
+          CRR1126135_clean_NODE_81_length_2695_cov_19.80 | F=Marseilleviridae | G=Marseillevirus | S=Tokyovirus A1 | S_agree=1/2: metabuli
+          CRR1126139_clean_NODE_139_length_1504_cov_21.1 | F=Marseilleviridae | G=Marseillevirus | S=Tokyovirus A1 | S_agree=1/1: metabuli
+          CRR1126140_clean_NODE_353_length_1978_cov_2.95 | F=Phycodnaviridae | G=Chlorovirus | S=Thornevirus SP15 | S_agree=1/2: ACVirus
+          CRR1126140_clean_NODE_619_length_1514_cov_2.60 | F=Picobirnaviridae | G=Orthopicobirnavirus | S=Picobirnavirus sp. | S_agree=1/1: metabuli
+      其中带占位限定词(sp./cf./strain 等) 17 行 ; Species_agree 仍写 1/1 的 60 行
+
+  /home/zhangwenda/MMPV-paper/goji-virome/02_novel_virus/RNA-Lycium_barbarum_out/05_Taxonomy/Votus.integrated/final_integrated_classification.tsv
+    可比对行(双名法且 Genus 非空) 13765 ; 冲突 1246 行
+      A 同科不同属          532 行 (42.7%)
+          CRR1126135_clean_NODE_325_length_1694_cov_3.83 | F=Hepaciviridae | G=Fadolivirus | S=Orthohepacivirus hominis | S_agree=2/3: CAT,diamond_lca
+          CRR1126135_clean_NODE_499_length_1449_cov_2.35 | F=Mimiviridae | G=Fadolivirus | S=Mimivirus LCMiAC01 | S_agree=1/2: metabuli
+          CRR1126140_clean_NODE_1581_length_952_cov_27.2 | F=Caulimoviridae | G=Dioscovirus | S=Badnavirus reterubi | S_agree=1/2: metabuli
+          CRR1126140_clean_NODE_787_length_1353_cov_2.69 | F=Mimiviridae | G=Tupanvirus | S=Catovirus CTV1 | S_agree=1/2: metabuli
+      B 跨科             497 行 (39.9%)
+          CRR1126135_clean_NODE_138_length_2279_cov_4.76 | F=Mimiviridae | G=Nitunavirus | S=Simplexvirus macacinealpha1 | S_agree=1/5: metabuli
+          CRR1126135_clean_NODE_152_length_2226_cov_13.3 | F=Mimiviridae | G=Alphahydrivirus | S=Orthopestivirus bovis | S_agree=1/4: metabuli
+          CRR1126135_clean_NODE_239_length_1906_cov_2.06 | F=Mimiviridae | G=Alphahydrivirus | S=Coltivirus dermacentoris | S_agree=1/3: metabuli
+          CRR1126135_clean_NODE_34_length_3374_cov_5.361 | F=Mimiviridae | G=Tupanvirus | S=Simplexvirus humanalpha2 | S_agree=1/2: metabuli
+      C 行 Family 空      27 行 (2.2%)
+          CRR1126135_clean_NODE_110_length_2415_cov_7.63 | F=NA | G=Immutovirus | S=Virus NIOZ-UU157 | S_agree=3/4: CAT,diamond_lca,metabuli
+          CRR1440129_clean_NODE_151_length_2409_cov_4.60 | F=NA | G=Immutovirus | S=Virus NIOZ-UU157 | S_agree=3/4: CAT,diamond_lca,metabuli
+          CRR1440130_clean_NODE_116_length_2443_cov_3.60 | F=NA | G=Immutovirus | S=Virus NIOZ-UU157 | S_agree=3/4: CAT,diamond_lca,metabuli
+          CRR1440134_clean_NODE_94_length_2236_cov_6.845 | F=NA | G=Immutovirus | S=Virus NIOZ-UU157 | S_agree=3/4: CAT,diamond_lca,metabuli
+      D 首词不在参照表        190 行 (15.2%)
+          CRR1126135_clean_NODE_81_length_2695_cov_19.80 | F=Marseilleviridae | G=Marseillevirus | S=Tokyovirus A1 | S_agree=1/2: metabuli
+          CRR1126139_clean_NODE_139_length_1504_cov_21.1 | F=Marseilleviridae | G=Marseillevirus | S=Tokyovirus A1 | S_agree=1/1: metabuli
+          CRR1126140_clean_NODE_619_length_1514_cov_2.60 | F=Picobirnaviridae | G=Orthopicobirnavirus | S=Picobirnavirus sp. | S_agree=1/1: metabuli
+          CRR1440126_clean_NODE_14_length_4197_cov_1.855 | F=Autographiviridae | G=Gyeongsanvirus | S=Virus NIOZ-UU157 | S_agree=2/3: CAT,diamond_lca
+      其中带占位限定词(sp./cf./strain 等) 64 行 ; Species_agree 仍写 1/1 的 107 行
+

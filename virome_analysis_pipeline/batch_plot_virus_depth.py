@@ -38,6 +38,17 @@ import matplotlib.patches as patches
 import matplotlib.ticker as ticker
 from matplotlib.lines import Line2D
 
+# 出版级全局样式: 可编辑字体 (期刊要求 TrueType) + 无衬线 + 白底
+plt.rcParams.update({
+    'pdf.fonttype': 42,
+    'ps.fonttype': 42,
+    'font.sans-serif': ['Arial', 'Helvetica', 'DejaVu Sans'],
+    'font.family': 'sans-serif',
+    'axes.unicode_minus': False,
+    'figure.facecolor': 'white',
+    'savefig.facecolor': 'white',
+})
+
 try:
     import seaborn as sns
     HAS_SEABORN = True
@@ -400,7 +411,6 @@ def run_depth_mode(args):
                         total_plots += 1
                         if v_success:
                             success_plots += 1
-                            tqdm.write(f"    [{sample}] {os.path.basename(info)}")
                         else:
                             tqdm.write(f"    [{sample}] {virus}: {info}")
             except Exception as exc:
@@ -454,9 +464,14 @@ def run_frequency_mode(args):
         sns.set_style("ticks")
         sns.set_context("paper", font_scale=1.2)
 
-    turbo_palette = (sns.color_palette("turbo", max(unique_count, 1))
-                     if HAS_SEABORN else
-                     plt.cm.turbo(np.linspace(0, 1, max(unique_count, 1))))
+    # 分类变量用色盲友好定性色板 (turbo 是连续色图, 映射分类违反期刊惯例)
+    # 类目多时循环使用 tab20, 保证相邻类目可区分
+    if unique_count <= 8:
+        turbo_palette = sns.color_palette("colorblind", max(unique_count, 1)) if HAS_SEABORN else \
+            plt.cm.tab10(np.linspace(0, 1, max(unique_count, 1)))
+    else:
+        turbo_palette = sns.color_palette("tab20", max(unique_count, 1)) if HAS_SEABORN else \
+            plt.cm.tab20(np.linspace(0, 1, max(unique_count, 1)))
 
     def make_boxplot(data, value_col, out_prefix):
         plot_df = data.dropna(subset=[value_col]).copy()

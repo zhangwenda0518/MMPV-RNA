@@ -1,0 +1,1336 @@
+{
+ "reads_funnel": {
+  "n_samples": 1342,
+  "raw_reads": 66126541256.0,
+  "clean_reads_fastp": 64672764260.0,
+  "fastp_retention_pct": 97.8,
+  "raw_bases": 5825951554554.0,
+  "clean_bases": 5705365730482.0,
+  "median_clean_Q20": 97.7,
+  "median_clean_Q30": 92.0,
+  "median_dup_rate": 20.2
+ },
+ "host_depletion_funnel": {
+  "n_samples": 1341,
+  "input_reads": 12517071378.0,
+  "after_kraken2": 10864586837.0,
+  "after_host_align": 10864586837.0,
+  "rRNA_removed": 0.0,
+  "kraken2_retention_pct": 86.8,
+  "hostalign_retention_pct": 86.8
+ },
+ "assembly": {
+  "n_samples": 1342,
+  "assemblers": {
+   "rnaviralspades": 1341,
+   "all": 1
+  },
+  "total_contigs_M": 179.95,
+  "total_size_Gb": 92.24,
+  "median_N50": 853,
+  "max_N50": 3286,
+  "median_max_len": 8341,
+  "global_max_len": 52036,
+  "total_gt1000bp_M": 11.34,
+  "median_pct_gt1000bp": 13.8
+ },
+ "identification": {
+  "n_samples": 1343,
+  "total_all_candidate": 6967670,
+  "tool_positive_sums": {
+   "genomad": 378486,
+   "blast": 4726082,
+   "metabuli": 2911776,
+   "virsorter2": 0,
+   "viralverify": 599938,
+   "virhunter": 0,
+   "virbot": 0,
+   "viralm": 0,
+   "rdrpcatch": 55838
+  }
+ },
+ "filter": {
+  "comb": {
+   "passed_total": 1476114,
+   "samples": 1342,
+   "bad_retained_pct_rows": 1
+  },
+  "strict": {
+   "passed_total": 1476114,
+   "samples": 1342,
+   "bad_retained_pct_rows": 1
+  },
+  "filter": {
+   "passed_total": 1476114,
+   "samples": 1342,
+   "bad_retained_pct_rows": 1
+  }
+ },
+ "cobra": {
+  "samples": 1341,
+  "total_queries": 115180,
+  "extended_circular": 0,
+  "extended_partial": 0,
+  "extended_failed": 1,
+  "median_orphan_rate_pct": 0.0,
+  "total_gain_bp": 274009544
+ },
+ "clustering": [
+  {
+   "Stage": "Input contigs",
+   "Count": "761295"
+  },
+  {
+   "Stage": "vOTU clusters",
+   "Count": "610535"
+  },
+  {
+   "Stage": "Final centroids",
+   "Count": "610425"
+  }
+ ],
+ "cluster_size_distribution": [
+  {
+   "Size": "1 (singleton)",
+   "Count": "542349"
+  },
+  {
+   "Size": "2-3",
+   "Count": "54726"
+  },
+  {
+   "Size": "4-5",
+   "Count": "8782"
+  },
+  {
+   "Size": "6-10",
+   "Count": "3210"
+  },
+  {
+   "Size": "11-20",
+   "Count": "912"
+  },
+  {
+   "Size": "21+",
+   "Count": "556"
+  }
+ ],
+ "cdhit_known_association": {
+  "n_rows": 448,
+  "columns": [
+   "contig_id",
+   "ref_accession"
+  ]
+ },
+ "vclust_global_summary": "===========================================================\nVCLUST 聚类统计概览\n===========================================================\n  输入序列总数:    761,295\n  总聚类簇数:      610,535\n  整体去冗余率:    19.80%\n  ---------------------------------------------------------\n  单例簇数:        542,349 (88.8%)\n  多序列簇数:      68,186\n  最大簇大小:      64\n  平均簇大小:      1.25\n===========================================================\n",
+ "plant_clusters": {
+  "n_cluster_records": 20054,
+  "singletons_plant": 18377,
+  "multi_member_plant_clusters": 1677,
+  "largest_cluster": 53,
+  "clusters_with_ref_cov": 0
+ },
+ "plant_taxonomy": {
+  "n_rows": 20054,
+  "columns": [
+   "contig_id",
+   "primary_tool",
+   "completeness",
+   "confidence",
+   "Realm",
+   "Kingdom",
+   "Phylum",
+   "Class",
+   "Order",
+   "Family",
+   "Genus",
+   "Species",
+   "Realm_agree",
+   "Kingdom_agree",
+   "Phylum_agree",
+   "Class_agree",
+   "Order_agree",
+   "Family_agree",
+   "Genus_agree",
+   "Species_agree"
+  ],
+  "n_families": 75,
+  "top10_families": [
+   [
+    "NA",
+    2723
+   ],
+   [
+    "Partitiviridae",
+    2608
+   ],
+   [
+    "Caulimoviridae",
+    2117
+   ],
+   [
+    "Potyviridae",
+    2033
+   ],
+   [
+    "Tombusviridae",
+    1642
+   ],
+   [
+    "Tymoviridae",
+    1000
+   ],
+   [
+    "Secoviridae",
+    837
+   ],
+   [
+    "Rhabdoviridae",
+    803
+   ],
+   [
+    "Endornaviridae",
+    655
+   ],
+   [
+    "Closteroviridae",
+    631
+   ]
+  ],
+  "top15_genera": [
+   [
+    "NA",
+    5879
+   ],
+   [
+    "Potyvirus",
+    1712
+   ],
+   [
+    "Deltapartitivirus",
+    1608
+   ],
+   [
+    "Badnavirus",
+    1061
+   ],
+   [
+    "Luteovirus",
+    943
+   ],
+   [
+    "Maculavirus",
+    643
+   ],
+   [
+    "Alphaendornavirus",
+    602
+   ],
+   [
+    "Cucumovirus",
+    453
+   ],
+   [
+    "Begomovirus",
+    441
+   ],
+   [
+    "Ampelovirus",
+    357
+   ],
+   [
+    "Potexvirus",
+    342
+   ],
+   [
+    "Polerovirus",
+    305
+   ],
+   [
+    "Caulimovirus",
+    296
+   ],
+   [
+    "Nepovirus",
+    282
+   ],
+   [
+    "Waikavirus",
+    266
+   ]
+  ],
+  "species_filled": 16538
+ },
+ "taxonomy_composition_top": {
+  "Realm": [
+   [
+    "Varidnaviria",
+    290397
+   ],
+   [
+    "Duplodnaviria",
+    101806
+   ],
+   [
+    "Riboviria",
+    98142
+   ],
+   [
+    "Adnaviria",
+    572
+   ],
+   [
+    "Monodnaviria",
+    271
+   ],
+   [
+    "Ribozyviria",
+    265
+   ]
+  ],
+  "Kingdom": [
+   [
+    "Bamfordvirae",
+    290379
+   ],
+   [
+    "Heunggongvirae",
+    101711
+   ],
+   [
+    "Orthornavirae",
+    51036
+   ],
+   [
+    "Pararnavirae",
+    41915
+   ],
+   [
+    "Shotokuvirae",
+    12754
+   ],
+   [
+    "Zilligvirae",
+    570
+   ],
+   [
+    "Loebvirae",
+    43
+   ],
+   [
+    "Sangervirae",
+    8
+   ]
+  ],
+  "Phylum": [
+   [
+    "Nucleocytoviricota",
+    271083
+   ],
+   [
+    "Peploviricota",
+    58449
+   ],
+   [
+    "Uroviricota",
+    57105
+   ],
+   [
+    "Artverviricota",
+    41359
+   ],
+   [
+    "Pisuviricota",
+    21695
+   ],
+   [
+    "Kitrinoviricota",
+    14830
+   ],
+   [
+    "Preplasmiviricota",
+    8014
+   ],
+   [
+    "Commensaviricota",
+    6453
+   ],
+   [
+    "Negarnaviricota",
+    6253
+   ],
+   [
+    "Cressdnaviricota",
+    3224
+   ],
+   [
+    "Duplornaviricota",
+    2909
+   ],
+   [
+    "Lenarviricota",
+    2844
+   ]
+  ],
+  "Class": [
+   [
+    "Megaviricetes",
+    260877
+   ],
+   [
+    "Herviviricetes",
+    55989
+   ],
+   [
+    "Caudoviricetes",
+    54183
+   ],
+   [
+    "Revtraviricetes",
+    41360
+   ],
+   [
+    "Naldaviricetes",
+    14788
+   ],
+   [
+    "Pisoniviricetes",
+    9544
+   ],
+   [
+    "Pharingeaviricetes",
+    8689
+   ],
+   [
+    "Duplopiviricetes",
+    8195
+   ],
+   [
+    "Alsuviricetes",
+    6986
+   ],
+   [
+    "Pokkesviricetes",
+    6629
+   ],
+   [
+    "Cardeaviricetes",
+    6433
+   ],
+   [
+    "Flasuviricetes",
+    5248
+   ]
+  ],
+  "Order": [
+   [
+    "Imitervirales",
+    156085
+   ],
+   [
+    "Herpesvirales",
+    56869
+   ],
+   [
+    "Algavirales",
+    48752
+   ],
+   [
+    "Pimascovirales",
+    45900
+   ],
+   [
+    "Ortervirales",
+    41564
+   ],
+   [
+    "Rowavirales",
+    12410
+   ],
+   [
+    "Lefavirales",
+    11621
+   ],
+   [
+    "Durnavirales",
+    8266
+   ],
+   [
+    "Picornavirales",
+    7590
+   ],
+   [
+    "Chitovirales",
+    7372
+   ],
+   [
+    "Sanitavirales",
+    6757
+   ],
+   [
+    "Amarillovirales",
+    5418
+   ]
+  ],
+  "Family": [
+   [
+    "Mimiviridae",
+    120124
+   ],
+   [
+    "Orthoherpesviridae",
+    50585
+   ],
+   [
+    "Phycodnaviridae",
+    46774
+   ],
+   [
+    "Retroviridae",
+    29166
+   ],
+   [
+    "Pithoviridae",
+    22203
+   ],
+   [
+    "Marseilleviridae",
+    17197
+   ],
+   [
+    "Adenoviridae",
+    13154
+   ],
+   [
+    "Schizomimiviridae",
+    10880
+   ],
+   [
+    "Baculoviridae",
+    8621
+   ],
+   [
+    "Partitiviridae",
+    7464
+   ],
+   [
+    "Poxviridae",
+    7115
+   ],
+   [
+    "Anelloviridae",
+    6863
+   ]
+  ],
+  "Genus": [
+   [
+    "Lentivirus",
+    22031
+   ],
+   [
+    "Pandoravirus",
+    18753
+   ],
+   [
+    "Chlorovirus",
+    17267
+   ],
+   [
+    "Fadolivirus",
+    10981
+   ],
+   [
+    "Tupanvirus",
+    9575
+   ],
+   [
+    "Prasinovirus",
+    9279
+   ],
+   [
+    "Alphabaculovirus",
+    6459
+   ],
+   [
+    "Megavirus",
+    6262
+   ],
+   [
+    "Simplexvirus",
+    5837
+   ],
+   [
+    "Varicellovirus",
+    5397
+   ],
+   [
+    "Biavirus",
+    4905
+   ],
+   [
+    "Gammaretrovirus",
+    4894
+   ]
+  ],
+  "Species": [
+   [
+    "Lentivirus humimdef1",
+    18271
+   ],
+   [
+    "Fadolivirus algeromassiliense",
+    10934
+   ],
+   [
+    "Chrysophyceae clade H virus",
+    9628
+   ],
+   [
+    "environmental samples",
+    8678
+   ],
+   [
+    "Terrestrivirus sp.",
+    7032
+   ],
+   [
+    "Marseillevirus LCMAC202",
+    5303
+   ],
+   [
+    "Biavirus raunefjordenense",
+    4905
+   ],
+   [
+    "Sylvanvirus sp.",
+    4785
+   ],
+   [
+    "Alphapithovirus siberiense",
+    4690
+   ],
+   [
+    "Metavirus cladosporii",
+    4566
+   ],
+   [
+    "Megavirus sp.",
+    4551
+   ],
+   [
+    "Heliosvirus raunefjordenense",
+    4187
+   ]
+  ]
+ },
+ "taxonomy_agreement": {
+  "metabuli": {
+   "rate": 0.774,
+   "level": "Species"
+  },
+  "diamond_lca": {
+   "rate": 0.863,
+   "level": "Species"
+  },
+  "CAT": {
+   "rate": 0.65,
+   "level": "Species"
+  },
+  "mmseqs": {
+   "rate": 0.94,
+   "level": "Species"
+  },
+  "genomad": {
+   "rate": 0.545,
+   "level": "Species"
+  },
+  "VITAP": {
+   "rate": 0.217,
+   "level": "Species"
+  }
+ },
+ "host_distribution": [
+  {
+   "Host": "Protist",
+   "Count": "185751"
+  },
+  {
+   "Host": "Animal",
+   "Count": "155944"
+  },
+  {
+   "Host": "Bacteria",
+   "Count": "67513"
+  },
+  {
+   "Host": "Algae",
+   "Count": "46176"
+  },
+  {
+   "Host": "Mammalia",
+   "Count": "33612"
+  },
+  {
+   "Host": "Plant",
+   "Count": "20054"
+  },
+  {
+   "Host": "Unknown",
+   "Count": "13671"
+  },
+  {
+   "Host": "Fungi",
+   "Count": "11641"
+  },
+  {
+   "Host": "Archaea",
+   "Count": "76"
+  }
+ ],
+ "host_decision_method": [
+  {
+   "Method": "ICTV_Preferred",
+   "Count": "436801"
+  },
+  {
+   "Method": "Rule_Class_Taxonomy",
+   "Count": "54615"
+  },
+  {
+   "Method": "ICTV_RVH_Agree",
+   "Count": "20893"
+  },
+  {
+   "Method": "Unassigned",
+   "Count": "13671"
+  },
+  {
+   "Method": "RVH_Preferred",
+   "Count": "4122"
+  },
+  {
+   "Method": "ICTV_PB2_Agree_Tiebreaker",
+   "Count": "3583"
+  },
+  {
+   "Method": "RVH_PB2_Agree_Tiebreaker",
+   "Count": "468"
+  },
+  {
+   "Method": "PB2_Preferred",
+   "Count": "285"
+  }
+ ],
+ "checkv_by_host": [
+  {
+   "Host": "Algae",
+   "Complete": "5",
+   "High-quality": "8",
+   "Medium-quality": "70",
+   "Low-quality": "33583",
+   "Not-determined": "12510",
+   "Total": "46176",
+   "HQ": "13"
+  },
+  {
+   "Host": "Animal",
+   "Complete": "66",
+   "High-quality": "233",
+   "Medium-quality": "2323",
+   "Low-quality": "51878",
+   "Not-determined": "101444",
+   "Total": "155944",
+   "HQ": "299"
+  },
+  {
+   "Host": "Archaea",
+   "Complete": "0",
+   "High-quality": "0",
+   "Medium-quality": "0",
+   "Low-quality": "31",
+   "Not-determined": "45",
+   "Total": "76",
+   "HQ": "0"
+  },
+  {
+   "Host": "Bacteria",
+   "Complete": "25",
+   "High-quality": "69",
+   "Medium-quality": "354",
+   "Low-quality": "53335",
+   "Not-determined": "13730",
+   "Total": "67513",
+   "HQ": "94"
+  },
+  {
+   "Host": "Fungi",
+   "Complete": "76",
+   "High-quality": "426",
+   "Medium-quality": "2800",
+   "Low-quality": "2041",
+   "Not-determined": "6298",
+   "Total": "11641",
+   "HQ": "502"
+  },
+  {
+   "Host": "Mammalia",
+   "Complete": "7",
+   "High-quality": "16",
+   "Medium-quality": "206",
+   "Low-quality": "6146",
+   "Not-determined": "27237",
+   "Total": "33612",
+   "HQ": "23"
+  },
+  {
+   "Host": "Plant",
+   "Complete": "172",
+   "High-quality": "447",
+   "Medium-quality": "1308",
+   "Low-quality": "2286",
+   "Not-determined": "15841",
+   "Total": "20054",
+   "HQ": "619"
+  },
+  {
+   "Host": "Protist",
+   "Complete": "11",
+   "High-quality": "29",
+   "Medium-quality": "1236",
+   "Low-quality": "102187",
+   "Not-determined": "82288",
+   "Total": "185751",
+   "HQ": "40"
+  },
+  {
+   "Host": "Unknown",
+   "Complete": "2",
+   "High-quality": "9",
+   "Medium-quality": "176",
+   "Low-quality": "5562",
+   "Not-determined": "7922",
+   "Total": "13671",
+   "HQ": "11"
+  },
+  {
+   "Host": "TOTAL",
+   "Complete": "364",
+   "High-quality": "1237",
+   "Medium-quality": "8473",
+   "Low-quality": "257049",
+   "Not-determined": "267315",
+   "Total": "534438",
+   "HQ": "1601"
+  }
+ ],
+ "plant_checkv": {
+  "n": 8915,
+  "aai_confidence": {
+   "high": 979,
+   "low": 1492,
+   "medium": 1430,
+   "NA": 5014
+  },
+  "n_with_completeness": 3901,
+  "completeness_median": 8.8,
+  "completeness_ge90": 185,
+  "min_length": 500,
+  "n_lt1000bp": 997,
+  "branch_source": {
+   "免拯救": 198,
+   "rescued": 8717
+  }
+ },
+ "evidence_chain": {
+  "n": 8915,
+  "verdicts": {
+   "KEEP": 2592,
+   "REVIEW": 2614,
+   "DROP": 3709
+  },
+  "novelty": {
+   "Known virus(blast蛋白)": 222,
+   "Novel candidate (blast protein)": 461,
+   "Novel candidate (domain-only evidence)": 2095,
+   "Novel candidate (blast only, no viral domain)": 1291,
+   "Short fragment - pending": 1137,
+   "Host / non-viral": 3709
+  },
+  "categories": {
+   "Known plant virus": 280,
+   "新种候选": 184,
+   "Distantly-related virus candidate": 835,
+   "Distantly-related (undetermined)": 2127,
+   "Undetermined": 1383,
+   "Insect virus/Contamination": 581,
+   "Host gene contamination": 3373,
+   "真菌病毒/Contamination": 152
+  },
+  "score_median": 28.0,
+  "fp_reasons": [
+   [
+    "tax_mismatch: 有病毒域但CDD未命中taxenom属核心域(分类未被CDD支持)",
+    1863
+   ],
+   [
+    "no_viral_domain_but_blast: CDDno viral domain but blast hit, pending",
+    1291
+   ],
+   [
+    "short_fragment: length below 20% of genus mean, may lack core domain, pending",
+    1137
+   ],
+   [
+    "FALSE_POSITIVE: taxonomy 分类为 Bromoviridae/Cucumovirus/Cucumovirus CMV 但 CDD 无病毒核心域且 blast 无有效证据(aa=0%/0%cov)",
+    246
+   ],
+   [
+    "short_fragment: short fragment (<20% genus mean) excluded from core domain validation, hits retained for review",
+    186
+   ],
+   [
+    "FALSE_POSITIVE: taxonomy 分类为 Tymoviridae/Maculavirus/Maculavirus vitis 但 CDD 无病毒核心域且 blast 无有效证据(aa=0%/0%cov)",
+    119
+   ],
+   [
+    "FALSE_POSITIVE: taxonomy 分类为 NA/NA/NA 但 CDD 无病毒核心域且 blast 无有效证据(aa=0%/0%cov)",
+    114
+   ],
+   [
+    "FALSE_POSITIVE: taxonomy 分类为 Tombusviridae/Luteovirus/Blueberry virus L 但 CDD 无病毒核心域且 blast 无有效证据(aa=0%/0%cov)",
+    92
+   ],
+   [
+    "FALSE_POSITIVE: taxonomy 分类为 Potyviridae/Potyvirus/Potyvirus gebatatae 但 CDD 无病毒核心域且 blast 无有效证据(aa=0%/0%cov)",
+    80
+   ],
+   [
+    "FALSE_POSITIVE: taxonomy 分类为 Geminiviridae/Begomovirus/NA 但 CDD 无病毒核心域且 blast 无有效证据(aa=0%/0%cov)",
+    43
+   ],
+   [
+    "FALSE_POSITIVE: taxonomy 分类为 Partitiviridae/Deltapartitivirus/Deltapartitivirus sp. 'yunanense' 但 CDD 无病毒核心域且 blast 无有效证据(aa=77%/8%cov)",
+    41
+   ],
+   [
+    "FALSE_POSITIVE: taxonomy 分类为 NA/NA/Apis mellifra filamentous-like virus 但 CDD 无病毒核心域且 blast 无有效证据(aa=0%/0%cov)",
+    39
+   ]
+  ],
+  "drop_scores_lt50": 7938
+ },
+ "final_judgement": {
+  "n": 9414,
+  "categories": {
+   "Distantly-related (undetermined)": 2173,
+   "Distantly-related virus candidate": 843,
+   "Known plant virus": 286,
+   "Undetermined": 1396,
+   "新种候选": 184,
+   "Host gene contamination": 3793,
+   "Insect virus/Contamination": 586,
+   "真菌病毒/Contamination": 153
+  }
+ },
+ "viroid_per_virus": [
+  {
+   "ref_acc": "FJ751925.1",
+   "species": "Pospiviroid exocortiscitri",
+   "genus": "Pospiviroid",
+   "family": "Pospiviroidae",
+   "ref_len": "394",
+   "n_contigs": "339",
+   "n_samples": "282",
+   "avg_pident": "96.2",
+   "avg_alen": "109",
+   "coverage_pct": "9349.5"
+  },
+  {
+   "ref_acc": "MZ463755.1",
+   "species": "Pospiviroid exocortiscitri",
+   "genus": "Pospiviroid",
+   "family": "Pospiviroidae",
+   "ref_len": "394",
+   "n_contigs": "61",
+   "n_samples": "58",
+   "avg_pident": "93.0",
+   "avg_alen": "156",
+   "coverage_pct": "2413.5"
+  },
+  {
+   "ref_acc": "MZ463745.1",
+   "species": "Pospiviroid exocortiscitri",
+   "genus": "Pospiviroid",
+   "family": "Pospiviroidae",
+   "ref_len": "387",
+   "n_contigs": "54",
+   "n_samples": "54",
+   "avg_pident": "93.1",
+   "avg_alen": "136",
+   "coverage_pct": "1891.2"
+  },
+  {
+   "ref_acc": "MZ463748.1",
+   "species": "Pospiviroid exocortiscitri",
+   "genus": "Pospiviroid",
+   "family": "Pospiviroidae",
+   "ref_len": "387",
+   "n_contigs": "32",
+   "n_samples": "32",
+   "avg_pident": "96.1",
+   "avg_alen": "148",
+   "coverage_pct": "1226.6"
+  },
+  {
+   "ref_acc": "MZ463754.1",
+   "species": "Pospiviroid exocortiscitri",
+   "genus": "Pospiviroid",
+   "family": "Pospiviroidae",
+   "ref_len": "394",
+   "n_contigs": "29",
+   "n_samples": "27",
+   "avg_pident": "87.7",
+   "avg_alen": "227",
+   "coverage_pct": "1668.3"
+  },
+  {
+   "ref_acc": "MZ463759.1",
+   "species": "Pospiviroid exocortiscitri",
+   "genus": "Pospiviroid",
+   "family": "Pospiviroidae",
+   "ref_len": "410",
+   "n_contigs": "15",
+   "n_samples": "14",
+   "avg_pident": "82.5",
+   "avg_alen": "170",
+   "coverage_pct": "622.7"
+  },
+  {
+   "ref_acc": "MZ463757.1",
+   "species": "Pospiviroid exocortiscitri",
+   "genus": "Pospiviroid",
+   "family": "Pospiviroidae",
+   "ref_len": "394",
+   "n_contigs": "11",
+   "n_samples": "11",
+   "avg_pident": "84.1",
+   "avg_alen": "175",
+   "coverage_pct": "489.1"
+  },
+  {
+   "ref_acc": "MZ463756.1",
+   "species": "Pospiviroid exocortiscitri",
+   "genus": "Pospiviroid",
+   "family": "Pospiviroidae",
+   "ref_len": "394",
+   "n_contigs": "8",
+   "n_samples": "8",
+   "avg_pident": "92.6",
+   "avg_alen": "156",
+   "coverage_pct": "317.0"
+  },
+  {
+   "ref_acc": "MZ463753.1",
+   "species": "Pospiviroid exocortiscitri",
+   "genus": "Pospiviroid",
+   "family": "Pospiviroidae",
+   "ref_len": "394",
+   "n_contigs": "3",
+   "n_samples": "3",
+   "avg_pident": "89.9",
+   "avg_alen": "107",
+   "coverage_pct": "81.2"
+  },
+  {
+   "ref_acc": "HM043811.1",
+   "species": "Pospiviroid latenscolumneae",
+   "genus": "Pospiviroid",
+   "family": "Pospiviroidae",
+   "ref_len": "373",
+   "n_contigs": "3",
+   "n_samples": "2",
+   "avg_pident": "96.6",
+   "avg_alen": "214",
+   "coverage_pct": "172.1"
+  },
+  {
+   "ref_acc": "AY222072.1",
+   "species": "Pospiviroid latenscolumneae",
+   "genus": "Pospiviroid",
+   "family": "Pospiviroidae",
+   "ref_len": "371",
+   "n_contigs": "2",
+   "n_samples": "2",
+   "avg_pident": "99.0",
+   "avg_alen": "234",
+   "coverage_pct": "125.9"
+  },
+  {
+   "ref_acc": "MZ463758.1",
+   "species": "Pospiviroid exocortiscitri",
+   "genus": "Pospiviroid",
+   "family": "Pospiviroidae",
+   "ref_len": "394",
+   "n_contigs": "2",
+   "n_samples": "2",
+   "avg_pident": "93.0",
+   "avg_alen": "100",
+   "coverage_pct": "50.8"
+  },
+  {
+   "ref_acc": "KR020039.1",
+   "species": "Pospiviroid alphairesinis",
+   "genus": "Pospiviroid",
+   "family": "Pospiviroidae",
+   "ref_len": "371",
+   "n_contigs": "2",
+   "n_samples": "2",
+   "avg_pident": "98.9",
+   "avg_alen": "308",
+   "coverage_pct": "166.3"
+  },
+  {
+   "ref_acc": "MZ463746.1",
+   "species": "Pospiviroid exocortiscitri",
+   "genus": "Pospiviroid",
+   "family": "Pospiviroidae",
+   "ref_len": "387",
+   "n_contigs": "2",
+   "n_samples": "2",
+   "avg_pident": "94.9",
+   "avg_alen": "190",
+   "coverage_pct": "97.9"
+  },
+  {
+   "ref_acc": "FJ751927.1",
+   "species": "Pospiviroid exocortiscitri",
+   "genus": "Pospiviroid",
+   "family": "Pospiviroidae",
+   "ref_len": "395",
+   "n_contigs": "2",
+   "n_samples": "2",
+   "avg_pident": "88.1",
+   "avg_alen": "159",
+   "coverage_pct": "80.5"
+  },
+  {
+   "ref_acc": "MZ463752.1",
+   "species": "Pospiviroid exocortiscitri",
+   "genus": "Pospiviroid",
+   "family": "Pospiviroidae",
+   "ref_len": "394",
+   "n_contigs": "2",
+   "n_samples": "2",
+   "avg_pident": "84.8",
+   "avg_alen": "162",
+   "coverage_pct": "82.5"
+  },
+  {
+   "ref_acc": "MZ463747.1",
+   "species": "Pospiviroid exocortiscitri",
+   "genus": "Pospiviroid",
+   "family": "Pospiviroidae",
+   "ref_len": "387",
+   "n_contigs": "1",
+   "n_samples": "1",
+   "avg_pident": "79.6",
+   "avg_alen": "191",
+   "coverage_pct": "49.4"
+  },
+  {
+   "ref_acc": "EF494682.1",
+   "species": "Pospiviroid exocortiscitri",
+   "genus": "Pospiviroid",
+   "family": "Pospiviroidae",
+   "ref_len": "372",
+   "n_contigs": "1",
+   "n_samples": "1",
+   "avg_pident": "99.3",
+   "avg_alen": "301",
+   "coverage_pct": "80.9"
+  },
+  {
+   "ref_acc": "MK096271.1",
+   "species": "Coleviroid zetacolei",
+   "genus": "Coleviroid",
+   "family": "Pospiviroidae",
+   "ref_len": "342",
+   "n_contigs": "1",
+   "n_samples": "1",
+   "avg_pident": "89.4",
+   "avg_alen": "303",
+   "coverage_pct": "88.6"
+  },
+  {
+   "ref_acc": "DQ022677.1",
+   "species": "Pospiviroid latenscolumneae",
+   "genus": "Pospiviroid",
+   "family": "Pospiviroidae",
+   "ref_len": "368",
+   "n_contigs": "1",
+   "n_samples": "1",
+   "avg_pident": "95.3",
+   "avg_alen": "43",
+   "coverage_pct": "11.7"
+  },
+  {
+   "ref_acc": "AY365230.1",
+   "species": "Pospiviroid latenscolumneae",
+   "genus": "Pospiviroid",
+   "family": "Pospiviroidae",
+   "ref_len": "374",
+   "n_contigs": "1",
+   "n_samples": "1",
+   "avg_pident": "97.1",
+   "avg_alen": "34",
+   "coverage_pct": "9.1"
+  },
+  {
+   "ref_acc": "MZ463750.1",
+   "species": "Pospiviroid exocortiscitri",
+   "genus": "Pospiviroid",
+   "family": "Pospiviroidae",
+   "ref_len": "392",
+   "n_contigs": "1",
+   "n_samples": "1",
+   "avg_pident": "77.3",
+   "avg_alen": "238",
+   "coverage_pct": "60.7"
+  }
+ ],
+ "viroid_species": [
+  {
+   "species": "Pospiviroid exocortiscitri",
+   "genus": "Pospiviroid",
+   "family": "Pospiviroidae",
+   "ref_len": "387",
+   "n_contigs": "563",
+   "n_samples": "398",
+   "avg_pident": "94.3"
+  },
+  {
+   "species": "Pospiviroid latenscolumneae",
+   "genus": "Pospiviroid",
+   "family": "Pospiviroidae",
+   "ref_len": "374",
+   "n_contigs": "7",
+   "n_samples": "4",
+   "avg_pident": "97.1"
+  },
+  {
+   "species": "Pospiviroid alphairesinis",
+   "genus": "Pospiviroid",
+   "family": "Pospiviroidae",
+   "ref_len": "371",
+   "n_contigs": "2",
+   "n_samples": "2",
+   "avg_pident": "98.9"
+  },
+  {
+   "species": "Coleviroid zetacolei",
+   "genus": "Coleviroid",
+   "family": "Pospiviroidae",
+   "ref_len": "342",
+   "n_contigs": "1",
+   "n_samples": "1",
+   "avg_pident": "89.4"
+  }
+ ],
+ "prevalence": {
+  "n": 8915,
+  "n_single_sample": 1698,
+  "n_ge2": 7217,
+  "n_ge10": 4679,
+  "max_samples": 1296,
+  "median_samples": 11,
+  "zero_prevalence_rows": 1
+ },
+ "cdd_evidence": {
+  "n": 8915,
+  "evidence_levels": {
+   "PASS_CORE": 590,
+   "PASS_VIRAL": 2049,
+   "AMBIGUOUS": 3800,
+   "PASS_CORE_FAM": 139,
+   "REVIEW": 2337
+  },
+  "n_genus_filled": 5808
+ },
+ "plant_genus_summary_top15": [
+  [
+   "Potyvirus",
+   1712,
+   0
+  ],
+  [
+   "Deltapartitivirus",
+   1608,
+   0
+  ],
+  [
+   "Badnavirus",
+   1061,
+   0
+  ],
+  [
+   "Luteovirus",
+   943,
+   0
+  ],
+  [
+   "Maculavirus",
+   643,
+   0
+  ],
+  [
+   "Alphaendornavirus",
+   602,
+   0
+  ],
+  [
+   "Cucumovirus",
+   453,
+   0
+  ],
+  [
+   "Begomovirus",
+   441,
+   0
+  ],
+  [
+   "Ampelovirus",
+   357,
+   0
+  ],
+  [
+   "Potexvirus",
+   342,
+   0
+  ],
+  [
+   "Polerovirus",
+   305,
+   0
+  ],
+  [
+   "Caulimovirus",
+   296,
+   0
+  ],
+  [
+   "Nepovirus",
+   282,
+   0
+  ],
+  [
+   "Waikavirus",
+   266,
+   0
+  ],
+  [
+   "Marafivirus",
+   238,
+   0
+  ]
+ ]
+}

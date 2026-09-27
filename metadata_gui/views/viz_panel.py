@@ -40,21 +40,38 @@ class SCIPlotWorker(QThread):
         self._csv, self._outdir = csv_path, outdir
 
     def run(self):
-        import subprocess, sys
-        gui_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        project_dir = os.path.dirname(gui_dir)
-        script = os.path.join(project_dir, "public_metadata_pipeline", "gsa_sra.plot.py")
+        import sys
+        # In PyInstaller EXE, pipeline scripts are under sys._MEIPASS
+        if getattr(sys, 'frozen', False):
+            pipeline_dir = os.path.join(sys._MEIPASS, "public_metadata_pipeline")
+        else:
+            gui_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            project_dir = os.path.dirname(gui_dir)
+            pipeline_dir = os.path.join(project_dir, "public_metadata_pipeline")
+
+        # Fix stdout/stderr for GUI mode
+        if sys.stdout is None:
+            sys.stdout = open(os.devnull, "w", encoding="utf-8", errors="replace")
+        if sys.stderr is None:
+            sys.stderr = open(os.devnull, "w", encoding="utf-8", errors="replace")
+
+        # Load and call plot_sci_landscape directly (no subprocess)
+        import importlib.util
+        plot_script = os.path.join(pipeline_dir, "gsa_sra.plot.py")
         self.progress.emit("Generating SCI figure...")
         try:
-            r = subprocess.run([sys.executable, script, "-i", self._csv, "-o", self._outdir],
-                               capture_output=True, text=True, timeout=120,
-                               encoding="utf-8", errors="replace",
-                               cwd=os.path.dirname(script))
-            if r.returncode != 0:
-                self.error.emit(r.stderr[-500:] or "Unknown error"); return
+            spec = importlib.util.spec_from_file_location("gsa_sra_plot", plot_script)
+            if spec is None:
+                self.error.emit(f"Cannot load: {plot_script}"); return
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            mod.plot_sci_landscape(self._csv, self._outdir)
             png = os.path.join(self._outdir, "Combined_Landscape_Full.png")
             pdf = os.path.join(self._outdir, "Combined_Landscape_Full.pdf")
-            self.finished.emit(png, pdf) if os.path.isfile(png) else self.error.emit(f"Missing: {png}")
+            if os.path.isfile(png):
+                self.finished.emit(png, pdf)
+            else:
+                self.error.emit(f"Output not found: {png}")
         except Exception as e:
             self.error.emit(str(e))
 

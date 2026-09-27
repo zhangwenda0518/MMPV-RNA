@@ -1,0 +1,3 @@
+# verify/selftest_fixture.py 的合成数据输出目录 (可随时删除重生成)
+verify/_selftest_fixture/
+verify/*/rerun_currentcode/

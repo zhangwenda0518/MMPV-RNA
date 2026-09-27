@@ -1,6 +1,14 @@
 # ==============================================================================
 # MMPV = Massive Meta-mining of Plant Viruses — 管道配置文件
 # ==============================================================================
+# 【I/O 目录布局】(v3.1 新增, 不写 = legacy 现行名, 老项目零影响)
+#   io_layout: legacy | standard
+#   也可用环境变量 MMPV_IO_LAYOUT 或各编排器 --io-layout (优先级 CLI > 环境变量 > legacy)
+#   legacy   = 现行目录名 (00a_CleanData/02a_Identification/09a_Virome_Analysis/...)
+#   standard = 管线独立根布局 (01_PublicData/02_Preprocessing/03_Discovery/
+#              04_Analysis/05_Phylo/06_EVE, 根内各自独立编号)
+#   完整规范与 legacy↔standard 映射表见 doc/IO_LAYOUT_DESIGN.md
+#
 # 用法:
 #   python virome_pipeline.py --profile default --output_dir out/
 #   python virome_pipeline.py --config my_config.yaml --profile plant

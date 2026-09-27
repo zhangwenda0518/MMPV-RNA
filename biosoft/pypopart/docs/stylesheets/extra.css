@@ -1,0 +1,179 @@
+/*
+ * PyPopART docs theme: the app's Bauhaus-flavoured pop-art palette.
+ *
+ * Mirrors src/pypopart/visualization/style.py and gui/assets/theme.css:
+ * amber header with ink text, red links, parchment page ground, bone
+ * code blocks, flat colour with hard rules and no shadows. Light only.
+ */
+
+@import url("https://fonts.googleapis.com/css2?family=Jost:wght@500;600;700&display=swap");
+
+:root,
+[data-md-color-scheme="default"] {
+  /* Palette (style.py names) */
+  --pp-red: #d62828;
+  --pp-navy: #003049;
+  --pp-amber: #fcbf49;
+  --pp-bone: #eae2b7;
+  --pp-ink: #1d1d1b;
+  --pp-paper: #ffffff;
+  --pp-teal: #2a9d8f;
+  --pp-orange: #e8871e;
+  --pp-green: #2e7d5b;
+  --pp-gold: #d9a521;
+  --pp-pink: #d9678a;
+  --pp-blue: #2d6a9f;
+  --pp-parchment: #f6f2e9;
+
+  /* Page ground and text */
+  --md-default-bg-color: var(--pp-parchment);
+  --md-default-fg-color: var(--pp-ink);
+  --md-default-fg-color--light: rgba(29, 29, 27, 0.72);
+  --md-default-fg-color--lighter: rgba(29, 29, 27, 0.4);
+  --md-default-fg-color--lightest: rgba(29, 29, 27, 0.08);
+
+  /* Code */
+  --md-code-bg-color: var(--pp-bone);
+  --md-code-fg-color: var(--pp-ink);
+  --md-code-hl-color: rgba(252, 191, 73, 0.35);
+
+  /* Links */
+  --md-typeset-a-color: var(--pp-red);
+
+  /* Flat: no soft shadows anywhere */
+  --md-shadow-z1: none;
+  --md-shadow-z2: none;
+  --md-shadow-z3: none;
+
+  /* Admonitions and footer keylines */
+  --md-admonition-fg-color: var(--pp-ink);
+  --md-admonition-bg-color: var(--pp-paper);
+  --md-footer-bg-color: var(--pp-bone);
+  --md-footer-bg-color--dark: var(--pp-bone);
+  --md-footer-fg-color: var(--pp-ink);
+  --md-footer-fg-color--light: var(--pp-ink);
+  --md-footer-fg-color--lighter: rgba(29, 29, 27, 0.6);
+}
+
+[data-md-color-primary="custom"] {
+  --md-primary-fg-color: var(--pp-amber);
+  --md-primary-fg-color--light: #fcd580;
+  --md-primary-fg-color--dark: var(--pp-gold);
+  /* Text on the amber header is ink, not white */
+  --md-primary-bg-color: var(--pp-ink);
+  --md-primary-bg-color--light: rgba(29, 29, 27, 0.72);
+}
+
+[data-md-color-accent="custom"] {
+  --md-accent-fg-color: var(--pp-red);
+  --md-accent-fg-color--transparent: rgba(214, 40, 40, 0.1);
+  --md-accent-bg-color: var(--pp-paper);
+  --md-accent-bg-color--light: rgba(255, 255, 255, 0.7);
+}
+
+/* Header: amber with a heavy ink rule, like the app title bar */
+.md-header {
+  border-bottom: 4px solid var(--pp-ink);
+}
+.md-tabs {
+  border-bottom: 2px solid var(--pp-ink);
+}
+
+/* Display type: Jost for headings and the site title, as in the app */
+.md-header__title,
+.md-typeset h1,
+.md-typeset h2,
+.md-typeset h3,
+.md-typeset h4 {
+  font-family: "Jost", "Space Grotesk", Helvetica, Arial, sans-serif;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+.md-typeset h1 {
+  color: var(--pp-ink);
+  font-weight: 700;
+}
+
+/* Links: red, orange on hover, no colour-only cue */
+.md-typeset a {
+  text-decoration: underline;
+  text-decoration-thickness: 2px;
+  text-underline-offset: 0.15em;
+}
+.md-typeset a:hover,
+.md-typeset a:focus {
+  color: var(--pp-orange);
+}
+
+/* Square everything: no rounded corners on code, admonitions, buttons */
+.md-typeset code,
+.md-typeset pre > code,
+.md-typeset .admonition,
+.md-typeset details,
+.md-typeset .md-button,
+.md-search__form,
+.md-search__output {
+  border-radius: 0;
+}
+
+/* Admonitions: bone ground, ink keyline, amber accent bar */
+.md-typeset .admonition,
+.md-typeset details {
+  border: 2px solid var(--pp-ink);
+  border-left-width: 6px;
+  background: var(--pp-paper);
+}
+.md-typeset .admonition-title,
+.md-typeset summary {
+  background: var(--pp-bone);
+}
+
+/* Tables: ink rules, bone header */
+.md-typeset table:not([class]) {
+  border: 2px solid var(--pp-ink);
+}
+.md-typeset table:not([class]) th {
+  background: var(--pp-bone);
+  color: var(--pp-ink);
+}
+
+/* Buttons */
+.md-typeset .md-button--primary {
+  background: var(--pp-navy);
+  border-color: var(--pp-navy);
+  color: var(--pp-paper);
+}
+.md-typeset .md-button--primary:hover {
+  background: var(--pp-red);
+  border-color: var(--pp-red);
+}
+
+/* Navigation: active item in red, sidebar text in ink */
+.md-nav__link--active,
+.md-nav__item .md-nav__link--active {
+  color: var(--pp-red);
+}
+
+/* The modern variant paints the header from the page ground, not the
+ * primary colour, so set it explicitly: amber bar, ink text. */
+.md-header,
+.md-tabs {
+  background-color: var(--pp-amber);
+  color: var(--pp-ink);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+.md-tabs {
+  box-shadow: none;
+}
+.md-tabs__link--active,
+.md-tabs__link:hover {
+  color: var(--pp-red);
+}
+.md-search__form {
+  background-color: var(--pp-parchment);
+}
+.md-search__input::placeholder,
+.md-search__icon {
+  color: rgba(29, 29, 27, 0.6);
+}

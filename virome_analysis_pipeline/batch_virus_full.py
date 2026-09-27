@@ -13,10 +13,14 @@ import os
 import re
 import sys
 import subprocess
+import signal
 from pathlib import Path
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError
 import pandas as pd
 from tqdm import tqdm
+
+# Per-task timeout: 2 hours (virus-full 12-step assembly can be slow)
+TASK_TIMEOUT_SECONDS = 7200
 
 def safe_name(s: str, max_len: int = 100) -> str:
     s = str(s)
@@ -95,10 +99,21 @@ def find_extracted_reads(sample, virus, reads_dir):
         res = sorted(matched)
     return res
 
+def _safe_under(path: Path, base: Path) -> Path:
+    """规范化并校验 path 必须位于 base 目录内 (防路径逃逸), 返回规范化后的绝对路径。"""
+    p = Path(path).resolve()
+    b = Path(base).resolve()
+    if not str(p).startswith(str(b) + os.sep) and p != b:
+        raise ValueError(f"path escapes output root: {p}")
+    return p
+
+
 def worker_run_virus_full(task):
     sample, virus, norm_tax, ref_fasta, ext_reads, raw_reads, out_dir, args = task
-    
-    log_file = out_dir.parent / f"{out_dir.name}_assembly.log"
+
+    # resolve() 规范化路径, 消除 ../ 透传 (输出根目录来自 --outdir, 任务名经 safe_name 清洗)
+    out_root = Path(args.outdir).resolve()
+    log_file = _safe_under(out_dir.parent / f"{out_dir.name}_assembly.log", out_root)
     
     cmd = [
         "python3", args.virus_full_script,
@@ -124,9 +139,16 @@ def worker_run_virus_full(task):
     try:
         with open(log_file, "w") as log:
             log.write(f"CMD: {' '.join(cmd)}\n\n")
-            proc = subprocess.run(cmd, stdout=log, stderr=subprocess.STDOUT, text=True)
+            # close_fds=True: prevent grandchildren from inheriting log file handle
+            # start_new_session: 独立进程组; timeout 到期终止子进程 (真超时, 原实现仅放弃等待)
+            proc = subprocess.run(cmd, stdout=log, stderr=subprocess.STDOUT,
+                                  text=True, close_fds=True,
+                                  timeout=TASK_TIMEOUT_SECONDS,
+                                  start_new_session=(os.name == "posix"))
             if proc.returncode == 0:
                 return f"✅ [{sample}] {norm_tax} ({virus}) 组装完成"
+            elif proc.returncode < 0:
+                return f"⏰ [{sample}] {norm_tax} ({virus}) 组装超时被终止 (>{TASK_TIMEOUT_SECONDS}s, 查看日志: {log_file})"
             else:
                 return f"❌ [{sample}] {norm_tax} ({virus}) 组装失败 (查看日志: {log_file})"
     except Exception as e:
@@ -222,18 +244,26 @@ def main():
         sys.exit("❌ 没有生成任何有效的组装任务，请检查过滤阈值和文件路径。")
 
     print(f"🚀 构建了 {len(tasks)} 个病毒全长组装任务！开始并行执行 (并发数: {args.jobs})...")
-    
+
     success_count = 0
     print(f"[Assembly] 0/{len(tasks)} done", flush=True)
-    with ProcessPoolExecutor(max_workers=args.jobs) as executor:
-        futures = [executor.submit(worker_run_virus_full, t) for t in tasks]
+    with ThreadPoolExecutor(max_workers=args.jobs) as executor:
+        futures = {executor.submit(worker_run_virus_full, t): t[0] for t in tasks}
         done = 0
-        for future in tqdm(as_completed(futures), total=len(tasks), desc="Assembly", file=sys.stdout, ncols=80, mininterval=5):
-            res = future.result()
-            done += 1
-            if "✅" in res:
-                success_count += 1
-            if done % 10 == 0 or done == len(tasks):
+        for future in tqdm(as_completed(futures), total=len(tasks), desc="Assembly",
+                           file=sys.stdout, ncols=80, mininterval=5):
+            sample_name = futures[future]
+            try:
+                res = future.result()
+                done += 1
+                if "✅" in res:
+                    success_count += 1
+                else:
+                    print(f"\n  {res}", flush=True)
+            except Exception as e:
+                done += 1
+                print(f"\n  ❌ [{sample_name}] 异常: {e}", flush=True)
+            if done % 5 == 0 or done == len(tasks):
                 print(f"[Assembly] {done}/{len(tasks)} ({success_count} OK)", flush=True)
             
     print("-" * 60)

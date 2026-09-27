@@ -6,10 +6,10 @@ from typing import Optional, List, Set
 import numpy as np
 # pandas imported lazily via _get_pd() to avoid import deadlock
 
-CORE13_COLS = [
+CORE14_COLS = [
     "Run", "ReleaseDate", "CollectionDate", "Location", "Source",
     "Tissue", "Age_GrowthStage", "ScientificName", "TaxID",
-    "LibrarySource", "CenterName", "BioProject", "PMID"
+    "LibrarySource", "CenterName", "BioProject", "BioSample", "PMID"
 ]
 
 NA_PLACEHOLDERS = {"NA", "N/A", "Not_Provided", "not collected",
@@ -40,7 +40,7 @@ class MetadataStore:
     def dataframe(self):
         import pandas as pd
         if self._df is None:
-            self._df = pd.DataFrame(columns=CORE13_COLS)
+            self._df = pd.DataFrame(columns=CORE14_COLS)
         return self._df
 
     @property
@@ -65,7 +65,7 @@ class MetadataStore:
 
     @property
     def columns(self) -> List[str]:
-        return list(self._df.columns) if self._df is not None else CORE13_COLS
+        return list(self._df.columns) if self._df is not None else CORE14_COLS
 
     def load(self, filepath: str) -> bool:
         import pandas as pd

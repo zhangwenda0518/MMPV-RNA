@@ -1,4 +1,4 @@
-# host_depletion.py — 去宿主 + 去rRNA / Host Depletion & rRNA Removal
+# host_depletion.py — 去宿主 + 去rRNA / Host Depletion & rRNA Removal（`data_preprocessing_pipeline/`）
 
 > Kraken2 + Bowtie2/HISAT2/Minimap2 + Ribodetector/SILVA. Ablation experiments via `--steps`, resource monitoring per sample.
 
@@ -12,14 +12,14 @@ Kraken2 分类 → Bowtie2/HISAT2 去宿主 → rRNA 去除 (Ribodetector 或 SI
 
 ```bash
 # Ribodetector (默认, 仅 rna-short)
-python host_depletion.py \
+python data_preprocessing_pipeline/host_depletion.py \
     --tool bowtie2 --seq-type rna-short \
     --kraken2_index <dir> --step2_index <dir> \
     --input-dir <dir> --outdir <dir> \
     --rrna --jobs 10 --threads 40
 
 # SILVA Bowtie2 (所有 seq_type)
-python host_depletion.py \
+python data_preprocessing_pipeline/host_depletion.py \
     --tool bowtie2 --seq-type rna-short \
     --kraken2_index <dir> --step2_index <dir> \
     --input-dir <dir> --outdir <dir> \

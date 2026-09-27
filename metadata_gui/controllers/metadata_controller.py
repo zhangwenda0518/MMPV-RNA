@@ -33,7 +33,7 @@ class MetadataController:
             project, "public_metadata_pipeline_output", "info"))
 
         for d in possible_dirs:
-            core = os.path.join(d, "Global_Unified_Metadata_Core13.tsv")
+            core = os.path.join(d, "Global_Unified_Metadata_Core14.tsv")
             if os.path.isfile(core):
                 ok = self._store.load(core)
                 full = os.path.join(d, "Global_Unified_Metadata_Full.tsv")

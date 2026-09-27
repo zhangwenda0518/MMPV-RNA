@@ -57,8 +57,8 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
-from eve_scan_core import (EveConfig, check_tools, clean_name, merge_all,
-                           safe_dir)
+from eve_scan_core import (EVALUE, HOST_BS, MERGE_D, VIRAL_BS, WINDOW, EveConfig,
+                           check_tools, clean_name, merge_all, safe_dir)
 from eve_genome_scan import parse_stages, run_genome, setup_logger
 
 STAGE_HELP = {
@@ -220,13 +220,13 @@ def build_parser():
                    help="samtools 可执行文件 (默认 PATH)")
 
     g = p.add_argument_group("EVE 参数")
-    g.add_argument("--window", type=int, default=50000, help="滑窗宽度 (nt)")
-    g.add_argument("--merge-distance", type=int, default=300,
+    g.add_argument("--window", type=int, default=WINDOW, help="滑窗宽度 (nt)")
+    g.add_argument("--merge-distance", type=int, default=MERGE_D,
                    help="位点合并距离 (nt)")
-    g.add_argument("--evalue", default="1e-5")
-    g.add_argument("--host-bs", type=float, default=50,
+    g.add_argument("--evalue", default=EVALUE)
+    g.add_argument("--host-bs", type=float, default=HOST_BS,
                    help="Stage2 植物侧判定阈值 (bitscore)")
-    g.add_argument("--viral-bs", type=float, default=50,
+    g.add_argument("--viral-bs", type=float, default=VIRAL_BS,
                    help="Stage2 病毒侧判定阈值 (bitscore)")
     g.add_argument("--cmd-timeout", type=int, default=0,
                    help="单条外部命令超时 (秒); 0=不限 (防工具挂死占核)")
@@ -321,7 +321,17 @@ def main(argv=None):
         with ProcessPoolExecutor(max_workers=args.jobs) as ex:
             futs = {ex.submit(run_genome, j): j["name"] for j in jobs}
             for i, fu in enumerate(as_completed(futs), 1):
-                r = fu.result()
+                # worker 硬死 (OOM killer / 段错误) 会让 fu.result() 抛
+                # BrokenProcessPool; 那是整个进程池的状态, 从此所有 future 都取不到
+                # 结果. 逐 future 兜住, 至少把它记成 error 行而不是让整批消失.
+                try:
+                    r = fu.result()
+                except Exception as exc:
+                    name = futs[fu]
+                    r = {"name": name, "status": "error", "elapsed": 0,
+                         "error": f"worker 死亡: {type(exc).__name__}"[:300]}
+                    log.error("worker 死亡, 剩余 future 可能都取不到结果: %s: %s",
+                              name, type(exc).__name__)
                 results.append(r)
                 _log_result(log, i, len(jobs), r)
     else:

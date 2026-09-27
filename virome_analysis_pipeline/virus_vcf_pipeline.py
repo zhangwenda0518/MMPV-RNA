@@ -3,8 +3,16 @@
 """
 病毒VCF合并、质控、下游群体遗传学分析管线  v3.0
 =================================================
-merge → QC/过滤 → SNP矩阵导出 → 自定义距离 → NJ树 → 可视化
-所有新增模块均可通过 CLI flag 独立开启, 默认行为与 v1 兼容。
+merge → QC/过滤 → SNP矩阵导出 → 自定义距离 → UPGMA树 → 可视化
+
+Module decomposition plan (future refactoring):
+  Section A: merge + bgzip + tabix        → vcf_merger.py
+  Section B: sample QC + filtering        → vcf_qc.py
+  Section C: SNP matrix export (0/1/NA)   → snp_matrix.py
+  Section D: distance matrix + UPGMA tree → distance_tree.py
+  Section E: visualization (PCA/heat/AFS) → vcf_visualizer.py
+
+All modules accessible via CLI flags; default behavior is v1-compatible.
 """
 
 import os
@@ -21,6 +29,13 @@ try:
     HAS_NUMPY = True
 except ImportError:
     HAS_NUMPY = False
+
+try:
+    import pandas as pd
+    HAS_PANDAS = True
+except ImportError:
+    pd = None
+    HAS_PANDAS = False
 
 try:
     from scipy.cluster.hierarchy import linkage, dendrogram
@@ -262,6 +277,160 @@ def export_snp_matrix(vcf_path, out_tsv):
     return M, samples, pos_labels
 
 
+# ---- 位点标签位置解析 (兼容带下划线的 contig 名, 如 NC_002030.1) ----
+def parse_site_pos(label):
+    """从 CHROM_POS_REF_ALT 标签解析基因组位置; 优先取倒数第3段。"""
+    parts = str(label).split("_")
+    if len(parts) >= 3 and parts[-3].isdigit():
+        return int(parts[-3])
+    for p in reversed(parts):
+        if p.isdigit():
+            return int(p)
+    return 0
+
+
+def _af_table_for_vcf(vcf):
+    """定位同目录的 allele_frequencies.tsv 并返回 (路径, Run 名)。
+    约定: 本管线每个样本目录一份 <Run>.<Contig>.allele_frequencies.tsv,
+    Run 取 AF 表文件名首个 '.' 前的 token (对含下划线的 Run 也稳)。"""
+    d = os.path.dirname(vcf)
+    cands = sorted(glob.glob(os.path.join(d, "*.allele_frequencies.tsv")))
+    if not cands:
+        return "", ""
+    run = os.path.basename(cands[0]).split(".", 1)[0]
+    return cands[0], run
+
+
+def build_matrix_from_af_tables(vcf_files, af_min=0.05,
+                                 out_bin_tsv=None, out_af_tsv=None):
+    """
+    从 per-sample allele_frequencies.tsv 构建 presence/absence 矩阵。
+
+    背景: freebayes --pooled-continuous 输出 sites-only VCF (无样本 GT 列),
+    bcftools merge 后假样本列全为 ./., GT 提取退化为 1/NA, 距离全零。
+    本函数改吃 Stage 3 已解析好的 AF 表:
+      ALT_FREQ >= af_min          → 1
+      有记录但低于阈值 / 未记录   → 0   (显式参考态)
+    位点标签含 ALT (同一 POS 多等位基因各占一列);
+    同时输出连续 AF 矩阵供剂量型下游 (QST 等) 使用。
+
+    返回 (M(0/1 float ndarray), samples(list), site_labels(list)); 失败返回 (None,)*3
+    """
+    assert HAS_NUMPY, "需要 numpy"
+    site_freq, sample_names, skipped = {}, [], []
+    for vcf in sorted(vcf_files):
+        af_path, run = _af_table_for_vcf(vcf)
+        if not af_path:
+            skipped.append(os.path.basename(vcf))
+            continue
+        if run in sample_names:
+            print(f"[AF矩阵] 样本 {run} 出现多个输入文件, 仅取首个, 忽略: {os.path.basename(vcf)}")
+            continue
+        tmp = {}
+        try:
+            with open(af_path, "r", encoding="utf-8") as f:
+                ic = {name: k for k, name in enumerate(f.readline().rstrip("\n").split("\t"))}
+                miss = [c for c in ("CHROM", "POS", "REF", "ALT", "ALT_FREQ") if c not in ic]
+                if miss:
+                    raise ValueError(f"缺少列 {miss}")
+                for line in f:
+                    line = line.rstrip("\n")
+                    if not line.strip():
+                        continue
+                    p = line.split("\t")
+                    if len(p) < len(ic):
+                        continue
+                    tmp[f"{p[ic['CHROM']]}_{p[ic['POS']]}_{p[ic['REF']]}_{p[ic['ALT']]}"] = \
+                        float(p[ic["ALT_FREQ"]])
+        except Exception as e:
+            print(f"[AF矩阵] 解析失败跳过 {af_path}: {e}")
+            continue
+        sample_names.append(run)
+        for lab, fr in tmp.items():
+            site_freq.setdefault(lab, {})[run] = fr
+
+    if skipped:
+        print(f"[AF矩阵] {len(skipped)} 个输入无对应 AF 表, 已跳过 (如: {skipped[0]})")
+    samples = sorted(sample_names)
+    site_labels = sorted(site_freq.keys(),
+                         key=lambda l: (str(l).split("_")[0], parse_site_pos(l), str(l)))
+    if not samples or not site_labels:
+        print("[AF矩阵] 无可用样本或位点。")
+        return None, None, None
+
+    sidx = {s: i for i, s in enumerate(samples)}
+    M_bin = np.zeros((len(samples), len(site_labels)), dtype=np.float64)
+    M_af = np.zeros_like(M_bin)
+    for k, lab in enumerate(site_labels):
+        for s, fr in site_freq[lab].items():
+            i = sidx[s]
+            M_af[i, k] = fr
+            if fr >= af_min:
+                M_bin[i, k] = 1.0
+
+    def _dump(path, mat, fmt):
+        if not path:
+            return
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("Sample\t" + "\t".join(site_labels) + "\n")
+            for i, s in enumerate(samples):
+                f.write(s + "\t" + "\t".join(fmt(mat[i, k]) for k in range(len(site_labels))) + "\n")
+
+    _dump(out_bin_tsv, M_bin, lambda v: str(int(v)))
+    _dump(out_af_tsv, M_af, lambda v: f"{v:.4f}")
+    print(f"[AF矩阵] {len(samples)} 样本 x {len(site_labels)} 位点 (阈值 {af_min:g}); "
+          f"二值 1 占比 {M_bin.mean() * 100:.1f}%")
+    for pth, tag in ((out_bin_tsv, "二值"), (out_af_tsv, "连续AF")):
+        if pth:
+            print(f"[AF矩阵] {tag}已导出: {pth}")
+    return M_bin, samples, site_labels
+
+
+def qc_stats_from_af_tables(vcf_files, af_min=0.05):
+    """sites-only 输入下从 AF 表计算样本级 QC 统计 (列名与 qc_summary_table 兼容):
+    n_variants = 携带位点数 (ALT_FREQ >= af_min); missing 恒为 0;
+    ts/tv 仅统计单碱基 SNV。"""
+    transitions = [{"A", "G"}, {"G", "A"}, {"C", "T"}, {"T", "C"}]
+    agg = defaultdict(lambda: {"n": 0, "carriers": 0, "ts": 0, "tv": 0})
+    seen = set()
+    for vcf in sorted(vcf_files):
+        af_path, run = _af_table_for_vcf(vcf)
+        if not af_path or run in seen:
+            continue
+        seen.add(run)
+        try:
+            with open(af_path, "r", encoding="utf-8") as f:
+                ic = {name: k for k, name in enumerate(f.readline().rstrip("\n").split("\t"))}
+                for line in f:
+                    p = line.rstrip("\n").split("\t")
+                    if len(p) < len(ic):
+                        continue
+                    ref, alt = p[ic["REF"]].upper(), p[ic["ALT"]].upper()
+                    freq = float(p[ic["ALT_FREQ"]])
+                    a = agg[run]
+                    a["n"] += 1
+                    if freq >= af_min:
+                        a["carriers"] += 1
+                    if len(ref) == 1 and len(alt) == 1:
+                        if {ref, alt} in transitions:
+                            a["ts"] += 1
+                        else:
+                            a["tv"] += 1
+        except Exception as e:
+            print(f"[QC-AF] 解析失败跳过 {af_path}: {e}")
+    stats = {}
+    for s, a in agg.items():
+        stats[s] = {
+            "n_variants": a["carriers"],
+            "n_missing": 0,
+            "missing_rate": 0.0,
+            "ts_count": a["ts"],
+            "tv_count": a["tv"],
+            "ts_tv_ratio": round(a["ts"] / a["tv"], 4) if a["tv"] > 0 else float("inf"),
+        }
+    return stats
+
+
 # ============================================================
 # 3. 距离矩阵计算 (Jaccard / Hamming — 保留用于 0/1 矩阵)
 # ============================================================
@@ -320,7 +489,7 @@ def save_distance_matrix(D, samples, out_path):
 
 
 # ============================================================
-# 4. NJ 树 (scipy linkage → Newick)
+# 4. UPGMA 聚类树 (scipy linkage → Newick)
 # ============================================================
 
 def linkage_to_newick(Z, labels):
@@ -348,12 +517,22 @@ def linkage_to_newick(Z, labels):
     return f"({nodes[2 * n - 2]});"
 
 
-def build_nj_tree(D, samples, out_path, method="average"):
+def build_upgma_tree(D, samples, out_path, method="average"):
     """
-    从距离矩阵构建 NJ 树 (通过 UPGMA/WPGMA 近似)。
+    从距离矩阵构建 UPGMA 层次聚类树 (average linkage)。
+    注: method="average" 即 UPGMA; 其余 method 为不同 linkage 策略,
+    均属层次聚类而非 neighbor-joining。
     method: "average" | "ward" | "single" | "complete"
     """
     assert HAS_SCIPY, "需要 scipy"
+
+    # 退化输入守卫: 样本过少无法建树 (旧版在此抛 scipy 空矩阵异常)
+    if len(samples) < 2:
+        print(f"[树] 仅 {len(samples)} 个样本, 无法建树, 输出占位 Newick。")
+        name = samples[0] if samples else "empty"
+        with open(out_path, "w", encoding="utf-8") as f:
+            f.write(f"({name});\n")
+        return None, None
 
     # NaN 处理: 无共有位点的样本对 → 赋予群体最大距离 (而非 0)
     max_dist = np.nanmax(D) if not np.isnan(D).all() else 1.0
@@ -370,6 +549,91 @@ def build_nj_tree(D, samples, out_path, method="average"):
         f.write(newick + "\n")
     print(f"[树] Newick 已保存: {out_path}")
     return Z, newick
+
+
+# ============================================================
+# 4.5 Mantel Test — 地理-遗传距离相关性
+# ============================================================
+
+def mantel_test(D_gen, D_geo, n_permutations=9999):
+    """
+    Mantel test: 检验两个距离矩阵是否显著相关。
+    D_gen: 遗传距离矩阵 (n×n)
+    D_geo:  地理距离矩阵 (n×n)
+    返回: (r, p_value, n_permutations)
+    """
+    n = D_gen.shape[0]
+    if n < 5:
+        return None, None, "N<5, insufficient"
+    # 取上三角 (不含对角线)
+    iu = np.triu_indices(n, k=1)
+    g_flat = D_gen[iu]
+    e_flat = D_geo[iu]
+    # 剔除 NaN/Inf
+    mask = np.isfinite(g_flat) & np.isfinite(e_flat)
+    g_flat, e_flat = g_flat[mask], e_flat[mask]
+    if len(g_flat) < 10:
+        return None, None, f"only {len(g_flat)} valid pairs"
+    # observed correlation
+    r_obs = np.corrcoef(g_flat, e_flat)[0, 1]
+    # permutation
+    count = 0
+    rng = np.random.RandomState(42)
+    for _ in range(n_permutations):
+        perm = rng.permutation(n)
+        Dp = D_geo[perm][:, perm]
+        ep = Dp[iu][mask]
+        rp = np.corrcoef(g_flat, ep)[0, 1]
+        if abs(rp) >= abs(r_obs):
+            count += 1
+    p_val = (count + 1) / (n_permutations + 1)
+    return r_obs, p_val, n_permutations
+
+
+def compute_geo_distance(meta_df, samples):
+    """
+    从元数据计算样本间地理距离。
+    meta_df: 含 Sample, Latitude, Longitude (或 Province/Country)
+    samples: 样本名列表
+    返回: (n×n 地理距离矩阵, labels)
+    """
+    common = [s for s in samples if s in meta_df.index]
+    if len(common) < 5:
+        return None, None
+    lat = meta_df.loc[common, "Latitude"].values.astype(float)
+    lon = meta_df.loc[common, "Longitude"].values.astype(float)
+    n = len(common)
+    D_geo = np.zeros((n, n))
+    for i in range(n):
+        for j in range(i + 1, n):
+            # Haversine 距离 (km)
+            dlat = np.radians(lat[j] - lat[i])
+            dlon = np.radians(lon[j] - lon[i])
+            a = np.sin(dlat / 2) ** 2 + np.cos(np.radians(lat[i])) * np.cos(np.radians(lat[j])) * np.sin(dlon / 2) ** 2
+            c = 2 * np.arctan2(np.sqrt(a), np.sqrt(1 - a))
+            D_geo[i, j] = D_geo[j, i] = 6371 * c
+    return D_geo, common
+
+
+def plot_mantel(g_flat, e_flat, r_val, p_val, out_path):
+    """Mantel test 散点图: 遗传距离 vs 地理距离"""
+    assert HAS_VIZ, "需要 matplotlib"
+    plt.figure(figsize=(8, 7))
+    plt.scatter(e_flat, g_flat, alpha=0.5, s=20, c="#4A90E2", edgecolors="none")
+    # 趋势线
+    if len(g_flat) > 3:
+        z = np.polyfit(e_flat, g_flat, 1)
+        x_line = np.linspace(e_flat.min(), e_flat.max(), 100)
+        plt.plot(x_line, np.polyval(z, x_line), "r--", linewidth=2, alpha=0.7)
+    plt.xlabel("Geographic Distance (km)", fontsize=13, fontweight="bold")
+    plt.ylabel("Genetic Distance (Jaccard)", fontsize=13, fontweight="bold")
+    p_str = f"p={p_val:.4f}" if p_val >= 0.0001 else f"p<0.0001"
+    plt.title(f"Isolation by Distance (Mantel Test)\nr={r_val:.4f}, {p_str}, N={len(g_flat)} pairs",
+              fontsize=14, fontweight="bold")
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=300, bbox_inches="tight")
+    plt.close()
+    print(f"[Mantel] 已保存: {out_path}")
 
 
 # ============================================================
@@ -495,19 +759,34 @@ def plot_pca(M, samples, out_path, method="kinship"):
 def plot_distance_heatmap(D, samples, out_path, title="Sample Distance Heatmap"):
     """距离矩阵热图 + 层次聚类树"""
     assert HAS_VIZ, "需要 matplotlib + seaborn"
+    from scipy.cluster.hierarchy import linkage as scipy_linkage
+    from scipy.spatial.distance import squareform
 
-    D_df = {samples[i]: {samples[j]: D[i, j] for j in range(len(samples))}
-            for i in range(len(samples))}
-    import pandas as pd
-    df = pd.DataFrame(D_df)
+    # 转 condensed 并处理 NaN
+    n = len(samples)
+    iu = np.triu_indices(n, k=1)
+    condensed = D[iu].copy()
+    condensed = np.nan_to_num(condensed, nan=np.nanmax(condensed[np.isfinite(condensed)]) if np.any(np.isfinite(condensed)) else 1.0)
+    # 确保 condensed 长度正确
+    if len(condensed) != n * (n - 1) // 2:
+        print(f"[热图] 距离矩阵格式异常, 跳过。")
+        return
 
-    # 处理 NaN
-    mask = df.isna()
+    # 先算 linkage
+    try:
+        Z = scipy_linkage(condensed, method="average")
+    except Exception as e:
+        print(f"[热图] linkage 计算失败: {e}, 跳过。")
+        return
 
-    g = sns.clustermap(df, cmap="YlOrRd_r", metric="precomputed",
-                       row_cluster=True, col_cluster=True,
-                       linewidths=0.5, figsize=(max(10, len(samples)*0.4),
-                                                 max(8, len(samples)*0.4)),
+    # 用 numpy array + linkage 画, 避免 seaborn precomputed 兼容问题
+    D_plot = D.copy()
+    D_plot[np.isnan(D_plot)] = np.nanmax(D_plot[np.isfinite(D_plot)]) if np.any(np.isfinite(D_plot)) else 1.0
+    mask = np.isnan(D) | (D_plot == 0)
+
+    g = sns.clustermap(D_plot, cmap="YlOrRd_r",
+                       row_linkage=Z, col_linkage=Z,
+                       linewidths=0.5, figsize=(max(10, n * 0.4), max(8, n * 0.4)),
                        mask=mask, cbar_kws={"label": "Distance"})
     g.ax_heatmap.set_title(title, fontsize=14, fontweight="bold", pad=20)
     plt.savefig(out_path, dpi=300, bbox_inches="tight")
@@ -571,13 +850,7 @@ def compute_ld_r2(M, site_labels, min_r2=0.5):
     M_sites = M.T  # sites × samples
     n_sites = M_sites.shape[0]
 
-    positions = []
-    for label in site_labels:
-        try:
-            pos = int(label.split("_")[1])
-        except (IndexError, ValueError):
-            pos = 0
-        positions.append(pos)
+    positions = [parse_site_pos(l) for l in site_labels]
 
     strong_pairs = []
     for i in range(n_sites):
@@ -589,6 +862,9 @@ def compute_ld_r2(M, site_labels, min_r2=0.5):
         if pi == 0 or pi == 1:
             continue
         for j in range(i + 1, n_sites):
+            # 同位置多等位对 (Distance_bp==0) 为伪信号, 直接跳过
+            if positions[i] == positions[j]:
+                continue
             bj = M_sites[j]
             mask_j = ~np.isnan(bj)
             mask = mask_i & mask_j
@@ -650,6 +926,179 @@ def plot_epistatic_network(df_pairs, site_labels, positions, out_path):
     print(f"[共突变图] 已保存: {out_path}")
 
 
+def plot_ld_triangle_heatmap(df_pairs, site_labels, out_path, min_r2=0.5):
+    """LD r² 下三角热图: 位点按基因组坐标升序排列, 只画下三角;
+    颜色范围 [min_r2, 1], 空白格 = 未达阈值或未计算。EasyHap 风格补件。"""
+    if df_pairs is None or df_pairs.empty:
+        return
+    assert HAS_VIZ and HAS_NUMPY, "需要 matplotlib + numpy"
+
+    labels = sorted(set(df_pairs["Site_1"]) | set(df_pairs["Site_2"]),
+                    key=parse_site_pos)
+    idx = {lab: k for k, lab in enumerate(labels)}
+    R = np.full((len(labels), len(labels)), np.nan)
+    for _, r in df_pairs.iterrows():
+        i, j = idx[r["Site_1"]], idx[r["Site_2"]]
+        v = float(r["R_squared"])
+        R[i, j] = R[j, i] = v
+
+    hide = np.triu(np.ones_like(R, dtype=bool), k=0)  # 对角及以上隐藏 (下三角图)
+    Rm = np.ma.masked_where(hide | np.isnan(R), R)
+
+    n = len(labels)
+    if n > 200:
+        print(f"[共突变热图] 位点数 {n} 过大, 跳过下三角热图\n"
+              "        (r² 数据已完整存于 epistatic_co_mutations.tsv 与网络图)。")
+        return
+    fig, ax = plt.subplots(figsize=(max(6, n * 0.45), max(5, n * 0.38)))
+    im = ax.imshow(Rm, cmap="YlOrRd", vmin=min_r2, vmax=1.0, aspect="equal")
+    for k in range(n):
+        ax.axhline(k - 0.5, color="white", lw=0.9)
+        ax.axvline(k - 0.5, color="white", lw=0.9)
+    if n <= 20:
+        fs = max(7, 110 // max(1, n))
+        for i in range(n):
+            for j in range(i):
+                if not np.isnan(R[i, j]):
+                    ax.text(j, i, f"{R[i, j]:.2f}", ha="center", va="center",
+                            fontsize=fs, color="#333333")
+    short = [(parse_site_pos(l) or l) for l in labels]
+    ax.set_xticks(range(n))
+    ax.set_xticklabels(short, rotation=90, fontsize=8)
+    ax.set_yticks(range(n))
+    ax.set_yticklabels(short, fontsize=8)
+    ax.set_title("Linkage disequilibrium r² between co-mutating sites\n"
+                 "(lower triangle; ordered by genomic position)",
+                 fontsize=12, fontweight="bold")
+    ax.set_xlabel("Genomic position (bp)", fontsize=10)
+    ax.set_ylabel("Genomic position (bp)", fontsize=10)
+    cb = fig.colorbar(im, shrink=0.75)
+    cb.set_label("r²", fontsize=10)
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=300, facecolor="white", bbox_inches="tight")
+    plt.close()
+    print(f"[共突变热图] 已保存: {out_path}")
+
+
+def plot_ld_diamond_heatmap(df_pairs, site_labels, out_path, min_r2=0.5):
+    """EasyHap 式菱形三角 LD 热图: 位点按基因组位置排序, 对角=位点轴。
+    每个格子一个菱形 Polygon, 与 imshow 下三角版互为补充。"""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from matplotlib.patches import Polygon
+    from matplotlib.colors import Normalize
+    from matplotlib.cm import ScalarMappable
+    if df_pairs is None or df_pairs.empty:
+        return
+    labels = sorted(set(df_pairs["Site_1"]) | set(df_pairs["Site_2"]),
+                    key=parse_site_pos)
+    n = len(labels)
+    if n > 200:
+        print(f"[LD菱形] 位点数 {n} 过大, 跳过 (数据已存 TSV 与网络图)。")
+        return
+    idx = {l: k for k, l in enumerate(labels)}
+    R = np.full((n, n), np.nan)
+    for _, r in df_pairs.iterrows():
+        i, j = idx[r["Site_1"]], idx[r["Site_2"]]
+        v = float(r["R_squared"])
+        R[i, j] = R[j, i] = v
+    cmap = plt.get_cmap("YlOrRd")
+    norm = Normalize(vmin=min_r2, vmax=1.0)
+    fig, ax = plt.subplots(figsize=(max(6, n * 0.45), max(4, n * 0.30)))
+    for i in range(n):
+        for j in range(i + 1, n):
+            v = R[i, j]
+            face = cmap(norm(float(v))) if np.isfinite(v) else (0.92, 0.92, 0.92, 1.0)
+            cx = (i + j) / 2.0
+            cy = -(j - i) / 2.0
+            ax.add_patch(Polygon(
+                [(cx, cy + 0.5), (cx + 0.5, cy), (cx, cy - 0.5), (cx - 0.5, cy)],
+                closed=True, facecolor=face, edgecolor="white", linewidth=0.5))
+    ax.set_xlim(0, max(1, n - 1))
+    ax.set_ylim(-max(1.0, n / 2.0), 0.16)
+    ax.set_aspect("equal", adjustable="box")
+    ax.xaxis.tick_top()
+    ax.xaxis.set_label_position("top")
+    short = [str(parse_site_pos(l)) for l in labels]
+    ax.set_xticks(np.arange(n))
+    ax.set_xticklabels(short, rotation=90, fontsize=7)
+    ax.tick_params(axis="x", pad=3, length=0)
+    ax.set_yticks([])
+    for side in ("left", "right", "bottom"):
+        ax.spines[side].set_visible(False)
+    ax.spines["top"].set_visible(False)
+    ax.set_title("Linkage disequilibrium r² (diamond triangle; ordered by position)",
+                 fontsize=11, fontweight="bold")
+    sm = ScalarMappable(norm=norm, cmap=cmap)
+    sm.set_array([])
+    fig.colorbar(sm, ax=ax, label="r²", fraction=0.035, pad=0.025)
+    fig.subplots_adjust(left=0.06, right=0.88, top=0.92, bottom=0.08)
+    plt.savefig(out_path, dpi=300, facecolor="white", bbox_inches="tight")
+    plt.close()
+    print(f"[LD菱形热图] 已保存: {out_path}")
+
+
+def plot_gene_variant_links(positions, site_labels, gene_spans, out_path, tag=""):
+    """基因结构图 + 变异位点分布连线 (EasyHap plot_gene_structure_with_haps 思路重写)。
+    上方面板: 每个基因一个 CDS 块 (按基因组坐标), 下方位点 tick,
+    每位点用细线连到基因骨架, 直观展示变异落在基因组/基因的何处。"""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from matplotlib.patches import Rectangle, ConnectionPatch
+    if not gene_spans:
+        return
+    gnames = sorted(gene_spans, key=lambda g: gene_spans[g][0])
+    gmin = min(gene_spans[g][0] for g in gnames)
+    gmax = max(gene_spans[g][1] for g in gnames)
+    pos_arr = np.array([float(p) for p in positions], dtype=float)
+    vmin, vmax = float(pos_arr.min()), float(pos_arr.max())
+    lo = min(gmin, vmin)
+    hi = max(gmax, vmax)
+    span = max(1, hi - lo)
+    fig, (axg, axv) = plt.subplots(
+        2, 1, figsize=(max(7, min(18, 3.0 + 0.006 * span)), 4.6),
+        gridspec_kw={"height_ratios": [1.0, 1.5], "hspace": 0.10})
+    # ---- 基因面板 (同一骨架线, CDS 块) ----
+    axg.hlines(0, lo, hi, color="black", lw=1.4, zorder=1)
+    colors = ["#4DBEEE", "#E69F00", "#009E73", "#D55E00", "#56B4E9", "#CC79A7"]
+    for k, g in enumerate(gnames):
+        s, e = gene_spans[g]
+        axg.add_patch(Rectangle((s, -0.13), max(1, e - s), 0.26,
+                                facecolor=colors[k % len(colors)],
+                                edgecolor="black", lw=0.7, zorder=3))
+        axg.text((s + e) / 2, 0.20, g, ha="center", va="bottom",
+                 fontsize=7, rotation=0, zorder=4)
+    axg.set_xlim(lo - 0.02 * span, hi + 0.02 * span)
+    axg.set_ylim(-0.5, 0.9)
+    axg.set_yticks([])
+    axg.set_title(f"Gene structure & variant positions — {tag}".strip(),
+                  fontsize=11, fontweight="bold")
+    axg.tick_params(axis="x", labelbottom=False)
+    for side in ("left", "right", "top"):
+        axg.spines[side].set_visible(False)
+    # ---- 位点面板 + 连线 ----
+    for i, p in enumerate(positions):
+        axv.vlines(p, 0, 0.85, color="#D55E00", lw=1.0, zorder=3)
+        y_t = 0.95 + 0.08 * (i % 6)
+        con = ConnectionPatch(xyA=(p, y_t), coordsA=axv.transData,
+                              xyB=(p, -0.28), coordsB=axg.transData,
+                              color="0.45", lw=0.5, alpha=0.7, zorder=1,
+                              clip_on=False)
+        fig.add_artist(con)
+    axv.set_xlim(lo - 0.02 * span, hi + 0.02 * span)
+    axv.set_ylim(0, 1.6)
+    axv.set_yticks([])
+    axv.set_xlabel("Genomic position (bp)", fontsize=10)
+    for side in ("left", "right", "top"):
+        axv.spines[side].set_visible(False)
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=300, facecolor="white", bbox_inches="tight")
+    plt.close()
+    print(f"[基因-变异连线] 已保存: {out_path}")
+
+
 # ============================================================
 # 5.7  滑动窗 π 与 Tajima's D
 # ============================================================
@@ -665,13 +1114,7 @@ def compute_sliding_window_popgen(M, site_labels, win_size=0, step=0):
     n_samples = M.shape[0]
 
     # 解析位置
-    positions = []
-    for label in site_labels:
-        try:
-            pos = int(label.split("_")[1])
-        except (IndexError, ValueError):
-            pos = 0
-        positions.append(pos)
+    positions = [parse_site_pos(l) for l in site_labels]
 
     if not positions:
         return None
@@ -1122,7 +1565,7 @@ def main():
     parser.add_argument("--dist-metrics", choices=["jaccard", "hamming", "both"],
                         default=None, help="在 Python 中计算距离矩阵 (替代/补充 VCF2Dis)")
     parser.add_argument("--tree", action="store_true",
-                        help="从距离矩阵构建 NJ/UPGMA 树")
+                        help="从距离矩阵构建 UPGMA 聚类树")
 
     parser.add_argument("--visualize", action="store_true",
                         help="生成全套图表 (PCA/热图/AFS/树图/LD/PopGen/per-gene柱状图/注释热图/基因轨道)")
@@ -1152,8 +1595,16 @@ def main():
     parser.add_argument("--use-vcf2tools", action="store_true",
                         help="使用 VCF2PCACluster 和 VCF2Dis (默认已改用 Python sklearn/numpy)")
 
+    parser.add_argument("--meta", type=str, default=None,
+                        help="SRA 元数据 TSV (需含 Sample,Latitude,Longitude 列, 触发 Mantel test 地理-遗传距离相关性)")
+
     parser.add_argument("--ivar", action="store_true",
                         help="输入为 iVar 产物, 启用 awk 修复缺失的 FORMAT/GT 列 (Freebayes/bcftools 不要加此参数)")
+
+    parser.add_argument("--af-min", type=float, default=0.05,
+                        help="AF 表兜底路径的二值化阈值 (默认 0.05)")
+    parser.add_argument("--force-gt-path", action="store_true",
+                        help="禁用自动检测, 强制走 VCF GT 提取路径 (调试对比用)")
 
     args = parser.parse_args()
 
@@ -1292,6 +1743,29 @@ def main():
         return
     print(f"[信息] 合并后保留 {snp_count} 个 bi-allelic SNP 位点。")
 
+    # ---- 输入形态检测: GT 状态空间不完整 (sites-only 或无 0 态) 时走 AF 兜底 ----
+    # 判据: ① 无样本列 (纯 sites-only) ② 有样本列但 GT 不含 0 态 (如 iVar --ivar 合成 1/1)
+    # 二者任一成立 → 矩阵必然 1/NA 退化, 切 AF 表重建。不依赖 args.ivar,
+    # 保证正式编排器以 --ivar 模式调用时同样被识别。
+    sites_only_inputs = False
+    if ready_vcfs:
+        probe_samples = run_command(
+            f"bcftools query -l '{ready_vcfs[0]}'", return_output=True
+        ).strip()
+        if probe_samples == "":
+            sites_only_inputs = True
+        else:
+            gt_probe = run_command(
+                f"bcftools query -f '[%GT\\t]\\n' '{ready_vcfs[0]}' | head -50",
+                return_output=True,
+            )
+            has_zero = any("0" in tok for tok in gt_probe.replace("\t", " ").split())
+            if not has_zero:
+                sites_only_inputs = True
+                print("[检测] 输入有样本列但 GT 无 0 态 (如 iVar 合成 1/1), 同样走 AF 兜底。")
+        if sites_only_inputs:
+            print("[检测] 输入 VCF GT 状态空间不完整, 将走 AF 表兜底路径。")
+
     # ============================================================
     # Step 2.5: QC (如果开启)
     # ============================================================
@@ -1300,37 +1774,59 @@ def main():
 
     if args.qc:
         print("\n================ [步骤 2.5] 样本 QC ================")
-        stats = qc_sample_stats(merged_vcf)
-
-        if args.max_snps > 0 or args.max_missing > 0:
-            qc_merged = os.path.join(work_dir, "qc_filtered.vcf.gz")
-            kept, excluded_samples = qc_filter_samples(
-                merged_vcf, qc_merged, stats,
-                max_snps=args.max_snps, max_missing=args.max_missing
-            )
-        else:
-            # 只出报告不过滤
-            kept = list(stats.keys())
+        if sites_only_inputs and not args.force_gt_path:
+            # 合并 VCF 的假样本列全为 ./., GT 版 QC 全是噪声, 改由 AF 表统计
+            print("[QC] AF 兜底路径: 统计改由 allele_frequencies.tsv 计算 (missing 恒为 0)。")
+            if args.max_snps > 0 or args.max_missing > 0:
+                print(f"[警告] AF 兜底路径暂不支持样本过滤: "
+                      f"--max-snps/--max-missing 将被忽略 (GT 完整输入不受影响)。")
+            stats = qc_stats_from_af_tables(vcf_files, af_min=args.af_min)
             excluded_samples = set()
+            qc_path = os.path.join(stats_dir, "qc_summary.tsv")
+            qc_summary_table(stats, excluded_samples, qc_path)
+        else:
+            stats = qc_sample_stats(merged_vcf)
+
+            if args.max_snps > 0 or args.max_missing > 0:
+                qc_merged = os.path.join(work_dir, "qc_filtered.vcf.gz")
+                kept, excluded_samples = qc_filter_samples(
+                    merged_vcf, qc_merged, stats,
+                    max_snps=args.max_snps, max_missing=args.max_missing
+                )
+            else:
+                # 只出报告不过滤
+                kept = list(stats.keys())
+                excluded_samples = set()
 
         qc_path = os.path.join(stats_dir, "qc_summary.tsv")
         qc_summary_table(stats, excluded_samples, qc_path)
 
     # ============================================================
-    # Step 3: SNP 矩阵导出
+    # Step 3: SNP 矩阵导出 (GT 路径 或 AF 表兜底路径)
     # ============================================================
     M = None
     samples = None
     site_labels = None
 
-    if args.snp_matrix or args.dist_metrics or args.visualize or args.ld or args.popgen_windows or args.gene_summary or args.snpgenie:
+    need_M = args.snp_matrix or args.dist_metrics or args.visualize or \
+        args.ld or args.popgen_windows or args.gene_summary or args.snpgenie
+
+    if need_M and sites_only_inputs and not args.force_gt_path:
+        print("\n================ [步骤 3] 构建 SNP 矩阵 (AF 表兜底路径) ================")
+        M, samples, site_labels = build_matrix_from_af_tables(
+            vcf_files, af_min=args.af_min,
+            out_bin_tsv=os.path.join(matrix_dir, "snp_matrix.tsv"),
+            out_af_tsv=os.path.join(matrix_dir, "af_matrix.tsv"),
+        )
+    elif need_M:
         print("\n================ [步骤 3] 导出 SNP 矩阵 ================")
         M, samples, site_labels = export_snp_matrix(
             qc_merged, os.path.join(matrix_dir, "snp_matrix.tsv")
         )
-        if M is None:
-            print("[错误] SNP 矩阵导出失败。")
-            sys.exit(1)
+
+    if need_M and M is None:
+        print("[错误] SNP 矩阵构建失败。")
+        sys.exit(1)
 
 
     # ============================================================
@@ -1348,10 +1844,10 @@ def main():
             save_distance_matrix(D_mat, samples, save_path)
 
     # ============================================================
-    # Step 5: NJ 树
+    # Step 5: UPGMA 聚类树
     # ============================================================
     if args.tree and M is not None and len(samples) > 0:
-        print("\n================ [步骤 5] 构建 NJ/UPGMA 树 ================")
+        print("\n================ [步骤 5] 构建 UPGMA 聚类树 ================")
         if "jaccard" in D_dict:
             D_tree = D_dict["jaccard"]
         elif "hamming" in D_dict:
@@ -1362,7 +1858,66 @@ def main():
             D_tree = D_dict2["jaccard"]
 
         tree_path = os.path.join(tree_dir, "tree.newick")
-        Z_linkage, _ = build_nj_tree(D_tree, samples, tree_path)
+        Z_linkage, _ = build_upgma_tree(D_tree, samples, tree_path)
+
+    # ============================================================
+    # Step 5a: Mantel Test (地理-遗传距离相关性)
+    # ============================================================
+    if args.meta and M is not None and len(samples) > 0:
+        meta_path = os.path.expanduser(args.meta)
+        if os.path.isfile(meta_path):
+            print("\n================ [步骤 5a] Mantel Test (Isolation by Distance) ================")
+            try:
+                import pandas as _pd
+                meta_df = _pd.read_csv(meta_path, sep=None, engine="python")
+                # 查找 Sample 列
+                sample_col = None
+                for c in ["Sample", "Run", "sample", "run", "Sample_ID"]:
+                    if c in meta_df.columns:
+                        sample_col = c
+                        break
+                if sample_col:
+                    meta_df = meta_df.set_index(sample_col)
+                if "Latitude" in meta_df.columns and "Longitude" in meta_df.columns:
+                    D_geo, geo_samples = compute_geo_distance(meta_df, list(samples))
+                    if D_geo is not None:
+                        D_gen = D_dict.get("jaccard", D_dict.get("hamming"))
+                        if D_gen is not None:
+                            # align samples
+                            gen_idx = [list(samples).index(s) for s in geo_samples if s in samples]
+                            geo_idx = [list(geo_samples).index(s) for s in geo_samples if s in samples]
+                            if len(gen_idx) >= 5:
+                                common_samples = [list(samples)[i] for i in gen_idx]
+                                D_gen_sub = D_gen[np.ix_(gen_idx, gen_idx)]
+                                D_geo_sub = D_geo[np.ix_(geo_idx, geo_idx)]
+                                r_val, p_val, n_perm = mantel_test(D_gen_sub, D_geo_sub)
+                                if r_val is not None:
+                                    print(f"[Mantel] r={r_val:.4f}, p={p_val:.6f} (permutations={n_perm}), N={len(common_samples)}")
+                                    mantel_out = os.path.join(stats_dir, "mantel_test.tsv")
+                                    with open(mantel_out, "w") as mf:
+                                        mf.write(f"r\tp_value\tpermutations\tn_samples\tn_pairs\n")
+                                        iu = np.triu_indices(len(common_samples), k=1)
+                                        g_flat = D_gen_sub[iu]; e_flat = D_geo_sub[iu]
+                                        mask = np.isfinite(g_flat) & np.isfinite(e_flat)
+                                        mf.write(f"{r_val:.6f}\t{p_val:.6f}\t{n_perm}\t{len(common_samples)}\t{mask.sum()}\n")
+                                    # scatter plot
+                                    if HAS_VIZ:
+                                        plot_mantel(g_flat[mask], e_flat[mask], r_val, p_val,
+                                                    os.path.join(fig_dir, "mantel_ibd.png"))
+                                else:
+                                    print(f"[Mantel] skipped: {p_val}")
+                            else:
+                                print(f"[Mantel] skipped: only {len(gen_idx)} overlapping samples")
+                        else:
+                            print("[Mantel] skipped: no genetic distance matrix")
+                    else:
+                        print("[Mantel] skipped: missing Lat/Lon in metadata")
+                else:
+                    print(f"[Mantel] skipped: columns={list(meta_df.columns)[:10]}")
+            except Exception as e:
+                print(f"[Mantel] error: {e}")
+        else:
+            print(f"[Mantel] skipped: meta file not found: {meta_path}")
 
     # ============================================================
     # Step 6: 可视化
@@ -1407,9 +1962,16 @@ def main():
             print(f"[共突变] 已导出 {len(ld_df)} 对强连锁变异: {ld_out}")
             # 网络散点 + r² 分布图
             if args.visualize and HAS_VIZ and site_labels is not None:
-                pos_arr = [int(l.split("_")[1]) if "_" in l else 0 for l in site_labels]
+                pos_arr = [parse_site_pos(l) for l in site_labels]
                 plot_epistatic_network(ld_df, site_labels, pos_arr,
                                        os.path.join(fig_dir, "epistatic_network.png"))
+                # 下三角 r² 热图 (按基因组位置排序) + 菱形版 (EasyHap 风格)
+                plot_ld_triangle_heatmap(ld_df, site_labels,
+                                         os.path.join(fig_dir, "ld_r2_triangle.png"),
+                                         min_r2=0.5)
+                plot_ld_diamond_heatmap(ld_df, site_labels,
+                                        os.path.join(fig_dir, "ld_r2_diamond.png"),
+                                        min_r2=0.5)
 
     # ============================================================
     # Step 6b: 滑动窗 π + Tajima's D
@@ -1578,6 +2140,13 @@ def main():
                 df_popgen, gene_spans,
                 os.path.join(fig_dir, "popgen_with_genes.png"))
 
+        # 基因结构 + 变异位点连线 (EasyHap plot_gene_structure_with_haps 思路)
+        if gene_spans and site_labels:
+            plot_gene_variant_links(
+                [parse_site_pos(l) for l in site_labels], site_labels,
+                gene_spans, os.path.join(fig_dir, "gene_variant_links.png"),
+                tag=prefix)
+
     # ============================================================
     # Step 7: VCF2工具 (仅当 --use-vcf2tools)
     # ============================================================
@@ -1655,7 +2224,7 @@ def main():
         for m in D_dict:
             print(f"  距离矩阵({m}): {matrix_dir}/distance_{m}.tsv")
     if args.tree:
-        print(f"  NJ 树:        {tree_dir}/tree.newick")
+        print(f"  UPGMA 聚类树: {tree_dir}/tree.newick")
     if args.visualize:
         print(f"  PCA 图:       {fig_dir}/pca.png")
         print(f"  热图:         {fig_dir}/distance_clustermap.png")

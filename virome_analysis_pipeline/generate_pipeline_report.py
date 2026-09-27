@@ -17,6 +17,14 @@ import shutil
 from pathlib import Path
 from datetime import datetime
 
+# 跨管线统一 I/O 布局 (mmpv_common/, 仓库根): 目录名随 MMPV_IO_LAYOUT 解析
+# (编排器已 normalize 环境变量, 子进程导入本模块时快照即正确布局)
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+from mmpv_common.io_layout import layout_dirs as _layout_dirs
+_D = _layout_dirs(os.environ.get("MMPV_IO_LAYOUT", "legacy"))
+
 
 def _esc(v):
     """HTML-escape a value to prevent XSS injection."""
@@ -87,6 +95,9 @@ def collect_charts(post_dir, virus_acc):
             ('mafSummary_TCGA.png', 'MAF 突变类型'),
             ('Oncoplot.png', '突变瀑布图'),
             ('TiTv_Summary.png', 'Ti/Tv 汇总'),
+            ('03c_WholeGenome_Lollipop_Map.png', '全基因组棒棒糖总图'),
+            ('04_SomaticInteractions_Network.png', '突变互作网络'),
+            ('03b_Lollipop_All_Stitched.png', '基因棒棒糖拼接长图'),
         ],
         'snpgenie': [
             ('Fig01_VAF_Spectrum.png', 'VAF 频谱'),
@@ -102,6 +113,13 @@ def collect_charts(post_dir, virus_acc):
             ('Fig11a_PCA_2D.png', '2D PCA 聚类'),
             ('Fig11b_PCA_3D.png', '3D PCA 聚类'),
         ],
+        'vcf_merge/figs': [
+            ('pca.png', '群体 PCA'),
+            ('mantel_ibd.png', '距离隔离 Mantel 检验'),
+            ('distance_clustermap.png', '样本距离聚类热图'),
+            ('afs.png', '合并等位频率谱'),
+            ('dendrogram.png', '样本谱系树'),
+        ],
     }
 
     for subdir, patterns in chart_patterns.items():
@@ -114,13 +132,33 @@ def collect_charts(post_dir, virus_acc):
                 candidates = list(sd.glob(f"*{fname}"))
                 fp = candidates[0] if candidates else fp
             if fp.exists():
-                b64 = img_to_base64(fp)
+                b64 = img_to_base64(fp, max_kb=3500)
                 charts[f"{subdir}_{fname}"] = {
                     'label': label,
                     'path': str(fp.relative_to(post_dir.parent)),
                     'base64': b64,
                     'ext': fp.suffix[1:],
                 }
+    maf_sd = vdir / "maftools"
+    if maf_sd.is_dir():
+        sk = maf_sd / "SKIPPED_EMPTY_INPUT.txt"
+        if sk.exists():
+            rsn = ""
+            try:
+                rsn = sk.read_text(errors='replace').splitlines()[0].strip()
+            except Exception:
+                pass
+            short = rsn.replace("maftools skipped: ", "", 1) if rsn else "empty input / no non-synonymous variants"
+            charts["maftools_SKIPPED"] = {"label": "Skipped \u2014 " + short, "path": "", "base64": None, "ext": "txt"}
+        for lf in sorted(maf_sd.glob("maftools_03_Lollipop_*.png")):
+            gname = lf.stem.replace("maftools_03_Lollipop_", "")
+            b64 = img_to_base64(lf, max_kb=3500)
+            charts[f"maftools_lollipop_{gname}"] = {
+                "label": f"\u68d2\u68d2\u7cd6\u56fe {gname}",
+                "path": str(lf.relative_to(post_dir.parent)),
+                "base64": b64,
+                "ext": "png",
+            }
     return charts
 
 
@@ -177,7 +215,7 @@ def collect_virus_data(out_dir, summary_in):
 def _collect_variant_summary(out_dir):
     """Aggregate per-virus variant stats from S3 all_summary.tsv."""
     out = Path(out_dir)
-    summary_tsv = out / "3_Virus_variants_Results/summary/all_summary.tsv"
+    summary_tsv = out / os.path.join(_D['a_variants'], 'summary/all_summary.tsv')
     df = safe_read_csv(summary_tsv)
     if df is None: return {}
     acc_col = next((c for c in ["Accession"] if c in df.columns), None)
@@ -207,7 +245,7 @@ def _collect_assembly_summary(out_dir):
     where stages is a list of {step, length, n50, n_count} for full evolution tracking.
     """
     out = Path(out_dir)
-    asm_dir = out / "4_Virus_assemblies_final"
+    asm_dir = _resolve_dir(out_dir, _D['a_assembly'])
     if not asm_dir.is_dir(): return {}
     result = {}
     for vdir in asm_dir.iterdir():
@@ -259,12 +297,12 @@ def _collect_assembly_summary(out_dir):
 def _collect_detection_summary(out_dir):
     """Parse S1 best-summary TSV to aggregate per-virus detection metrics."""
     out = Path(out_dir)
-    tsv = out / "1_FastViromeExplorer/summary/all_viruses.best.summary.tsv"
+    tsv = out / os.path.join(_D['a_detect'], 'summary/all_viruses.best.summary.tsv')
     if not tsv.is_file():
-        tsv = out / "1_FastViromeExplorer/summary/all_viruses.summary.tsv"
+        tsv = out / os.path.join(_D['a_detect'], 'summary/all_viruses.summary.tsv')
     df = safe_read_csv(tsv)
     if df is None: return {}
-    raw_tsv = out / "1_FastViromeExplorer/summary/all_viruses.raw.tsv"
+    raw_tsv = out / os.path.join(_D['a_detect'], 'summary/all_viruses.raw.tsv')
     raw_df = safe_read_csv(raw_tsv)
     total_raw = len(raw_df) if raw_df is not None else None
     acc_col = next((c for c in ["Rep_Accession"] if c in df.columns), None)
@@ -288,7 +326,7 @@ def _collect_detection_summary(out_dir):
 def _collect_capheine_summary(out_dir, virus_acc):
     """Parse DRHIP combined_summary.csv for per-gene BUSTED selection results."""
     out = Path(out_dir)
-    vdir = _find_virus_dir(out / "7_capheine", virus_acc)
+    vdir = _find_virus_dir(out / "07_capheine", virus_acc)
     if not vdir: return None
     cs = vdir / "drhip" / "combined_summary.csv"
     df = safe_read_csv(cs)
@@ -313,7 +351,7 @@ def _collect_capheine_summary(out_dir, virus_acc):
 def _collect_similarity_data(out_dir, virus_acc):
     """Find similarity heatmaps and pairwise stats for a virus."""
     out = Path(out_dir)
-    vdir = _find_virus_dir(out / "8_similarity", virus_acc)
+    vdir = _find_virus_dir(out / "08_similarity", virus_acc)
     if not vdir: return {"available": False, "reason": "no similarity directory"}
     mat_dir = vdir / "Mode_Filter" / "Full_Dataset" / "02_similarity_matrices"
     if not mat_dir.is_dir():
@@ -348,7 +386,7 @@ def _collect_similarity_data(out_dir, virus_acc):
 def _collect_extract_stats(out_dir):
     """Parse S5 extracted FASTA files for per-virus stats."""
     out = Path(out_dir)
-    ext_dir = out / "5_assemblies_clean"
+    ext_dir = _resolve_dir(out_dir, _D['a_extract'])
     if not ext_dir.is_dir(): return {}
     result = {}
     for vdir in ext_dir.iterdir():
@@ -411,7 +449,7 @@ def _find_virus_files(out_dir, stage_rel, virus_acc, subdir_patterns):
     vdir = None
 
     # For S3, lookup is reversed: stage/{subdir}/{virus_dir}[/{sample_dir}]
-    if stage_rel == "3_Virus_variants_Results":
+    if stage_rel == _D['a_variants']:
         html = ""
         for subd_rel, globs in subdir_patterns:
             subd = stage_path / subd_rel
@@ -546,11 +584,147 @@ def _build_stage_data_json(viruses, variant_summary, assembly_summary, detection
     return _json.dumps(data, ensure_ascii=False, default=_json_safe)
 
 
+# ── Backward-compatible directory resolver (module-level, shared by all functions) ──
+_DIR_FALLBACK = {
+    _D['a_post']: "06_post_analysis",
+    _D['a_assembly']: "04_assembly",
+    _D['a_extract']: "05_extraction",
+}
+
+def _resolve_dir(base_dir, path_segment):
+    """Resolve directory path with new→old naming fallback."""
+    d = Path(base_dir) / path_segment
+    if d.is_dir():
+        return d
+    if path_segment in _DIR_FALLBACK:
+        fb = Path(base_dir) / _DIR_FALLBACK[path_segment]
+        if fb.is_dir():
+            return fb
+    return d
+
+
+# ── Pipeline methods section (auto-generated from stage metadata) ──
+STAGE_METHODS = [
+    (1, "Detection", "batch_virus_depth.py",
+     "Virus detection was performed using Salmon pseudo-alignment in quantification mode "
+     "against a curated plant virus reference database. Read counts were normalized to "
+     "CPM and FPKM. A Poisson Ratio filter was applied to distinguish uniformly covered "
+     "true viral reads from localized spurious alignments (threshold ≥ 0.3). Parameters: "
+     "min coverage 10%, min mean depth 0.5×, min TPM 1.0, species ANI threshold 95%."),
+
+    (2, "Filtering", "utils/filter_summary.py",
+     "High-confidence detections were retained by requiring Rep_Coverage ≥ 50%, "
+     "Rep_MeanDepth ≥ 5×, and ≥ 100 estimated mapped reads. Optional keyword-based "
+     "taxonomic filtering available for targeted virus groups."),
+
+    (3, "Variant Calling", "batch_virus_variants.py",
+     "Variants were called using iVar in haploid mode with minimum quality 20, "
+     "minimum depth 5×, and minimum allele frequency 5%. Functional annotation "
+     "was performed with SnpEff using custom databases built from viral GenBank records. "
+     "Population genetic parameters (π, dN/dS) were computed using SNPGenie."),
+
+    (4, "Post-hoc Visualization", "virus_vcf_pipeline.py + virus_variants_analyzer.py",
+     "Per-virus VCF files were merged with bcftools and subjected to sample-level QC "
+     "filtering. Jaccard and Hamming distance matrices were computed from SNP genotypes, "
+     "and NJ trees constructed via UPGMA. PCA was performed on kinship matrices. "
+     "Nine publication-grade figures were generated per virus: genomic mutation landscape, "
+     "Ts/Tv ratio, functional impact, hierarchical clustering, allele frequency spectrum, "
+     "variant density with gene annotation, AF by mutation type, sliding-window π + Tajima's D, "
+     "and PCA sub-lineage analysis with auto-optimized K-means clustering."),
+
+    (5, "Full-length Assembly", "virus-full.py (OmniVirusAssembler V9)",
+     "De novo genome assembly employed a 12-step pipeline: (1-2) MEGAHIT/SPAdes/PenguIN "
+     "multi-tool assembly with refineC merging; (3) Shiver-like orientation correction; "
+     "(4-8) Divine Fusion reference-guided gap resolution, PVGA read extension with "
+     ">100bp gap splitting, rmDup deduplication at 95% identity; (9) 3-round minimap2 + "
+     "viral_consensus iterative polishing; (10) Dual-engine gap filling via gmcloser + "
+     "abyss-sealer; (11) Circularity detection via terminal BLASTN self-alignment; "
+     "(12) Full-lifecycle coverage visualization. Fast-track mode bypassed intermediate "
+     "fusion steps for high-quality initial skeletons. Assembly quality assessed at "
+     "≥98% reference coverage and ≥95% N50 for perfect designation."),
+
+    (6, "Contig Extraction", "utils/extract_full_fasta.py",
+     "The longest assembled contig per virus was extracted from the 12-step pipeline output. "
+     "N-filled regions were resolved using reference-guided gap filling. Contigs with "
+     ">10% ambiguous bases were excluded."),
+
+    (7, "Selection Analysis", "capheine_pipeline.py",
+     "Codon-level positive selection was detected using the CAPHEINE pipeline integrating "
+     "CAWLIGN codon-aware alignment, HyPhy CLN duplicate removal, IQ-TREE maximum likelihood "
+     "phylogeny (GTR+I+G), and six HyPhy methods: FEL (Fixed Effects Likelihood), "
+     "MEME (Mixed Effects Model of Evolution), PRIME (Property-Informed Models of Evolution), "
+     "BUSTED (Branch-Site Unrestricted Statistical Test), CONTRAST-FEL, and RELAX. "
+     "Results were aggregated via DRHIP. Non-coding viruses (viroids) were automatically excluded."),
+
+    (8, "Similarity Panorama", "virus_auto_pipeline.py",
+     "Pairwise nucleotide and amino acid similarity matrices were computed for each virus "
+     "across all samples using Biopython pairwise alignment (SDT-strict mode, no gap penalty). "
+     "CD-HIT soft deduplication at adaptive identity thresholds removed redundant sequences. "
+     "SciPy hierarchical clustering produced optimally ordered triangular heatmaps at 600 DPI. "
+     "Multi-gene concatenated CDS matrices were also generated when multiple CDS regions were available."),
+
+    (9, "DVG & Recombination", "batch_virema_dvg.py",
+     "Defective viral genomes and recombination events were detected using ViReMa "
+     "with seed length 25, micro-indel threshold 15 bp. Recombination landscapes "
+     "were visualized via Circos plots showing junction networks. Viruses with "
+     "≥80% genome coverage were included in DVG analysis."),
+
+    (10, "Report Generation", "generate_pipeline_report.py",
+     "This interactive HTML report was auto-generated from pipeline outputs, embedding "
+     "all figures, tables, and result files. Includes AI-assisted interpretation via "
+     "LLM integration (OpenAI/DeepSeek/Ollama compatible)."),
+]
+
+
+def _build_methods_section(viruses, overview_metrics, total_records):
+    """Generate dynamic methods section from STAGE_METHODS metadata."""
+    n_viruses = len(viruses)
+
+    # Pipeline summary table
+    rows = ""
+    for num, name, script, _ in STAGE_METHODS:
+        rows += f"<tr><td>{num}. {name}</td><td>{_esc(script)}</td></tr>"
+
+    # Stage details (collapsible)
+    details = ""
+    for num, name, script, desc in STAGE_METHODS:
+        details += f'''<details><summary><strong>{name} (Stage {num})</strong> — <code>{_esc(script)}</code></summary>
+        <div class="suggestion" style="padding:10px 16px;font-size:13px;line-height:1.7">{desc}</div></details>\n'''
+
+    return f'''
+    <h3 id="paper-reference">Pipeline Methods</h3>
+    <div class="paper-block">
+        <p>The Known Virus Analysis Pipeline processed <strong>{n_viruses} virus species</strong> across
+        {overview_metrics.get("n_samples","?")} samples through 10 automated stages.</p>
+
+        <h4>Stage Overview</h4>
+        <table>
+            <tr><th>Stage</th><th>Primary Script</th></tr>
+            {rows}
+        </table>
+
+        <h4>Detailed Methods</h4>
+        {details}
+
+        <h4>Key Quantitative Results</h4>
+        <ul>
+            <li><strong>Detection</strong>: {total_records} virus-sample records identified across {n_viruses} species</li>
+            <li><strong>Assembly</strong>: {overview_metrics.get("assemblies","?")} de novo assemblies generated</li>
+            <li><strong>Variant Calling</strong>: SNVs called at minimum 5× depth with 5% allele frequency (iVar haploid mode)</li>
+            <li><strong>Selection</strong>: HyPhy codon-level testing (FEL/MEME/BUSTED/PRIME) for coding viruses</li>
+        </ul>
+    </div>'''
+
+
 def generate_html(out_dir, out_html, viruses, ai_html="", stage_summaries=None):
     """Generate interactive HTML report with sidebar navigation."""
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     out = Path(out_dir)
-    post_dir = out / "6_post_analysis"
+
+    def _d(seg):
+        return _resolve_dir(out, seg)
+
+    post_dir = _resolve_dir(out, _D['a_post'])
 
     total_records = sum(v.get("n_samples", 0) for v in viruses.values()) if isinstance(
         next(iter(viruses.values()), {}).get("n_samples", 0), int) else "?"
@@ -558,19 +732,23 @@ def generate_html(out_dir, out_html, viruses, ai_html="", stage_summaries=None):
     # Pre-compute global overview metrics
     overview_metrics = {}
     # Detection counts
-    raw_tsv_ov = out / "1_FastViromeExplorer/summary/all_viruses.raw.tsv"
+    raw_tsv_ov = out / os.path.join(_D['a_detect'], 'summary/all_viruses.raw.tsv')
     raw_ov = safe_read_csv(raw_tsv_ov)
-    best_tsv_ov = out / "1_FastViromeExplorer/summary/all_viruses.best.summary.tsv"
+    best_tsv_ov = out / os.path.join(_D['a_detect'], 'summary/all_viruses.best.summary.tsv')
     best_ov = safe_read_csv(best_tsv_ov)
     overview_metrics["raw_detections"] = len(raw_ov) if raw_ov is not None else "?"
     overview_metrics["best_detections"] = len(best_ov) if best_ov is not None else "?"
     overview_metrics["n_samples"] = best_ov["Sample"].nunique() if best_ov is not None and "Sample" in best_ov.columns else "?"
     # Filter counts
-    hc_tsv_ov = out / "2_Virus_result_filter/high_conf.summary.tsv"
+    hc_tsv_ov = out / os.path.join(_D['a_filter'], 'high_conf.summary.tsv')
     hc_ov = safe_read_csv(hc_tsv_ov)
     overview_metrics["filtered_records"] = len(hc_ov) if hc_ov is not None else "?"
+    # v21: metadata association coverage
+    meta_tsv_ov = out / os.path.join(_D['a_filter'], 'metadata_association/Viral_Infection_with_Metadata_Summary.tsv')
+    meta_ov = safe_read_csv(meta_tsv_ov)
+    overview_metrics["meta_records"] = len(meta_ov) if meta_ov is not None else 0
     # Assembly counts
-    asm_dir_ov = out / "4_Virus_assemblies_final"
+    asm_dir_ov = _d(_D['a_assembly'])
     n_asm = 0
     if asm_dir_ov.is_dir():
         for vd in asm_dir_ov.iterdir():
@@ -578,7 +756,7 @@ def generate_html(out_dir, out_html, viruses, ai_html="", stage_summaries=None):
                 n_asm += sum(1 for d in vd.iterdir() if d.is_dir())
     overview_metrics["assemblies"] = n_asm
     # DVG counts
-    dvg_dir_ov = out / "9_virema_dvg/Summary_Analysis_Report/Virus_Specific_Plots"
+    dvg_dir_ov = out / os.path.join(_D['a_dvg'], 'Summary_Analysis_Report/Virus_Specific_Plots')
     overview_metrics["dvg_viruses"] = sum(1 for d in dvg_dir_ov.iterdir() if d.is_dir()) if dvg_dir_ov.is_dir() else 0
 
     # Pre-load stage summaries
@@ -590,13 +768,13 @@ def generate_html(out_dir, out_html, viruses, ai_html="", stage_summaries=None):
     # Helper: collect stage-level files for embedding
     def _stage_files(outd, sn):
         """Return HTML for stage-level result files (plots/tables from stage directory)."""
-        dirs = {1:"1_FastViromeExplorer", 2:"2_Virus_result_filter",
-                4:"4_Virus_assemblies_final",
-                6:"6_post_analysis", 7:"7_capheine"}
+        dirs = {1:_D['a_detect'], 2:_D['a_filter'],
+                4:_D['a_assembly'],
+                6:_D['a_post'], 7:"07_capheine"}
         patterns = {1:["summary/all_viruses.best.summary.tsv","plots/virus_analysis/freq_multi_metrics_log10.png"],
-                    2:[],
+                    2:["**/metadata_association/**/*"],
                     4:["**/*final_coverage*"],
-                    6:["**/metadata_association/**"],
+                    6:[],
                     7:["**/selection_per_gene.*"]}
         if sn not in dirs: return "", ""
         spath = outd / dirs[sn]
@@ -611,7 +789,10 @@ def generate_html(out_dir, out_html, viruses, ai_html="", stage_summaries=None):
         for f in collected:
             if f.suffix.lower() == '.pdf' and f.stem in png_stems:
                 continue
-            fn = f.name
+            try:
+                fn = str(f.relative_to(spath)) if f.parent != spath else f.name
+            except ValueError:
+                fn = f.name
             if fn.endswith('.tsv') or fn.endswith('.csv'):
                 try:
                     rows = []
@@ -680,7 +861,7 @@ def generate_html(out_dir, out_html, viruses, ai_html="", stage_summaries=None):
             total_best = ds.get("total_best", "?")
             n_virus_raw = "?"
             # Load raw TSV for raw-level stats
-            raw_tsv_s1 = out / "1_FastViromeExplorer/summary/all_viruses.raw.tsv"
+            raw_tsv_s1 = out / os.path.join(_D['a_detect'], 'summary/all_viruses.raw.tsv')
             raw_s1 = safe_read_csv(raw_tsv_s1)
             if raw_s1 is not None:
                 n_samples = raw_s1["Sample"].nunique() if "Sample" in raw_s1.columns else "?"
@@ -689,7 +870,7 @@ def generate_html(out_dir, out_html, viruses, ai_html="", stage_summaries=None):
             else:
                 n_samples = "?"
             # Best summary stats
-            best_tsv_s1 = out / "1_FastViromeExplorer/summary/all_viruses.best.summary.tsv"
+            best_tsv_s1 = out / os.path.join(_D['a_detect'], 'summary/all_viruses.best.summary.tsv')
             best_s1 = safe_read_csv(best_tsv_s1)
             if best_s1 is not None:
                 acc_best = next((c for c in ["Rep_Accession","Accession"] if c in best_s1.columns), None)
@@ -703,9 +884,9 @@ def generate_html(out_dir, out_html, viruses, ai_html="", stage_summaries=None):
             stage_sections += f'<div class="card-row" style="margin-top:8px"><div class="card"><div class="value">{total_raw or "?"}</div><div class="label">Raw Detections (raw.tsv)</div></div><div class="card"><div class="value">{poisson_filtered}</div><div class="label">Poisson Filtered</div></div><div class="card"><div class="value">{total_best}</div><div class="label">High-Conf (best.tsv)</div></div><div class="card"><div class="value">{n_samples}</div><div class="label">Samples</div></div><div class="card"><div class="value">{n_virus_best}</div><div class="label">Virus Species</div></div><div class="card"><div class="value">{rate}</div><div class="label">Retention</div></div></div>'
         if sn == 2:
             # Quick-load data for cards (must load before using)
-            raw_tsv_s2 = out / "1_FastViromeExplorer/summary/all_viruses.raw.tsv"
-            hc_tsv_s2 = out / "2_Virus_result_filter/high_conf.summary.tsv"
-            ps_tsv_s2 = out / "2_Virus_result_filter/filter_stats.per_sample.tsv"
+            raw_tsv_s2 = out / os.path.join(_D['a_detect'], 'summary/all_viruses.raw.tsv')
+            hc_tsv_s2 = out / os.path.join(_D['a_filter'], 'high_conf.summary.tsv')
+            ps_tsv_s2 = out / os.path.join(_D['a_filter'], 'filter_stats.per_sample.tsv')
             raw_s2 = safe_read_csv(raw_tsv_s2); hc_s2 = safe_read_csv(hc_tsv_s2); ps_s2 = safe_read_csv(ps_tsv_s2)
             raw_n = len(raw_s2) if raw_s2 is not None else "?"
             hc_n = len(hc_s2) if hc_s2 is not None else "?"
@@ -726,7 +907,7 @@ def generate_html(out_dir, out_html, viruses, ai_html="", stage_summaries=None):
                 stage_sections += '<div class="chart-gallery">' + sfiles_charts + '</div>'
         # Stage 2: Custom filter stats with pre/post comparison
         if sn == 2:
-            raw_tsv = out / "1_FastViromeExplorer/summary/all_viruses.raw.tsv"
+            raw_tsv = out / os.path.join(_D['a_detect'], 'summary/all_viruses.raw.tsv')
             raw = safe_read_csv(raw_tsv)
             pre_sample = {}; pre_virus = {}
             if raw is not None:
@@ -735,7 +916,7 @@ def generate_html(out_dir, out_html, viruses, ai_html="", stage_summaries=None):
                     pre_sample = raw.groupby("Sample")[raw_acc].nunique().to_dict()
                     pre_virus = raw.groupby(raw_acc)["Sample"].nunique().to_dict()
             # Also build species->accession map from best TSV for per-virus lookup
-            best_tsv = out / "1_FastViromeExplorer/summary/all_viruses.best.summary.tsv"
+            best_tsv = out / os.path.join(_D['a_detect'], 'summary/all_viruses.best.summary.tsv')
             best = safe_read_csv(best_tsv)
             sp2acc = {}
             if best is not None:
@@ -745,8 +926,8 @@ def generate_html(out_dir, out_html, viruses, ai_html="", stage_summaries=None):
                     for _, r in best.iterrows():
                         sp2acc[str(r[spc])] = str(r[bac])
             # Parse filter_stats
-            ps_tsv = out / "2_Virus_result_filter/filter_stats.per_sample.tsv"
-            pv_tsv = out / "2_Virus_result_filter/filter_stats.per_virus.tsv"
+            ps_tsv = out / os.path.join(_D['a_filter'], 'filter_stats.per_sample.tsv')
+            pv_tsv = out / os.path.join(_D['a_filter'], 'filter_stats.per_virus.tsv')
             ps_df = safe_read_csv(ps_tsv); pv_df = safe_read_csv(pv_tsv)
             # Per-sample table
             if ps_df is not None:
@@ -759,7 +940,7 @@ def generate_html(out_dir, out_html, viruses, ai_html="", stage_summaries=None):
                     stage_sections += f'<tr><td>{s}</td><td>{pre}</td><td>{post}</td><td>{flt}</td><td>{rate}</td><td>{r["total_EM_reads"]}</td><td>{r["mean_coverage"]}%</td></tr>'
                 stage_sections += '</table></div>'
             # Build per-virus max/avg/min from high_conf
-            hc_tsv = out / "2_Virus_result_filter/high_conf.summary.tsv"
+            hc_tsv = out / os.path.join(_D['a_filter'], 'high_conf.summary.tsv')
             hc = safe_read_csv(hc_tsv)
             virus_stats = {}
             if hc is not None:
@@ -814,7 +995,7 @@ def generate_html(out_dir, out_html, viruses, ai_html="", stage_summaries=None):
                     poisson = f'{v["avg_poisson"]:.2f}' if v.get("avg_poisson") is not None else "-"
                     stage_sections += f'<tr><td>{sp}</td><td>{n}</td><td>{cov}</td><td>{depth}</td><td>{cpm}</td><td>{fpkm}</td><td>{poisson}</td></tr>'
                 stage_sections += '</table></div>'
-            coi_tsv = out / "3_Virus_variants_Results/summary/Coinfection_Matrix_Reads.tsv"
+            coi_tsv = out / os.path.join(_D['a_variants'], 'summary/Coinfection_Matrix_Reads.tsv')
             if coi_tsv.is_file():
                 try:
                     coi_rows = []
@@ -833,7 +1014,7 @@ def generate_html(out_dir, out_html, viruses, ai_html="", stage_summaries=None):
                 except Exception: pass
         # Stage 1: Add batch_plot visuals (after cards/table/co-infection)
         if sn == 1:
-            plots_dir = out / "1_FastViromeExplorer/plots"
+            plots_dir = out / os.path.join(_D['a_detect'], 'plots')
             keep = {"sample_distribution": ["sample_virus_count_bar.png", "virus_occurrence_bar.png"], "coabundance": ["coabundance_cooccurrence_heatmap.png", "coabundance_spearman_heatmap.png"]}
             stage_sections += '<h3 style="color:var(--ink-secondary);font-size:14px;margin-top:12px">Sample Distribution &amp; Co-abundance</h3><div class="chart-gallery">'
             for bd, keep_files in keep.items():
@@ -847,7 +1028,7 @@ def generate_html(out_dir, out_html, viruses, ai_html="", stage_summaries=None):
             stage_sections += '</div>'
         # Stage 9: DVG per-virus statistics table
         if sn == 9:
-            dvg_m = out / "9_virema_dvg/Summary_Analysis_Report/Matrix_Sample_Wise_Recombination_Statistics.csv"
+            dvg_m = out / os.path.join(_D['a_dvg'], 'Summary_Analysis_Report/Matrix_Sample_Wise_Recombination_Statistics.csv')
             if dvg_m.is_file():
                 try:
                     import re as _re2
@@ -905,7 +1086,7 @@ def generate_html(out_dir, out_html, viruses, ai_html="", stage_summaries=None):
                         stage_sections += '</section>'
                         continue
                     # Kruskal-Wallis dN/dS test (if available)
-                    kw_csv = out / "6_post_analysis" / _find_virus_dir(out / "6_post_analysis", acc).name / "snpgenie/Stats_Kruskal_Wallis.csv" if _find_virus_dir(out / "6_post_analysis", acc) else None
+                    kw_csv = _d(_D['a_post']) / _find_virus_dir(_d(_D['a_post']), acc).name / "snpgenie/Stats_Kruskal_Wallis.csv" if _find_virus_dir(_d(_D['a_post']), acc) else None
                     if kw_csv and kw_csv.is_file():
                         try:
                             kw = safe_read_csv(kw_csv)
@@ -962,6 +1143,9 @@ def generate_html(out_dir, out_html, viruses, ai_html="", stage_summaries=None):
                             stage_sections += f'<h4 style="font-size:12px;color:var(--ink-secondary);margin:0 0 4px;font-weight:600">{group_label} <span style="font-weight:400;font-size:10px">({len(group_charts)} charts)</span></h4>'
                             stage_sections += '<div class="chart-gallery">'
                             for ci in sorted(group_charts.values(), key=lambda x: x.get('label','')):
+                                if ci.get('ext') == 'txt':
+                                    stage_sections += f'<div class="skip-chip">\u23f8 {_esc(ci.get("label",""))}</div>'
+                                    continue
                                 if ci.get('base64'):
                                     b64 = ci['base64']; ext = ci.get('ext','')
                                     if ext == 'pdf':
@@ -972,7 +1156,7 @@ def generate_html(out_dir, out_html, viruses, ai_html="", stage_summaries=None):
                     else:
                         stage_sections += '<p style="color:var(--ink-secondary);font-size:12px">Post-hoc charts not available for this virus.</p>'
                 elif sn == 9:
-                    dcharts = collect_dvg_charts(out / "9_virema_dvg", acc)
+                    dcharts = collect_dvg_charts(out / _D['a_dvg'], acc)
                     if dcharts:
                         stage_sections += '<div class="chart-gallery">'
                         for ci in sorted(dcharts.values(), key=lambda x: x.get('label','')):
@@ -988,7 +1172,7 @@ def generate_html(out_dir, out_html, viruses, ai_html="", stage_summaries=None):
                 else:
                     # S3/S4/S7/S8: locate per-virus result files
                     if sn == 2:
-                        fp_filter = out / "2_Virus_result_filter" / "filter_summary_plot.png"
+                        fp_filter = out / _D['a_filter'] / "filter_summary_plot.png"
                         b64_f = img_to_base64(fp_filter, 3000)
                         if b64_f:
                             stage_sections += f'<div class="chart-card"><div class="chart-title">Filter Summary</div><img src="data:image/png;base64,{b64_f}" loading="lazy" alt="Filter Summary"></div>'
@@ -996,7 +1180,7 @@ def generate_html(out_dir, out_html, viruses, ai_html="", stage_summaries=None):
                             stage_sections += '<p style="color:var(--ink-secondary);font-size:12px">Filter summary plot not available.</p>'
                     elif sn == 5:
                         # Count extracted contigs per virus
-                        ext_dir = out / "5_assemblies_clean"
+                        ext_dir = _resolve_dir(out_dir, _D['a_extract'])
                         vd = _find_virus_dir(ext_dir, acc)
                         if vd:
                             fasta_files = list(vd.glob("*.fasta")) + list(vd.glob("*.fa"))
@@ -1118,35 +1302,40 @@ def generate_html(out_dir, out_html, viruses, ai_html="", stage_summaries=None):
 <style>
 /* ═══════════════════════════════════════════
    Virus Pipeline Report — Product Register
-   Palette: Restrained blue-on-neutral
-   Type: System sans-serif stack
+   Palette: Data-dense dashboard (blue data + amber highlights)
+   Type: Charter display / Fira Sans body / Fira Code data
    ═══════════════════════════════════════════ */
+@import url('https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600&family=Fira+Sans:wght@400;500;600;700&display=swap');
 :root {{
-  --ink: #1a2332;
-  --ink-secondary: #5a6a7e;
-  --accent: #2563eb;
-  --accent-hover: #1d4ed8;
-  --accent-subtle: #eff4ff;
+  --ink: #16233d;
+  --ink-secondary: #475569;
+  --accent: #1e40af;
+  --accent-hover: #16368f;
+  --accent-subtle: #dbeafe;
+  --accent-soft: #eff4ff;
+  --accent-2: #0e7f8c;
   --surface: #ffffff;
-  --surface-alt: #f6f8fb;
-  --surface-hover: #eef1f6;
-  --border: #e1e5eb;
-  --border-light: #eef0f4;
+  --surface-alt: #F8FAFC;
+  --surface-hover: #edf1f7;
+  --border: #dce3ee;
+  --border-light: #ecf0f5;
   --sidebar-bg: #f3f5f8;
   --sidebar-ink: #4a5568;
-  --sidebar-active: #2563eb;
+  --sidebar-active: #1e40af;
   --success: #0d9488;
   --warning: #d97706;
   --danger: #dc2626;
-  --radius: 6px;
-  --shadow-sm: 0 1px 2px rgba(0,0,0,.04);
-  --shadow-md: 0 4px 12px rgba(0,0,0,.06);
+  --radius: 8px;
+  --shadow-sm: 0 1px 2px rgba(22,35,61,.05);
+  --shadow-md: 0 6px 18px rgba(22,35,61,.09);
+  --font-display: Charter, 'Bitstream Charter', 'Source Serif Pro', Georgia, 'Times New Roman', serif;
+  --font-mono: 'Fira Code', ui-monospace, 'Cascadia Mono', Consolas, monospace;
 }}
 
 * {{box-sizing:border-box;margin:0;padding:0}}
 
 body {{
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  font-family:'Fira Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
   color: var(--ink); background: var(--surface-alt); display:flex; min-height:100vh;
   -webkit-font-smoothing: antialiased;
 }}
@@ -1177,12 +1366,15 @@ body {{
 
 /* ── Typography ── */
 h1 {{
-  color: var(--ink); font-size:26px; font-weight:700; margin-bottom:4px;
-  padding-bottom:10px; border-bottom: 2px solid var(--border); letter-spacing: -.02em;
+  font-family: var(--font-display);
+  color: var(--ink); font-size:31px; font-weight:700; margin-bottom:4px;
+  padding-bottom:12px; border-bottom: 2px solid var(--border); letter-spacing: -.015em;
 }}
 h2 {{
-  color: var(--ink); font-size:19px; font-weight:600; margin:28px 0 8px; letter-spacing: -.01em;
+  color: var(--ink); font-size:19px; font-weight:650; margin:28px 0 8px; letter-spacing: -.01em;
+  position:relative; padding-left:14px;
 }}
+h2::before {{content:'';position:absolute;left:0;top:4px;bottom:4px;width:4px;border-radius:2px;background:linear-gradient(180deg,var(--accent),#7aa5f8)}}
 h3 {{font-size:15px; font-weight:600; color: var(--ink); margin:16px 0 6px}}
 
 /* ── Metrics cards ── */
@@ -1193,7 +1385,7 @@ h3 {{font-size:15px; font-weight:600; color: var(--ink); margin:16px 0 6px}}
   transition: box-shadow 0.15s;
 }}
 .metric:hover {{box-shadow: var(--shadow-sm)}}
-.metric .value {{display:block; font-size:22px; font-weight:700; color: var(--accent)}}
+.metric .value {{display:block; font-size:22px; font-weight:700; color: var(--accent); font-variant-numeric: tabular-nums}}
 .metric .unit {{display:block; font-size:10.5px; color: var(--ink-secondary); margin-top:2px}}
 
 .card-row {{display:flex; flex-wrap:wrap; gap:10px; margin:12px 0}}
@@ -1203,8 +1395,44 @@ h3 {{font-size:15px; font-weight:600; color: var(--ink); margin:16px 0 6px}}
   transition: box-shadow 0.15s;
 }}
 .card:hover {{box-shadow: var(--shadow-sm)}}
-.card .value {{display:block; font-size:24px; font-weight:700; color: var(--accent); word-break:break-all}}
+.card .value {{display:block; font-size:24px; font-weight:700; color: var(--accent); word-break:break-all; font-variant-numeric: tabular-nums}}
 .card .label {{display:block; font-size:10px; color: var(--ink-secondary); margin-top:2px; font-weight:500}}
+
+/* ── v21 additions: hero flow strip, status chips, print ── */
+.flow-strip {{display:flex;align-items:stretch;gap:0;margin:16px 0 4px;flex-wrap:wrap;row-gap:6px}}
+.flow-node {{
+  display:inline-flex;flex-direction:column;justify-content:center;gap:1px;
+  padding:7px 13px;background:var(--surface);border:1px solid var(--border);
+  border-radius:5px;font-size:10px;font-weight:600;color:var(--ink-secondary);
+  box-shadow:var(--shadow-sm); transition:border-color .15s, transform .15s;
+}}
+.flow-node b {{font-family:var(--font-display);font-size:12.5px;color:var(--accent);letter-spacing:.03em;line-height:1.1}}
+.flow-node small {{font-weight:400;font-size:9px;color:var(--ink-secondary);opacity:.9;line-height:1.2}}
+.flow-node:hover {{border-color:var(--accent);transform:translateY(-1px)}}
+.flow-arrow {{align-self:center;color:#b9c2cf;padding:0 6px;font-size:13px;user-select:none}}
+.skip-chip {{
+  display:flex;align-items:center;gap:8px;padding:11px 14px;margin:4px 0;
+  background:#fffbeb;border:1px solid #fde68a;border-left:3px solid var(--warning);
+  border-radius:var(--radius);font-size:12px;line-height:1.5;color:#92400e;
+}}
+@media print {{
+  .sidebar,#back-to-top,#ai-panel,#ai-btn,.pg-nav,.chart-dl-btn,.ai-stage-btn{{display:none!important}}
+  .main{{margin-left:0;padding:0;max-width:none}}
+  body{{display:block;background:#fff}}
+  section{{page-break-inside:avoid}}
+}}
+
+/* ── v22: a11y, rendering perf, data-typography ── */
+:focus-visible {{outline:2px solid var(--accent); outline-offset:2px; border-radius:2px}}
+::selection {{background:#bfd7ff; color:var(--ink)}}
+h1, h2 {{text-wrap:balance}}
+table {{font-variant-numeric: tabular-nums}}
+.tb-scroll thead th {{position:sticky; top:0; z-index:2; background:#f1f5f9; box-shadow:inset 0 -1px 0 var(--border)}}
+.main > section {{content-visibility:auto; contain-intrinsic-size:auto 640px}}
+.sidebar::-webkit-scrollbar {{width:8px}}
+.sidebar::-webkit-scrollbar-thumb {{background:#cdd6e2; border-radius:4px; border:2px solid var(--sidebar-bg)}}
+.sidebar::-webkit-scrollbar-thumb:hover {{background:#b3c1d4}}
+.flow-node b, .card .value {{font-feature-settings:'tnum' 1}}
 
 /* ── Chart gallery ── */
 .chart-gallery {{
@@ -1214,15 +1442,17 @@ h3 {{font-size:15px; font-weight:600; color: var(--ink); margin:16px 0 6px}}
 .chart-card {{
   background: var(--surface); border:1px solid var(--border);
   border-radius: var(--radius); overflow:hidden;
-  transition: box-shadow 0.15s;
+  transition: box-shadow 0.18s, transform 0.18s, border-color 0.18s;
 }}
-.chart-card:hover {{box-shadow: var(--shadow-md)}}
+.chart-card:hover {{box-shadow: var(--shadow-md); transform:translateY(-1px); border-color:#c9d4e4}}
 .chart-title {{
-  background: var(--surface-alt); padding:6px 10px; font-size:11.5px;
+  background:#fafbfd; padding:7px 11px; font-size:11.5px;
   font-weight:600; color: var(--ink-secondary); border-bottom: 1px solid var(--border-light);
+  display:flex; align-items:center; gap:6px;
 }}
+.chart-title::before {{content:'';width:6px;height:6px;border-radius:50%;background:linear-gradient(135deg,var(--accent),#7aa5f8);flex-shrink:0}}
 .chart-card img {{
-  width:100%; height:auto; max-height:80vh; object-fit:contain; display:block; background: var(--surface-alt);
+  width:100%; height:auto; max-height:80vh; object-fit:contain; display:block; background:#fff;
 }}
 .chart-placeholder {{padding:40px; text-align:center; background: var(--surface-alt)}}
 .chart-placeholder a {{color: var(--accent); text-decoration:none; font-size:13px}}
@@ -1435,9 +1665,9 @@ window.addEventListener('scroll',function(){{
     }});
 }});
 </script></head><body>
-<button id="back-to-top" onclick="scrollTop()" title="Back to top">&#9650;</button>
+<button id="back-to-top" onclick="scrollTop()" title="Back to top" aria-label="Back to top">&#9650;</button>
 
-<button id="chat-btn" onclick="toggleChat()" title="Ask questions about this report">?</button>
+<button id="chat-btn" onclick="toggleChat()" title="Ask questions about this report" aria-label="Open report Q&amp;A">?</button>
 <div id="chat-panel" style="display:none">
     <div class="chat-header">
         <span>Report Q&amp;A</span>
@@ -1445,7 +1675,7 @@ window.addEventListener('scroll',function(){{
     </div>
     <div class="chat-messages" id="chat-msgs"></div>
     <div class="chat-input-row">
-        <input id="chat-input" type="text" placeholder="Ask about this report..." onkeydown="if(event.key==='Enter')sendChat()">
+        <input id="chat-input" type="text" placeholder="Ask about this report…" aria-label="Ask a question about this report" onkeydown="if(event.key==='Enter')sendChat()">
         <button onclick="sendChat()" class="chat-send-btn">Send</button>
     </div>
 </div>
@@ -1455,7 +1685,18 @@ window.addEventListener('scroll',function(){{
 </nav>
 <main class="main">
     <h1>Known Virus Pipeline Report</h1>
-    <p style="color:var(--ink-secondary);font-size:13px">Generated: {now} | Directory: {out_dir}</p>
+    <p style="color:var(--ink-secondary);font-size:13px">Generated: {now} &nbsp;|&nbsp; Directory: <span style="font-family:var(--font-mono);font-size:11.5px">{out_dir}</span></p>
+    <div class="flow-strip" aria-label="Pipeline stages">
+        <div class="flow-node"><b>S1</b><small>Detection</small></div><span class="flow-arrow">&#8594;</span>
+        <div class="flow-node"><b>S2</b><small>Filter&nbsp;+&nbsp;Meta</small></div><span class="flow-arrow">&#8594;</span>
+        <div class="flow-node"><b>S3</b><small>Variants</small></div><span class="flow-arrow">&#8594;</span>
+        <div class="flow-node"><b>S4</b><small>Assembly</small></div><span class="flow-arrow">&#8594;</span>
+        <div class="flow-node"><b>S5</b><small>Extract</small></div><span class="flow-arrow">&#8594;</span>
+        <div class="flow-node"><b>S6</b><small>Post-hoc</small></div><span class="flow-arrow">&#8594;</span>
+        <div class="flow-node"><b>S7</b><small>Selection</small></div><span class="flow-arrow">&#8594;</span>
+        <div class="flow-node"><b>S8</b><small>Similarity</small></div><span class="flow-arrow">&#8594;</span>
+        <div class="flow-node"><b>S9</b><small>DVG</small></div>
+    </div>
 
     {ai_html}
 
@@ -1488,6 +1729,7 @@ window.addEventListener('scroll',function(){{
         <div class="card-row">
             <div class="card"><div class="value">{overview_metrics.get("n_samples","?")}</div><div class="label">Samples</div></div>
             <div class="card"><div class="value">{len(viruses)}</div><div class="label">Virus Species</div></div>
+            <div class="card"><div class="value">{overview_metrics.get("meta_records",0)}</div><div class="label">Meta-linked Records</div></div>
             <div class="card"><div class="value">{overview_metrics.get("raw_detections","?")}</div><div class="label">Raw Detections</div></div>
             <div class="card"><div class="value">{overview_metrics.get("best_detections","?")}</div><div class="label">High-Confidence</div></div>
             <div class="card"><div class="value">{overview_metrics.get("filtered_records","?")}</div><div class="label">Post-Filter Records</div></div>
@@ -1502,61 +1744,8 @@ window.addEventListener('scroll',function(){{
     <section id="virus-summary">
         <h2>Virus Summary</h2>
         {_build_virus_summary_table(viruses)}
-        <h3 id="paper-reference">Paper Reference: Methods Paper Template</h3>
-
-        <h3>Pipeline Summary</h3>
-        <div class="paper-block">
-            <p>The Known Virus Analysis Pipeline (KVAP) processed <strong>{len(viruses)} virus species</strong> across samples, completing all 10 stages of detection, variant analysis, assembly, and evolutionary characterization.</p>
-            <table>
-                <tr><th>Stage</th><th>Script</th><th>Output</th></tr>
-                <tr><td>1. Detect</td><td>batch_virus_depth.py</td><td>Salmon pseudo-alignment + Poisson filtering</td></tr>
-                <tr><td>2. Filter</td><td>utils/filter_summary.py</td><td>Coverage ≥50%, Depth ≥5×, Reads ≥100</td></tr>
-                <tr><td>3. Variants</td><td>batch_virus_variants.py</td><td>FreeBayes + SnpEff + SNPGenie</td></tr>
-                <tr><td>4. Assembly</td><td>virus-full.py</td><td>12-step multi-tool de novo assembly</td></tr>
-                <tr><td>5. Extract</td><td>utils/extract_full_fasta.py</td><td>Longest contig extraction</td></tr>
-                <tr><td>6. Post-hoc</td><td>6-script suite</td><td>VCF viz + SnpEff macro + MAF + SnpGenie</td></tr>
-                <tr><td>7. Capheine</td><td>capheine_pipeline.py</td><td>HyPhy FEL/MEME/BUSTED/PRIME</td></tr>
-                <tr><td>8. Similarity</td><td>virus_auto_pipeline.py</td><td>SDT pairwise similarity heatmaps</td></tr>
-                <tr><td>9. DVG</td><td>batch_virema_dvg.py</td><td>ViReMa recombination + Circos</td></tr>
-                <tr><td>10. Report</td><td>generate_pipeline_report.py</td><td>This interactive HTML report</td></tr>
-            </table>
-        </div>
-
-        <h3>Key Quantitative Results</h3>
-        <div class="paper-block">
-            <p>The pipeline was validated on a plant virus dataset with the following quantifiable outcomes:</p>
-            <ul>
-                <li><strong>Detection Sensitivity</strong>: {total_records} virus records identified across {len(viruses)} species</li>
-                <li><strong>Assembly Completeness</strong>: {"Multiple complete genomes recovered at >99% reference coverage" if len(viruses) > 1 else "Genome assembly completed"}</li>
-                <li><strong>Variant Calling Resolution</strong>: SNVs detected at minimum 10× depth with 5% allele frequency threshold</li>
-                <li><strong>Selection Analysis</strong>: {"Kruskal-Wallis cross-gene dN/dS comparison and HyPhy codon-level positive selection testing available for coding viruses"}</li>
-            </ul>
-        </div>
-
-        <h3>Writing Suggestions — Methods Section</h3>
-        <div class="paper-block">
-            <p>For each stage of the pipeline, the following writing templates can be adapted for a journal methods section:</p>
-
-            <details><summary><strong>Detection & Filtering (Stages 1–2)</strong></summary>
-            <div class="suggestion">"Virus detection was performed using Salmon (v1.10) pseudo-alignment in quantification mode against a curated database of [N] plant virus reference genomes. Read counts were normalized to CPM (counts per million) and FPKM. A Poisson Ratio filter (threshold ≥ 0.3) was applied to distinguish uniformly covered true viral reads from localized spurious alignments. High-confidence detections were retained by requiring Rep_Coverage ≥ 50%, Rep_MeanDepth ≥ 5×, and Asm_EM_Reads ≥ 100."</div></details>
-
-            <details><summary><strong>Variant Calling (Stage 3)</strong></summary>
-            <div class="suggestion">"Variants were called using FreeBayes (v1.3.6) in haploid mode with dynamic depth thresholds (DP ≥ 10 for mean depth < 50×, DP ≥ 20 for 50–1000×, DP ≥ 100 for >1000×) and minimum allele frequency of 5%. Functional annotation was performed with SnpEff (v5.1) using custom databases built from viral GenBank records. Population genetic parameters (π, πN/πS, dN/dS) were computed using SNPGenie with 50-bp sliding windows."</div></details>
-
-            <details><summary><strong>Assembly (Stages 4–5)</strong></summary>
-            <div class="suggestion">"De novo genome assembly employed a 12-step pipeline integrating MEGAHIT, SPAdes/RNAviralSPAdes, and PenguIN assemblers with iterative refinement including Shiver-like orientation correction, Divine Fusion reference-guided gap resolution, PVGA read extension, and 3-round minimap2 + viral_consensus polishing. Assembly quality was assessed by total length relative to reference (≥98% = perfect) and N50."</div></details>
-
-            <details><summary><strong>Selection Analysis (Stages 6–7)</strong></summary>
-            <div class="suggestion">"Gene-level dN/dS distributions were compared using Kruskal-Wallis non-parametric testing. Individual gene deviation from neutral expectation was assessed with Wilcoxon signed-rank tests. 10,000-iteration bootstrap resampling provided 95% confidence intervals for dN/dS estimates. Codon-level positive selection was detected using HyPhy FEL, MEME, BUSTED, and PRIME methods with significance at p < 0.05. The optimal number of evolutionary sub-lineages was automatically determined by maximizing the Silhouette Score (K = 2–7) on PCA-reduced feature space [dN, dS, πN, πS]."</div></details>
-
-            <details><summary><strong>Defective Genome Detection (Stage 9)</strong></summary>
-            <div class="suggestion">"Defective viral genomes and recombination events were detected using ViReMa (v0.29) with seed length 25, micro-indel threshold 15 bp, and strict breakpoint resolution (defuzz = 0). Recombination landscapes were visualized using Circos 4-track plots showing mutation density, gene annotation, coverage depth (deletions/duplications), and donor-acceptor junction networks."</div></details>
-        </div>
-
-        <h3>Writing Suggestions — Results Section</h3>
-        <div class="paper-block">
-            <p>Based on the actual pipeline output, the following data-driven narrative templates can be used:</p>
-            <ul>
+        {_build_methods_section(viruses, overview_metrics, total_records)}
+    </section>
                 <li><strong>Detection overview</strong>: "Analysis of [N] samples identified [M] known virus species, with [high-conf species] passing stringent quality filters (coverage ≥50%, depth ≥5×)."</li>
                 <li><strong>Assembly performance</strong>: "De novo assembly successfully reconstructed [A/B] complete viral genomes ([P]% perfect rate)."</li>
                 <li><strong>Selection signature</strong>: "Cross-gene comparison revealed significant differences in selection pressure (Kruskal-Wallis H = [value], p = [value]), with [gene] showing the highest median dN/dS."</li>
@@ -1611,6 +1800,7 @@ document.addEventListener('DOMContentLoaded',function(){{
         var btn=document.createElement('button');
         btn.className='chart-dl-btn';
         btn.textContent='Save';
+        btn.setAttribute('aria-label','Download this chart as PNG');
         btn.title='Download image';
         btn.addEventListener('click',function(e){{
             e.stopPropagation();
@@ -1780,31 +1970,31 @@ def ensure_summary_plots(out_dir):
     import subprocess as _sp
     out = Path(out_dir)
     script_dir = Path(__file__).resolve().parent
-    fp_plot = out / "2_Virus_result_filter" / "filter_summary_plot.pdf"
+    fp_plot = out / _D['a_filter'] / "filter_summary_plot.pdf"
     if not fp_plot.exists():
         best_tsv = None
         for p in ["high_conf.summary.tsv","all_viruses.best.summary.tsv"]:
-            for d in ["2_Virus_result_filter","1_FastViromeExplorer/summary"]:
+            for d in [_D['a_filter'],os.path.join(_D['a_detect'], 'summary')]:
                 fpp = out / d / p
                 if fpp.is_file(): best_tsv = str(fpp); break
             if best_tsv: break
         if best_tsv:
             fs = script_dir / "utils" / "filter_summary.py"
             if fs.is_file():
-                _sp.run([sys.executable,str(fs),"-i",best_tsv,"-o",str(out/"2_Virus_result_filter"/"high_conf.summary.tsv"),"--plot"], capture_output=True)
-    asm_plot = out / "5_assemblies_clean" / "assembly_stats.pdf"
+                _sp.run([sys.executable,str(fs),"-i",best_tsv,"-o",str(out/_D['a_filter']/"high_conf.summary.tsv"),"--plot"], capture_output=True)
+    asm_plot = _resolve_dir(out, _D['a_extract']) / "assembly_stats.pdf"
     if not asm_plot.exists():
-        asm_dir = out / "4_Virus_assemblies_final"
+        asm_dir = _resolve_dir(out_dir, _D['a_assembly'])
         if asm_dir.is_dir():
             es = script_dir / "utils" / "extract_full_fasta.py"
             if es.is_file():
-                _sp.run([sys.executable,str(es),"-d",str(asm_dir),"-o",str(out/"5_assemblies_clean"),"--plot","--max_n","100","--min_len","100"], capture_output=True)
+                _sp.run([sys.executable,str(es),"-d",str(asm_dir),"-o",str(out/_D['a_extract']),"--plot","--max_n","100","--min_len","100"], capture_output=True)
 
 
 def copy_results_to_report(out_dir, report_dir):
     """Copy key result files from each stage into the report directory.
 
-    Copies summary tables, key plots, and per-virus charts to 10_Reports/
+    Copies summary tables, key plots, and per-virus charts to 10_report/
     so users can easily share the complete report package.
     """
     out = Path(out_dir); rep = Path(report_dir)
@@ -1831,23 +2021,25 @@ def copy_results_to_report(out_dir, report_dir):
                         shutil.copy2(f, d); copied.append(str(f.relative_to(out)))
 
     # Stage 1: Detection summary
-    _cp("1_FastViromeExplorer/summary/all_viruses.best.summary.tsv", "S1_Detection/all_viruses.best.summary.tsv")
+    _cp(os.path.join(_D['a_detect'], 'summary/all_viruses.best.summary.tsv'), "S1_Detection/all_viruses.best.summary.tsv")
 
     # Stage 2: Filter results
-    _cp("2_Virus_result_filter/high_conf.summary.tsv", "S2_Filter/high_conf.summary.tsv")
-    _cp("2_Virus_result_filter/filter_summary_plot.png", "S2_Filter/filter_summary_plot.png")
-    _cp("2_Virus_result_filter/filter_summary_plot.pdf", "S2_Filter/filter_summary_plot.pdf")
+    _cp(os.path.join(_D['a_filter'], 'high_conf.summary.tsv'), "S2_Filter/high_conf.summary.tsv")
+    _cp(os.path.join(_D['a_filter'], 'filter_summary_plot.png'), "S2_Filter/filter_summary_plot.png")
+    _cp(os.path.join(_D['a_filter'], 'filter_summary_plot.pdf'), "S2_Filter/filter_summary_plot.pdf")
+    # Stage 2b: Metadata association results ([2b] meta block output)
+    _cp(os.path.join(_D['a_filter'], 'metadata_association'), "S2_Filter/metadata_association")
 
     # Stage 3: Variants summary
-    _cp("3_Virus_variants_Results/summary/all_summary.tsv", "S3_Variants/all_summary.tsv")
-    _cp("3_Virus_variants_Results/summary/Coinfection_Matrix_Reads.tsv", "S3_Variants/Coinfection_Matrix_Reads.tsv")
+    _cp(os.path.join(_D['a_variants'], 'summary/all_summary.tsv'), "S3_Variants/all_summary.tsv")
+    _cp(os.path.join(_D['a_variants'], 'summary/Coinfection_Matrix_Reads.tsv'), "S3_Variants/Coinfection_Matrix_Reads.tsv")
 
     # Stage 5: Assembly stats
-    _cp("5_assemblies_clean/assembly_stats.png", "S5_Assembly_Stats/assembly_stats.png")
-    _cp("5_assemblies_clean/assembly_stats.pdf", "S5_Assembly_Stats/assembly_stats.pdf")
+    _cp(os.path.join(_D['a_extract'], 'assembly_stats.png'), "S5_Assembly_Stats/assembly_stats.png")
+    _cp(os.path.join(_D['a_extract'], 'assembly_stats.pdf'), "S5_Assembly_Stats/assembly_stats.pdf")
 
     # Stage 6: Post-hoc charts (per-virus)
-    post_dir = out / "6_post_analysis"
+    post_dir = _resolve_dir(out, _D['a_post'])
     if post_dir.is_dir():
         for vdir in post_dir.iterdir():
             if not vdir.is_dir() or vdir.name.startswith("run_"): continue
@@ -1856,14 +2048,14 @@ def copy_results_to_report(out_dir, report_dir):
                     _cp(str(subd.relative_to(out)), f"S6_Post_hoc/{vdir.name}/{subd.name}")
 
     # Stage 7: Capheine
-    cap_dir = out / "7_capheine"
+    cap_dir = out / "07_capheine"
     if cap_dir.is_dir():
         for vdir in cap_dir.iterdir():
             if vdir.is_dir() and not vdir.name.startswith("run_"):
                 _cp(str(vdir.relative_to(out)), f"S7_Capheine/{vdir.name}")
 
     # Stage 8: Similarity (recursive: heatmaps are nested deep)
-    sim_dir = out / "8_similarity"
+    sim_dir = out / "08_similarity"
     if sim_dir.is_dir():
         for vdir in sim_dir.iterdir():
             if vdir.is_dir():
@@ -1875,7 +2067,7 @@ def copy_results_to_report(out_dir, report_dir):
                     _cp(str(f.relative_to(out)), f"S8_Similarity/{vdir.name}/{f.name}")
 
     # Stage 9: DVG plots
-    dvg_plots = out / "9_virema_dvg/Summary_Analysis_Report/Virus_Specific_Plots"
+    dvg_plots = out / os.path.join(_D['a_dvg'], 'Summary_Analysis_Report/Virus_Specific_Plots')
     if dvg_plots.is_dir():
         for vdir in dvg_plots.iterdir():
             if vdir.is_dir():
@@ -2117,7 +2309,7 @@ def main():
 
     summary_in = None
     for p in ["high_conf.summary.tsv", "all_viruses.best.summary.tsv", "all_viruses.summary.tsv"]:
-        for loc in [out / "2_Virus_result_filter" / p, out / "1_FastViromeExplorer" / "summary" / p]:
+        for loc in [out / _D['a_filter'] / p, out / _D['a_detect'] / "summary" / p]:
             if loc.is_file(): summary_in = loc; break
         if summary_in: break
     if summary_in is None:
@@ -2142,19 +2334,19 @@ def main():
         es = _collect_extract_stats(args.dir)
         # Build overview metrics (subset needed for AI)
         ov = {"n_samples": "?", "n_viruses": len(viruses)}
-        raw_t = safe_read_csv(_P(args.dir) / "1_FastViromeExplorer/summary/all_viruses.raw.tsv")
-        best_t = safe_read_csv(_P(args.dir) / "1_FastViromeExplorer/summary/all_viruses.best.summary.tsv")
-        hc_t = safe_read_csv(_P(args.dir) / "2_Virus_result_filter/high_conf.summary.tsv")
+        raw_t = safe_read_csv(_P(args.dir) / os.path.join(_D['a_detect'], 'summary/all_viruses.raw.tsv'))
+        best_t = safe_read_csv(_P(args.dir) / os.path.join(_D['a_detect'], 'summary/all_viruses.best.summary.tsv'))
+        hc_t = safe_read_csv(_P(args.dir) / os.path.join(_D['a_filter'], 'high_conf.summary.tsv'))
         ov["raw_detections"] = len(raw_t) if raw_t is not None else "?"
         ov["best_detections"] = len(best_t) if best_t is not None else "?"
         ov["filtered_records"] = len(hc_t) if hc_t is not None else "?"
-        n_as = 0; d_as = _P(args.dir) / "4_Virus_assemblies_final"
+        n_as = 0; d_as = _P(args.dir) / _D['a_assembly']
         if d_as.is_dir():
             for vd in d_as.iterdir():
                 if vd.is_dir() and not vd.name.startswith("run_"):
                     n_as += sum(1 for d in vd.iterdir() if d.is_dir())
         ov["assemblies"] = n_as
-        d_dvg = _P(args.dir) / "9_virema_dvg/Summary_Analysis_Report/Virus_Specific_Plots"
+        d_dvg = _P(args.dir) / os.path.join(_D['a_dvg'], 'Summary_Analysis_Report/Virus_Specific_Plots')
         ov["dvg_viruses"] = sum(1 for d in d_dvg.iterdir() if d.is_dir()) if d_dvg.is_dir() else 0
         ai_html = generate_ai_summary(viruses, vs, asm, ds, es, ov)
         stage_sums = generate_stage_ai_summaries(viruses, vs, asm, ds, es, ov)
@@ -2166,7 +2358,7 @@ def main():
     print(f"  Report: {out_html} ({out_html.stat().st_size / 1024:.0f} KB)")
 
     # Copy result files to report directory
-    report_dir = out / "10_Reports"
+    report_dir = out / "10_report"
     print("Copying result files to report directory...")
     copied, skipped = copy_results_to_report(args.dir, report_dir)
     print(f"  Copied {len(copied)} files, skipped {len(skipped)} missing")

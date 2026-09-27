@@ -58,8 +58,8 @@ CORE_18_SRA = ['query_id', 'Run', 'ReleaseDate', 'CollectionDate', 'Location', '
 DESC_COLS = ['Study_title', 'Study_abstract']
 GSA_AI_10 = ['Run', 'CollectionDate', 'Location', 'Source', 'Tissue', 'Age_GrowthStage', 'ScientificName', 'LibrarySource', 'CenterName', 'BioProject']
 
-# 大一统输出 13 列
-FINAL_13 = ['Run', 'ReleaseDate', 'CollectionDate', 'Location', 'Source', 'Tissue', 'Age_GrowthStage', 'ScientificName', 'TaxID', 'LibrarySource', 'CenterName', 'BioProject', 'BioSample', 'PMID']
+# 大一统输出 14 列
+FINAL_14 = ['Run', 'ReleaseDate', 'CollectionDate', 'Location', 'Source', 'Tissue', 'Age_GrowthStage', 'ScientificName', 'TaxID', 'LibrarySource', 'CenterName', 'BioProject', 'BioSample', 'PMID']
 
 # ----------------- 【SRA 专用推断提示词（全域信息综合推断版）】 -----------------
 PROMPT_SRA_INFER = """你是一个专业的生物信息学数据分析专家。我将提供一段来自NCBI SRA数据库的元数据记录（植物测序实验）。
@@ -175,8 +175,6 @@ def build_api_kwargs(model, sys_prompt, user_content):
             kwargs["extra_body"] = {"thinking": {"type": "enabled"}}
         else:
             kwargs["temperature"] = 0.1
-    elif "reasoner" in model.lower() or "r1" in model.lower():
-        pass 
     else:
         kwargs["temperature"] = 0.1
     return kwargs
@@ -599,12 +597,6 @@ class SRAPipeline:
         return df_merged
 
 
-# 全局静态缓存，用于跨 Accession 保持机构地理位置一致性
-GLOBAL_ORG_LOC_CACHE = {}
-
-# =========================================================================
-# 🔵 GSA 引擎 (终极无错版：彻底修复布尔数组歧义 ValueError + 序列化漏洞)
-# =========================================================================
 class GSAPipeline:
     def __init__(self, mode, api_client, ai_model, out_dir, fill_date):
         self.mode, self.api_client, self.ai_model, self.fill_date = mode, api_client, ai_model, fill_date
@@ -618,6 +610,8 @@ class GSAPipeline:
             os.makedirs(d, exist_ok=True)
         self.headers = HEADERS.copy()
         self.headers['Connection'] = 'close'
+        # 实例级缓存，用于跨 Accession 保持机构地理位置一致性
+        self.org_loc_cache: dict[str, str] = {}
 
     def sanitize_for_json(self, data_dict):
         """安全清理字典中的 pd.NA/NaN/NaT、Numpy 类型以及 Timestamp 时间格式，彻底杜绝 TypeError 和 ValueError"""
@@ -906,7 +900,7 @@ class GSAPipeline:
                                 with open(api_json_f, 'r', encoding='utf-8') as f: ai_res = json.load(f)
                                 logs.append("[✓API缓存]")
                                 if pd.notna(org) and ai_res.get('Location') and "Unknown" not in ai_res['Location']:
-                                    GLOBAL_ORG_LOC_CACHE[org] = ai_res['Location']
+                                    self.org_loc_cache[org] = ai_res['Location']
                             except: pass
 
                         if not ai_res:
@@ -924,7 +918,7 @@ class GSAPipeline:
                                 ai_res = json.loads(clean_ai_json(res.choices[0].message.content))
 
                                 if pd.notna(org) and ai_res.get('Location') and "Unknown" not in ai_res['Location']:
-                                    GLOBAL_ORG_LOC_CACHE[org] = ai_res['Location']
+                                    self.org_loc_cache[org] = ai_res['Location']
 
                                 with open(api_json_f, 'w', encoding='utf-8') as f:
                                     json.dump(self.sanitize_for_json(ai_res), f, indent=4, ensure_ascii=False)
@@ -934,9 +928,9 @@ class GSAPipeline:
                                 logs.append(f"[⚠️API报错:{type(e).__name__} | {error_msg[:50]}]")
                                 ai_res = {}
 
-                        if pd.notna(org) and org in GLOBAL_ORG_LOC_CACHE:
-                            if ai_res.get('Location') != GLOBAL_ORG_LOC_CACHE[org]:
-                                ai_res['Location'] = GLOBAL_ORG_LOC_CACHE[org]
+                        if pd.notna(org) and org in self.org_loc_cache:
+                            if ai_res.get('Location') != self.org_loc_cache[org]:
+                                ai_res['Location'] = self.org_loc_cache[org]
                                 logs.append("[✓位置同步]")
 
                         for col in GSA_AI_10:
@@ -1212,24 +1206,24 @@ def merge_global_results(df_sra, df_gsa, out_dir, fill_date, mode, api_client, a
         df_global.loc[missing_pmid_mask, 'PMID'] = df_global.loc[missing_pmid_mask, 'BioProject'].map(pmid_mapping).fillna(df_global.loc[missing_pmid_mask, 'PMID'])
         print(f"📊 溯源战报：成功追溯 {success} 项。详情见 BioProject_Results 目录。")
 
-    for col in FINAL_13:
+    for col in FINAL_14:
         if col not in df_global.columns: df_global[col] = pd.NA
-    df_final_13 = df_global[FINAL_13].copy().replace(["Not_Provided", "not_provided", "None", ""], pd.NA)
-    save_dual_format(df_final_13, os.path.join(out_dir, "Global_Unified_Metadata_Core13"))
+    df_final_14 = df_global[FINAL_14].copy().replace(["Not_Provided", "not_provided", "None", ""], pd.NA)
+    save_dual_format(df_final_14, os.path.join(out_dir, "Global_Unified_Metadata_Core14"))
     full_f = save_dual_format(df_global, os.path.join(out_dir, "Global_Unified_Metadata_Full"))
     generate_global_datavzrd(full_f, out_dir)
     
     # === 找到 merge_global_results 函数的末尾，确保调用方式如下 ===
-    # 保存 Core13 (由于我们加入了新字段，列名需对齐实际情况，这里使用你最终确定的列)
+    # 保存 Core14 (由于我们加入了新字段，列名需对齐实际情况，这里使用你最终确定的列)
     core_cols = [c for c in['Run', 'ReleaseDate', 'CollectionDate', 'Location', 'Source', 'Tissue', 'Age_GrowthStage', 'ScientificName', 'TaxID', 'LibrarySource', 'CenterName', 'BioProject', 'BioSample', 'PMID'] if c in df_global.columns]
     df_core = df_global[core_cols].copy().replace(["Not_Provided", "not_provided", "None", ""], pd.NA)
     # 强制同时保存 CSV 和 TSV，并返回 CSV 路径
-    core_f = save_dual_format(df_core, os.path.join(out_dir, "Global_Unified_Metadata_Core13"))
+    core_f = save_dual_format(df_core, os.path.join(out_dir, "Global_Unified_Metadata_Core14"))
     full_f = save_dual_format(df_global, os.path.join(out_dir, "Global_Unified_Metadata_Full"))
 
     print(f"🎉 完美收工！数据已纯净化。")
     print(f"👉 【全维溯源表】: Global_Unified_Metadata_Full.csv")
-    print(f"👉 【核心标准表】: Global_Unified_Metadata_Core13.tsv")
+    print(f"👉 【核心标准表】: Global_Unified_Metadata_Core14.tsv")
 
 def main():
     parser = argparse.ArgumentParser(description="🌍 Global Metadata Engine v12.11 终极完备版")
@@ -1239,13 +1233,19 @@ def main():
     parser.add_argument("-t", "--threads", type=int, default=4)
     parser.add_argument("--kimi-api", help="Kimi API Key")
     parser.add_argument("--deepseek-api", help="DeepSeek API Key")
-    parser.add_argument("--deepseek-model", default="deepseek-v4-flash", choices=["deepseek-chat", "deepseek-reasoner", "deepseek-v4-flash", "deepseek-v4-pro"], help="指定 DeepSeek 模型版本")
+    parser.add_argument("--deepseek-model", default="deepseek-v4-flash", choices=["deepseek-v4-flash", "deepseek-v4-pro"], help="指定 DeepSeek 模型版本 (v4-flash 快速 / v4-pro 深度思考)")
     parser.add_argument("--ncbi-api", help="NCBI API Key")
     parser.add_argument("--use-scholar", action="store_true", help="允许调用 Google Scholar")
     parser.add_argument("--fill-date", action="store_true", help="时间兜底")
     args = parser.parse_args()
 
     if args.ncbi_api: os.environ["NCBI_API_KEY"] = args.ncbi_api
+    # 环境变量回退 (export DEEPSEEK_API_KEY / NCBI_API_KEY)
+    if not args.deepseek_api and os.environ.get("DEEPSEEK_API_KEY"):
+        args.deepseek_api = os.environ["DEEPSEEK_API_KEY"]
+    if not args.ncbi_api and os.environ.get("NCBI_API_KEY"):
+        args.ncbi_api = os.environ["NCBI_API_KEY"]
+        os.environ["NCBI_API_KEY"] = args.ncbi_api
     client, model = None, None
     if args.mode in ['api', 'both']:
         if args.kimi_api:
@@ -1254,7 +1254,7 @@ def main():
         elif args.deepseek_api:
             client, model = OpenAI(api_key=args.deepseek_api, base_url="https://api.deepseek.com"), args.deepseek_model
             print(f"🤖 挂载引擎: DeepSeek ({model})")
-        else: parser.error("API模式需提供 Key")
+        else: parser.error("API模式需提供 Key (--deepseek-api 或 export DEEPSEEK_API_KEY)")
 
     os.makedirs(args.outdir, exist_ok=True)
     input_data = [line.strip() for line in open(args.input, 'r')] if os.path.isfile(args.input) else [args.input]

@@ -1,0 +1,159 @@
+[project]
+site_name = "PyPopART Documentation"
+site_description = "Pure Python implementation of PopART haplotype network analysis"
+site_author = "Adam Taranto"
+site_url = "https://pypopart.readthedocs.io"
+repo_url = "https://github.com/Adamtaranto/pypopart"
+repo_name = "Adamtaranto/pypopart"
+edit_uri = "edit/main/docs/"
+extra_css = ["stylesheets/extra.css"]
+
+nav = [
+  { "Home" = "index.md" },
+  { "Getting Started" = [
+    { "Installation" = "installation.md" },
+    { "Quick Start" = "quickstart.md" },
+    { "Basic Concepts" = "concepts.md" },
+  ] },
+  { "User Guide" = [
+    { "Command-Line Interface" = "guide/cli.md" },
+    { "Python API" = "guide/api.md" },
+    { "Loading Data" = "guide/loading_data.md" },
+    { "Distance Metrics" = "guide/distances.md" },
+    { "Network Algorithms" = "guide/algorithms.md" },
+    { "Visualization" = "guide/visualization.md" },
+    { "Analysis" = "guide/analysis.md" },
+    { "Web GUI" = "gui_usage.md" },
+    { "Layout Algorithms" = "layout_algorithms.md" },
+    { "Haplotype Labels" = "h_number_labeling.md" },
+    { "Differences from PopART" = "popart_differences.md" },
+  ] },
+  { "Tutorials" = [
+    { "Basic Workflow" = "tutorials/basic_workflow.md" },
+    { "Algorithm Comparison" = "tutorials/algorithm_comparison.md" },
+    { "Visualization Options" = "tutorials/visualization.md" },
+    { "Population Genetics" = "tutorials/popgen.md" },
+  ] },
+  { "API Reference" = [
+    { "Core" = [
+      { "Sequence" = "api/core/sequence.md" },
+      { "Alignment" = "api/core/alignment.md" },
+      { "Haplotype" = "api/core/haplotype.md" },
+      { "Distance" = "api/core/distance.md" },
+      { "Site Patterns" = "api/core/site_patterns.md" },
+      { "Network" = "api/core/network.md" },
+    ] },
+    { "Algorithms" = [
+      { "Base" = "api/algorithms/base.md" },
+      { "MST" = "api/algorithms/mst.md" },
+      { "MSN" = "api/algorithms/msn.md" },
+      { "TCS" = "api/algorithms/tcs.md" },
+      { "MJN" = "api/algorithms/mjn.md" },
+      { "TSW" = "api/algorithms/tsw.md" },
+      { "Parsimony Network" = "api/algorithms/parsimony_net.md" },
+      { "Parsimony Trees" = "api/algorithms/ancestral.md" },
+      { "Registry" = "api/algorithms/registry.md" },
+    ] },
+    { "I/O" = [
+      { "Readers" = "api/io/readers.md" },
+      { "Writers" = "api/io/writers.md" },
+      { "Metadata" = "api/io/metadata.md" },
+    ] },
+    { "Visualization" = [
+      { "Static" = "api/visualization/static.md" },
+      { "Interactive" = "api/visualization/interactive.md" },
+      { "Cytoscape" = "api/visualization/cytoscape.md" },
+      { "Shared Styling" = "api/visualization/style.md" },
+      { "Layout" = "api/visualization/layout.md" },
+    ] },
+    { "Statistics" = [
+      { "Network Stats" = "api/stats/statistics.md" },
+      { "Population Genetics" = "api/stats/popgen.md" },
+      { "Topology" = "api/stats/topology.md" },
+    ] },
+    { "CLI" = "api/cli.md" },
+  ] },
+  { "About" = [
+    { "Contributing" = "contributing.md" },
+    { "FAQ" = "faq.md" },
+    { "Changelog" = "changelog.md" },
+    { "License" = "license.md" },
+  ] },
+]
+
+[project.theme]
+logo = "icons/popart.svg"
+favicon = "icons/popart.ico"
+features = [
+  "content.code.annotate",
+  "content.code.copy",
+  "content.tabs.link",
+  "navigation.expand",
+  "navigation.path",
+  "navigation.sections",
+  "navigation.tabs",
+  "navigation.tabs.sticky",
+  "navigation.top",
+  "search.highlight",
+  "search.suggest",
+]
+
+[project.theme.icon]
+repo = "fontawesome/brands/github"
+
+[project.theme.font]
+text = "Space Grotesk"
+code = "JetBrains Mono"
+
+# The app's Bauhaus pop-art palette, light only: amber header, red
+# links, parchment ground. "custom" is passed straight through to the
+# data-md-color-* attributes and defined in docs/stylesheets/extra.css.
+[[project.theme.palette]]
+scheme = "default"
+primary = "custom"
+accent = "custom"
+
+[[project.extra.social]]
+icon = "fontawesome/brands/github"
+link = "https://github.com/Adamtaranto"
+
+[[project.extra.social]]
+icon = "fontawesome/brands/python"
+link = "https://pypi.org/project/pypopart/"
+
+[project.markdown_extensions]
+admonition = {}
+footnotes = {}
+meta = {}
+toc.permalink = true
+pymdownx.betterem.smart_enable = "all"
+pymdownx.caret = {}
+pymdownx.details = {}
+pymdownx.emoji.emoji_generator = "zensical.extensions.emoji.to_svg"
+pymdownx.emoji.emoji_index = "zensical.extensions.emoji.twemoji"
+pymdownx.highlight.anchor_linenums = true
+pymdownx.inlinehilite = {}
+pymdownx.keys = {}
+pymdownx.mark = {}
+pymdownx.smartsymbols = {}
+pymdownx.superfences.custom_fences = [
+  { name = "mermaid", class = "mermaid", format = "pymdownx.superfences.fence_code_format" },
+]
+pymdownx.tabbed.alternate_style = true
+pymdownx.tasklist.custom_checkbox = true
+pymdownx.tilde = {}
+
+[project.plugins.search]
+
+[project.plugins.mkdocstrings.handlers.python]
+paths = ["src"]
+
+[project.plugins.mkdocstrings.handlers.python.options]
+docstring_style = "numpy"
+heading_level = 2
+members_order = "source"
+separate_signature = true
+show_root_heading = true
+show_root_toc_entry = true
+show_signature_annotations = true
+show_source = true

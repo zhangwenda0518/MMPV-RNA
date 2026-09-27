@@ -2,12 +2,12 @@
 """
 build_ref_info.py — 生成 auto_known_virus.py 的 --ref_info TSV
 =============================================================
-从 suvtk taxonomy + 05_Taxonomy R 共识 + all_plant_viruses.fasta 生成
+从 suvtk taxonomy + 05_Taxonomy R 共识 + HQ_plant_viruses.fasta 生成
 
 输入:
   09_Virome_Analysis/suvtk_taxonomy/taxonomy.tsv
   05_Taxonomy/Votus.integrated/final_integrated_classification.tsv
-  08_Rescue/all_plant_viruses.fasta
+  08_Rescue/HQ_plant_viruses.fasta
 
 输出:
   09_Virome_Analysis/ref_info.tsv
@@ -18,6 +18,14 @@ build_ref_info.py — 生成 auto_known_virus.py 的 --ref_info TSV
 
 import argparse, os, sys
 from pathlib import Path
+
+# 跨管线统一 I/O 布局 (mmpv_common/, 仓库根): 目录名随 MMPV_IO_LAYOUT 解析
+# (编排器已 normalize 环境变量, 子进程导入本模块时快照即正确布局)
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+from mmpv_common.io_layout import layout_dirs as _layout_dirs
+_D = _layout_dirs(os.environ.get("MMPV_IO_LAYOUT", "legacy"))
 
 def _read_tsv(path):
     rows = []
@@ -36,14 +44,17 @@ def main():
     args = p.parse_args()
     root = Path(args.output_dir)
 
-    analysis = root / "09_Virome_Analysis"
+    analysis = root / _D['d_analysis']
+    # 09_ 是 NN[ab]_Name 命名里唯一的例外；改名 09a_Virome_Analysis 后两个名字都认
+    if not analysis.is_dir() and (root / _D['d_analysis']).is_dir():
+        analysis = root / _D['d_analysis']
 
     # ── 1. 读取多源数据 ──
     # suvtk taxonomy (多路径查找, 格式: contig\ttaxonomy)
     suvtk_data = {}
     sv_tax = analysis / "suvtk_taxonomy" / "taxonomy.tsv"
     if not sv_tax.is_file():
-        sv_tax = root / "08_Rescue" / "suvtk.taxonomy_output" / "taxonomy.tsv"
+        sv_tax = root / _D['d_rescue'] / "suvtk.taxonomy_output" / "taxonomy.tsv"
     if sv_tax.is_file():
         for r in _read_tsv(sv_tax):
             cid = r.get("contig_id", r.get("contig", r.get("seq_name","")))
@@ -67,9 +78,9 @@ def main():
 
     # R 共识 (05_Taxonomy)
     r_data = {}
-    r_tsv = root / "05_Taxonomy" / "Votus.integrated" / "final_integrated_classification.tsv"
+    r_tsv = root / _D['d_taxonomy'] / "Votus.integrated" / "final_integrated_classification.tsv"
     if not r_tsv.is_file():
-        tax_dir = root / "05_Taxonomy"
+        tax_dir = root / _D['d_taxonomy']
         for d in tax_dir.glob("*.integrated"):
             candidate = d / "final_integrated_classification.tsv"
             if candidate.is_file():
@@ -92,9 +103,9 @@ def main():
                     "primary_tool": r.get("primary_tool","").strip('"'),
                 }
 
-    # all_plant_viruses.fasta (序列长度)
+    # HQ_plant_viruses.fasta (序列长度)
     seq_lens = {}
-    all_fa = root / "08_Rescue" / "all_plant_viruses.fasta"
+    all_fa = root / _D['d_rescue'] / "HQ_plant_viruses.fasta"
     if all_fa.is_file():
         seq = ""
         for line in open(all_fa):
@@ -111,7 +122,7 @@ def main():
     feat_data = {}
     sv_feat = analysis / "suvtk_features" / "featuretable.tbl"
     if not sv_feat.is_file():
-        sv_feat = root / "08_Rescue" / "suvtk.features_output" / "featuretable.tbl"
+        sv_feat = root / _D['d_rescue'] / "suvtk.features_output" / "featuretable.tbl"
     if sv_feat.is_file():
         cur = None
         for line in open(sv_feat):

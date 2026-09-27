@@ -2,7 +2,7 @@
 """
 auto_known_virus.py - Known Virus Analysis Pipeline
 ====================================================
-7-stage automated pipeline for known virus detection, variant analysis,
+9-stage automated pipeline for known virus detection, variant analysis,
 full-length assembly, and post-hoc characterization.
 
 Stages:
@@ -12,21 +12,24 @@ Stages:
   4. full      - De novo full-length assembly (virus-full.py)
   5. extract   - Extract longest contigs (extract_full_fasta.py)
   6. post      - VCF visualization + SnpEff macro + MAF + SnpGenie
-  7. capheine   - Positive selection analysis (capheine_pipeline.py)
-  8. similarity - Full-length similarity panorama (virus_auto_pipeline.py)
-  9. dvg        - DVG & recombination detection (batch_virema_dvg.py)
- 10. report     - Generate summary report + AI interpretation prompts
+  7. similarity - Full-length similarity panorama (virus_auto_pipeline.py)
+  8. dvg        - DVG & recombination detection (batch_virema_dvg.py)
+  9. report     - Generate summary report + AI interpretation prompts
 
-Output structure:
+Note: positive selection (capheine) analysis migrated to virome_phylo_pipeline/.
+
+Output structure (legacy 布局; standard 布局见 doc/IO_LAYOUT_DESIGN.md):
   output_dir/
-    1_FastViromeExplorer/     Stage 1: detection results
-    2_Virus_variants_Results/ Stage 3: variant analysis
-    3_Virus_assemblies_final/ Stage 4: full assemblies
-    4_assemblies_clean/       Stage 5: extracted contigs
-    5_post_analysis/          Stage 6: post-hoc viz
-    6_capheine/               Stage 7: selection analysis
-    7_similarity/             Stage 8: similarity panorama
-    logs/                     Pipeline logs
+    01_detection/       Stage 1: detection results
+    02_filtering/       Stage 2: high-confidence filtering
+    03_variants/        Stage 3: variant analysis
+    04_post_analysis/   Stage 4: post-hoc viz (VCF merge, PCA, heatmap)
+    05_assembly/        Stage 5: full assemblies
+    06_extraction/      Stage 6: extracted contigs
+    07_similarity/      Stage 7: similarity panorama
+    08_dvg/             Stage 8: DVG & recombination
+    09_report/          Stage 9: HTML report
+    logs/               Pipeline logs
 """
 
 import argparse
@@ -34,11 +37,18 @@ import subprocess
 import sys
 import os
 import logging
+import shutil
 from pathlib import Path
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 SCRIPT_DIR = Path(__file__).resolve().parent
+
+# 跨管线统一 I/O 布局 (mmpv_common/, 仓库根)
+_REPO_ROOT = SCRIPT_DIR.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+from mmpv_common.io_layout import build_analysis_dirs, normalize_layout_env
 
 def setup_logger(out_dir, level="INFO"):
     logger = logging.getLogger("KnownVirus")
@@ -89,9 +99,41 @@ def find_virus_dir(base_dir, sub_dir, acc):
     return None
 
 
+# ── Schema constants: required columns for inter-stage TSV files ──
+STAGE1_SCHEMA = ["Sample", "Rep_Accession", "Rep_Coverage(%)", "Rep_MeanDepth",
+                  "Asm_TPM", "Poisson_Ratio", "taxid", "Adjusted_Species"]
+STAGE3_SCHEMA = ["Sample", "Accession", "Covered%", "MeanDepth", "Consensus"]
+
+
+def check_tsv_schema(tsv_path, required_cols, stage_label, logger):
+    """Validate that a TSV file has all required columns.
+    Raises SystemExit with a clear message if columns are missing.
+    """
+    if not tsv_path.exists():
+        logger.error("[%s] Schema check FAILED: file not found: %s", stage_label, tsv_path)
+        logger.error("  → Has the upstream stage completed successfully?")
+        sys.exit(1)
+    try:
+        with open(tsv_path, encoding="utf-8") as f:
+            actual = set(f.readline().strip().split("\t"))
+    except Exception as e:
+        logger.error("[%s] Schema check FAILED: cannot read %s: %s", stage_label, tsv_path, e)
+        sys.exit(1)
+    missing = [c for c in required_cols if c not in actual]
+    if missing:
+        logger.error("[%s] Schema check FAILED: missing columns in %s", stage_label, tsv_path.name)
+        logger.error("  Required: %s", ", ".join(required_cols))
+        logger.error("  Missing:  %s", ", ".join(missing))
+        logger.error("  Actual:   %s", ", ".join(sorted(actual)))
+        logger.error("  → Column names may have changed between pipeline versions. Check upstream script output.")
+        sys.exit(1)
+    logger.info("[%s] Schema check PASSED: %d columns (%d required present)",
+                stage_label, len(actual), len(required_cols))
+
+
 def main():
     parser = argparse.ArgumentParser(
-        description="Known Virus Analysis Pipeline (7-stage)",
+        description="Known Virus Analysis Pipeline (10-stage)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
 
@@ -99,6 +141,10 @@ def main():
     g = parser.add_argument_group("Input/Output")
     g.add_argument("--reads_dir", default=None, help="Clean reads directory")
     g.add_argument("--output_dir", "-o", default=None, help="Output root directory")
+    g.add_argument("--io-layout", choices=["legacy", "standard"], default=None,
+                   help="I/O directory layout: legacy=v3.0 names (default); "
+                        "standard=unified numbering (doc/IO_LAYOUT_DESIGN.md); "
+                        "or set env MMPV_IO_LAYOUT")
     g.add_argument("--ref_info", default=None, help="Reference info TSV")
     g.add_argument("--reference", default=None, help="Reference genome FASTA")
 
@@ -107,7 +153,7 @@ def main():
     g.add_argument(
         "--stage",
         default="all",
-        choices=["all", "detect", "filter", "variants", "full", "extract", "post", "capheine", "similarity", "dvg", "report"],
+        choices=["all", "detect", "filter", "variants", "full", "extract", "post", "similarity", "dvg", "report"],
         help="Which stage to run (default: all)",
     )
     g.add_argument("--no-resume", action="store_true", help="Disable checkpoint resume (always re-run)")
@@ -145,7 +191,7 @@ def main():
 
     # ---- Stage 2: Filter ----
     g = parser.add_argument_group("Stage 2: Filter (filter_summary)")
-    g.add_argument("--filter", action="store_true", help="Enable high-confidence filtering")
+    g.add_argument("--filter", action=argparse.BooleanOptionalAction, default=True, help="Enable high-confidence filtering (default: on, use --no-filter to disable)")
     g.add_argument("--filter_cov", type=float, default=50.0, help="Min coverage %% for filter")
     g.add_argument("--filter_depth", type=float, default=5.0, help="Min depth for filter")
     g.add_argument("--filter_reads", type=float, default=100.0, help="Min reads for filter")
@@ -191,25 +237,24 @@ def main():
     g.add_argument("--post_min_af", type=float, default=0.05, help="VCF min allele freq")
     g.add_argument("--skip_vcf_viz", action="store_true")
     g.add_argument("--skip_vcf_merge", action="store_true", help="Skip VCF merge + PCA + distance matrix")
+    g.add_argument("--meta", type=str, default=None,
+                   help="SRA metadata TSV with Lat/Lon cols for Mantel test (passed to virus_vcf_pipeline)")
+    g.add_argument("--metadata_tsv", type=str, default=None,
+                   help="队列元数据表 (Global_Unified_Metadata_Core14.tsv). 提供后 post 阶段改用发表级 v2 病毒×元数据分析引擎")
+    g.add_argument("--skip_metadata_assoc", action="store_true",
+                   help="Skip virus × metadata association plots in post stage")
     g.add_argument("--skip_snpeff_macro", action="store_true")
     g.add_argument("--skip_maftools", action="store_true")
     g.add_argument("--skip_snpgenie", action="store_true")
 
-    # ---- Stage 7: Capheine ----
-    g = parser.add_argument_group("Stage 7: Capheine (Positive Selection)")
-    g.add_argument("--capheine_ref", help="Reference CDS FASTA for capheine")
-    g.add_argument("--capheine_unaligned", help="Unaligned sequences FASTA")
-    g.add_argument("--capheine_fg", help="Foreground taxa list")
-    g.add_argument("--capheine_code", default="1", help="Genetic code (default: 1=Universal)")
-
-    # ---- Stage 8: Similarity ----
+    # ---- Stage 7: Similarity ----
     g = parser.add_argument_group("Stage 8: Similarity Panorama (virus_auto_pipeline)")
     g.add_argument("--sim_ref", help="GenBank accession or .gb file for similarity analysis")
     g.add_argument("--sim_mode", default="filter", choices=["strict", "filter", "fill", "all"])
     g.add_argument("--sim_cdhit", action="store_true", help="Enable CD-HIT dedup")
 
-    # ---- Stage 9: DVG ----
-    g = parser.add_argument_group("Stage 9: DVG & Recombination (batch_virema_dvg)")
+    # ---- Stage 8: DVG ----
+    g = parser.add_argument_group("Stage 8: DVG & Recombination (batch_virema_dvg)")
     g.add_argument("--virema_script", default=str(SCRIPT_DIR / "../biosoft/virema/ViReMa.py"), help="Path to ViReMa.py")
     g.add_argument("--dvg_seed", type=int, default=25, help="ViReMa seed length (default: 25)")
     g.add_argument("--dvg_mindel", type=int, default=15, help="Microdeletion threshold (default: 15)")
@@ -217,34 +262,67 @@ def main():
     g.add_argument("--dvg_shm", action="store_true", help="Use /dev/shm RAM disk for ViReMa")
     g.add_argument("--dvg_reads", default=None, help="FASTQ reads dir for DVG (default: same as --reads_dir)")
 
-    # ---- Stage 10: Report ----
-    g = parser.add_argument_group("Stage 10: Report Generation (generate_pipeline_report)")
+    # ---- Stage 9: Report ----
+    g = parser.add_argument_group("Stage 9: Report Generation (generate_pipeline_report)")
     g.add_argument("--report_ai", action="store_true", help="Include AI interpretation prompts")
-    g.add_argument("--ai_api_key", default=None, help="DeepSeek/OpenAI API key for AI interpretation")
+    g.add_argument("--ai_api_key", default=os.environ.get("DEEPSEEK_API_KEY") or os.environ.get("AI_API_KEY"),
+                   help="DeepSeek/OpenAI API key for AI interpretation (default: $DEEPSEEK_API_KEY/$AI_API_KEY)")
     g.add_argument("--ai_model", default="deepseek-chat", help="LLM model")
 
     # ---- Profile support ----
     g = parser.add_argument_group("Profile")
-    g.add_argument("--profile", default=None, help="YAML profile with default parameters")
+    g.add_argument("--profile", default=None, help="Profile name within pipeline_config.yaml (e.g. 'analysis')")
+    g.add_argument("--config", default=None, help="Path to pipeline_config.yaml (auto-detected if omitted)")
 
     # Pre-parse only --profile from raw argv
-    profile_file = None
+    # ── Config / Profile loading (YAML) ──
+    config_path = None
+    profile_name = None
     for i, a in enumerate(sys.argv[1:], 1):
-        if a == '--profile' and i < len(sys.argv):
-            profile_file = sys.argv[i + 1]
+        if a == '--config' and i < len(sys.argv):
+            config_path = sys.argv[i + 1]
+        elif a.startswith('--config='):
+            config_path = a.split('=', 1)[1]
+        elif a == '--profile' and i < len(sys.argv):
+            profile_name = sys.argv[i + 1]
         elif a.startswith('--profile='):
-            profile_file = a.split('=', 1)[1]
+            profile_name = a.split('=', 1)[1]
 
-    if profile_file:
+    if not config_path:
+        candidate = SCRIPT_DIR.parent / "pipeline_config.yaml"
+        if candidate.exists():
+            config_path = str(candidate)
+
+    if config_path and profile_name:
         try:
             import yaml
-            with open(profile_file, 'r') as f:
-                profile = yaml.safe_load(f)
-            parser.set_defaults(**{k: v for k, v in profile.items() if v is not None})
+            with open(config_path, 'r') as f:
+                full_config = yaml.safe_load(f)
+            profiles = full_config.get("profiles", {})
+            if profile_name not in profiles:
+                print(f"[WARNING] profile '{profile_name}' not found in {config_path}. Available: {list(profiles.keys())}", file=sys.stderr)
+            else:
+                profile_data = profiles[profile_name]
+                def _flatten(d, prefix=""):
+                    items = {}
+                    for k, v in d.items():
+                        key = f"{prefix}{k}" if prefix else k
+                        if isinstance(v, dict) and not k.startswith("_"):
+                            items.update(_flatten(v, f"{key}_"))
+                        else:
+                            # Set both prefixed and bare key: argparse args don't have prefixes
+                            items[key] = v
+                            if prefix and k not in items:
+                                items[k] = v
+                    return items
+                flat = {k: v for k, v in _flatten(profile_data).items()
+                        if v is not None and not isinstance(v, (dict, list))}
+                parser.set_defaults(**flat)
+                print(f"[INFO] Loaded profile '{profile_name}' from {config_path} ({len(flat)} keys)", file=sys.stderr)
         except ImportError:
-            print(f"[WARNING] pyyaml 未安装, 跳过 profile 加载: {profile_file}", file=sys.stderr)
+            print(f"[WARNING] pyyaml not installed, skipping config loading", file=sys.stderr)
         except Exception as e:
-            print(f"[WARNING] profile 加载失败 ({profile_file}): {e}", file=sys.stderr)
+            print(f"[WARNING] Config loading failed: {e}", file=sys.stderr)
 
     args = parser.parse_args()
 
@@ -259,6 +337,9 @@ def main():
     # ---- Setup ----
     script_dir = Path(__file__).parent.resolve()
     out = Path(args.output_dir).resolve()
+
+    # 布局解析 (CLI > MMPV_IO_LAYOUT > legacy) 并写回环境供子进程继承
+    normalize_layout_env(getattr(args, "io_layout", None))
 
     # Redirect all temp files to pipeline's own tmp dir (avoid /tmp overflow)
     _pipeline_tmp = out / "tmp"
@@ -284,36 +365,57 @@ def main():
         log.info("  Mode:   RESUME (skip completed, default)")
     log.info("=" * 55)
 
+    # ── Process Guard: kill entire process tree on Ctrl+C ──
+    try:
+        from process_guard import install_global_guard
+        _guard = install_global_guard(logger=log)
+    except ImportError:
+        _guard = None
+        log.warning("[Guard] process_guard module not found — Ctrl+C may leave orphans")
+
     # ---- Dry-run ----
     if args.dry_run:
         s = args.stage
         log.info("")
         log.info("=== DRY-RUN ===")
         log.info("  Tool:    %s", args.tool)
-        if s in ("all", "detect"):   log.info("  [1/10] Detect:   batch_virus_depth.py")
-        if args.filter or s == "filter": log.info("  [2/10] Filter:   filter_summary.py")
-        if s in ("all", "variants"):  log.info("  [3/10] Variants: batch_virus_variants.py (caller=%s snpeff=%s snpgenie=%s)", args.variant_caller, args.snpeff, args.snpgenie)
-        if s in ("all", "full"):      log.info("  [4/10] Full:     batch_virus_full.py")
-        if s in ("all", "extract"):   log.info("  [5/10] Extract:  extract_full_fasta.py")
-        if s in ("all", "post"):      log.info("  [6/10] Post-hoc: VCF viz + SnpEff + MAF + SnpGenie")
-        if s in ("all", "capheine"):  log.info("  [7/10] Capheine: positive selection analysis")
-        if s in ("all", "similarity"): log.info("  [8/10] Similarity: virus_auto_pipeline.py")
-        if s in ("all", "dvg"):       log.info("  [9/10] DVG:    batch_virema_dvg.py")
-        if s in ("all", "report"):    log.info("  [10/10] Report: generate_pipeline_report.py")
+        if s in ("all", "detect"):   log.info("  [1/9] Detect:   batch_virus_depth.py")
+        if args.filter or s == "filter": log.info("  [2/9] Filter:   filter_summary.py")
+        if s in ("all", "variants"):  log.info("  [3/9] Variants: batch_virus_variants.py (caller=%s snpeff=%s snpgenie=%s)", args.variant_caller, args.snpeff, args.snpgenie)
+        if s in ("all", "post"):      log.info("  [4/9] Post-hoc: VCF viz + SnpEff + MAF + SnpGenie")
+        if s in ("all", "full"):      log.info("  [5/9] Full:     batch_virus_full.py")
+        if s in ("all", "extract"):   log.info("  [6/9] Extract:  extract_full_fasta.py")
+        if s in ("all", "similarity"): log.info("  [7/9] Similarity: virus_auto_pipeline.py")
+        if s in ("all", "dvg"):       log.info("  [8/9] DVG:    batch_virema_dvg.py")
+        if s in ("all", "report"):    log.info("  [9/9] Report: generate_pipeline_report.py")
         log.info("=== DRY-RUN END ===")
         return
 
-    # ---- Shared paths ----
-    detect_dir = out / "1_FastViromeExplorer"
-    filter_dir = out / "2_Virus_result_filter"
-    variants_dir = out / "3_Virus_variants_Results"
-    full_dir = out / "4_Virus_assemblies_final"
-    extract_dir = out / "5_assemblies_clean"
-    post_dir = out / "6_post_analysis"
-    capheine_dir = out / "7_capheine"
-    similarity_dir = out / "8_similarity"
-    dvg_dir = out / "9_virema_dvg"
-    report_dir = out / "10_Reports"
+    try:
+        _run_pipeline_stages(args, out, reads, log, script_dir, _pipeline_tmp)
+    finally:
+        if _guard:
+            try:
+                from process_guard import uninstall_global_guard
+                uninstall_global_guard()
+                log.info("[Guard] Process tree cleanup complete.")
+            except Exception:
+                pass
+
+
+def _run_pipeline_stages(args, out, reads, log, script_dir, _pipeline_tmp):
+    """Execute all pipeline stages. Extracted to enable try/finally guard cleanup."""
+    # ---- Shared paths (目录名由 mmpv_common.io_layout 决定, legacy=v3.0 现行名) ----
+    _dirs = build_analysis_dirs(out, getattr(args, 'io_layout', None))
+    detect_dir = _dirs['detect']
+    filter_dir = _dirs['filter']
+    variants_dir = _dirs['variants']
+    post_dir = _dirs['post']
+    assembly_dir = _dirs['assembly']
+    extract_dir = _dirs['extract']
+    similarity_dir = _dirs['similarity']
+    dvg_dir = _dirs['dvg']
+    report_dir = _dirs['report']
 
     best_summary = detect_dir / "summary" / "all_viruses.best.summary.tsv"
     high_conf = filter_dir / "high_conf.summary.tsv"
@@ -337,16 +439,24 @@ def main():
             log.removeHandler(handler)
             handler.close()
 
+    def _stage_ok(stage_dir):
+        return (stage_dir / "run.ok").is_file()
+
+    def _mark_stage_ok(stage_dir):
+        stage_dir.mkdir(parents=True, exist_ok=True)
+        (stage_dir / "run.ok").write_text("ok")
+
     # ═══════════════════════════════════════════
     # Stage 1: Detection
     # ═══════════════════════════════════════════
     if args.stage in ("all", "detect"):
         _sh = add_stage_log(detect_dir, "1_detect")
-        if not args.force and best_summary.exists():
-            log.info("[1/10] Detection: checkpoint OK, skip")
+        parts = []
+        if not args.force and _stage_ok(detect_dir):
+            log.info("[1/9] Detection: checkpoint OK, skip")
         else:
             log.info("-" * 40)
-            log.info("[1/10] Rapid Virus Detection")
+            log.info("[1/9] Rapid Virus Detection")
             # checkpoint check
             parts = [
             f"python {script_dir / 'batch_virus_depth.py'}",
@@ -375,21 +485,22 @@ def main():
             parts.append(f"--taxid_clusters {args.taxid_clusters}")
         if args.use_coverm:
             parts.append("--use_coverm")
-        parts += [
-            f"--min_aln_len {args.min_aln_len}",
-            f"--min_aln_prop {args.min_aln_prop}",
-            f"--min_pid {args.min_pid}",
-            ]
-        if args.single_end:
-            parts.append("--single_end")
-        if args.keep_tmp:
-            parts.append("--keep_tmp")
-        if args.verbose:
-            parts.append("--verbose")
-        if not args.no_resume and not args.force:
-            parts.append("--resume")
-        if not run(" ".join(parts), log, "batch_virus_depth"):
-            sys.exit(1)
+            parts += [
+                f"--min_aln_len {args.min_aln_len}",
+                f"--min_aln_prop {args.min_aln_prop}",
+                f"--min_pid {args.min_pid}",
+                ]
+            if args.single_end:
+                parts.append("--single_end")
+            if args.keep_tmp:
+                parts.append("--keep_tmp")
+            if args.verbose:
+                parts.append("--verbose")
+        if parts:
+            if not args.no_resume and not args.force:
+                parts.append("--resume")
+            if not run(" ".join(parts), log, "batch_virus_depth"):
+                sys.exit(1)
         # ── Stage 1 viz: batch_plot_virus_depth.py ──
         batch_plot = script_dir / 'batch_plot_virus_depth.py'
         if batch_plot.is_file() and best_summary.exists():
@@ -408,17 +519,19 @@ def main():
                     log, "plot_depth_all")
             log.info("  [1/10 viz] Stage 1 plots complete -> %s", detect_dir)
         log.info("  Detection complete -> %s", detect_dir)
+        _mark_stage_ok(detect_dir)
 
     # ═══════════════════════════════════════════
     # Stage 2: Filter (optional auto-filter)
     # ═══════════════════════════════════════════
     if args.filter or args.stage == "filter":
         _sh2 = add_stage_log(filter_dir, "2_filter")
-        if not args.force and high_conf.exists():
-            log.info("[2/10] Filter: checkpoint OK, skip")
+        if not args.force and _stage_ok(filter_dir):
+            log.info("[2/9] Filter: checkpoint OK, skip")
         elif best_summary.exists():
+            check_tsv_schema(best_summary, STAGE1_SCHEMA, "Stage2→Stage1", log)
             log.info("-" * 40)
-            log.info("[2/10] High-Confidence Filtering")
+            log.info("[2/9] High-Confidence Filtering")
             filter_parts = [
                 f"python {script_dir / 'utils/filter_summary.py'}",
                 f"-i {best_summary}",
@@ -437,6 +550,7 @@ def main():
                 filter_parts.append(f"--min_poisson {args.filter_poisson}")
             if run(" ".join(filter_parts), log, "filter_summary"):
                 log.info("  Filter complete -> %s", high_conf)
+                _mark_stage_ok(filter_dir)
         else:
             log.warning("  best.summary not found, skipping filter")
 
@@ -445,12 +559,13 @@ def main():
     # ═══════════════════════════════════════════
     if args.stage in ("all", "variants"):
         _sh3 = add_stage_log(variants_dir, "3_variants")
-        if not args.force and (variants_dir / "summary" / "all_summary.tsv").exists():
-            log.info("[3/10] Variants: checkpoint OK, skip")
+        if not args.force and _stage_ok(variants_dir):
+            log.info("[3/9] Variants: checkpoint OK, skip")
         else:
             log.info("-" * 40)
-            log.info("[3/10] Variant Analysis")
+            log.info("[3/9] Variant Analysis")
             summary_in = get_summary()
+            check_tsv_schema(summary_in, STAGE1_SCHEMA, "Stage3→upstream", log)
             if not summary_in.exists():
                 log.error("Summary not found: %s (run Stage 1 first)", summary_in)
                 sys.exit(1)
@@ -498,81 +613,18 @@ def main():
                 log.warning("  Variant analysis partially failed, check logs")
             else:
                 log.info("  Variants complete -> %s", variants_dir)
-
-    # ═══════════════════════════════════════════
-    # Stage 4: Full-length Assembly
-    # ═══════════════════════════════════════════
-    if args.stage in ("all", "full"):
-        _sh4 = add_stage_log(full_dir, "4_full")
-        if not args.force and full_dir.exists() and any(p.is_dir() for p in full_dir.iterdir()):
-            log.info("[4/10] Assembly: checkpoint OK, skip")
-        else:
-            log.info("-" * 40)
-            log.info("[4/10] Full-length Assembly")
-            var_summary = variants_dir / "summary" / "all_summary.tsv"
-            if not var_summary.exists():
-                log.error("Variant summary not found: %s (run Stage 3 first)", var_summary)
-                sys.exit(1)
-
-            vsi = args.virus_full_script or str(script_dir / "virus-full.py")
-            parts = [
-                f"python {script_dir / 'batch_virus_full.py'}",
-                f"--downstream_dir {variants_dir}",
-                f"--summary {get_summary()}",
-                f"--clean_data {reads}",
-                f"--virus_full_script {vsi}",
-                f"--outdir {full_dir}",
-                f"--assembly_tools {args.assembly_tools}",
-                f"--jobs {args.jobs}",
-                f"--threads {args.threads}",
-                f'--extra_args "{args.extra_args}"',
-                f"--min_covered {args.min_covered}",
-            ]
-            if args.gb:
-                parts.append(f"--gb {args.gb}")
-            if not run(" ".join(parts), log, "batch_virus_full"):
-                log.warning("  Assembly partially failed, check logs")
-            else:
-                log.info("  Assemblies complete -> %s", full_dir)
-
-    # ═══════════════════════════════════════════
-    # Stage 5: Extract Clean Assemblies
-    # ═══════════════════════════════════════════
-    if args.stage in ("all", "extract"):
-        _sh5 = add_stage_log(extract_dir, "5_extract")
-        if not args.force and extract_dir.exists() and any(p.is_dir() for p in extract_dir.iterdir()):
-            log.info("[5/10] Extract: checkpoint OK, skip")
-        else:
-            log.info("-" * 40)
-            log.info("[5/10] Extract Longest Contigs")
-            if full_dir.exists():
-                parts = [
-                    f"python {script_dir / 'utils/extract_full_fasta.py'}",
-                    f"--dir {full_dir}",
-                    f"--outdir {extract_dir}",
-                    f"--target_file {args.extract_target}",
-                    f"--fill",
-                    f"--ref_info {args.ref_info}",
-                    f"--ref_dir {variants_dir}",
-                    f"--max_n_genome {args.max_n_genome}",
-                    f"--min_len {args.min_length}",
-                    "--plot",
-                ]
-                if run(" ".join(parts), log, "extract_full_fasta"):
-                    log.info("  Extraction complete -> %s", extract_dir)
-            else:
-                log.warning("  Assembly dir not found, skipping extract")
+                _mark_stage_ok(variants_dir)
 
     # ═══════════════════════════════════════════
     # Stage 6: Post-hoc Visualization
     # ═══════════════════════════════════════════
     if args.stage in ("all", "post"):
-        _sh6 = add_stage_log(post_dir, "6_post")
-        if not args.force and post_dir.exists() and any(p.is_dir() for p in post_dir.iterdir()):
-            log.info("[6/10] Post-hoc: checkpoint OK, skip")
+        _sh4 = add_stage_log(post_dir, "4_post")
+        if not args.force and _stage_ok(post_dir):
+            log.info("[4/9] Post-hoc: checkpoint OK, skip")
         else:
             log.info("-" * 40)
-            log.info("[6/10] Post-hoc Visualization")
+            log.info("[4/9] Post-hoc Visualization")
 
             summary_for_post = get_summary()
             if not summary_for_post.exists():
@@ -630,9 +682,13 @@ def main():
 
                         if not args.skip_vcf_merge and vcf_in:
                             tasks_total += 1
-                            merge_flags = f"-d {vcf_in} -o {vout / 'vcf_merge'} --prefix {vname} --visualize"
+                            merge_flags = (f"-d {vcf_in} -o {vout / 'vcf_merge'} --prefix {vname} "
+                                          f"--visualize --qc --snp-matrix --tree "
+                                          f"--dist-metrics both --pca-method genotype --ld")
                             if args.variant_caller == "ivar":
                                 merge_flags += " --ivar"
+                            if getattr(args, 'meta', None):
+                                merge_flags += f" --meta {args.meta}"
                             if run(f"python {script_dir / 'virus_vcf_pipeline.py'} {merge_flags}", log, f"merge_{vname}"):
                                 tasks_done += 1
 
@@ -667,184 +723,111 @@ def main():
                             log.info("  %s: %d/%d analyses OK", name, done, total)
 
                     # Virus vs metadata association
-                    meta_script = script_dir / 'utils' / 'virus_metadata_plot.py'
-                    if meta_script.is_file():
-                        run(f"python {meta_script} "
-                            f"-m {summary_for_post} "
-                            f"-o {post_dir / 'metadata_association'}",
-                            log, "meta_association")
+                    # - --metadata_tsv given -> publication-grade v2 engine (repo root)
+                    # - otherwise            -> utils v1 (auto-fetches SRA metadata via --sra_list)
+                    if not getattr(args, 'skip_metadata_assoc', False):
+                        meta_v2 = script_dir / 'virus_metadata_plot.py'
+                        meta_v1 = script_dir / 'utils' / 'virus_metadata_plot.py'
+                        if getattr(args, 'metadata_tsv', None) and meta_v2.is_file():
+                            run(f"python {meta_v2} "
+                                f"-v {summary_for_post} "
+                                f"-m {args.metadata_tsv} "
+                                f"-o {post_dir / 'metadata_association'}",
+                                log, "meta_association_v2")
+                        elif meta_v1.is_file():
+                            # sra.list 取自 summary 第一列 (Sample/Run 编号)
+                            sra_col = next((c for c in ("Sample", "sample", "Run", "run") if c in df.columns), df.columns[0])
+                            sra_list = post_dir / 'sra.list'
+                            try:
+                                df[sra_col].dropna().astype(str).str.strip() \
+                                    .loc[lambda s: s != ""].drop_duplicates() \
+                                    .to_csv(sra_list, index=False, header=False)
+                            except Exception as e:
+                                log.warning("  sra.list 生成失败: %s", e)
+                            run(f"python {meta_v1} "
+                                f"-v {summary_for_post} "
+                                f"--sra_list {sra_list} "
+                                f"-o {post_dir / 'metadata_association'}",
+                                log, "meta_association")
 
                 log.info("  Post-hoc complete -> %s", post_dir)
+                _mark_stage_ok(post_dir)
 
     # ═══════════════════════════════════════════
-    # Stage 7: Capheine Positive Selection
+    # Stage 4: Full-length Assembly
     # ═══════════════════════════════════════════
-    if args.stage in ("all", "capheine"):
-        _sh7 = add_stage_log(capheine_dir, "7_capheine")
-        if not args.force and capheine_dir.exists() and any(p.is_dir() for p in capheine_dir.iterdir()):
-            log.info("[7/10] Capheine: checkpoint OK, skip")
+    if args.stage in ("all", "full"):
+        _sh5 = add_stage_log(assembly_dir, "5_assembly")
+        if not args.force and _stage_ok(assembly_dir):
+            log.info("[5/9] Assembly: checkpoint OK, skip")
         else:
             log.info("-" * 40)
-            log.info("[7/10] Positive Selection Analysis (Capheine)")
+            log.info("[5/9] Full-length Assembly")
+            var_summary = variants_dir / "summary" / "all_summary.tsv"
+            if not var_summary.exists():
+                log.error("Variant summary not found: %s (run Stage 3 first)", var_summary)
+                sys.exit(1)
 
-            cap_ref = args.capheine_ref
-            cap_unaligned = args.capheine_unaligned
-
-            # Auto-extract CDS from virus-annotations if not provided
-            gb_dir = variants_dir / "virus-annotations"
-            cap_input_dir = capheine_dir.parent / ".capheine_input"
-
-            if (not cap_ref or not cap_unaligned) and gb_dir.exists():
-                log.info("  Auto-extracting CDS from virus-annotations/...")
-                cap_input_dir.mkdir(parents=True, exist_ok=True)
-
-                # Find the virus to analyze from summary
-                import pandas as _pd
-                _df = _pd.read_csv(get_summary(), sep="\t")
-                _acc_col = next((c for c in ["Rep_Accession", "Accession"] if c in _df.columns), _df.columns[0])
-                _sp_col = next((c for c in ["Adjusted_Species", "Species", "Species_NCBI"] if c in _df.columns), None)
-                _targets = _df[_acc_col].dropna().unique()
-
-                # Build virus name mapping {acc: Species_Acc}, same as post-hoc
-                _virus_map = {}
-                for _, row in _df.drop_duplicates(subset=[_acc_col]).iterrows():
-                    _a = str(row[_acc_col])
-                    if _sp_col:
-                        _sp = str(row[_sp_col]).replace(" ", "_").replace("/", "_").replace("'", "")
-                        _virus_map[_a] = f"{_sp}_{_a}"
-                    else:
-                        _virus_map[_a] = _a
-
-                for _acc in _targets:
-                    _gb_file = gb_dir / f"{_acc}.gb"
-                    if not _gb_file.exists():
-                        _gb_file = gb_dir / f"{_acc.split('.')[0]}.gb"
-                    if not _gb_file.exists():
-                        continue
-
-                    _vname = _virus_map.get(str(_acc), str(_acc))
-                    _vout = cap_input_dir / _vname
-                    _vout.mkdir(parents=True, exist_ok=True)
-                    # Extract CDS from GB
-                    run(f"python {script_dir / 'utils/gbk_extractor.py'} "
-                        f"-i {_gb_file} -n {_vout / 'ref_cds.fasta'}", log, f"cds_{_acc}")
-
-                    _ref_cds = _vout / "ref_cds.fasta"
-                    _cap_ref = str(_ref_cds) if _ref_cds.exists() else None
-
-                    # Collect assemblies as unaligned
-                    import glob as _glob
-                    _asm_matches = _glob.glob(str(extract_dir / f"*{_acc.split('.')[0]}*"))
-                    _cap_unaligned = None
-                    if _asm_matches:
-                        _unaligned = _vout / "unaligned.fasta"
-                        _all_seqs = []
-                        for _fa in Path(_asm_matches[0]).rglob("*.full.fasta"):
-                            _all_seqs.append(_fa.read_text())
-                        if _all_seqs:
-                            with open(_unaligned, "w") as _uf:
-                                _uf.write("".join(_all_seqs))
-                        if _unaligned.exists():
-                            _cap_unaligned = str(_unaligned)
-
-                    # Skip non-coding viruses (e.g. viroids)
-                    if _ref_cds.exists() and _ref_cds.stat().st_size < 100:
-                        log.info("  %s: no CDS (likely non-coding virus), skipped", _vname)
-                        continue
-
-                    if not _cap_ref or not _cap_unaligned:
-                        continue
-
-                    # Run capheine
-                    _cap_out = capheine_dir / _vname
-                    _cap_out.mkdir(parents=True, exist_ok=True)
-                    _parts = [
-                        f"python {script_dir / 'capheine_pipeline.py'}",
-                        f"-r {_cap_ref}", f"-u {_cap_unaligned}",
-                        f"-o {_cap_out}", f"--code {args.capheine_code}",
-                        f"--workers {args.jobs}",
-                        f"--cpus_iqtree {min(args.threads, 16)}",
-                        f"--cpus_hyphy {min(args.threads, 32)}",
-                    ]
-                    if args.capheine_fg:
-                        _parts.append(f"--foreground_list {args.capheine_fg}")
-                    if run(" ".join(_parts), log, f"capheine_{_acc}"):
-                        log.info("  %s: capheine OK", _acc)
-                        # Visualize positive selection sites
-                        drhip_csv = _cap_out / "drhip" / "combined_sites.csv"
-                        cln_dir = _cap_out / "hyphy" / "CLN"
-                        if drhip_csv.exists() and cln_dir.exists():
-                            run(f"python {script_dir / 'utils/visual_codon_miner.py'} "
-                                f"--drhip {drhip_csv} --clndir {cln_dir} "
-                                f"-o {_cap_out / 'codon_plots'}", log, f"codon_{_acc}")
-
-                        # Per-gene selection summary bar chart
-                        if drhip_csv.exists():
-                            _gen_bar = _cap_out / "selection_per_gene.pdf"
-                            try:
-                                import matplotlib
-                                matplotlib.use('Agg')
-                                import matplotlib.pyplot as __plt
-                                _dr = __pd.read_csv(drhip_csv)
-                                _gene_col = next((c for c in ['gene', 'Gene', 'gene_name'] if c in _dr.columns), None)
-                                if _gene_col and len(_dr) > 0:
-                                    _dr['gene_short'] = _dr[_gene_col].str.replace(
-                                        r'.*\.part_', '', regex=True)
-                                    _cnts = _dr['gene_short'].value_counts()
-                                    _fig, _ax = __plt.subplots(figsize=(max(6, len(_cnts)*0.4), 5))
-                                    _colors = __plt.cm.Set2(__plt.Normalize(0, max(len(_cnts)-1, 1))(range(len(_cnts))))
-                                    _ax.barh(range(len(_cnts)), _cnts.values, color=_colors, edgecolor='#333')
-                                    _ax.set_yticks(range(len(_cnts)))
-                                    _ax.set_yticklabels(_cnts.index, fontsize=10, fontweight='bold')
-                                    _ax.set_xlabel('Positive Selection Sites', fontweight='bold')
-                                    _ax.set_title(f'Positive Selection Sites per Gene ({_acc})',
-                                                 fontweight='bold', fontsize=13)
-                                    for _j, _v in enumerate(_cnts.values):
-                                        _ax.text(_v + max(_cnts.values)*0.02, _j, str(_v),
-                                                va='center', fontweight='bold')
-                                    __plt.tight_layout()
-                                    _fig.savefig(_gen_bar, dpi=300, bbox_inches='tight')
-                                    _gen_bar_png = str(_gen_bar).replace('.pdf', '.png')
-                                    _fig.savefig(_gen_bar_png, dpi=300, bbox_inches='tight')
-                                    __plt.close()
-                                    log.info("  %s: gene selection plot -> %s", _acc, _gen_bar)
-                            except Exception as _ex:
-                                log.warning("  %s: gene selection plot failed: %s", _acc, _ex)
-                    else:
-                        log.warning("  %s: capheine failed", _acc)
-
-                log.info("  Capheine complete -> %s", capheine_dir)
-
-            elif cap_ref and cap_unaligned:
-                capheine_dir.mkdir(parents=True, exist_ok=True)
-                parts = [
-                    f"python {script_dir / 'capheine_pipeline.py'}",
-                    f"-r {cap_ref}", f"-u {cap_unaligned}",
-                    f"-o {capheine_dir}", f"--code {args.capheine_code}",
-                    f"--workers {args.jobs}",
-                    f"--cpus_iqtree {min(args.threads, 16)}",
-                    f"--cpus_hyphy {min(args.threads, 32)}",
-                ]
-                if args.capheine_fg:
-                    parts.append(f"--foreground_list {args.capheine_fg}")
-                if not run(" ".join(parts), log, "capheine_pipeline"):
-                    log.warning("  Capheine analysis failed, check logs")
-                else:
-                    log.info("  Capheine complete -> %s", capheine_dir)
+            vsi = args.virus_full_script or str(script_dir / "virus-full.py")
+            parts = [
+                f"python {script_dir / 'batch_virus_full.py'}",
+                f"--downstream_dir {variants_dir}",
+                f"--summary {get_summary()}",
+                f"--clean_data {reads}",
+                f"--virus_full_script {vsi}",
+                f"--outdir {assembly_dir}",
+                f"--assembly_tools {args.assembly_tools}",
+                f"--jobs {args.jobs}",
+                f"--threads {args.threads}",
+                f'--extra_args "{args.extra_args}"',
+                f"--min_covered {args.min_covered}",
+            ]
+            if args.gb:
+                parts.append(f"--gb {args.gb}")
+            if not run(" ".join(parts), log, "batch_virus_full"):
+                log.warning("  Assembly partially failed, check logs")
             else:
-                log.warning("  capheine requires CDS input. Provide --capheine_ref/--capheine_unaligned")
-                log.info("  or ensure virus-annotations/ and assemblies exist from Stage 3+5.")
+                log.info("  Assemblies complete -> %s", assembly_dir)
+                _mark_stage_ok(assembly_dir)
 
     # ═══════════════════════════════════════════
-    # Stage 8: Full-length Similarity Panorama
+    # Stage 5: Extract Clean Assemblies
+    # ═══════════════════════════════════════════
+    if args.stage in ("all", "extract"):
+        _sh6 = add_stage_log(extract_dir, "6_extract")
+        if not args.force and _stage_ok(extract_dir):
+            log.info("[6/9] Extract: checkpoint OK, skip")
+        else:
+            log.info("-" * 40)
+            log.info("[6/9] Extract Longest Contigs")
+            if assembly_dir.exists():
+                parts = [
+                    f"python {script_dir / 'utils/extract_full_fasta.py'}",
+                    f"--dir {assembly_dir}",
+                    f"--outdir {extract_dir}",
+                    f"--target_file {args.extract_target}",
+                    f"--fill",
+                    f"--ref_info {args.ref_info}",
+                    f"--ref_dir {variants_dir}",
+                    f"--max_n_genome {args.max_n_genome}",
+                    f"--min_len {args.min_length}",
+                    "--plot",
+                ]
+                if run(" ".join(parts), log, "extract_full_fasta"):
+                    log.info("  Extraction complete -> %s", extract_dir)
+                    _mark_stage_ok(extract_dir)
+            else:
+                log.warning("  Assembly dir not found, skipping extract")
+
+    # Stage 7: Full-length Similarity Panorama
     # ═══════════════════════════════════════════
     if args.stage in ("all", "similarity"):
-        _sh8 = add_stage_log(similarity_dir, "8_similarity")
-        if not args.force and similarity_dir.exists() and any(p.is_dir() for p in similarity_dir.iterdir()):
-            log.info("[8/10] Similarity: checkpoint OK, skip")
+        _sh7 = add_stage_log(similarity_dir, "7_similarity")
+        if not args.force and _stage_ok(similarity_dir):
+            log.info("[7/9] Similarity: checkpoint OK, skip")
         else:
             log.info("-" * 40)
-            log.info("[8/10] Full-length Similarity Panorama")
+            log.info("[7/9] Full-length Similarity Panorama")
 
             consensus_base = variants_dir / "virus-consensus"
             if not consensus_base.exists():
@@ -891,17 +874,18 @@ def main():
                     _shutil.rmtree(flat_dir, ignore_errors=True)
 
                 log.info("  Similarity complete -> %s", similarity_dir)
+                _mark_stage_ok(similarity_dir)
 
     # ═══════════════════════════════════════════
-    # Stage 9: DVG & Recombination Analysis
+    # Stage 8: DVG & Recombination Analysis
     # ═══════════════════════════════════════════
     if args.stage in ("all", "dvg"):
-        _sh9 = add_stage_log(dvg_dir, "9_dvg")
-        if not args.force and dvg_dir.exists() and any(p.is_dir() for p in dvg_dir.iterdir()):
-            log.info("[9/10] DVG: checkpoint OK, skip")
+        _sh8 = add_stage_log(dvg_dir, "8_dvg")
+        if not args.force and _stage_ok(dvg_dir):
+            log.info("[8/9] DVG: checkpoint OK, skip")
         else:
             log.info("-" * 40)
-            log.info("[9/10] DVG & Recombination Analysis")
+            log.info("[8/9] DVG & Recombination Analysis")
             summary_in = get_summary()
             if not summary_in.exists():
                 log.warning("  Summary not found, skipping DVG analysis")
@@ -928,14 +912,15 @@ def main():
                     log.warning("  DVG analysis failed, check logs")
                 else:
                     log.info("  DVG complete -> %s", dvg_dir)
+                    _mark_stage_ok(dvg_dir)
 
     # ═══════════════════════════════════════════
-    # Stage 10: Generate Summary Report
+    # Stage 9: Generate Summary Report
     # ═══════════════════════════════════════════
     if args.stage in ("all", "report"):
-        _sh10 = add_stage_log(report_dir, "10_report")
+        _sh9 = add_stage_log(report_dir, "9_report")
         log.info("-" * 40)
-        log.info("[10/10] Generate Pipeline Summary Report")
+        log.info("[9/9] Generate Pipeline Summary Report")
         parts = [
             f"python {script_dir / 'generate_pipeline_report.py'}",
             f"-d {out}",
@@ -953,6 +938,21 @@ def main():
     log.info("=" * 55)
     log.info("Pipeline complete! | %s", datetime.now().strftime("%H:%M:%S"))
     log.info("=" * 55)
+
+
+# ── Pipeline topology registry (documentation + programmatic introspection) ──
+# Each entry: (stage_num, name, script, input_from, output_dir_key, checkpoint)
+STAGES = [
+    (1,  "detect",     "batch_virus_depth.py",     None,            "detect_dir",     "best.summary.tsv"),
+    (2,  "filter",     "filter_summary.py",         "detect_dir",    "filter_dir",     "high_conf.summary.tsv"),
+    (3,  "variants",   "batch_virus_variants.py",   "get_summary()", "variants_dir",   "all_summary.tsv"),
+    (4,  "post",       "virus_vcf_pipeline.py",     "variants_dir",  "post_dir",       "figs/"),
+    (5,  "assembly",   "batch_virus_full.py",       "variants_dir",  "assembly_dir",   "*/"),
+    (6,  "extract",    "extract_full_fasta.py",     "assembly_dir",  "extract_dir",    "*.fasta"),
+    (7,  "similarity", "virus_auto_pipeline.py",    "variants_dir",  "similarity_dir", "pipeline_results/"),
+    (8,  "dvg",        "batch_virema_dvg.py",       "get_summary()", "dvg_dir",       "Summary_Analysis_Report/"),
+    (9,  "report",     "generate_pipeline_report.py","*",             "report_dir",     "Pipeline_Summary_Report.html"),
+]
 
 
 if __name__ == "__main__":

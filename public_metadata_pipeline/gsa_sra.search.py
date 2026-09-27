@@ -143,7 +143,7 @@ class SRAEngine:
 # 🔵 GSA 检索引擎
 # ==========================================
 class GSAEngine:
-    def __init__(self, query, source, out_dir, detailed=False):
+    def __init__(self, query, source, out_dir, detailed=False, max_workers=5, progress_cb=None):
         self.query = str(query).strip()
         self.source_filter = str(source).strip() if source else None
         self.center_filter = "NGDC" 
@@ -155,6 +155,8 @@ class GSAEngine:
         if self.detailed:
             os.makedirs(self.d_xls, exist_ok=True)
         self.session = get_retry_session()
+        self.max_workers = max_workers
+        self.progress_cb = progress_cb  # callback(n_done, n_total, msg)
 
     def get_accession_list(self):
         url = "https://ngdc.cncb.ac.cn/gsa/search/getAccessionList"
@@ -306,42 +308,79 @@ class GSAEngine:
         print(f"  ✓ 提取到 {len(url_dict)} 条下载链接")
         return url_dict
 
+    def _fetch_one_acc(self, acc):
+        """Fetch and parse a single accession page. Thread-safe."""
+        import threading
+        web_cache_f = os.path.join(self.d_web, f"{acc}.html")
+        try:
+            if not os.path.exists(web_cache_f):
+                time.sleep(random.uniform(0.2, 0.6))
+                # Each thread uses its own session for safety
+                sess = get_retry_session()
+                res_web = sess.get(f"https://ngdc.cncb.ac.cn/gsa/search?searchTerm={acc}", timeout=30)
+                # Atomic-ish write
+                tmp = web_cache_f + ".tmp"
+                with open(tmp, 'w', encoding='utf-8') as f:
+                    f.write(res_web.text)
+                os.replace(tmp, web_cache_f)
+            with open(web_cache_f, 'r', encoding='utf-8') as f:
+                html = f.read()
+
+            wf = self.parse_all_from_html(html, acc)
+            if self.query.lower() not in str(wf.get("ScientificName", "")).lower():
+                return None
+
+            records = []
+            cra_id = wf.get("CRA", "UNKNOWN_CRA")
+            for r in wf.get("RunRecords", [{"Run": acc}]):
+                records.append({
+                    "Run": r["Run"], "ReleaseDate": wf.get("ReleaseDate", pd.NA),
+                    "LibraryStrategy": wf.get("LibraryStrategy"), "LibrarySource": wf.get("LibrarySource"),
+                    "BioProject": wf.get("PRJ", pd.NA), "BioSample": wf.get("SAMC", pd.NA),
+                    "Platform": wf.get("Platform", pd.NA), "CenterName": wf.get("Organization", pd.NA),
+                    "ScientificName": wf.get("ScientificName", pd.NA),
+                })
+            return (cra_id, records)
+        except Exception as e:
+            return None
+
     def fetch_gsa(self):
+        from concurrent.futures import ThreadPoolExecutor, as_completed
         print("\n" + "="*65)
         mode_str = "详细模式 (含Excel解析)" if self.detailed else "极速模式 (基础信息)"
-        print(f"🔵 启动 GSA 检索引擎 [{mode_str}]")
+        print(f"🔵 启动 GSA 检索引擎 [{mode_str}] [{self.max_workers} workers]")
         print("="*65)
-        
+
         acc_list = self.get_accession_list()
-        if not acc_list: return pd.DataFrame()
+        if not acc_list:
+            return pd.DataFrame()
+
+        total = len(acc_list)
+        print(f"🎯 锁定 {total} 个 accession，并行抓取中...")
+        if self.progress_cb:
+            self.progress_cb(0, total, f"GSA: 0/{total}")
 
         all_records = []
         unique_cras = set()
-        
-        for acc in tqdm(acc_list, desc="🔵 解析 HTML"):
-            web_cache_f = os.path.join(self.d_web, f"{acc}.html")
-            try:
-                if not os.path.exists(web_cache_f):
-                    time.sleep(random.uniform(1.0, 2.0))
-                    res_web = self.session.get(f"https://ngdc.cncb.ac.cn/gsa/search?searchTerm={acc}", timeout=30)
-                    with open(web_cache_f, 'w', encoding='utf-8') as f: f.write(res_web.text)
-                with open(web_cache_f, 'r', encoding='utf-8') as f: html = f.read()
+        n_done = 0
+        last_report = 0
 
-                wf = self.parse_all_from_html(html, acc)
-                if self.query.lower() not in str(wf.get("ScientificName", "")).lower(): continue
-                
-                cra_id = wf.get("CRA", "UNKNOWN_CRA")
-                unique_cras.add(cra_id)
-                
-                for r in wf.get("RunRecords", [{"Run": acc}]):
-                    all_records.append({
-                        "Run": r["Run"], "ReleaseDate": wf.get("ReleaseDate", pd.NA),
-                        "LibraryStrategy": wf.get("LibraryStrategy"), "LibrarySource": wf.get("LibrarySource"),
-                        "BioProject": wf.get("PRJ", pd.NA), "BioSample": wf.get("SAMC", pd.NA),
-                        "Platform": wf.get("Platform", pd.NA), "CenterName": wf.get("Organization", pd.NA),
-                        "ScientificName": wf.get("ScientificName", pd.NA),
-                    })
-            except Exception as e: pass
+        with ThreadPoolExecutor(max_workers=self.max_workers) as pool:
+            futures = {pool.submit(self._fetch_one_acc, acc): acc for acc in acc_list}
+            for fut in as_completed(futures):
+                n_done += 1
+                result = fut.result()
+                if result:
+                    cra_id, records = result
+                    unique_cras.add(cra_id)
+                    all_records.extend(records)
+                # Report progress every 5% or every 5 items
+                if self.progress_cb and (n_done - last_report >= max(1, total // 20)):
+                    self.progress_cb(n_done, total, f"GSA: {n_done}/{total} ({len(all_records)} runs)")
+                    last_report = n_done
+
+        if self.progress_cb:
+            self.progress_cb(total, total, f"GSA: {total}/{total} ({len(all_records)} runs)")
 
         df_gsa = pd.DataFrame(all_records)
         

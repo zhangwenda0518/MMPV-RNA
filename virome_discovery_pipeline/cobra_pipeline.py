@@ -534,12 +534,18 @@ class CobraPipeline:
             main_logger.info(f"  [{self.args.virus_mode}] 无过滤结果, 回退到原始鉴定")
 
         virus_patterns = [
-            f"{n}_virus.all.candidate.fasta" for n in name_variants
-        ] + [
-            f"{n}_virus.fasta" for n in name_variants
-        ] + [
-            "final-virus-combined.fa",
-        ]
+                f"{n}.virus.candidate_filtered.fasta" for n in name_variants
+            ] + [
+                f"{n}.virus.candidate_uniprot.fasta" for n in name_variants
+            ] + [
+                f"{n}.virus.candidate_cdd_filtered.fasta" for n in name_variants
+            ] + [
+                f"{n}_virus.all.candidate.fasta" for n in name_variants
+            ] + [
+                f"{n}_virus.fasta" for n in name_variants
+            ] + [
+                "final-virus-combined.fa",
+            ]
 
         # 1. 先尝试嵌套结构: {virsorter_dir}/{name}/{tool}_result/
         for name in name_variants:
@@ -890,6 +896,24 @@ class CobraPipeline:
             cobra_status = "成功生成延伸序列" if cobra_final_file else "未生成有效延伸序列"
             main_logger.info(f"完成处理: {task_id} [{cobra_status}]")
 
+            # 清理中间文件: 删 BAM/BWA索引/contigs.fa, 保留 .virus.fa/.cobra.fa/coverage/日志
+            for junk_pat in [f"{task_id}.sorted.bam", f"{task_id}.sorted.bam.bai",
+                             f"{task_id}.contigs.fa"]:
+                jf = output_dir / junk_pat
+                if jf.is_file():
+                    try:
+                        jf.unlink()
+                    except Exception:
+                        pass
+            # BWA 索引: .contigs.fa.0123/.amb/.ann/.bwt.2bit.64/.pac
+            for idx_suffix in ['.0123', '.amb', '.ann', '.bwt.2bit.64', '.pac']:
+                idx_file = output_dir / f"{task_id}.contigs.fa{idx_suffix}"
+                if idx_file.is_file():
+                    try:
+                        idx_file.unlink()
+                    except Exception:
+                        pass
+
             return {
                 "task_id": task_id,
                 "sample": sample,
@@ -1189,7 +1213,14 @@ def main():
         sys.exit(0)
     
     args = parser.parse_args()
-    
+
+    # 进程守护: 停止主命令时连带杀掉所有子孙进程, 避免后台残留
+    try:
+        import process_guard
+        process_guard.install()
+    except Exception:
+        pass
+
     # 验证参数
     required_dirs = [
         ("contigs_dir", "Contigs目录"),

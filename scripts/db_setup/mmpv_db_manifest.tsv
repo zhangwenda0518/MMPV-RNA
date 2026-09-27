@@ -1,0 +1,61 @@
+id	kind	type	root	path	probe	size	required	note
+# MMPV 数据库依赖清单 — 机读版。由 scripts/db_setup/mmpv_db.py 解析。
+# 列: id | kind | type | root | path | probe | size | required | note
+#   kind     download = 一条命令下预建库; build = 下原始数据再建索引; local = 无法重下，需从共享池拷贝; repo = 随仓库/本地小文件
+#   type     dir = path 是目录; file = path 是文件（layout 只在父目录建骨架）
+#   root     db = ${MMPV_DB_ROOT} | plant = ${MMPV_PLANT_VIRUS_DB} | repo = 仓库根 | src = ${MMPV_SRC}（上游原始数据，建完索引可删）
+#   path     root 下的相对路径（部署/迁移的原子单元）
+#   probe    path 内用于判定“存在且非空”的哨兵（留空 = path 自身）
+#   required yes = default/plant profile 缺了会致命; no = 可选/单工具会自动降级
+# 与 doc/MMPV_dependencies.md 的 D 节（D1 鉴定 / D2 宿主 / D3 分类 / D4 深度学习）互补：那里按用途分组，这里按部署单元。
+# 改库版本时：改这里的路径 + pipeline_config.yaml 对应键 + doc/DB_DEPLOYMENT.md 表格，三处要一致。
+src_rvdb31	download	file	src	RVDB/RVDB_v31.fasta.gz		~5GB	no	RVDB v31 上游 fasta（§1.5）；多个派生库的共同基底，见 DB_DEPLOYMENT.md §3.2 派生图
+taxonomy	build	dir	db	taxonomy	nodes.dmp	~200MB	yes	NCBI taxdump.tar.gz 解压; taxonkit 谱系的基础
+taxid_map_prot	build	file	db	taxonomy/prot.accession2taxid		~3GB	yes	diamond makedb --taxonmap 用; 与 nr/uniref 建库绑定
+taxid_map_nucl	build	file	db	taxonomy/nucl_gb.accession2taxid		~50GB	no	核酸 accession→taxid; 非 diamond 建库路径用
+vinfo_lineage	build	file	db	taxonomy/fullnamelineage.dmp		~2GB	yes	virus_classifier.py:217/300/583 硬编码读取; 来自 new_taxdump（非 taxdump）
+vranked_lineage	build	file	db	taxonomy/rankedlineage.dmp		~2GB	no	build_genus_family_ref.py 的输入; 同样来自 new_taxdump
+genus_family_ref	build	file	db	taxonomy/genus_family_ref.tsv		~1MB	yes	virome_pipeline.py:52 TAX_GATE_REF_DEFAULT; 由 scripts/audit/build_genus_family_ref.py 生成
+cdd_db	build	dir	db	cdd/cdd-db	cdd_db	~30GB	yes	filter_virus.py DEFAULTS['CDD_DB']; 由 build_cdd_databases.sh 建
+kraken2_pluspfp	download	dir	db	kraken2/k2_pluspfp_20260226	hash.k2d	~50GB	yes	去宿主第一步; 路径在 pipeline_config.yaml deplete.kraken2_db
+uniref90	build	file	db	uniport_db/uniref90/uniref90.dmnd		~50GB	yes	注意目录名拼写就是 uniport_db（历史笔误，勿改）
+nr_db	build	file	db	nr_db/nr.dmnd		~250GB	no	Diamond BLASTX 去假阳性; 缺失只降级不致命
+nt_viruses	build	dir	db	nt-db/nt_viruses	nt_viruses	~10GB	no	panvirome_novel_known.py 用
+host_db	build	dir	db	host_db	kraken2	~60GB	yes	去宿主自定义库; 由 public_metadata_pipeline/build_host_pipeline.py 建
+virus_db_genomad	download	dir	db	virus-db/genomad_db	genomad_db	~14GB	yes	genomad download-database; --genomad-db
+virus_db_checkv	download	dir	db	virus-db/checkv-db-v1.7	genome_db	~6.5GB	yes	checkv download_database; 仅 plant profile 用 --checkv-db
+virus_db_virsorter2	build	dir	db	virus-db/virsorter2_db		~2GB	yes	virsorter config --init-source --db-dir
+virus_db_viralverify	build	file	db	virus-db/viralverify_db/nbc_hmms.hmm		~1GB	yes	YAML 键 viralverify_hmm 指向这里
+virus_db_viralverify_alt	local	file	db	virus-db/ViralVerify/nbc_hmms.h3m		~1GB	no	代码 standalone 回退路径（virus_identification.py:390），与上面并存以免断
+virus_db_viroids	build	dir	db	virus-db/viroids-db	viroids.fasta	~50MB	yes	VirusDetect v248 的类病毒库; makeblastdb 建索引
+virus_db_rvdb31_diamond	build	dir	db	virus-db/RVDB-v31/RVDB_viroids.diamond_db	U-RVDBv31.0-prot_unique.dmnd	~5GB	yes	YAML 键 virus_protein_db; 由 build_virus_db.py --databases diamond 派生（产出名需补别名，见配方）
+virus_db_rvdb31_mmseqs	build	dir	db	virus-db/RVDB-v31/RVDB.mmseqs_db	RVDB.mmseqs	~5GB	yes	virus_classifier.py:760 硬编码; build_virus_db.py --db-prefix RVDB --databases mmseqs
+virus_db_rvdb31_metabuli	build	dir	db	virus-db/RVDB-v31/RVDB_viroids.metabuli_db		~8GB	yes	build_virus_db.py --databases metabuli; --metabuli-db
+virus_db_rvdb31_cat	local	dir	db	virus-db/RVDB-v31/CAT-db	db	~40GB	no	virus_classifier.py:757 CAT 分类库(db/tax); CAT_pack prepare --db_dir
+virus_db_rvdb31_hmm	local	dir	db	virus-db/RVDB-v31	U-RVDBv31.0-prot.hmm	~2GB	no	D1: RVDB 的 hmm/annot 伴生文件（.hmm / .EX.acc.fasta / .info.tab）；pyhmmer 路径用
+virus_db_rvdb30_mmseqs	build	dir	db	virus-db/RVDB-30	RVDB.mmseqs	~5GB	no	YAML 键 mmseqs_db 指向 RVDB-30（与代码的 v31 不一致，两个都留着）
+virus_db_vitap	local	dir	db	virus-db/vitap-db/VMR-MSL40_DB		~2.6GB	no	virus_classifier.py:759; VITAP 预建 DB
+virus_db_acvirus	build	dir	db	virus-db/acvirus_db	taxa.txt	~600MB	no	ACVirus create_db --vmr <VMR xlsx> --dbpath（§3.7）
+virus_db_vcontact3	local	dir	db	virus-db/vConTACT3_db		~14GB	no	opt-in，默认 --tools all 不含它
+virus_db_ct3	download	dir	db	virus-db/ct3_DBs	hmmscan_DBs	~20GB	no	get_ct3_dbs 全套
+virus_db_ictv	build	dir	db	virus-db/ictv-db/ictv_nr_db	ictv_nr_db	~2GB	no	ictv-mmseqs2-protein-database（§3.2）; panvirome 用
+virus_db_ncbi_ref	local	dir	db	virus-db/ncbi-virus_ref		~48GB	no	YAML 键 blast_db; 完整植物病毒基因组 BLASTN 抢救
+virus_db_ncbi_virus	local	dir	db	virus-db/ncbi-virus	ncbi_virus.nucl.fasta	~5GB	no	gen_final_judgement.py 用 $MMPV_NT_DB/$MMPV_AA_DB
+virus_db_vp_diamond	build	dir	db	virus-db/Diamond_VirusProtein_db	viral_protein.dmnd	~2GB	no	virus_identification.py:327 回退路径（VP 库第二候选）; 可由 viral.1.protein.faa 派生
+virus_db_genus_lens	build	file	db	virus-db/db/genus_lens		~64KB	yes	病毒属平均长度表; make_genus-length.py 生成; virome_pipeline.py:1489
+virus_db_genus_lens_json	local	file	db	virus-db/db/genus_lens_no_prefix.json		~64KB	no	D2: genus_lens 的第二格式（no_prefix），与上面配套
+virus_db_vmr	local	file	db	virus-db/VMR_MSL41.v1.20260320.xlsx		~3.7MB	yes	ICTV VMR 官方表; ACVirus 建库与注释的输入
+virus_db_phabox2	local	dir	db	virus-db/phabox_db_v2_2		~2GB	no	PhaBOX2 宿主预测; run_host_prediction.py --phabox-db
+virus_db_suvtk	download	dir	db	virus-db/suvtk_db		~1GB	no	suvtk download-database; 提交管线注释用
+virus_db_rdrpcatch	download	dir	db	virus-db/rdrp-db/rdrpcatch_dbs		~2GB	no	rdrpcatch databases -o; RdRp 检测（Stage 2）
+virus_db_viralm	local	dir	db	virus-db/viralm_db		~1.5GB	no	D4: ViraLM / DNABERT-2 模型（gdown，§2.6）; env viralm
+virus_db_virbot_ref	local	file	db	virus-db/VirBot/ref/VirBot.dmnd		~1GB	no	D4: VirBot 参考库（OneDrive，§2.8）
+virus_db_pyhmmer_hmm	local	dir	db	virus-db/hmm	viral/combined.hmm	~5GB	no	D4: pyhmmer HMM（viral/combined.hmm + pfam/Pfam-A-*.hmm）
+plant_ref_db	local	dir	plant	3.final-ref-virus.db	final.complete_ref.fasta	~3GB	yes	植物病毒参考库; cluster.ref_genomes + validate_rescue_cdd 的 genera/family 表
+repo_cdd_whitelist	local	file	repo	database/cdd/cdd_virus_final_v4.txt		~278KB	yes	filter_virus.py DEFAULTS['CDD_WHITELIST']; 被 .gitignore 忽略，需从共享池拷
+repo_cdd_taxid	local	file	repo	database/cdd/cdd_classified_taxid.tsv		~47MB	yes	filter_virus.py DEFAULTS['CDD_CLASSIFIED']; 同上
+repo_virus_taxid	local	file	repo	database/uniprot/virus.taxid.txt		~1MB	yes	filter_virus.py DEFAULTS['VIRUS_TAXID']; 同上
+repo_genus_lens	local	file	repo	database/genus_lens		~64KB	yes	integrate_rescue_evidence.py:207 回退路径
+repo_ictv_msl41	local	file	repo	database/ICTV_MSL41_Species.tsv		~400KB	yes	ICTV MSL41 各分类阶元表 + valid_names.json
+repo_cross_analysis	local	dir	repo	database/cross_analysis	genus_host_probability.tsv	~11MB	yes	D3: ICTV 宿主概率表; utils/classify_contigs.py --prob_dir 用; 被 .gitignore 忽略
+repo_virhunter_weights	repo	dir	repo	biosoft/virhunter/weights/generalistic		~6.6MB	no	D4: VirHunter 权重; 随 git 仓库自带，无需部署（列出以保证清单完整）

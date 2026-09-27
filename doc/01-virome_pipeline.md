@@ -19,10 +19,10 @@ python virome_pipeline.py --stage <stage> [参数]
 --stage identification     六工具病毒鉴定
 --stage cobra              COBRA 批量延伸
 --stage cluster            聚类 (CD-HIT + vclust, 仅聚类不拯救)
---stage taxonomy           五工具分类 + R 共识
+--stage taxonomy           八工具分类 + R 共识
 --stage host               宿主预测 (ICTV > RNAVirHost > PhaBOX2)
 --stage checkv             按宿主 CheckV 预评估 (新增)
---stage rescue             宿主过滤 + 三支路级联拯救
+--stage rescue             宿主过滤 + 四支路级联拯救 (A→B→C→D)
 --stage all                全流程串行
 ```
 

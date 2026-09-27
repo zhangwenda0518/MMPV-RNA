@@ -1,0 +1,18 @@
+{
+  "description": "TCS collapses its inferred chain into one weighted edge",
+  "derivation": "Hand-traced against TCS::computeGraph. Sequences AAAA, AAAT, ATTT: distances H1-H2=1, H2-H3=2, H1-H3=3. Level 1 connects H1-H2 directly. Level 2 connects the {H1,H2} component to H3 via H2 (findIntermediates keeps u=H2, v=H3, path length 2), creating one unlabelled intermediate with two unit edges. Level 3's H1-H3 pair is now within one component and is skipped. The post-pass collapses the degree-2 intermediate into a single H2-H3 edge of weight 2. Ids by sorted sequence: AAAA->H1, AAAT->H2, ATTT->H3.",
+  "algorithm": "tcs",
+  "params": {},
+  "sequences": {
+    "s1": "AAAA",
+    "s2": "AAAT",
+    "s3": "ATTT"
+  },
+  "expected": {
+    "nodes": ["H1", "H2", "H3"],
+    "edges": [
+      ["H1", "H2", 1],
+      ["H2", "H3", 2]
+    ]
+  }
+}

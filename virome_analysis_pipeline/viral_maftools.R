@@ -163,6 +163,28 @@ if (dir.exists(opt$input)) {
   mega_maf_dt <- data.table::fread(file = opt$input, colClasses = "character", stringsAsFactors = FALSE, showProgress = FALSE)
 }
 
+# ── [Guard v21] 空数据优雅跳过：0 变异是生物学现实，不是脚本事故 ──
+if (is.null(mega_maf_dt) || nrow(mega_maf_dt) == 0) {
+  cat("\n[跳过] 输入 MAF 无任何可用变异记录（文件为空或未通过上游过滤）。\n")
+  cat("[跳过] 不生成图表，属预期行为而非错误。\n")
+  writeLines(c("maftools skipped: 0 variants retained in input MAF(s)",
+               sprintf("input: %s", opt$input),
+               sprintf("time: %s", format(Sys.time()))),
+             file.path(out_dir, "SKIPPED_EMPTY_INPUT.txt"))
+  quit(status = 0)
+}
+
+# ── [Guard v21] 必需列守卫：缺失列补 NA，绝不裸引用 ──
+required_cols <- c("Hugo_Symbol", "Start_Position", "End_Position", "Reference_Allele",
+                   "Tumor_Seq_Allele1", "Tumor_Seq_Allele2", "Variant_Classification",
+                   "Variant_Type", "Tumor_Sample_Barcode", "Protein_Change", "NCBI_Build")
+missing_cols <- setdiff(required_cols, names(mega_maf_dt))
+if (length(missing_cols) > 0) {
+  cat(sprintf("[守卫] 输入缺列 %d 个，已补 NA: %s\n", length(missing_cols),
+              paste(missing_cols, collapse = ", ")))
+  for (cc in missing_cols) mega_maf_dt[, (cc) := NA_character_]
+}
+
 suppressWarnings({ mega_maf_dt[, Start_Position := as.numeric(Start_Position)]; mega_maf_dt[, End_Position := as.numeric(End_Position)] })
 true_accession <- mega_maf_dt$NCBI_Build[1]
 mega_maf_dt[, NCBI_Build := "Viral_Consensus"]; mega_maf_dt[, Center := "GCVA_Consensus"]
@@ -179,7 +201,21 @@ custom_prot_dat <- get_ncbi_lengths(true_accession)
 if(is.null(custom_prot_dat)) custom_prot_dat <- get_empirical_lengths(mega_maf_dt)
 
 cat("[预处理完成] 交送统计中 ...\n")
-viral_maf <- tryCatch({ read.maf(maf = mega_maf_dt, vc_nonSyn = tcga_native_non_syn, verbose = FALSE) }, error = function(e) stop("\n[挂载失败] ", e$message))
+viral_maf <- tryCatch({ read.maf(maf = mega_maf_dt, vc_nonSyn = tcga_native_non_syn, verbose = FALSE) },
+    error = function(e) {
+        # ── [Guard v21] 全同义/无非同义突变：同样属生物学现实，优雅跳过 ──
+        if (grepl("non-synonymous", e$message, ignore.case = TRUE)) {
+            cat("\n[跳过] 检出变异均为同义或非编码类，无非同义突变，maftools 无图可画。\n")
+            cat(sprintf("[跳过] 输入共 %d 条变异记录，但均未达到非同义标准。\n", nrow(mega_maf_dt)))
+            writeLines(c("maftools skipped: no non-synonymous mutations in input MAF(s)",
+                         sprintf("input: %s", opt$input),
+                         sprintf("total variant rows: %d", nrow(mega_maf_dt)),
+                         sprintf("time: %s", format(Sys.time()))),
+                       file.path(out_dir, "SKIPPED_EMPTY_INPUT.txt"))
+            quit(status = 0)
+        }
+        stop("\n[挂载失败] ", e$message)
+    })
 
 summary_df <- as.data.frame(viral_maf@summary)
 n_samples <- as.numeric(summary_df[summary_df$ID == "Samples", "summary"])
@@ -203,6 +239,10 @@ cat(" -> [保留经典模型] 绘制瀑布图与突变面板...\n")
 safe_plot(paste0(output_prefix, "_01_mafSummary_TCGA.pdf"), 11, 8, quote({ plotmafSummary(maf = viral_maf, rmOutlier = TRUE, addStat = "median", dashboard = TRUE, color = custom_colors, textSize = 0.8) }))
 safe_plot(paste0(output_prefix, "_06_TiTv_Summary.pdf"), 10, 7, quote({ plotTiTv(res = titv(maf = viral_maf, plot = FALSE, useSyn = TRUE)) }))
 safe_plot(paste0(output_prefix, "_02_Oncoplot.pdf"), max(10, min(14, n_samples * 1.5)), if(n_samples>1) max(8, min(15, 0.4*opt$top)) else 8, quote({ oncoplot(maf=viral_maf, top=opt$top, fontSize=0.8, colors=custom_colors, showTumorSampleBarcodes=(n_samples>1 && n_samples<50), titleText = sprintf("Mutational Cohort N=%d", n_samples)) }))
+
+# somaticInteractions: 突变共现/互斥互作网络
+cat(" -> 拓扑关联: 绘制体细胞突变互作网络...\n")
+safe_plot(paste0(output_prefix, "_04_SomaticInteractions_Network.pdf"), 10, 8, quote({ somaticInteractions(maf=viral_maf, top=25, pvalue=c(0.05, 0.1)) }))
 
 gene_sum <- getGeneSummary(viral_maf)$Hugo_Symbol
 target_genes <- if(is.null(opt$gene)) head(gene_sum, 5) else if(tolower(opt$gene)=="all") gene_sum else intersect(unlist(strsplit(opt$gene, ",")), gene_sum)

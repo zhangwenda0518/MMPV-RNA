@@ -1,0 +1,90 @@
+genus	species	source	components
+Caulimovirus	Angelica bushy stunt virus	existing	MP|RT
+Caulimovirus	Atractylodes mild mottle virus	existing	RT
+Badnavirus	Banana streak CA virus	existing	VAP
+Badnavirus	Banana streak IM virus	existing	VAP
+Badnavirus	Banana streak OL virus	existing	VAP
+Badnavirus	Banana streak UA virus	existing	VAP
+Badnavirus	Banana streak UI virus	existing	VAP
+Badnavirus	Banana streak UL virus	existing	VAP
+Badnavirus	Banana streak UM virus	existing	VAP
+Cavemovirus	Cassava vein mosaic virus	existing	AP+RT|MP+CP|VAP
+Caulimovirus	Cauliflower mosaic virus	existing	CP|MP|RT
+?	Caulimovirus MSa3	existing	MP
+Caulimovirus	Caulimovirus sp.	existing	CP|MP|RT
+Caulimovirus	Caulimovirus-DPa2	existing	RT
+Caulimovirus	Caulimovirus-DPa3	existing	RH|RT
+Caulimovirus	Caulimovirus-GJa1	existing	MP
+Caulimovirus	Caulimovirus-GJa2	existing	AP|MP
+Caulimovirus	Caulimovirus-PDa1	existing	MP
+Caulimovirus	Caulimovirus-PDa4	existing	MP
+Soymovirus	Cestrum yellow leaf curling virus	existing	VAP
+Caulimovirus	Dahlia common mosaic virus	existing	CP|MP|RT
+Caulimovirus	Dahlia mosaic virus	existing	MP
+Caulimovirus	Eupatorium vein clearing virus	existing	VAP
+Soymovirus	Hibiscus soymovirus	existing	CP|MP
+Caulimovirus	Hygrophyla virus 1 NIB-1	existing	CP|MP|RT|VAP
+Caulimovirus	Lamium leaf distortion virus	existing	VAP
+Caulimovirus	Metaplexis yellow mottle-associated virus	existing	CP|MP
+Caulimovirus	Physostegia virginiana caulimovirus 1	existing	RT
+Caulimovirus	Physostegia virginiana caulimovirus 2	existing	RT
+Badnavirus	Pitaya badnavirus 1	existing	VAP
+Caulimovirus	Plant associated caulimovirus 1	existing	RT+RH
+Soymovirus	Plant associated soymovirus 1	existing	RT+RH
+Caulimovirus	Pueraria virus A	existing	CP|RT
+Tungrovirus	Rice tungro bacilliform virus	existing	CP
+Rosadnavirus	Rose yellow vein virus	existing	CP|MP|RT
+Soymovirus	Soybean chlorotic mottle virus	existing	VAP
+Soymovirus	Soymovirus malvae	existing	CP|MP
+Caulimovirus	Strawberry vein banding virus	existing	CP|MP|RT|VAP
+Badnavirus	Sugarcane bacilliform Guadeloupe A virus	existing	VAP
+Badnavirus	Sugarcane bacilliform virus	existing	VAP
+Cavemovirus	Sweet potato collusive virus	existing	MP+CP
+Badnavirus	Taro bacilliform virus	existing	VAP
+Solendovirus	Tobacco vein clearing virus	existing	CP|MP
+Soymovirus	Water chestnut soymovirus 1	existing	AP
+?	Aristotelia chilensis virus 1	added	MP|RT
+?	Banana streak Musa itinerans virus	added	AP+RT+RH
+?	Banana streak Peru virus	added	AP+RT+RH
+?	Pinus nigra virus 1	added	AP+RT+RH
+Badnavirus	Aglaonema bacilliform virus	added	AP+RT+RH
+Badnavirus	Andraeanum bacilliform virus	added	AP+RT+RH
+Badnavirus	Badnavirus alphananas	added	AP+RT+RH
+Badnavirus	Badnavirus camelliae	added	AP+RT+RH
+Badnavirus	Badnavirus maculakalanchoes	added	AP+RT+RH
+Badnavirus	Badnavirus sp.	added	AP+RT+RH
+Badnavirus	Badnavirus tetainflatheobromae	added	AP+RT+RH
+Badnavirus	Badnavirus venaribis	added	AP+RT+RH
+Badnavirus	Banana streak GF virus	added	AP+RT+RH
+Badnavirus	Banana streak MY virus	added	AP+RT+RH|VAP
+Badnavirus	Banana streak VN virus	added	AP+RT+RH
+Badnavirus	Banana streak virus	added	AP+RT+RH
+Badnavirus	Banana streak virus Acuminata Yunnan	added	AP+RT+RH
+Badnavirus	Birch leaf roll-associated virus	added	AP+RT+RH
+Badnavirus	Black pepper virus B	added	AP+RT+RH
+Badnavirus	Blackberry virus F	added	AP+RT+RH
+Badnavirus	Bougainvillea chlorotic vein banding virus	added	AP+RT+RH
+Badnavirus	Cacao bacilliform Sri Lanka virus	added	AP+RT+RH
+Badnavirus	Cacao mild mosaic virus	added	AP+RT+RH
+Badnavirus	Cacao red vein-banding virus	added	AP+RT+RH
+Badnavirus	Cacao swollen shoot CD virus	added	AP+RT+RH
+Badnavirus	Cacao swollen shoot CE virus	added	AP+RT+RH
+Badnavirus	Cacao swollen shoot Ghana J virus	added	AP+RT+RH
+Badnavirus	Cacao swollen shoot Ghana K virus	added	AP+RT+RH
+Badnavirus	Cacao swollen shoot Ghana L virus	added	AP+RT+RH
+Caulimovirus	Carnation etched ring virus	added	AP+RT|AP+RT+RH|CP|MP
+Caulimovirus	Dahlia mosaic virus D10	added	AP+RT+RH|MP
+Caulimovirus	Dahlia mosaic virus-Holland	added	CP|MP|RT
+Caulimovirus	Horseradish latent virus	added	AP+RT+RH|CP|MP
+Caulimovirus	Isatis caulimovirus A	added	CP|MP|RT
+Caulimovirus	Silene caulimovirus A	added	AP+RT+RH|CP|MP
+Caulimovirus	Soybean Putnam virus	added	CP|MP|RT
+Cavemovirus	Epiphyllum virus 4	added	CP
+Cavemovirus	chicory mosaic cavemovirus	added	CP
+Petuvirus	Petunia vein clearing virus	added	AP+RT+RH
+Rosadnavirus	Viola yellow mottle virus	added	CP|MP
+Ruflodivirus	Rudbeckia flower distortion virus	added	AP+RT+RH|CP|MP
+Solendovirus	Sweet potato vein clearing virus	added	CP|MP
+Soymovirus	Blueberry red ringspot virus	added	CP|MP|RT
+Soymovirus	Peanut chlorotic streak virus	added	CP|MP|RT
+Vaccinivirus	Vaccinivirus cadovaccinii	added	AP+RT+RH

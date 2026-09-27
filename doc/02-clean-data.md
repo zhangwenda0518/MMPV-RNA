@@ -1,17 +1,17 @@
-# clean-data.py — 数据清洗 / Data Cleaning
+# clean-data.py — 数据清洗 / Data Cleaning（`data_preprocessing_pipeline/`）
 
-> Fastp QC → Seqkit FASTQ-to-FASTA → Clumpify optical dedup. Checkpoint-resume with `.clean_checkpoints`.
+> Fastp QC → Seqkit FASTQ-to-FASTA → Clumpify clustering/reordering for better compression. Checkpoint-resume with `.clean_checkpoints`.
 
 ## 流程 / Workflow
 
 ```
-Fastp 质控 → Seqkit 统计 → Clumpify 去重
+Fastp 质控 → Seqkit 统计 → Clumpify 聚类重排（提升压缩率）
 ```
 
 ## 用法
 
 ```bash
-python clean-data.py --input <dir> --output <dir> [参数]
+python data_preprocessing_pipeline/clean-data.py --input <dir> --output <dir> [参数]
 ```
 
 ## 参数
@@ -22,9 +22,9 @@ python clean-data.py --input <dir> --output <dir> [参数]
 | `--output` | 必需 | 输出目录 |
 | `--fastp-threads` | 4 | Fastp 线程数 |
 | `--jobs` | 1 | 并行任务数 |
-| `--skip-clumpify` | — | 跳过 Clumpify 光学去重 |
+| `--skip-clumpify` | — | 跳过 Clumpify 聚类重排（提升压缩率） |
 | `--force` | — | 强制重跑 (清除 checkpoint) |
-| `--dedup` | — | 额外去重 |
+| `--dedup` | — | fastp 自带去重 (默认未开启) |
 | `--clumpify-memory` | 10g | Clumpify 内存 |
 
 ## 输出
@@ -33,7 +33,7 @@ python clean-data.py --input <dir> --output <dir> [参数]
 {output}/
 ├── 1.fastp/          Fastp 质控报告 (HTML/JSON)
 ├── 2.fasta/          清洗后 FASTA
-├── 3.clumpify/       Clumpify 去重 reads
+├── 3.clumpify/       Clumpify 重排 reads
 └── logs/
 ```
 

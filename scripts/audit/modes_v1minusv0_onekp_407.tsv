@@ -1,0 +1,408 @@
+contig_id	Family	Genus	Determination_Level	Host_ICTV	pred|L1	pred|L2	evidence	Host	Host_NCBI_lineage
+ERR2040118_clean_NODE_3110_length_1999_cov_45.834867	Hepaciviridae	Sequivirus	Species(via Species)	Plant	Invertebrate		pred_low_confidence	-	-
+ERR2040119_clean_NODE_240_length_3688_cov_8.587380	Mimiviridae	Arepavirus	Species(via Species)	Plant				-	-
+ERR2040119_clean_NODE_459_length_3180_cov_5.632770	Mimiviridae	Alohovirus	Species(via Species)	Plant				-	-
+ERR2040123_clean_NODE_340_length_2792_cov_6.701346	Mimiviridae	Fabavirus	Species(via Species)	Plant				-	-
+ERR2040125_clean_NODE_22729_length_705_cov_3.916159	Iridoviridae	Sadwavirus	Species(via Species)	Plant				-	-
+ERR2040125_clean_NODE_407_length_3725_cov_11.559032	Mimiviridae	Ipomovirus	Species(via Species)	Plant				-	-
+ERR2040127_clean_NODE_1849_length_2312_cov_11.671662	Orthoherpesviridae	Macluravirus	Species(via Species)	Plant				-	-
+ERR2040127_clean_NODE_21_length_6103_cov_11.292079	Mimiviridae	Tritimovirus	Species(via Species)	Plant				-	-
+ERR2040129_clean_NODE_1684_length_2087_cov_9.728963	Mimiviridae	Nepovirus	Genus(via Genus)	Plant				-	-
+ERR2040130_clean_NODE_2166_length_1961_cov_7.527633	Orthoherpesviridae	Macluravirus	Species(via Species)	Plant				-	-
+ERR2040135_clean_NODE_580_length_3527_cov_238.446809	Allomimiviridae	Potexvirus	Species(via Species)	Plant				-	-
+ERR2040137_clean_NODE_3536_length_2000_cov_10.115013	Mimiviridae	Tymovirus	Species(via Species)	Plant				-	-
+ERR2040143_clean_NODE_2167_length_2188_cov_13.591608	Orthoherpesviridae	Macluravirus	Species(via Species)	Plant				-	-
+ERR2040144_clean_NODE_68_length_2866_cov_8.314559	Phycodnaviridae	Carlavirus	Species(via Species)	Plant				genus:Chlorella	d__Eukaryota;p__Chlorophyta;c__Trebouxiophyceae;o__Chlorellales;f__Chlorellaceae;g__Chlorella
+ERR2040145_clean_NODE_642_length_2489_cov_12.423957	Orthoherpesviridae	Macluravirus	Species(via Species)	Plant				-	-
+ERR2040146_clean_NODE_2310_length_2241_cov_18.277070	Orthoherpesviridae	Macluravirus	Species(via Species)	Plant	Chordata	Artiodactyla	pred_high_confidence	-	-
+ERR2040151_clean_NODE_11_length_4880_cov_36.771139	Mimiviridae	Polerovirus	Species(via Species)	Plant				-	-
+ERR2040157_clean_NODE_191_length_3716_cov_12.562076	Mimiviridae	Varicosavirus	Genus(via Genus)	Plant				species:Streptococcus cristatus	d__Bacteria;p__Firmicutes;c__Bacilli;o__Lactobacillales;f__Streptococcaceae;g__Streptococcus;s__Streptococcus cristatus
+ERR2040160_clean_NODE_5370_length_1648_cov_9.786916	Phycodnaviridae	Tritimovirus	Species(via Species)	Plant				genus:Synechococcus	d__Bacteria;p__Cyanobacteriota;c__Cyanophyceae;o__Synechococcales;f__Synechococcaceae;g__Synechococcus
+ERR2040161_clean_NODE_2812_length_1912_cov_74.957731	Phycodnaviridae	Badnavirus	Species(via Species)	Plant				species:Vermamoeba vermiformis	d__Eukaryota;p__Tubulinea;c__Echinamoebida;o__;f__Vermamoebidae;g__Vermamoeba;s__Vermamoeba vermiformis
+ERR2040172_clean_NODE_1_length_7861_cov_94.494633	Astroviridae	Potyvirus	Species(via Species)	Plant	Invertebrate		pred_high_confidence	-	-
+ERR2040180_clean_NODE_1457_length_1938_cov_9.665435	Pithoviridae	Nepovirus	Genus(via Genus)	Plant				-	-
+ERR2040182_clean_NODE_1500_length_2520_cov_9.029471	Orthoherpesviridae	Macluravirus	Species(via Species)	Plant				-	-
+ERR2040194_clean_NODE_343_length_3338_cov_10.757511	Mimiviridae	Potexvirus	Species(via Species)	Plant				-	-
+ERR2040197_clean_NODE_3699_length_1441_cov_4.690272	Mimiviridae	Nepovirus	Species(via Species)	Plant				species:Bodo saltans	d__Eukaryota;p__Euglenozoa;c__Kinetoplastea;o__Eubodonida;f__Bodonidae;g__Bodo;s__Bodo saltans
+ERR2040199_clean_NODE_1486_length_2270_cov_49.640323	Orthoherpesviridae	Macluravirus	Species(via Species)	Plant				-	-
+ERR2040202_clean_NODE_286_length_2988_cov_7.845840	Mimiviridae	Vitivirus	Species(via Species)	Plant				species:Vermamoeba vermiformis	d__Eukaryota;p__Tubulinea;c__Echinamoebida;o__;f__Vermamoebidae;g__Vermamoeba;s__Vermamoeba vermiformis
+ERR2040204_clean_NODE_601_length_2226_cov_9.067797	Orthoherpesviridae	Macluravirus	Species(via Species)	Plant				-	-
+ERR2040207_clean_NODE_146_length_4434_cov_9.319517	Marseilleviridae	Orthotospovirus	Genus(via Genus)	Plant	Invertebrate		pred_high_confidence	-	-
+ERR2040209_clean_NODE_63_length_4500_cov_13.544985	Mamonoviridae	Badnavirus	Species(via Species)	Plant				-	-
+ERR2040210_clean_NODE_2150_length_1845_cov_47.219756	Schizomimiviridae	Alphacytorhabdovirus	Species(via Species)	Plant				species:Aureococcus anophagefferens	d__Eukaryota;p__;c__Pelagophyceae;o__Pelagomonadales;f__Pelagomonadaceae;g__Aureococcus;s__Aureococcus anophagefferens
+ERR2040213_clean_NODE_72_length_4491_cov_11.165468	Mimiviridae	Deltapartitivirus	Species(via Species)	Plant	Chordata	Reptilia	pred_low_confidence	-	-
+ERR2040222_clean_NODE_764_length_2382_cov_8.419410	Mimiviridae	Emaravirus	Species(via Species)	Plant				-	-
+ERR2040232_clean_NODE_1582_length_2445_cov_11.999167	Mimiviridae	Alphaendornavirus	Genus(via Genus)	Plant				-	-
+ERR2040232_clean_NODE_2165_length_2237_cov_94.373747	Hepaciviridae	Coguvirus	Species(via Species)	Plant				species:Vermamoeba vermiformis	d__Eukaryota;p__Tubulinea;c__Echinamoebida;o__;f__Vermamoebidae;g__Vermamoeba;s__Vermamoeba vermiformis
+ERR2040241_clean_NODE_1587_length_2526_cov_29.914091	Marseilleviridae	Deltanucleorhabdovirus	Genus(via Genus)	Plant				-	-
+ERR2040247_clean_NODE_6661_length_1303_cov_27.128571	Mimiviridae	Tobamovirus	Genus(via Genus)	Plant				genus:Acanthamoeba	d__Eukaryota;p__Discosea;c__;o__Longamoebia;f__Acanthamoebidae;g__Acanthamoeba
+ERR2040250_clean_NODE_148_length_3473_cov_125.666181	Nimaviridae	Badnavirus	Species(via Species)	Plant				-	-
+ERR2040252_clean_NODE_108_length_3753_cov_21.970414	Phycodnaviridae	Orthotospovirus	Species(via Species)	Plant				genus:Chlorella	d__Eukaryota;p__Chlorophyta;c__Trebouxiophyceae;o__Chlorellales;f__Chlorellaceae;g__Chlorella
+ERR2040252_clean_NODE_1132_length_2412_cov_14.880522	Orthoherpesviridae	Macluravirus	Species(via Species)	Plant				-	-
+ERR2040255_clean_NODE_504_length_2506_cov_17.554202	Mimiviridae	Fabavirus	Species(via Species)	Plant				species:Acanthamoeba polyphaga	d__Eukaryota;p__Discosea;c__;o__Longamoebia;f__Acanthamoebidae;g__Acanthamoeba;s__Acanthamoeba polyphaga
+ERR2040273_clean_NODE_3559_length_2096_cov_12.898685	Orthoherpesviridae	Macluravirus	Species(via Species)	Plant	Chordata	Artiodactyla	pred_high_confidence	-	-
+ERR2040273_clean_NODE_453_length_3858_cov_5.196330	Pithoviridae	Luteovirus	Species(via Species)	Plant				-	-
+ERR2040273_clean_NODE_93_length_5581_cov_12.570964	Schizomimiviridae	Deltanucleorhabdovirus	Genus(via Genus)	Plant	Fungi		pred_low_confidence	-	-
+ERR2040283_clean_NODE_2339_length_2382_cov_24.330056	Nimaviridae	Ampelovirus	Species(via Species)	Plant				-	-
+ERR2040291_clean_NODE_976_length_2080_cov_6.517428	Orthoherpesviridae	Macluravirus	Species(via Species)	Plant				-	-
+ERR2040295_clean_NODE_726_length_2188_cov_3.574359	Baculoviridae	Nepovirus	Species(via Species)	Plant				-	-
+ERR2040299_clean_NODE_1327_length_2033_cov_10.836683	Mimiviridae	Poacevirus	Species(via Species)	Plant				-	-
+ERR2040302_clean_NODE_715_length_2301_cov_15.611160	Orthoherpesviridae	Macluravirus	Species(via Species)	Plant				-	-
+ERR2040304_clean_NODE_506_length_2354_cov_130.855041	Mimiviridae	Deltapartitivirus	Species(via Species)	Plant	Invertebrate		pred_low_confidence	species:Vermamoeba vermiformis	d__Eukaryota;p__Tubulinea;c__Echinamoebida;o__;f__Vermamoebidae;g__Vermamoeba;s__Vermamoeba vermiformis
+ERR2040305_clean_NODE_1153_length_2263_cov_6.532883	Orthoherpesviridae	Macluravirus	Species(via Species)	Plant				-	-
+ERR2040308_clean_NODE_1132_length_2297_cov_7.855812	Orthoherpesviridae	Macluravirus	Species(via Species)	Plant				-	-
+ERR2040309_clean_NODE_662_length_2923_cov_13.676389	Nimaviridae	Ampelovirus	Species(via Species)	Plant				-	-
+ERR2040321_clean_NODE_420_length_3478_cov_23.463464	Alloherpesviridae	Becurtovirus	Species(via Species)	Plant				-	-
+ERR2040339_clean_NODE_2054_length_529_cov_6.886831	Nimaviridae	Allexivirus	Species(via Species)	Plant				-	-
+ERR2040346_clean_NODE_2809_length_1662_cov_37.860408	Nimaviridae	Ampelovirus	Species(via Species)	Plant				-	-
+ERR2040347_clean_NODE_262_length_3409_cov_43.098633	Mimiviridae	Potexvirus	Species(via Species)	Plant				species:Acanthamoeba castellanii	d__Eukaryota;p__Discosea;c__;o__Longamoebia;f__Acanthamoebidae;g__Acanthamoeba;s__Acanthamoeba castellanii
+ERR2040350_clean_NODE_1135_length_2240_cov_11.163405	Orthoherpesviridae	Macluravirus	Species(via Species)	Plant				-	-
+ERR2040360_clean_NODE_3113_length_2180_cov_5.156294	Orthoherpesviridae	Macluravirus	Species(via Species)	Plant				-	-
+ERR2040362_clean_NODE_1459_length_2141_cov_35.079600	Phycodnaviridae	Tritimovirus	Species(via Species)	Plant				-	-
+ERR2040366_clean_NODE_2749_length_1684_cov_9.703839	Orthoherpesviridae	Macluravirus	Species(via Species)	Plant				-	-
+ERR2040371_clean_NODE_2494_length_2117_cov_70.550627	Orthoherpesviridae	Macluravirus	Species(via Species)	Plant	Invertebrate		pred_low_confidence	-	-
+ERR2040374_clean_NODE_2821_length_1891_cov_57.161255	Orthoherpesviridae	Macluravirus	Species(via Species)	Plant				-	-
+ERR2040376_clean_NODE_151_length_5401_cov_12.571855	Mimiviridae	Velarivirus	Species(via Species)	Plant				-	-
+ERR2040380_clean_NODE_53_length_6587_cov_8.282549	Mimiviridae	Nepovirus	Genus(via Genus)	Plant	Invertebrate		pred_low_confidence	-	-
+ERR2040383_clean_NODE_2884_length_2344_cov_91.892655	Mimiviridae	Deltapartitivirus	Species(via Species)	Plant				species:Vermamoeba vermiformis	d__Eukaryota;p__Tubulinea;c__Echinamoebida;o__;f__Vermamoebidae;g__Vermamoeba;s__Vermamoeba vermiformis
+ERR2040384_clean_NODE_706_length_3113_cov_18.454397	Schizomimiviridae	Closterovirus	Species(via Species)	Plant				species:Aureococcus anophagefferens	d__Eukaryota;p__;c__Pelagophyceae;o__Pelagomonadales;f__Pelagomonadaceae;g__Aureococcus;s__Aureococcus anophagefferens
+ERR2040385_clean_NODE_257_length_3456_cov_28.786027	Mimiviridae	Badnavirus	Species(via Species)	Plant				-	-
+ERR2040390_clean_NODE_1295_length_2883_cov_113.113732	Marseilleviridae	Cucumovirus	Species(via Species)	Plant				-	-
+ERR2040390_clean_NODE_2026_length_2487_cov_16.686579	Orthoherpesviridae	Macluravirus	Species(via Species)	Plant				-	-
+ERR2040395_clean_NODE_609_length_1719_cov_43.320406	Mimiviridae	Polerovirus	Species(via Species)	Plant				-	-
+ERR2040398_clean_NODE_483_length_1952_cov_5.006286	Mimiviridae	Tymovirus	Species(via Species)	Plant				-	-
+ERR2040402_clean_NODE_1327_length_2119_cov_63.080443	Orthoherpesviridae	Macluravirus	Species(via Species)	Plant				-	-
+ERR2040402_clean_NODE_245_length_3285_cov_76.066934	Mimiviridae	Ipomovirus	Species(via Species)	Plant	Invertebrate		pred_low_confidence	-	-
+ERR2040402_clean_NODE_43_length_4661_cov_32.214812	Phycodnaviridae	Ampelovirus	Genus(via Genus)	Plant				-	-
+ERR2040403_clean_NODE_2134_length_2287_cov_13.493316	Orthoherpesviridae	Macluravirus	Species(via Species)	Plant				-	-
+ERR2040404_clean_NODE_1172_length_2140_cov_6.075534	Mimiviridae	Citrivirus	Species(via Species)	Plant				-	-
+ERR2040404_clean_NODE_1524_length_1960_cov_26.609870	Poxviridae	Becurtovirus	Species(via Species)	Plant				genus:Phoeniconaias	d__Eukaryota;p__Chordata;c__Aves;o__Phoenicopteriformes;f__Phoenicopteridae;g__Phoeniconaias
+ERR2040405_clean_NODE_1391_length_2670_cov_9.118786	Mimiviridae	Maculavirus	Species(via Species)	Plant	Invertebrate		pred_low_confidence	-	-
+ERR2040414_clean_NODE_1105_length_2831_cov_13.727044	Mimiviridae	Betanucleorhabdovirus	Genus(via Genus)	Plant				-	-
+ERR2040415_clean_NODE_1049_length_3282_cov_19.238036	Pithoviridae	Tritimovirus	Species(via Species)	Plant				-	-
+ERR2040415_clean_NODE_2956_length_2324_cov_13.932486	Mimiviridae	Ampelovirus	Species(via Species)	Plant				-	-
+ERR2040416_clean_NODE_110_length_4268_cov_15.894438	Orthoherpesviridae	Macluravirus	Species(via Species)	Plant				-	-
+ERR2040429_clean_NODE_1241_length_2013_cov_17.985279	Nudiviridae	Ampelovirus	Species(via Species)	Plant				species:Helicoverpa zea	d__Eukaryota;p__Arthropoda;c__Insecta;o__Lepidoptera;f__Noctuidae;g__Helicoverpa;s__Helicoverpa zea
+ERR2040429_clean_NODE_1662_length_1867_cov_3.968202	Allomimiviridae	Maculavirus	Species(via Species)	Plant				-	-
+ERR2040429_clean_NODE_9266_length_874_cov_17.496992	Papillomaviridae	Alfamovirus	Species(via Species)	Plant				-	-
+ERR2040431_clean_NODE_2461_length_2293_cov_114.156889	Mimiviridae	Potyvirus	Species(via Species)	Plant				-	-
+ERR2040431_clean_NODE_2592_length_2245_cov_9.145777	Orthoherpesviridae	Macluravirus	Species(via Species)	Plant				-	-
+ERR2040431_clean_NODE_3915_length_1901_cov_23.382131	Phycodnaviridae	Waikavirus	Species(via Species)	Plant				-	-
+ERR2040433_clean_NODE_19105_length_695_cov_8.976994	Orpheoviridae	Tritimovirus	Species(via Species)	Plant				-	-
+ERR2040437_clean_NODE_1107_length_2137_cov_12.512894	Mimiviridae	Potexvirus	Species(via Species)	Plant	Invertebrate		pred_low_confidence	-	-
+ERR2040437_clean_NODE_1336_length_2025_cov_11.366801	Mimiviridae	Potyvirus	Species(via Species)	Plant				-	-
+ERR2040448_clean_NODE_278_length_3651_cov_27.300166	Mimiviridae	Ilarvirus	Species(via Species)	Plant				-	-
+ERR2040449_clean_NODE_1717_length_2209_cov_24.165282	Phycodnaviridae	Potexvirus	Species(via Species)	Plant				-	-
+ERR2040452_clean_NODE_1166_length_2302_cov_20.290394	Orthoherpesviridae	Macluravirus	Species(via Species)	Plant				-	-
+ERR2040455_clean_NODE_3175_length_1846_cov_11.029395	Orthoherpesviridae	Macluravirus	Species(via Species)	Plant				-	-
+ERR2040456_clean_NODE_1868_length_2366_cov_19.911752	Pithoviridae	Macluravirus	Species(via Species)	Plant	Invertebrate		pred_low_confidence	-	-
+ERR2040463_clean_NODE_1427_length_2331_cov_15.671603	Orthoherpesviridae	Macluravirus	Species(via Species)	Plant				-	-
+ERR2040464_clean_NODE_2096_length_2119_cov_9.985549	Orthoherpesviridae	Macluravirus	Species(via Species)	Plant				-	-
+ERR2040465_clean_NODE_164_length_2531_cov_10.553457	Mimiviridae	Begomovirus	Species(via Species)	Plant				-	-
+ERR2040467_clean_NODE_1168_length_2055_cov_81.519881	Adenoviridae	Trichovirus	Species(via Species)	Plant				-	-
+ERR2040468_clean_NODE_2113_length_1870_cov_44.563218	Schizomimiviridae	Potexvirus	Species(via Species)	Plant				-	-
+ERR2040475_clean_NODE_106_length_5866_cov_27.237850	Mimiviridae	Maculavirus	Species(via Species)	Plant	Chordata	Fish	pred_low_confidence	-	-
+ERR2040475_clean_NODE_2509_length_2434_cov_53.626098	Mimiviridae	Tenuivirus	Species(via Species)	Plant				-	-
+ERR2040475_clean_NODE_3573_length_2136_cov_23.197324	Mimiviridae	Nepovirus	Genus(via Genus)	Plant	Invertebrate		pred_low_confidence	-	-
+ERR2040475_clean_NODE_4163_length_2006_cov_21.830871	Mimiviridae	Solendovirus	Species(via Species)	Plant				-	-
+ERR2040476_clean_NODE_1387_length_2673_cov_4.757795	Phycodnaviridae	Begomovirus	Species(via Species)	Plant	Invertebrate		pred_low_confidence	-	-
+ERR2040476_clean_NODE_367_length_3746_cov_27.386984	Mimiviridae	Deltapartitivirus	Genus(via Genus)	Plant				-	-
+ERR2040486_clean_NODE_2124_length_1820_cov_4.936410	Orthoherpesviridae	Macluravirus	Species(via Species)	Plant				-	-
+ERR2040494_clean_NODE_1247_length_2034_cov_21.839779	Mimiviridae	Tritimovirus	Species(via Species)	Plant				-	-
+ERR2040496_clean_NODE_842_length_3146_cov_76.296165	Phycodnaviridae	Maculavirus	Species(via Species)	Plant				-	-
+ERR2040500_clean_NODE_1698_length_2759_cov_24.463549	Pithoviridae	Nepovirus	Species(via Species)	Plant				-	-
+ERR2040514_clean_NODE_3398_length_1339_cov_3.466821	Poxviridae	Pelarspovirus	Species(via Species)	Plant				species:Ovis aries	d__Eukaryota;p__Chordata;c__Mammalia;o__Artiodactyla;f__Bovidae;g__Ovis;s__Ovis aries
+ERR2040529_clean_NODE_1264_length_2372_cov_12.640189	Phycodnaviridae	Ampelovirus	Species(via Species)	Plant				-	-
+ERR2040530_clean_NODE_1468_length_2785_cov_34.674690	Alloherpesviridae	Waikavirus	Species(via Species)	Plant	Invertebrate		pred_low_confidence	-	-
+ERR2040533_clean_NODE_2260_length_2432_cov_4.487652	Phycodnaviridae	Ampelovirus	Species(via Species)	Plant				-	-
+ERR2040542_clean_NODE_741_length_2735_cov_14.294577	Nimaviridae	Ampelovirus	Species(via Species)	Plant				-	-
+ERR2040543_clean_NODE_205_length_3051_cov_10.978391	Nimaviridae	Ampelovirus	Species(via Species)	Plant				-	-
+ERR2040544_clean_NODE_406_length_2692_cov_16.594186	Mimiviridae	Luteovirus	Genus(via Genus)	Plant				-	-
+ERR2040550_clean_NODE_781_length_2549_cov_65.338388	Orpheoviridae	Torradovirus	Genus(via Genus)	Plant				species:Prymnesium kappa	d__Eukaryota;p__Haptophyta;c__;o__Prymnesiales;f__Prymnesiaceae;g__Prymnesium;s__Prymnesium kappa
+ERR2040552_clean_NODE_2413_length_2155_cov_18.841856	Mimiviridae	Deltapartitivirus	Species(via Species)	Plant				species:Vermamoeba vermiformis	d__Eukaryota;p__Tubulinea;c__Echinamoebida;o__;f__Vermamoebidae;g__Vermamoeba;s__Vermamoeba vermiformis
+ERR2040556_clean_NODE_3491_length_1688_cov_7.336778	Orthoherpesviridae	Macluravirus	Species(via Species)	Plant				-	-
+ERR2040557_clean_NODE_486_length_3222_cov_22.366153	Mimiviridae	Trichovirus	Species(via Species)	Plant				species:Acanthamoeba castellanii	d__Eukaryota;p__Discosea;c__;o__Longamoebia;f__Acanthamoebidae;g__Acanthamoeba;s__Acanthamoeba castellanii
+ERR2040559_clean_NODE_662_length_3375_cov_13.027545	Phycodnaviridae	Ilarvirus	Species(via Species)	Plant				-	-
+ERR2040559_clean_NODE_6911_length_1502_cov_17.019087	Mimiviridae	Potyvirus	Species(via Species)	Plant				-	-
+ERR2040563_clean_NODE_237_length_3764_cov_30.359850	Marseilleviridae	Umbravirus	Genus(via Genus)	Plant				genus:Prochlorococcus	d__Bacteria;p__Cyanobacteriota;c__Cyanophyceae;o__Synechococcales;f__Prochlorococcaceae;g__Prochlorococcus
+ERR2040563_clean_NODE_3003_length_1961_cov_86.441084	Adenoviridae	Potyvirus	Genus(via Genus)	Plant				-	-
+ERR2040568_clean_NODE_1357_length_2497_cov_36.812143	Mimiviridae	Potyvirus	Species(via Species)	Plant				-	-
+ERR2040568_clean_NODE_2713_length_2015_cov_102.909229	Schizomimiviridae	Alphanucleorhabdovirus	Species(via Species)	Plant				-	-
+ERR2040568_clean_NODE_3075_length_1922_cov_24.996275	Mimiviridae	Nepovirus	Genus(via Genus)	Plant				species:Vermamoeba vermiformis	d__Eukaryota;p__Tubulinea;c__Echinamoebida;o__;f__Vermamoebidae;g__Vermamoeba;s__Vermamoeba vermiformis
+ERR2040570_clean_NODE_4059_length_2017_cov_27.118541	Mimiviridae	Nepovirus	Genus(via Genus)	Plant				species:Vermamoeba vermiformis	d__Eukaryota;p__Tubulinea;c__Echinamoebida;o__;f__Vermamoebidae;g__Vermamoeba;s__Vermamoeba vermiformis
+ERR2040570_clean_NODE_627_length_3559_cov_39.781570	Mimiviridae	Deltapartitivirus	Species(via Species)	Plant				-	-
+ERR2040574_clean_NODE_143_length_2912_cov_21.241199	Mimiviridae	Deltapartitivirus	Species(via Species)	Plant				-	-
+ERR2040574_clean_NODE_732_length_2202_cov_138.661881	Orthoherpesviridae	Macluravirus	Species(via Species)	Plant				-	-
+ERR2040583_clean_NODE_5541_length_1511_cov_34.524523	Pithoviridae	Macluravirus	Species(via Species)	Plant				-	-
+ERR2040585_clean_NODE_264_length_3769_cov_123.167113	Marseilleviridae	Badnavirus	Species(via Species)	Plant				species:Prymnesium kappa	d__Eukaryota;p__Haptophyta;c__;o__Prymnesiales;f__Prymnesiaceae;g__Prymnesium;s__Prymnesium kappa
+ERR2040586_clean_NODE_4445_length_1799_cov_26.096372	Pithoviridae	Macluravirus	Species(via Species)	Plant				-	-
+ERR2040586_clean_NODE_980_length_2946_cov_25.275850	Nimaviridae	Ampelovirus	Species(via Species)	Plant	Invertebrate		pred_low_confidence	-	-
+ERR2040589_clean_NODE_17_length_6202_cov_14.764715	Iridoviridae	Robigovirus	Species(via Species)	Plant	Chordata	Fish	pred_low_confidence	genus:Micropogonias	d__Eukaryota;p__Chordata;c__Actinopteri;o__;f__Sciaenidae;g__Micropogonias
+ERR2040591_clean_NODE_1122_length_2178_cov_18.158782	Pithoviridae	Maculavirus	Species(via Species)	Plant				-	-
+ERR2040592_clean_NODE_3091_length_1800_cov_48.932271	Phycodnaviridae	Mastrevirus	Species(via Species)	Plant				-	-
+ERR2040593_clean_NODE_8730_length_839_cov_21.728643	Nimaviridae	Allexivirus	Species(via Species)	Plant	Invertebrate		pred_low_confidence	-	-
+ERR2040594_clean_NODE_908_length_2307_cov_11.708922	Mimiviridae	Luteovirus	Species(via Species)	Plant	Invertebrate		assign	-	-
+ERR2040598_clean_NODE_1771_length_2310_cov_72.183944	Mimiviridae	Alphacytorhabdovirus	Species(via Species)	Plant				-	-
+ERR2040601_clean_NODE_4524_length_1921_cov_15.752396	Mimiviridae	Closterovirus	Species(via Species)	Plant				-	-
+ERR2040602_clean_NODE_2030_length_1622_cov_17.223559	Pithoviridae	Macluravirus	Species(via Species)	Plant				-	-
+ERR2040607_clean_NODE_2474_length_2026_cov_5.336524	Mimiviridae	Potexvirus	Species(via Species)	Plant				-	-
+ERR2040609_clean_NODE_1760_length_2249_cov_5.326383	Mimiviridae	Potyvirus	Species(via Species)	Plant				-	-
+ERR2040609_clean_NODE_2508_length_2003_cov_50.365816	Schizomimiviridae	Marafivirus	Species(via Species)	Plant				species:Priestia megaterium	d__Bacteria;p__Bacillota;c__Bacilli;o__Bacillales;f__Bacillaceae;g__Priestia;s__Priestia megaterium
+ERR2040615_clean_NODE_1613_length_1525_cov_24.691946	Orthoherpesviridae	Macluravirus	Species(via Species)	Plant	Invertebrate		pred_high_confidence	-	-
+ERR2040615_clean_NODE_3432_length_1181_cov_36.445899	Mimiviridae	Maculavirus	Species(via Species)	Plant				-	-
+ERR2040621_clean_NODE_196_length_2456_cov_10.986369	Mimiviridae	Fijivirus	Genus(via Genus)	Plant				species:Cafeteria roenbergensis	d__Eukaryota;p__;c__Bigyra;o__Bicosoecida;f__Cafeteriaceae;g__Cafeteria;s__Cafeteria roenbergensis
+ERR2040630_clean_NODE_105_length_1924_cov_18.830941	Orthoherpesviridae	Macluravirus	Species(via Species)	Plant				-	-
+ERR2040638_clean_NODE_239_length_2881_cov_31.958421	Mimiviridae	Deltapartitivirus	Species(via Species)	Plant				species:Acanthamoeba sp.	d__Eukaryota;p__Discosea;c__;o__Longamoebia;f__Acanthamoebidae;g__Acanthamoeba;s__Acanthamoeba sp.
+ERR2040639_clean_NODE_934_length_2251_cov_237.333333	Mimiviridae	Sequivirus	Genus(via Genus)	Plant	Invertebrate		pred_low_confidence	-	-
+ERR2040640_clean_NODE_262_length_3264_cov_40.664700	Marseilleviridae	Badnavirus	Species(via Species)	Plant				-	-
+ERR2040645_clean_NODE_307_length_3013_cov_8.029293	Orthoherpesviridae	Macluravirus	Species(via Species)	Plant				-	-
+ERR2040646_clean_NODE_361_length_3769_cov_7.476919	Baculoviridae	Alphaendornavirus	Genus(via Genus)	Plant				-	-
+ERR2040652_clean_NODE_31_length_2412_cov_23.787252	Schizomimiviridae	Carlavirus	Species(via Species)	Plant				species:Prymnesium kappa	d__Eukaryota;p__Haptophyta;c__;o__Prymnesiales;f__Prymnesiaceae;g__Prymnesium;s__Prymnesium kappa
+ERR2040652_clean_NODE_6_length_3013_cov_7.021886	Gammaflexiviridae	Vitivirus	Genus(via Genus)	Plant	Fungi		pred_high_confidence	-	-
+ERR2040655_clean_NODE_2433_length_2006_cov_139.237901	Mimiviridae	Trichovirus	Species(via Species)	Plant				-	-
+ERR2040655_clean_NODE_374_length_2994_cov_124.851576	Pithoviridae	Fabavirus	Species(via Species)	Plant	Invertebrate		pred_low_confidence	-	-
+ERR2040656_clean_NODE_8552_length_1436_cov_31.884422	Baculoviridae	Ampelovirus	Species(via Species)	Plant	Fungi		pred_low_confidence	-	-
+ERR2040657_clean_NODE_265_length_2823_cov_14.635252	Mimiviridae	Blunervirus	Species(via Species)	Plant	Chordata	Reptilia	pred_low_confidence	-	-
+ERR2040668_clean_NODE_5924_length_1074_cov_49.982541	Mimiviridae	Coguvirus	Species(via Species)	Plant	Chordata	Primates	pred_low_confidence	-	-
+ERR2040675_clean_NODE_107_length_2977_cov_155.392638	Mimiviridae	Potexvirus	Species(via Species)	Plant				species:Vermamoeba vermiformis	d__Eukaryota;p__Tubulinea;c__Echinamoebida;o__;f__Vermamoebidae;g__Vermamoeba;s__Vermamoeba vermiformis
+ERR2040684_clean_NODE_1150_length_2118_cov_9.793735	Orthoherpesviridae	Macluravirus	Species(via Species)	Plant				-	-
+ERR2040689_clean_NODE_2858_length_1945_cov_13.318086	Mimiviridae	Fabavirus	Species(via Species)	Plant				-	-
+ERR2040691_clean_NODE_2002_length_2504_cov_76.065014	Nimaviridae	Allexivirus	Species(via Species)	Plant				-	-
+ERR2040692_clean_NODE_4479_length_1952_cov_103.716082	Schizomimiviridae	Tritimovirus	Species(via Species)	Plant				species:Aureococcus anophagefferens	d__Eukaryota;p__;c__Pelagophyceae;o__Pelagomonadales;f__Pelagomonadaceae;g__Aureococcus;s__Aureococcus anophagefferens
+ERR2040692_clean_NODE_478_length_3927_cov_25.628218	Mimiviridae	Marafivirus	Genus(via Genus)	Plant				-	-
+ERR2040693_clean_NODE_1096_length_2173_cov_5.162911	Orthoherpesviridae	Macluravirus	Species(via Species)	Plant				-	-
+ERR2040694_clean_NODE_163_length_3888_cov_67.674642	Pithoviridae	Trichovirus	Species(via Species)	Plant	Invertebrate		pred_high_confidence	species:Vermamoeba vermiformis	d__Eukaryota;p__Tubulinea;c__Echinamoebida;o__;f__Vermamoebidae;g__Vermamoeba;s__Vermamoeba vermiformis
+ERR2040695_clean_NODE_18_length_5402_cov_44.399142	Mimiviridae	Begomovirus	Genus(via Genus)	Plant				species:Vermamoeba vermiformis	d__Eukaryota;p__Tubulinea;c__Echinamoebida;o__;f__Vermamoebidae;g__Vermamoeba;s__Vermamoeba vermiformis
+ERR2040697_clean_NODE_333_length_2499_cov_12.784202	Schizomimiviridae	Potexvirus	Species(via Species)	Plant				species:Prymnesium kappa	d__Eukaryota;p__Haptophyta;c__;o__Prymnesiales;f__Prymnesiaceae;g__Prymnesium;s__Prymnesium kappa
+ERR2040700_clean_NODE_1613_length_2466_cov_14.328106	Orthoherpesviridae	Macluravirus	Species(via Species)	Plant				-	-
+ERR2040707_clean_NODE_865_length_1995_cov_12.081967	Phycodnaviridae	Polerovirus	Genus(via Genus)	Plant				genus:Ostreococcus	d__Eukaryota;p__Chlorophyta;c__Mamiellophyceae;o__Mamiellales;f__Bathycoccaceae;g__Ostreococcus
+ERR2040709_clean_NODE_16856_length_747_cov_10.667614	Schizomimiviridae	Fabavirus	Species(via Species)	Plant				-	-
+ERR2040719_clean_NODE_1459_length_2214_cov_11.345002	Mimiviridae	Robigovirus	Species(via Species)	Plant				-	-
+ERR2040724_clean_NODE_238_length_3474_cov_287.727485	Adenoviridae	Potyvirus	Species(via Species)	Plant				-	-
+ERR2040725_clean_NODE_1064_length_2640_cov_294.497112	Pithoviridae	Betanucleorhabdovirus	Genus(via Genus)	Plant				-	-
+ERR2040730_clean_NODE_175_length_3126_cov_4.297762	Alloherpesviridae	Mastrevirus	Species(via Species)	Plant				-	-
+ERR2040730_clean_NODE_184_length_3103_cov_30.308497	Phycodnaviridae	Polerovirus	Species(via Species)	Plant				genus:Chlorella	d__Eukaryota;p__Chlorophyta;c__Trebouxiophyceae;o__Chlorellales;f__Chlorellaceae;g__Chlorella
+ERR2040730_clean_NODE_384_length_2690_cov_40.109936	Phycodnaviridae	Stralarivirus	Species(via Species)	Plant				species:Bodo saltans	d__Eukaryota;p__Euglenozoa;c__Kinetoplastea;o__Eubodonida;f__Bodonidae;g__Bodo;s__Bodo saltans
+ERR2040730_clean_NODE_891_length_2256_cov_12.239494	Orthoherpesviridae	Macluravirus	Species(via Species)	Plant				-	-
+ERR2040739_clean_NODE_1093_length_2675_cov_30.281535	Adenoviridae	Maculavirus	Species(via Species)	Plant	Chordata	Artiodactyla	pred_high_confidence	-	-
+ERR2040740_clean_NODE_2494_length_2149_cov_61.005223	Mimiviridae	Badnavirus	Species(via Species)	Plant				species:Prymnesium kappa	d__Eukaryota;p__Haptophyta;c__;o__Prymnesiales;f__Prymnesiaceae;g__Prymnesium;s__Prymnesium kappa
+ERR2040758_clean_NODE_2086_length_1897_cov_7.966019	Mesomimiviridae	Potexvirus	Species(via Species)	Plant				-	-
+ERR2040764_clean_NODE_1583_length_1727_cov_25.522565	Mimiviridae	Sadwavirus	Species(via Species)	Plant				-	-
+ERR2040765_clean_NODE_93_length_5178_cov_11.723661	Mimiviridae	Fabavirus	Species(via Species)	Plant	Invertebrate		pred_low_confidence	-	-
+ERR2040767_clean_NODE_3655_length_1774_cov_33.138070	Mimiviridae	Marafivirus	Species(via Species)	Plant				-	-
+ERR2040769_clean_NODE_258_length_3578_cov_19.685149	Adenoviridae	Carlavirus	Species(via Species)	Plant				-	-
+ERR2040771_clean_NODE_264_length_1875_cov_14.495087	Mimiviridae	Betacytorhabdovirus	Genus(via Genus)	Plant				-	-
+ERR2040791_clean_NODE_1027_length_2565_cov_10.183584	Mimiviridae	Ampelovirus	Species(via Species)	Plant				species:Acanthamoeba castellanii	d__Eukaryota;p__Discosea;c__;o__Longamoebia;f__Acanthamoebidae;g__Acanthamoeba;s__Acanthamoeba castellanii
+ERR2040791_clean_NODE_353_length_3352_cov_17.677848	Mimiviridae	Varicosavirus	Genus(via Genus)	Plant				-	-
+ERR2040794_clean_NODE_217_length_4024_cov_26.368249	Phycodnaviridae	Ampelovirus	Species(via Species)	Plant	Fungi		pred_high_confidence	-	-
+ERR2040796_clean_NODE_25_length_7291_cov_154.727649	Schizomimiviridae	Orthotospovirus	Species(via Species)	Plant	Invertebrate		pred_high_confidence	-	-
+ERR2040798_clean_NODE_165_length_4546_cov_24.690651	Phycodnaviridae	Blunervirus	Species(via Species)	Plant	Chordata	Fish	pred_low_confidence	-	-
+ERR2040798_clean_NODE_565_length_3590_cov_14.321116	Mamonoviridae	Maculavirus	Species(via Species)	Plant	Invertebrate		pred_low_confidence	-	-
+ERR2040801_clean_NODE_3224_length_2143_cov_11.540952	Mimiviridae	Ampelovirus	Species(via Species)	Plant				species:Bodo saltans	d__Eukaryota;p__Euglenozoa;c__Kinetoplastea;o__Eubodonida;f__Bodonidae;g__Bodo;s__Bodo saltans
+ERR2040809_clean_NODE_467_length_3325_cov_11.061243	Mimiviridae	Potyvirus	Species(via Species)	Plant				-	-
+ERR2040820_clean_NODE_1401_length_2410_cov_19.093367	Mimiviridae	Blunervirus	Genus(via Genus)	Plant				-	-
+ERR2040822_clean_NODE_3752_length_1961_cov_4.442649	Marseilleviridae	Luteovirus	Species(via Species)	Plant				-	-
+ERR2040829_clean_NODE_1940_length_2809_cov_35.038322	Phycodnaviridae	Ophiovirus	Species(via Species)	Plant				species:Emiliania huxleyi	d__Eukaryota;p__Haptophyta;c__;o__Isochrysidales;f__Noelaerhabdaceae;g__Emiliania;s__Emiliania huxleyi
+ERR2040829_clean_NODE_492_length_3996_cov_10.425500	Mimiviridae	Sobemovirus	Species(via Species)	Plant				-	-
+ERR2040838_clean_NODE_328_length_4251_cov_10.422529	Alloherpesviridae	Allexivirus	Species(via Species)	Plant				-	-
+ERR2040839_clean_NODE_2653_length_2310_cov_10.509043	Mimiviridae	Potyvirus	Species(via Species)	Plant				-	-
+ERR2040842_clean_NODE_531_length_3597_cov_16.486213	Mimiviridae	Gammacarmovirus	Species(via Species)	Plant				-	-
+ERR2040849_clean_NODE_1477_length_3038_cov_6.777629	Phycodnaviridae	Maldovirus	Species(via Species)	Plant	Invertebrate		pred_low_confidence	-	-
+ERR2040849_clean_NODE_997_length_3400_cov_12.130474	Mimiviridae	Torradovirus	Species(via Species)	Plant				-	-
+ERR2040851_clean_NODE_1144_length_3140_cov_15.462383	Baculoviridae	Ophiovirus	Genus(via Genus)	Plant				-	-
+ERR2040858_clean_NODE_255_length_3954_cov_13.185886	Phycodnaviridae	Nepovirus	Genus(via Genus)	Plant				-	-
+ERR2040871_clean_NODE_214_length_3656_cov_14.181290	Mimiviridae	Potyvirus	Species(via Species)	Plant				-	-
+ERR2040875_clean_NODE_30885_length_517_cov_2.080169	Hypoviridae	Macluravirus	Species(via Species)	Plant				-	-
+ERR2040876_clean_NODE_1944_length_2241_cov_32.453594	Adenoviridae	Luteovirus	Species(via Species)	Plant	Invertebrate		pred_low_confidence	-	-
+ERR2040879_clean_NODE_88_length_5038_cov_10.171772	Mimiviridae	Sobemovirus	Species(via Species)	Plant				-	-
+ERR2040880_clean_NODE_99_length_4731_cov_23.423635	Phycodnaviridae	Potexvirus	Species(via Species)	Plant				genus:Chlorella	d__Eukaryota;p__Chlorophyta;c__Trebouxiophyceae;o__Chlorellales;f__Chlorellaceae;g__Chlorella
+ERR2040896_clean_NODE_935_length_2710_cov_59.718785	Mimiviridae	Marafivirus	Species(via Species)	Plant				-	-
+ERR2040899_clean_NODE_688_length_3608_cov_6.953436	Marseilleviridae	Vitivirus	Species(via Species)	Plant				-	-
+ERR2040904_clean_NODE_1766_length_2596_cov_63.730513	Mimiviridae	Marafivirus	Species(via Species)	Plant				-	-
+ERR2040907_clean_NODE_2504_length_2091_cov_12.649902	Marseilleviridae	Begomovirus	Species(via Species)	Plant				-	-
+ERR2040907_clean_NODE_688_length_2995_cov_19.272019	Mimiviridae	Marafivirus	Species(via Species)	Plant				-	-
+ERR2040911_clean_NODE_583_length_3604_cov_4.969459	Marseilleviridae	Vitivirus	Species(via Species)	Plant				-	-
+ERR2040912_clean_NODE_845_length_2894_cov_18.308932	Mimiviridae	Marafivirus	Species(via Species)	Plant	Fungi		pred_low_confidence	-	-
+ERR2040914_clean_NODE_312_length_3764_cov_5.829347	Orthoherpesviridae	Potyvirus	Species(via Species)	Plant	Invertebrate		pred_low_confidence	-	-
+ERR2040914_clean_NODE_600_length_3312_cov_33.159070	Mimiviridae	Marafivirus	Species(via Species)	Plant				-	-
+ERR2040918_clean_NODE_370_length_3398_cov_9.696870	Mimiviridae	Marafivirus	Species(via Species)	Plant				-	-
+ERR2040918_clean_NODE_469_length_3238_cov_35.692958	Mimiviridae	Marafivirus	Species(via Species)	Plant				-	-
+ERR2040920_clean_NODE_477_length_2630_cov_7.385565	Mimiviridae	Marafivirus	Species(via Species)	Plant				-	-
+ERR2040921_clean_NODE_2152_length_2861_cov_29.386089	Mimiviridae	Marafivirus	Species(via Species)	Plant				-	-
+ERR2040921_clean_NODE_808_length_3791_cov_6.712647	Mimiviridae	Fabavirus	Species(via Species)	Plant				-	-
+ERR2040923_clean_NODE_1158_length_2997_cov_22.811442	Mimiviridae	Marafivirus	Species(via Species)	Plant				-	-
+ERR2040923_clean_NODE_1742_length_2655_cov_22.637060	Papillomaviridae	Tobamovirus	Genus(via Genus)	Plant	Invertebrate		pred_low_confidence	-	-
+ERR2040923_clean_NODE_232_length_4278_cov_10.983707	Adenoviridae	Tritimovirus	Species(via Species)	Plant				-	-
+ERR2040927_clean_NODE_212_length_3939_cov_13.710729	Mesomimiviridae	Tritimovirus	Species(via Species)	Plant				-	-
+ERR2040930_clean_NODE_824_length_3694_cov_5.552725	Marseilleviridae	Vitivirus	Species(via Species)	Plant				-	-
+ERR2040933_clean_NODE_2749_length_1717_cov_29.161290	Mimiviridae	Amalgavirus	Species(via Species)	Plant				-	-
+ERR2040934_clean_NODE_11357_length_1101_cov_2.955577	Pithoviridae	Luteovirus	Species(via Species)	Plant				-	-
+ERR2040938_clean_NODE_3214_length_2064_cov_94.370114	Mimiviridae	Luteovirus	Species(via Species)	Plant				species:Acanthamoeba polyphaga	d__Eukaryota;p__Discosea;c__;o__Longamoebia;f__Acanthamoebidae;g__Acanthamoeba;s__Acanthamoeba polyphaga
+ERR2040940_clean_NODE_362_length_3209_cov_24.841756	Mimiviridae	Marafivirus	Species(via Species)	Plant				-	-
+ERR2040941_clean_NODE_27462_length_528_cov_2.086598	Dicistroviridae	Polerovirus	Genus(via Genus)	Plant	Invertebrate		pred_low_confidence	-	-
+ERR2040941_clean_NODE_8911_length_1545_cov_2.822237	Astroviridae	Potyvirus	Species(via Species)	Plant				-	-
+ERR2040944_clean_NODE_12048_length_1025_cov_3.518330	Deltaflexiviridae	Vitivirus	Genus(via Genus)	Plant	Fungi		pred_high_confidence	-	-
+ERR2040948_clean_NODE_24_length_5416_cov_10.571375	Mimiviridae	Crinivirus	Species(via Species)	Plant				-	-
+ERR2040949_clean_NODE_1913_length_2016_cov_113.049164	Mimiviridae	Sequivirus	Genus(via Genus)	Plant	Chordata	Reptilia	pred_low_confidence	-	-
+ERR2040950_clean_NODE_2373_length_2598_cov_11.449706	Mimiviridae	Carlavirus	Species(via Species)	Plant				-	-
+ERR2040951_clean_NODE_16333_length_639_cov_107.934564	Marseilleviridae	Badnavirus	Species(via Species)	Plant				-	-
+ERR2040955_clean_NODE_15368_length_768_cov_1.395862	Deltaflexiviridae	Potexvirus	Genus(via Genus)	Plant	Fungi		pred_low_confidence	-	-
+ERR2040955_clean_NODE_2085_length_2331_cov_10.418706	Mimiviridae	Nepovirus	Species(via Species)	Plant	Invertebrate		pred_low_confidence	-	-
+ERR2040956_clean_NODE_15028_length_916_cov_3.254296	Astroviridae	Potyvirus	Genus(via Genus)	Plant				-	-
+ERR2040956_clean_NODE_24112_length_598_cov_2.037838	Astroviridae	Potyvirus	Species(via Species)	Plant				-	-
+ERR2040961_clean_NODE_1066_length_2929_cov_23.127859	Astroviridae	Potyvirus	Genus(via Genus)	Plant	Chordata	Reptilia	pred_low_confidence	-	-
+ERR2040961_clean_NODE_13062_length_783_cov_4.066216	Alloherpesviridae	Potexvirus	Species(via Species)	Plant				-	-
+ERR2040961_clean_NODE_1428_length_2712_cov_11.330836	Mimiviridae	Trichovirus	Species(via Species)	Plant	Fungi		pred_low_confidence	-	-
+ERR2040968_clean_NODE_11071_length_1031_cov_5.307692	Papillomaviridae	Coguvirus	Species(via Species)	Plant	Chordata	Artiodactyla	pred_high_confidence	-	-
+ERR2040969_clean_NODE_3502_length_2279_cov_6.923971	Mimiviridae	Potexvirus	Species(via Species)	Plant				-	-
+ERR2040970_clean_NODE_109_length_4065_cov_41.735952	Mimiviridae	Maculavirus	Species(via Species)	Plant				-	-
+ERR2040971_clean_NODE_1855_length_2599_cov_5.833333	Astroviridae	Potyvirus	Genus(via Genus)	Plant				-	-
+ERR2040971_clean_NODE_4840_length_1860_cov_43.443038	Allomimiviridae	Bymovirus	Species(via Species)	Plant				-	-
+ERR2040971_clean_NODE_795_length_3277_cov_13.301793	Mimiviridae	Nepovirus	Species(via Species)	Plant				-	-
+ERR2040979_clean_NODE_2246_length_2993_cov_127.789831	Mimiviridae	Potyvirus	Species(via Species)	Plant				-	-
+ERR2040980_clean_NODE_2428_length_3263_cov_5.494720	Mimiviridae	Potyvirus	Species(via Species)	Plant				-	-
+ERR2040982_clean_NODE_17549_length_791_cov_4.368984	Astroviridae	Potyvirus	Species(via Species)	Plant				-	-
+ERR2040982_clean_NODE_25446_length_594_cov_2.669691	Astroviridae	Potyvirus	Species(via Species)	Plant				-	-
+ERR2040983_clean_NODE_12924_length_1261_cov_6.990148	Nimaviridae	Allexivirus	Species(via Species)	Plant	Chordata	Reptilia	pred_low_confidence	-	-
+ERR2040983_clean_NODE_397_length_3968_cov_6.864459	Astroviridae	Potyvirus	Species(via Species)	Plant				species:Listeria ivanovii	d__Bacteria;p__Firmicutes;c__Bacilli;o__Bacillales;f__Listeriaceae;g__Listeria;s__Listeria ivanovii
+ERR2040984_clean_NODE_23202_length_949_cov_6.252759	Mimiviridae	Luteovirus	Species(via Species)	Plant				-	-
+ERR2040986_clean_NODE_7026_length_1569_cov_3.289646	Deltaflexiviridae	Potexvirus	Species(via Species)	Plant	Invertebrate		pred_low_confidence	-	-
+ERR2040992_clean_NODE_22726_length_508_cov_10.707527	Nimaviridae	Allexivirus	Species(via Species)	Plant	Chordata	Unclassified	BLASTn	-	-
+ERR2040994_clean_NODE_23276_length_629_cov_1.911263	Astroviridae	Potyvirus	Genus(via Genus)	Plant				-	-
+ERR2040994_clean_NODE_29682_length_502_cov_3.786492	Astroviridae	Potyvirus	Genus(via Genus)	Plant				-	-
+ERR2041000_clean_NODE_115_length_4426_cov_22.243669	Mamonoviridae	Blunervirus	Genus(via Genus)	Plant				-	-
+ERR2041000_clean_NODE_1318_length_2178_cov_59.057143	Mimiviridae	Ampelovirus	Species(via Species)	Plant				-	-
+ERR2041000_clean_NODE_48_length_5253_cov_28.743570	Orthoherpesviridae	Nepovirus	Species(via Species)	Plant				-	-
+ERR2041003_clean_NODE_423_length_2888_cov_113.198946	Mimiviridae	Maculavirus	Species(via Species)	Plant				species:Acanthamoeba polyphaga	d__Eukaryota;p__Discosea;c__;o__Longamoebia;f__Acanthamoebidae;g__Acanthamoeba;s__Acanthamoeba polyphaga
+ERR2041005_clean_NODE_429_length_4093_cov_108.023457	Orthoherpesviridae	Nepovirus	Species(via Species)	Plant				-	-
+ERR2041008_clean_NODE_345_length_3869_cov_15.626764	Mimiviridae	Maculavirus	Species(via Species)	Plant				-	-
+ERR2041008_clean_NODE_442_length_3640_cov_92.928552	Allomimiviridae	Waikavirus	Species(via Species)	Plant				-	-
+ERR2041014_clean_NODE_11931_length_696_cov_20.869832	Pithoviridae	Alphacytorhabdovirus	Species(via Species)	Plant				species:Salmo salar	d__Eukaryota;p__Chordata;c__Actinopteri;o__Salmoniformes;f__Salmonidae;g__Salmo;s__Salmo salar
+ERR2041016_clean_NODE_12688_length_1132_cov_11.694215	Phycodnaviridae	Vitivirus	Species(via Species)	Plant				-	-
+ERR2041017_clean_NODE_1651_length_3176_cov_18.647622	Nimaviridae	Potexvirus	Species(via Species)	Plant				-	-
+ERR2041018_clean_NODE_846_length_3272_cov_10.464540	Poxviridae	Nepovirus	Genus(via Genus)	Plant	Chordata	Fish	pred_low_confidence	-	-
+ERR2041022_clean_NODE_17770_length_651_cov_13.549342	Nimaviridae	Allexivirus	Species(via Species)	Plant	Chordata	Unclassified	BLASTn	-	-
+ERR2041029_clean_NODE_743_length_3813_cov_4.769496	Phycodnaviridae	Carlavirus	Species(via Species)	Plant				-	-
+ERR2041047_clean_NODE_284_length_3540_cov_10.546468	Mimiviridae	Nepovirus	Species(via Species)	Plant				-	-
+ERR2041048_clean_NODE_104_length_5581_cov_25.408992	Pithoviridae	Furovirus	Species(via Species)	Plant	Chordata	Artiodactyla	pred_low_confidence	-	-
+ERR2041056_clean_NODE_1808_length_2127_cov_26.829175	Schizomimiviridae	Cheravirus	Species(via Species)	Plant				-	-
+ERR2041057_clean_NODE_418_length_4747_cov_9.532313	Baculoviridae	Maculavirus	Species(via Species)	Plant	Chordata	Rodentia	pred_low_confidence	-	-
+ERR2041061_clean_NODE_32_length_6543_cov_29.662615	Adenoviridae	Luteovirus	Species(via Species)	Plant				-	-
+ERR2041066_clean_NODE_862_length_4576_cov_15.622987	Phycodnaviridae	Alphaendornavirus	Genus(via Genus)	Plant				-	-
+ERR2041067_clean_NODE_451_length_5278_cov_18.490926	Mimiviridae	Cheravirus	Species(via Species)	Plant	Invertebrate		pred_low_confidence	-	-
+ERR2041069_clean_NODE_1307_length_1879_cov_53.007625	Mimiviridae	Potyvirus	Species(via Species)	Plant				-	-
+ERR2041073_clean_NODE_29874_length_547_cov_2.589286	Hepaciviridae	Carlavirus	Species(via Species)	Plant				-	-
+ERR2041079_clean_NODE_124_length_4462_cov_12.164064	Mimiviridae	Potyvirus	Species(via Species)	Plant				-	-
+ERR2041079_clean_NODE_3914_length_1670_cov_42.641057	Mimiviridae	Maculavirus	Species(via Species)	Plant				-	-
+ERR2041090_clean_NODE_1064_length_3512_cov_8.608244	Mimiviridae	Potexvirus	Species(via Species)	Plant				-	-
+ERR2041091_clean_NODE_3_length_7025_cov_27.714552	Phycodnaviridae	Luteovirus	Species(via Species)	Plant				-	-
+ERR2041096_clean_NODE_389_length_4033_cov_27.740852	Mimiviridae	Umbravirus	Genus(via Genus)	Plant				-	-
+ERR2041099_clean_NODE_197_length_3528_cov_25.480918	Poxviridae	Maculavirus	Species(via Species)	Plant	Chordata	Artiodactyla	pred_high_confidence	-	-
+ERR2041104_clean_NODE_542_length_2832_cov_6.187881	Mimiviridae	Polerovirus	Species(via Species)	Plant				-	-
+ERR2041105_clean_NODE_50_length_3937_cov_16.067540	Mimiviridae	Umbravirus	Genus(via Genus)	Plant	Invertebrate		pred_low_confidence	species:Vermamoeba vermiformis	d__Eukaryota;p__Tubulinea;c__Echinamoebida;o__;f__Vermamoebidae;g__Vermamoeba;s__Vermamoeba vermiformis
+ERR2041110_clean_NODE_1019_length_2173_cov_168.950704	Nimaviridae	Allexivirus	Species(via Species)	Plant	Invertebrate		pred_low_confidence	-	-
+ERR2041110_clean_NODE_120_length_3499_cov_39.151042	Poxviridae	Maculavirus	Species(via Species)	Plant	Invertebrate		pred_low_confidence	-	-
+ERR2041111_clean_NODE_11_length_7287_cov_11.733435	Marseilleviridae	Torradovirus	Species(via Species)	Plant				-	-
+ERR2041112_clean_NODE_156_length_4937_cov_13.903351	Marseilleviridae	Luteovirus	Species(via Species)	Plant				-	-
+ERR2041112_clean_NODE_2218_length_2491_cov_73.939951	Phycodnaviridae	Begomovirus	Species(via Species)	Plant				species:Prymnesium kappa	d__Eukaryota;p__Haptophyta;c__;o__Prymnesiales;f__Prymnesiaceae;g__Prymnesium;s__Prymnesium kappa
+ERR2041112_clean_NODE_703_length_3491_cov_13.693155	Mimiviridae	Maculavirus	Species(via Species)	Plant	Invertebrate		pred_low_confidence	-	-
+ERR2041113_clean_NODE_81_length_3610_cov_154.575554	Marseilleviridae	Mastrevirus	Species(via Species)	Plant				-	-
+ERR2041115_clean_NODE_496_length_3299_cov_52.502764	Mimiviridae	Tritimovirus	Species(via Species)	Plant	Invertebrate		pred_low_confidence	-	-
+ERR2041131_clean_NODE_1549_length_2924_cov_8.989240	Mimiviridae	Luteovirus	Species(via Species)	Plant				-	-
+ERR2041131_clean_NODE_62_length_9277_cov_26.994585	Allomimiviridae	Maculavirus	Species(via Species)	Plant	Invertebrate		pred_low_confidence	-	-
+ERR2041132_clean_NODE_587_length_3713_cov_10.102997	Baculoviridae	Betacytorhabdovirus	Species(via Species)	Plant				-	-
+ERR2041134_clean_NODE_361_length_5025_cov_24.454235	Mimiviridae	Varicosavirus	Species(via Species)	Plant				species:Acanthamoeba polyphaga	d__Eukaryota;p__Discosea;c__;o__Longamoebia;f__Acanthamoebidae;g__Acanthamoeba;s__Acanthamoeba polyphaga
+ERR2041135_clean_NODE_4886_length_1202_cov_9.320966	Nimaviridae	Allexivirus	Species(via Species)	Plant	Chordata	Artiodactyla	pred_low_confidence	-	-
+ERR2041137_clean_NODE_2160_length_2465_cov_36.410818	Orthoherpesviridae	Alphaendornavirus	Species(via Species)	Plant				-	-
+ERR2041138_clean_NODE_28_length_11695_cov_34.767937	Mimiviridae	Maculavirus	Species(via Species)	Plant				-	-
+ERR2041144_clean_NODE_5323_length_900_cov_1.953542	Gandrviridae	Babuvirus	Genus(via Genus)	Plant				species:Potamopyrgus antipodarum	d__Eukaryota;p__Mollusca;c__Gastropoda;o__Littorinimorpha;f__Tateidae;g__Potamopyrgus;s__Potamopyrgus antipodarum
+ERR2041145_clean_NODE_831_length_4580_cov_45.188451	Mimiviridae	Velarivirus	Genus(via Genus)	Plant				species:Vermamoeba vermiformis	d__Eukaryota;p__Tubulinea;c__Echinamoebida;o__;f__Vermamoebidae;g__Vermamoeba;s__Vermamoeba vermiformis
+ERR2041150_clean_NODE_982_length_3693_cov_13.861795	Mimiviridae	Potexvirus	Species(via Species)	Plant				-	-
+ERR2041151_clean_NODE_542_length_3130_cov_81.557823	Mimiviridae	Maculavirus	Species(via Species)	Plant				-	-
+ERR2041156_clean_NODE_257_length_2427_cov_8.944631	Adenoviridae	Trichovirus	Species(via Species)	Plant				-	-
+ERR2041159_clean_NODE_993_length_2540_cov_45.614738	Nudiviridae	Maculavirus	Species(via Species)	Plant				-	-
+ERR2041160_clean_NODE_229_length_3547_cov_155.830194	Mimiviridae	Maculavirus	Species(via Species)	Plant	Invertebrate		pred_low_confidence	species:Salinispora pacifica	d__Bacteria;p__Actinobacteria;c__Actinobacteria;o__Micromonosporales;f__Micromonosporaceae;g__Salinispora;s__Salinispora pacifica
+ERR2041166_clean_NODE_2106_length_2385_cov_297.637489	Nimaviridae	Allexivirus	Species(via Species)	Plant	Chordata	Rodentia	pred_low_confidence	-	-
+ERR2041167_clean_NODE_7183_length_1178_cov_4.985022	Mimiviridae	Nepovirus	Genus(via Genus)	Plant	Fungi		pred_low_confidence	-	-
+ERR2041171_clean_NODE_475_length_4160_cov_13.635414	Mimiviridae	Potexvirus	Species(via Species)	Plant				-	-
+ERR2041175_clean_NODE_1168_length_3902_cov_113.116092	Mimiviridae	Ampelovirus	Species(via Species)	Plant	Invertebrate		pred_low_confidence	-	-
+ERR2041179_clean_NODE_933_length_3363_cov_19.128012	Mimiviridae	Ipomovirus	Species(via Species)	Plant				-	-
+ERR2041180_clean_NODE_43_length_5993_cov_19.489412	Mimiviridae	Ipomovirus	Species(via Species)	Plant				-	-
+ERR2041182_clean_NODE_220_length_5315_cov_20.277693	Phycodnaviridae	Ipomovirus	Species(via Species)	Plant				-	-
+ERR2041184_clean_NODE_4044_length_1804_cov_17.376491	Mimiviridae	Carlavirus	Species(via Species)	Plant				-	-
+ERR2041186_clean_NODE_1810_length_3057_cov_24.767750	Astroviridae	Potyvirus	Genus(via Genus)	Plant				-	-
+ERR2041186_clean_NODE_3470_length_2355_cov_10.790657	Astroviridae	Potyvirus	Genus(via Genus)	Plant				-	-
+ERR2041190_clean_NODE_4136_length_2189_cov_89.485089	Mimiviridae	Luteovirus	Species(via Species)	Plant				-	-
+ERR2041190_clean_NODE_504_length_4065_cov_12.520388	Marseilleviridae	Vitivirus	Species(via Species)	Plant				-	-
+ERR2041191_clean_NODE_309_length_4916_cov_3.243587	Schizomimiviridae	Orthotospovirus	Species(via Species)	Plant				-	-
+ERR2041194_clean_NODE_605_length_4624_cov_8.987339	Marseilleviridae	Poacevirus	Species(via Species)	Plant				-	-
+ERR2041196_clean_NODE_12041_length_1093_cov_6.284762	Nimaviridae	Allexivirus	Species(via Species)	Plant	Fungi		pred_low_confidence	-	-
+ERR2041196_clean_NODE_5325_length_2024_cov_11.300353	Pithoviridae	Coguvirus	Species(via Species)	Plant				-	-
+ERR3487339_clean_NODE_2277_length_1994_cov_19.410559	Schizomimiviridae	Maculavirus	Species(via Species)	Plant				species:Aureococcus anophagefferens	d__Eukaryota;p__;c__Pelagophyceae;o__Pelagomonadales;f__Pelagomonadaceae;g__Aureococcus;s__Aureococcus anophagefferens
+ERR3487339_clean_NODE_720_length_2698_cov_8.323164	Marseilleviridae	Tritimovirus	Species(via Species)	Plant				-	-
+ERR3487341_clean_NODE_313_length_3606_cov_10.727758	Phycodnaviridae	Varicosavirus	Genus(via Genus)	Plant				genus:Chlorella	d__Eukaryota;p__Chlorophyta;c__Trebouxiophyceae;o__Chlorellales;f__Chlorellaceae;g__Chlorella
+ERR3487342_clean_NODE_266_length_3708_cov_14.755252	Mimiviridae	Luteovirus	Species(via Species)	Plant				-	-
+ERR3487344_clean_NODE_1554_length_2218_cov_33.230345	Pithoviridae	Curtovirus	Species(via Species)	Plant				-	-
+ERR3487347_clean_NODE_983_length_2336_cov_21.965142	Orthoherpesviridae	Macluravirus	Species(via Species)	Plant	Chordata	Artiodactyla	pred_high_confidence	-	-
+ERR3487350_clean_NODE_50_length_4047_cov_30.989261	Mimiviridae	Nepovirus	Species(via Species)	Plant				-	-
+ERR3487351_clean_NODE_407_length_2803_cov_7.023844	Phycodnaviridae	Tritimovirus	Species(via Species)	Plant	Invertebrate		pred_high_confidence	genus:Chlorella	d__Eukaryota;p__Chlorophyta;c__Trebouxiophyceae;o__Chlorellales;f__Chlorellaceae;g__Chlorella
+ERR3487354_clean_NODE_2746_length_1845_cov_13.394007	Pithoviridae	Cucumovirus	Species(via Species)	Plant				species:Vermamoeba vermiformis	d__Eukaryota;p__Tubulinea;c__Echinamoebida;o__;f__Vermamoebidae;g__Vermamoeba;s__Vermamoeba vermiformis
+ERR3487356_clean_NODE_1202_length_2489_cov_86.614064	Mimiviridae	Ampelovirus	Species(via Species)	Plant				-	-
+ERR3487356_clean_NODE_2955_length_1935_cov_13.735729	Baculoviridae	Deltapartitivirus	Species(via Species)	Plant				-	-
+ERR3487357_clean_NODE_1586_length_2358_cov_8.335637	Mimiviridae	Potyvirus	Species(via Species)	Plant				-	-
+ERR3487359_clean_NODE_1553_length_2331_cov_40.245645	Baculoviridae	Emaravirus	Species(via Species)	Plant				-	-
+ERR3487362_clean_NODE_5132_length_1381_cov_182.920030	Mimiviridae	Nepovirus	Species(via Species)	Plant				-	-
+ERR3487363_clean_NODE_992_length_2632_cov_17.606798	Nimaviridae	Carlavirus	Species(via Species)	Plant				-	-
+ERR3487368_clean_NODE_966_length_2566_cov_5.331352	Mimiviridae	Potexvirus	Species(via Species)	Plant				species:Vermamoeba vermiformis	d__Eukaryota;p__Tubulinea;c__Echinamoebida;o__;f__Vermamoebidae;g__Vermamoeba;s__Vermamoeba vermiformis
+ERR3487373_clean_NODE_642_length_2537_cov_26.688452	Mimiviridae	Comovirus	Species(via Species)	Plant				-	-
+ERR3487380_clean_NODE_821_length_2358_cov_43.952052	Adenoviridae	Potyvirus	Species(via Species)	Plant				-	-
+ERR3487382_clean_NODE_98_length_2990_cov_12.497455	Mimiviridae	Deltanucleorhabdovirus	Genus(via Genus)	Plant				-	-
+ERR3487383_clean_NODE_179_length_4463_cov_15.924208	Pithoviridae	Trichovirus	Species(via Species)	Plant	Invertebrate		pred_low_confidence	-	-
+ERR3487385_clean_NODE_1521_length_2678_cov_10.125996	Schizomimiviridae	Potyvirus	Species(via Species)	Plant				-	-
+ERR3487388_clean_NODE_1259_length_3022_cov_10.591809	Mimiviridae	Polerovirus	Species(via Species)	Plant				-	-
+ERR3487390_clean_NODE_2474_length_2306_cov_11.522757	Mimiviridae	Capillovirus	Species(via Species)	Plant				-	-
+ERR3487396_clean_NODE_1138_length_3071_cov_20.773118	Mimiviridae	Tymovirus	Species(via Species)	Plant				-	-
+ERR3487397_clean_NODE_18106_length_749_cov_2.235127	Astroviridae	Potyvirus	Genus(via Genus)	Plant				-	-
+ERR3487399_clean_NODE_682_length_3986_cov_23.835405	Mimiviridae	Carlavirus	Species(via Species)	Plant	Invertebrate		pred_low_confidence	-	-
+ERR3487399_clean_NODE_79_length_6253_cov_21.693398	Mimiviridae	Waikavirus	Species(via Species)	Plant				-	-
+ERR3487407_clean_NODE_1307_length_2307_cov_5.882509	Mimiviridae	Cheravirus	Species(via Species)	Plant				species:Bodo saltans	d__Eukaryota;p__Euglenozoa;c__Kinetoplastea;o__Eubodonida;f__Bodonidae;g__Bodo;s__Bodo saltans
+ERR3487411_clean_NODE_2156_length_2042_cov_12.966983	Mimiviridae	Begomovirus	Species(via Species)	Plant				-	-
+ERR3487415_clean_NODE_652_length_3810_cov_9.355721	Mimiviridae	Potyvirus	Species(via Species)	Plant				-	-
+ERR3487416_clean_NODE_894_length_2207_cov_4.469501	Mimiviridae	Maculavirus	Species(via Species)	Plant				species:Bodo saltans	d__Eukaryota;p__Euglenozoa;c__Kinetoplastea;o__Eubodonida;f__Bodonidae;g__Bodo;s__Bodo saltans
+ERR3487418_clean_NODE_331_length_4251_cov_4.128802	Mimiviridae	Begomovirus	Species(via Species)	Plant	Invertebrate		pred_low_confidence	-	-
+ERR3489925_clean_NODE_7142_length_821_cov_4.420308	Mimiviridae	Babuvirus	Species(via Species)	Plant				-	-
+ERR364329_clean_NODE_411_length_3864_cov_12.439018	Mimiviridae	Potyvirus	Species(via Species)	Plant	Fungi		pred_low_confidence	-	-
+ERR364331_clean_NODE_286_length_2340_cov_60.622993	Mamonoviridae	Crinivirus	Species(via Species)	Plant				-	-
+ERR364333_clean_NODE_75_length_3865_cov_5.062141	Mimiviridae	Nanovirus	Species(via Species)	Plant				-	-
+ERR364335_clean_NODE_707_length_3223_cov_12.153074	Mimiviridae	Potexvirus	Species(via Species)	Plant				-	-
+ERR364338_clean_NODE_2350_length_2421_cov_8.741990	Orthoherpesviridae	Macluravirus	Species(via Species)	Plant				-	-
+ERR364338_clean_NODE_3548_length_2083_cov_40.013766	Mimiviridae	Vitivirus	Species(via Species)	Plant				-	-
+ERR364345_clean_NODE_6744_length_1528_cov_9.033580	Mimiviridae	Waikavirus	Species(via Species)	Plant				-	-
+ERR364350_clean_NODE_2147_length_2407_cov_9.567990	Mimiviridae	Potyvirus	Species(via Species)	Plant				-	-
+ERR364352_clean_NODE_5543_length_1813_cov_7.882486	Mimiviridae	Sequivirus	Genus(via Genus)	Plant				-	-
+ERR364353_clean_NODE_2491_length_2560_cov_33.576877	Phycodnaviridae	Closterovirus	Species(via Species)	Plant				genus:Ostreococcus	d__Eukaryota;p__Chlorophyta;c__Mamiellophyceae;o__Mamiellales;f__Bathycoccaceae;g__Ostreococcus
+ERR364353_clean_NODE_46_length_6849_cov_16.736556	Iridoviridae	Orthotospovirus	Species(via Species)	Plant	Chordata	Fish	pred_high_confidence	-	-
+ERR364359_clean_NODE_350_length_4359_cov_18.401297	Mimiviridae	Maculavirus	Species(via Species)	Plant	Invertebrate		pred_low_confidence	-	-
+ERR364367_clean_NODE_1581_length_2936_cov_19.304528	Phycodnaviridae	Luteovirus	Species(via Species)	Plant	Invertebrate		assign	genus:Ostreococcus	d__Eukaryota;p__Chlorophyta;c__Mamiellophyceae;o__Mamiellales;f__Bathycoccaceae;g__Ostreococcus
+ERR364368_clean_NODE_3087_length_1508_cov_178.350984	Papillomaviridae	Tobamovirus	Genus(via Genus)	Plant				species:Pseudomonas formosensis	d__Bacteria;p__Proteobacteria;c__Gammaproteobacteria;o__Pseudomonadales;f__Pseudomonadaceae;g__Pseudomonas;s__Pseudomonas formosensis
+ERR364372_clean_NODE_167_length_4541_cov_6.446643	Mimiviridae	Potyvirus	Species(via Species)	Plant				-	-
+ERR364373_clean_NODE_14268_length_664_cov_7.201288	Baculoviridae	Luteovirus	Species(via Species)	Plant				-	-
+ERR364373_clean_NODE_646_length_3724_cov_12.446346	Phycodnaviridae	Allexivirus	Species(via Species)	Plant				-	-
+ERR364382_clean_NODE_65_length_3240_cov_17.532687	Poxviridae	Maculavirus	Species(via Species)	Plant				-	-
+ERR364384_clean_NODE_135_length_3402_cov_44.707455	Mimiviridae	Potyvirus	Species(via Species)	Plant				-	-
+ERR364388_clean_NODE_4588_length_1157_cov_9.547237	Papillomaviridae	Tobamovirus	Genus(via Genus)	Plant				species:Pseudomonas formosensis	d__Bacteria;p__Proteobacteria;c__Gammaproteobacteria;o__Pseudomonadales;f__Pseudomonadaceae;g__Pseudomonas;s__Pseudomonas formosensis
+ERR364395_clean_NODE_1697_length_2138_cov_21.364678	Mimiviridae	Luteovirus	Genus(via Genus)	Plant				-	-
+ERR364395_clean_NODE_4632_length_1476_cov_78.979763	Mimiviridae	Maculavirus	Species(via Species)	Plant	Fungi		pred_low_confidence	-	-
+ERR364404_clean_NODE_11553_length_925_cov_2.887755	Mimiviridae	Polerovirus	Genus(via Genus)	Plant				-	-
+ERR364405_clean_NODE_1050_length_2292_cov_25.635800	Mimiviridae	Ampelovirus	Species(via Species)	Plant				species:Vermamoeba vermiformis	d__Eukaryota;p__Tubulinea;c__Echinamoebida;o__;f__Vermamoebidae;g__Vermamoeba;s__Vermamoeba vermiformis
+ERR364414_clean_NODE_480_length_2674_cov_3.934066	Mamonoviridae	Deltanucleorhabdovirus	Genus(via Genus)	Plant				-	-
+ERR364415_clean_NODE_11395_length_977_cov_3.855460	Deltaflexiviridae	Vitivirus	Genus(via Genus)	Plant	Fungi		pred_low_confidence	-	-
+ERR706828_clean_NODE_11308_length_653_cov_1.350820	Baculoviridae	Cucumovirus	Species(via Species)	Plant				-	-
+ERR706838_clean_NODE_2008_length_1993_cov_53.156410	Papillomaviridae	Tobamovirus	Genus(via Genus)	Plant				species:Pseudomonas formosensis	d__Bacteria;p__Proteobacteria;c__Gammaproteobacteria;o__Pseudomonadales;f__Pseudomonadaceae;g__Pseudomonas;s__Pseudomonas formosensis
+ERR706848_clean_NODE_879_length_2792_cov_10.590033	Mimiviridae	Comovirus	Species(via Species)	Plant				-	-
+contig_10082	Schizomimiviridae	Pomovirus	Species(via Species)	Plant				species:Prymnesium kappa	d__Eukaryota;p__Haptophyta;c__;o__Prymnesiales;f__Prymnesiaceae;g__Prymnesium;s__Prymnesium kappa
+contig_17262	Mimiviridae	Ipomovirus	Species(via Species)	Plant				-	-
+contig_20236	Mimiviridae	Enamovirus	Genus(via Genus)	Plant				-	-
+contig_22309	Mimiviridae	Potyvirus	Species(via Species)	Plant				-	-
+contig_5685	Schizomimiviridae	Potexvirus	Species(via Species)	Plant				species:Prymnesium kappa	d__Eukaryota;p__Haptophyta;c__;o__Prymnesiales;f__Prymnesiaceae;g__Prymnesium;s__Prymnesium kappa
+contig_7023	Pithoviridae	Badnavirus	Genus(via Genus)	Plant				-	-

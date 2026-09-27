@@ -235,9 +235,16 @@ def worker_virema(args_tuple):
                             for line in in_f:
                                 line = line.rstrip('\n\r')
                                 if line.startswith('>'):
-                                    # Ensure unique read names for ViReMa dict
-                                    if not line.rstrip().endswith(tag):
-                                        line = line.rstrip() + tag
+                                    # Ensure unique read names for ViReMa dict.
+                                    # Fix: tag must be inserted INSIDE the name token (before any
+                                    # whitespace), otherwise ViReMa's MakeReadDict (Name.split()[0][1:])
+                                    # drops it and R1/R2 with identical names cause KeyError.
+                                    parts = line.split(None, 1)
+                                    name_tok = parts[0]
+                                    rest = (' ' + parts[1]) if len(parts) > 1 else ''
+                                    if not name_tok.endswith(tag):
+                                        name_tok = name_tok + tag
+                                    line = name_tok + rest
                                 out_f.write(line + '\n')
         else:
             return True

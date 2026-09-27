@@ -830,10 +830,101 @@ def run_pipeline(sample, sample_data, orig_ref, ref_len, out_root, active_tools,
             return True, f"{msg} (流程结束，但未能达到设定完美阈值)", sample, stats_history
 
     # ==========================
-    # 快车道状态控制变量
+    # 分支逻辑：快车道检测（完美骨架跳过中间融合）
     # ==========================
     fast_track_source = None
     is_perfect_early = False
+
+    def _standard_build_track():
+        """Steps 4-8: Full de novo build with PVGA extension + Divine Fusion.
+        Only runs when fast track is NOT triggered."""
+        nonlocal fast_track_source, is_perfect_early
+
+        # --- Step 4: Ref Merge 1 ---
+        d4_ref_m1.mkdir(exist_ok=True)
+        if not is_valid(f4_ref_m1):
+            if is_valid(f3_clean): divine_fusion_shiver_style(orig_ref, str(f3_clean), None, str(f4_ref_m1), args.threads, args.split_gap_size, args.min_contig_len, args.mafft_args, logger, sample)
+            else: shutil.copy(orig_ref, f4_ref_m1)
+
+        # --- Step 5: PVGA 延伸 & 评估打断 ---
+        d5_pvga.mkdir(exist_ok=True)
+        if not is_valid(f5_pvga_cut):
+            logger.info(f"[{sample}] Step 5: 运行 PVGA 延伸...")
+            pvga_input = d5_pvga / f"{sample}_pvga_reads.fasta"
+            if not pvga_is_single and pvga_r2 and is_fastq(pvga_r1):
+                run_cmd(['bbmerge.sh', f'in1={pvga_r1}', f'in2={pvga_r2}', f'out={d5_pvga}/m.fastq', f'outu1={d5_pvga}/u1.fastq', f'outu2={d5_pvga}/u2.fastq', 'overwrite=t'], cwd=d5_pvga, log_file=d5_pvga/"bbmerge.log", logger=logger, sample_name=sample, ignore_error=True)
+                safe_concat_to_fasta([d5_pvga/'m.fastq', d5_pvga/'u1.fastq', d5_pvga/'u2.fastq'] if (d5_pvga/'m.fastq').exists() else [pvga_r1, pvga_r2], d5_pvga/'all.fastq')
+                run_cmd(['reformat.sh', f'in={d5_pvga}/all.fastq', f'out={pvga_input}', 'overwrite=t'], cwd=d5_pvga, logger=logger, sample_name=sample)
+            else: safe_concat_to_fasta([pvga_r1] + ([pvga_r2] if not pvga_is_single and pvga_r2 else []), pvga_input)
+
+            pvga_sandbox = d5_pvga / "pvga_sandbox"; pvga_sandbox.mkdir(exist_ok=True)
+            pvga_out = pvga_sandbox / "pvga_res"
+            cmd_pvga = ['pvga', '-r', str(pvga_input.absolute()), '-b', str(f4_ref_m1.absolute()), '-o', str(pvga_out.absolute())] + (shlex.split(args.pvga_args) if args.pvga_args else [])
+            run_cmd(cmd_pvga, cwd=pvga_sandbox, log_file=d5_pvga/"pvga.log", logger=logger, sample_name=sample, ignore_error=True)
+
+            collected_pvga = [f for f in pvga_out.glob("*.fa*") if "scaffold" not in f.name.lower() and f.stat().st_size > 0] if pvga_out.exists() else []
+            if collected_pvga:
+                with open(f5_pvga_raw, 'w') as outf:
+                    for idx, pvga_f in enumerate(collected_pvga):
+                        for head, seq in parse_fasta_string(Path(pvga_f).read_text()).items(): outf.write(f">PVGA_SRC{idx}_{head}\n{seq}\n")
+            else: open(f5_pvga_raw, 'a').close()
+            try: shutil.rmtree(pvga_sandbox)
+            except Exception: pass
+
+            evaluate_and_split_pvga(orig_ref, f5_pvga_raw, f5_pvga_cut, args.threads, gap_size=args.split_gap_size, logger=logger, sample=sample)
+
+        # 再次检查是否触发快车道
+        if log_stat('2.PVGA_Extension', f5_pvga_cut):
+            fast_track_source = f5_pvga_cut
+            is_perfect_early = True
+            logger.info(f"[{sample}] 快车道：PVGA延伸骨架已达完美标准，跳过后续融合，直接进入 Step 9 迭代抛光！")
+            return  # 快车道触发，跳过 Step 6-8
+
+        # --- Step 6: Pre-Fusion Merge ---
+        d6_pre_m.mkdir(exist_ok=True)
+        if not is_valid(f6_pre_m):
+            logger.info(f"[{sample}] Step 6: 原始纯净 Contig 与打断后的 PVGA 序列融合...")
+            all_sources = d6_pre_m / "sources.fasta"
+            with open(all_sources, 'w') as outf:
+                for f in [f3_clean, f5_pvga_cut]:
+                    if is_valid(f): outf.write(Path(f).read_text() + "\n")
+            merged_fa = run_refinec_merge(all_sources, d6_pre_m, "pre_fusion", args.threads, logger, sample)
+            extract_and_move_fasta(merged_fa if merged_fa else f3_clean, f6_pre_m)
+        log_stat('3.Pre_Fusion_Merge', f6_pre_m)
+
+        # --- Step 7: rmDup ---
+        d7_rmdup.mkdir(exist_ok=True)
+        if not is_valid(f7_rmdup):
+            logger.info(f"[{sample}] Step 7: 执行严格去冗余，净化融合骨架物料...")
+            tmp_pl = d7_rmdup / "tmp_rmdup"; tmp_pl.mkdir(exist_ok=True)
+            cmd_rmdup = (f"perl {args.rmdup_script} --length {args.rmdup_len} --coverage {args.rmdup_cov} "
+                         f"--identity {args.rmdup_iden} --evalue {args.rmdup_evalue} --CPU {args.threads} --tmp {tmp_pl} {f6_pre_m} > {f7_rmdup}")
+            run_cmd(cmd_rmdup, cwd=d7_rmdup, log_file=d7_rmdup/"rmdup.log", logger=logger, sample_name=sample)
+            if not is_valid(f7_rmdup): shutil.copy(f6_pre_m, f7_rmdup)
+        log_stat('4.rmDup_Purification', f7_rmdup)
+
+        # --- Step 8: Ref Merged 2 (终极 Divine Fusion) ---
+        d8_ref_m2.mkdir(exist_ok=True)
+        if not is_valid(f8_ref_m2):
+            logger.info(f"[{sample}] Step 8: 执行 Divine Fusion 构建最终无缝实心骨架...")
+            divine_fusion_shiver_style(orig_ref, str(f7_rmdup), None, str(f8_ref_m2), args.threads, args.split_gap_size, args.min_contig_len, args.mafft_args, logger, sample)
+        log_stat('5.Fusion_Skeleton_Solid', f8_ref_m2)
+
+    def _fast_track_rmdup():
+        """Fast track rmDup: clean up the perfect skeleton before polishing."""
+        nonlocal fast_track_source
+        d7_rmdup.mkdir(exist_ok=True)
+        if not is_valid(f7_rmdup):
+            logger.info(f"[{sample}] 快车道去冗余: 对完美骨架执行 rmDup 净化...")
+            tmp_pl = d7_rmdup / "tmp_rmdup"; tmp_pl.mkdir(exist_ok=True)
+            cmd_rmdup = (f"perl {args.rmdup_script} --length {args.rmdup_len} --coverage {args.rmdup_cov} "
+                         f"--identity {args.rmdup_iden} --evalue {args.rmdup_evalue} --CPU {args.threads} --tmp {tmp_pl} {fast_track_source} > {f7_rmdup}")
+            run_cmd(cmd_rmdup, cwd=d7_rmdup, log_file=d7_rmdup/"rmdup.log", logger=logger, sample_name=sample)
+            if not is_valid(f7_rmdup):
+                shutil.copy(fast_track_source, f7_rmdup)
+            else:
+                fast_track_source = f7_rmdup
+        log_stat('4.rmDup_Purification', f7_rmdup if is_valid(f7_rmdup) else fast_track_source)
 
     # --- Step 1 & 2: Assembly ---
     d1_asm.mkdir(exist_ok=True); d2_rc_merge.mkdir(exist_ok=True)
@@ -879,94 +970,16 @@ def run_pipeline(sample, sample_data, orig_ref, ref_len, out_root, active_tools,
     if log_stat('1.DeNovo_Cleaned', f3_clean):
         fast_track_source = f3_clean
         is_perfect_early = True
-        logger.info(f"[{sample}] 🌟 触发快车道：初步净化骨架质量已达完美标准，跳过后续延伸融合，直接进入 Step 9 迭代抛光！")
+        logger.info(f"[{sample}] 快车道：初步净化骨架已达完美标准，跳过后续延伸融合，直接进入 Step 9 迭代抛光！")
 
-    # 如果未触发快车道，执行标准构建流程
-    if not fast_track_source:
-        # --- Step 4: Ref Merge 1 ---
-        d4_ref_m1.mkdir(exist_ok=True)
-        if not is_valid(f4_ref_m1):
-            if is_valid(f3_clean): divine_fusion_shiver_style(orig_ref, str(f3_clean), None, str(f4_ref_m1), args.threads, args.split_gap_size, args.min_contig_len, args.mafft_args, logger, sample)
-            else: shutil.copy(orig_ref, f4_ref_m1)
-
-        # --- Step 5: PVGA 延伸 & 评估打断 ---
-        d5_pvga.mkdir(exist_ok=True)
-        if not is_valid(f5_pvga_cut):
-            logger.info(f"[{sample}] Step 5: 运行 PVGA 延伸...")
-            pvga_input = d5_pvga / f"{sample}_pvga_reads.fasta"
-            if not pvga_is_single and pvga_r2 and is_fastq(pvga_r1):
-                run_cmd(['bbmerge.sh', f'in1={pvga_r1}', f'in2={pvga_r2}', f'out={d5_pvga}/m.fastq', f'outu1={d5_pvga}/u1.fastq', f'outu2={d5_pvga}/u2.fastq', 'overwrite=t'], cwd=d5_pvga, log_file=d5_pvga/"bbmerge.log", logger=logger, sample_name=sample, ignore_error=True)
-                safe_concat_to_fasta([d5_pvga/'m.fastq', d5_pvga/'u1.fastq', d5_pvga/'u2.fastq'] if (d5_pvga/'m.fastq').exists() else [pvga_r1, pvga_r2], d5_pvga/'all.fastq')
-                run_cmd(['reformat.sh', f'in={d5_pvga}/all.fastq', f'out={pvga_input}', 'overwrite=t'], cwd=d5_pvga, logger=logger, sample_name=sample)
-            else: safe_concat_to_fasta([pvga_r1] + ([pvga_r2] if not pvga_is_single and pvga_r2 else []), pvga_input)
-
-            pvga_sandbox = d5_pvga / "pvga_sandbox"; pvga_sandbox.mkdir(exist_ok=True)
-            pvga_out = pvga_sandbox / "pvga_res"
-            cmd_pvga = ['pvga', '-r', str(pvga_input.absolute()), '-b', str(f4_ref_m1.absolute()), '-o', str(pvga_out.absolute())] + (shlex.split(args.pvga_args) if args.pvga_args else [])
-            run_cmd(cmd_pvga, cwd=pvga_sandbox, log_file=d5_pvga/"pvga.log", logger=logger, sample_name=sample, ignore_error=True)
-          
-            collected_pvga = [f for f in pvga_out.glob("*.fa*") if "scaffold" not in f.name.lower() and f.stat().st_size > 0] if pvga_out.exists() else []
-            if collected_pvga:
-                with open(f5_pvga_raw, 'w') as outf:
-                    for idx, pvga_f in enumerate(collected_pvga):
-                        for head, seq in parse_fasta_string(Path(pvga_f).read_text()).items(): outf.write(f">PVGA_SRC{idx}_{head}\n{seq}\n")
-            else: open(f5_pvga_raw, 'a').close()
-            try: shutil.rmtree(pvga_sandbox)
-            except Exception: pass
-
-            evaluate_and_split_pvga(orig_ref, f5_pvga_raw, f5_pvga_cut, args.threads, gap_size=args.split_gap_size, logger=logger, sample=sample)
-        
-        # 再次检查是否触发快车道
-        if log_stat('2.PVGA_Extension', f5_pvga_cut):
-            fast_track_source = f5_pvga_cut
-            is_perfect_early = True
-            logger.info(f"[{sample}] 🌟 触发快车道：PVGA延伸骨架已达完美标准，跳过后续繁琐融合，直接进入 Step 9 迭代抛光！")
-
-    if not fast_track_source:
-        # --- Step 6: 纯净聚合 (Pre-Fusion Merge) ---
-        d6_pre_m.mkdir(exist_ok=True)
-        if not is_valid(f6_pre_m):
-            logger.info(f"[{sample}] Step 6: 原始纯净 Contig 与打断后的 PVGA 序列融合...")
-            all_sources = d6_pre_m / "sources.fasta"
-            with open(all_sources, 'w') as outf:
-                for f in [f3_clean, f5_pvga_cut]: 
-                    if is_valid(f): outf.write(Path(f).read_text() + "\n")
-            merged_fa = run_refinec_merge(all_sources, d6_pre_m, "pre_fusion", args.threads, logger, sample)
-            extract_and_move_fasta(merged_fa if merged_fa else f3_clean, f6_pre_m)
-        log_stat('3.Pre_Fusion_Merge', f6_pre_m)
-
-        # --- Step 7: Final rmDup (前置去冗余) ---
-        d7_rmdup.mkdir(exist_ok=True)
-        if not is_valid(f7_rmdup):
-            logger.info(f"[{sample}] Step 7: 执行严格去冗余，净化融合骨架物料...")
-            tmp_pl = d7_rmdup / "tmp_rmdup"; tmp_pl.mkdir(exist_ok=True)
-            cmd_rmdup = (f"perl {args.rmdup_script} --length {args.rmdup_len} --coverage {args.rmdup_cov} "
-                         f"--identity {args.rmdup_iden} --evalue {args.rmdup_evalue} --CPU {args.threads} --tmp {tmp_pl} {f6_pre_m} > {f7_rmdup}")
-            run_cmd(cmd_rmdup, cwd=d7_rmdup, log_file=d7_rmdup/"rmdup.log", logger=logger, sample_name=sample)
-            if not is_valid(f7_rmdup): shutil.copy(f6_pre_m, f7_rmdup)
-        log_stat('4.rmDup_Purification', f7_rmdup)
-
-        # --- Step 8: Ref Merged 2 (终极 Divine Fusion) ---
-        d8_ref_m2.mkdir(exist_ok=True)
-        if not is_valid(f8_ref_m2):
-            logger.info(f"[{sample}] Step 8: 执行 Divine Fusion 构建最终无缝实心骨架...")
-            divine_fusion_shiver_style(orig_ref, str(f7_rmdup), None, str(f8_ref_m2), args.threads, args.split_gap_size, args.min_contig_len, args.mafft_args, logger, sample)
-        log_stat('5.Fusion_Skeleton_Solid', f8_ref_m2)
-
-    # --- 快车道去冗余: 即使骨架完美，也要执行 rmDup 净化 ---
-    if fast_track_source and is_valid(fast_track_source):
-        d7_rmdup.mkdir(exist_ok=True)
-        if not is_valid(f7_rmdup):
-            logger.info(f"[{sample}] 快车道去冗余: 对完美骨架执行 rmDup 净化...")
-            tmp_pl = d7_rmdup / "tmp_rmdup"; tmp_pl.mkdir(exist_ok=True)
-            cmd_rmdup = (f"perl {args.rmdup_script} --length {args.rmdup_len} --coverage {args.rmdup_cov} "
-                         f"--identity {args.rmdup_iden} --evalue {args.rmdup_evalue} --CPU {args.threads} --tmp {tmp_pl} {fast_track_source} > {f7_rmdup}")
-            run_cmd(cmd_rmdup, cwd=d7_rmdup, log_file=d7_rmdup/"rmdup.log", logger=logger, sample_name=sample)
-            if not is_valid(f7_rmdup):
-                shutil.copy(fast_track_source, f7_rmdup)
-            else:
-                fast_track_source = f7_rmdup  # 替换为去冗余后的骨架
-        log_stat('4.rmDup_Purification', f7_rmdup if is_valid(f7_rmdup) else fast_track_source)
+    # ── 分支执行 ──
+    if fast_track_source:
+        _fast_track_rmdup()
+    else:
+        _standard_build_track()
+        if fast_track_source:
+            # 快车道在 Step 5 时触发
+            _fast_track_rmdup()
 
     # --- Step 9: Iterative Consensus (后置迭代抛光) 【V9.0 引入快车道输入支持】 ---
     d9_cons.mkdir(exist_ok=True); iter_process_dir = d9_cons / "Iteration_Process"; iter_process_dir.mkdir(exist_ok=True)

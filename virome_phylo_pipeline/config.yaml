@@ -1,0 +1,114 @@
+runtime:
+  stage: all
+  threads: 8
+  min_samples: 5
+  max_viruses: 0
+  force: false
+  skip_msa: false
+  skip_tree: false
+  iqtree_bin: iqtree2
+  # ── IQ-TREE 分支支持值 (2026-09-16 补: 主树原先无自举, 论文没有节点置信度) ──
+  # 与平台侧 Virus_Platform_Core/phylo.py::_run_iqtree 同口径 (-m MFP -B 1000 -alrt 1000)。
+  # ⚠️ IQ-TREE 硬性要求 -B/-alrt 均 >=1000, 写小于 1000 会被拒绝(不会"少跑几轮");
+  #    要关闭支持值就把对应项写 0 (两项都 0 = 回到修复前行为)。
+  iqtree_boot: 1000       # UFBoot 重复数 (-B)
+  iqtree_alrt: 1000       # SH-aLRT 重复数 (-alrt)
+  iqtree_bnni: false      # true = 给 UFBoot 加 --bnni (近缘序列多时更稳, 稍慢)
+  iqtree_timeout: 3600    # 单次尝试超时(秒); 带 UFBoot 后大比对需上调
+  output_dir: phylo_results
+rdp5:
+  # 2026-09-15 (P1-6): enabled 现在是**真正的关闭开关** —— 设为 false 时该 stage
+  # 会被移出执行清单(即使 --stage all)。此前它只用于"把 stage 追加进清单",
+  # 而 --stage all 展开的 STAGE_ORDER 本就含这些 stage, 所以 false 完全不起作用。
+  # 为保持与改动前**实际行为一致**, 这里全部写成 true; 要真关闭就改成 false
+  # (或在命令行用 --disable rdp5)。
+  enabled: true
+  script: ~/MMPV-RNA/biosoft/rdp5/run_rdp5.sh
+  genes: null
+  mask_min_methods: 3
+  stage: run
+beast:
+  enabled: true
+  bin: null
+  chain: 5000000
+  burnin: 10
+  timeout_hours: 48
+  skip_run: false
+  version: 1
+  # 全长 BEAST 并行链数。2026-09-16 修: `chains` 原先**不在 CONFIG_SECTION_ARG 映射里**
+  # → 这里写 5 也等于没写, 实际一直跑 argparse 默认 3 (与 phylogeo.chains 同一个坑)。
+  # 现已在映射中登记 ('chains': 'beast_chains'), 本行真正生效。
+  chains: 5
+gene_dating:
+  enabled: true
+  genes_dir: null
+  chain: 15000000
+  chain_big: 10000000
+  big_genes: L
+saturation:
+  replicates: 1000
+clean:
+  # 2026-09-22 新增: datasets.yaml 的 fasta 是**已比对文件**（含 '-' gap），
+  # 而 clean 默认把 gap 当非法字符**整条剔除** → 全部 REMOVE → clean.fasta 为空
+  # → 下游无输入（PSTVd 实测 111/111 全剔除，比对文件 0 字节）。
+  # true = 允许比对中的 gap 字符（本仓库数据集均提供已比对 fasta，故默认开）。
+  allow_gap_chars: true
+  # 其余 clean 项按需开启（默认 false，见 --clean_* 帮助）：
+  # strip_illegal: false        # true=删非法字符而非整条剔除
+  # drop_no_date: false         # true=丢弃无采集日期的序列
+  # drop_no_location: false     # true=丢弃无地理记录的序列
+popgen:
+  group: location
+  min_n: 5
+  perm: 999
+capheine:
+  ref: null
+  unaligned: null
+  code: 1
+  workers: 2
+  cpus_iqtree: 6
+  cpus_hyphy: 16
+  use_mpi: true
+phylogeo:
+  enabled: true
+  clock: ucln
+  prior: skyline
+  chain: 10000000
+  bf: 5.0
+  treeannotator_bin: treeannotator
+  chains: 5
+  # RRT 树注释法 (VirPhyKit 同口径, 2026-09-16 接线): 随机化 MCC 树 目录/glob。
+  # 留空/注释掉 = 不跑 (默认关闭) —— 它需要自备 N 棵"区域随机化"MCC 树
+  # (上游口径 N=20, 相当于 ~21 次完整 BEAST 重跑), 且会改变地理显著性结论。
+  # 生成方式: 打乱地点标签 → 重跑 phylogeo BEAST → treeannotator 取 MCC, 重复 N 次。
+  # 跑完后结论落在 geography/geo_analysis/extended/rrt_tree_summary.json
+  # rrt_randomized_dir: /path/to/randomized_mccs
+  # ── geo_paths 子阶段 (2026-09-16 新增): 事件级传播路径 + 扩散统计 + 传播图 ──
+  # 吃 phylogeo 的 merged/mcc.tree, 产出 pathways/{branch_table,pathways,episodes,ltl_summary}.csv
+  # + dispersion/{velocity_table,wavefront_series}.csv + 可选 transmission_map.png/gif。
+  # 定位: MCC 描述层, 不改 BSSVS BF 推断。阈值沿用 phymapr 默认, 论文前须按本数据
+  # E[S]=rate×Δheight×L 分布标定 (见 INTEGRATION_20260916.md §2)。
+  # 独立子阶段: --stage geo_paths 单独跑; geography 组自动包含。
+geo_paths:
+  # auto=按本数据 E[S] 分布 q25/q75 自动标定 (推荐); manual=用下面 direct_snp/indirect_snp
+  calibrate: auto
+  direct_snp: 2.0
+  indirect_snp: 5.0
+  censor_years: 0.5
+  n_perm: 200
+  # 出厂默认开启 (2026-09-17): 每次 --stage geo_paths 自动出传播图+树图联动
+  map: true
+  gif: false          # 动画较慢, 需要时 --geo_gif 或改 true
+  gif_frames: 36
+  tree_map: true
+temporal:
+  check: false
+  drt_randomizations: 20
+  bets: false
+  bets_steps: 20
+  bets_chain: 1000000
+report:
+  # 2026-09-15 (P1-7): 该开关此前没有注册成命令行参数, 因此是死的;
+  # 现对应 --report_enabled / --no-report。false 时不再产出
+  # phylo_summary.csv 与 phylo_report.html。
+  enabled: true

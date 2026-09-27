@@ -6,30 +6,43 @@
 public_data_pipeline.py (主编排器)
   │
 [Stage 1] search  → gsa_sra.search.py    → SRA_GSA_Merged_Final.csv
-[Stage 2] info    → gsa_sra.info.py      → Global_Unified_Metadata_Core13.csv
-[Stage 3] down    → gsa_sra.down.py      → downloaded FASTQ/SRA
-[Stage 4] plot    → gsa_sra.plot.py      → SCI 级可视化图表
+[Stage 2] info    → gsa_sra.info.py      → Global_Unified_Metadata_Core14.csv
+[Stage 3] down    → gsa_sra.down.py      → downloaded SRA
+[Stage 4] convert → sra2fastx.py         → FASTQ.GZ
+[Stage 5] plot    → gsa_sra.plot.py      → SCI 级可视化图表
+[Stage 6] hostref → download_host_genome.py → host_reference/genome/all.genome.uniq.fasta (四通道/用户FASTA)
+[Stage 7] hostdb   → build_hostbase.py     → host_reference/hostdb/ 四索引
+[Stage 8] report   → generate_report.py    → Pipeline_Summary_Report.html + sample_handoff.csv
 
-build_host_pipeline.py (宿主库编排器)
+宿主参考构建 (与测序数据获取同管道, build_host_pipeline.py 编排)
   │
-[Stage 1] genome-down  → download_host_genome.py  → all.genome.uniq.fasta
+[Stage 1] genome-down  → download_host_genome.py  → all.genome.uniq.fasta (四通道: datasets/ngd/FTP/gget)
 [Stage 2] hostdb       → build_hostbase.py        → kraken2/bowtie2/hisat2/minimap2 索引
+
+统一预处理入口 (preprocess_unified.py, 按需单独调用; 从 .sra 起步的公共数据 on-ramp)
+  │
+convert → clean → [hostref] → deplete → [bbnorm]
+  → 00_Converted/ 00a_CleanData/ 00b_HostDepletion/ [00c_BBnorm/]
 ```
 
 ---
 
 ## 1. public_data_pipeline.py — 公共数据主编排器
 
-**用途:** 四阶段公共数据获取调度器 (`search → info → down → plot`)。按物种拉丁名和 NCBI TaxID，搜索 NCBI SRA + CNCB GSA 数据库，清洗元数据，下载原始测序数据，生成出版级可视化。检查点机制避免重复执行。
+**用途:** 八阶段公共数据获取调度器 (`search → info → down → convert → plot → hostref → hostdb → report`)。按物种拉丁名和 NCBI TaxID，搜索 NCBI SRA + CNCB GSA 数据库，清洗元数据，下载原始测序数据，转换 FASTQ，生成出版级可视化，下载宿主参考基因组并构建四索引，收尾产出 HTML 报告与下游交接清单。检查点机制避免重复执行。各 stage 直接调用工作脚本，不嵌套子管道。
 
-### 4 阶段说明
+### 8 阶段说明
 
 | 阶段 | 脚本 | 输入 | 输出 |
 |------|------|------|------|
 | search | gsa_sra.search.py | — | `search/SRA_GSA_Merged_Final.csv` |
-| info | gsa_sra.info.py | `sra.list` | `info/Global_Unified_Metadata_Core13.csv` |
-| down | gsa_sra.down.py | `sra.list` | `down/{sample}/*.fastq.gz` |
+| info | gsa_sra.info.py | `sra.list` | `info/Global_Unified_Metadata_Core14.csv` |
+| down | gsa_sra.down.py | `sra.list` | `down/{sample}/*.sra` |
+| convert | sra2fastx.py | `down/*.sra` | `down/{sample}/*.fastq.gz` |
 | plot | gsa_sra.plot.py | 上述 CSV | `plot/Combined_Landscape_Full.pdf` |
+| hostref | download_host_genome.py | --host-species/--host-taxid (默认复用 --species/--taxid)；`--host-fasta` 跳过下载 | `host_reference/genome/all.genome.uniq.fasta` |
+| hostdb | build_hostbase.py | 上一步基因组 FASTA | `host_reference/hostdb/{kraken2,bowtie2,hisat2,minimap2}/` |
+| report | generate_report.py | 上述全部产物 | `Pipeline_Summary_Report.html` + `sample_handoff.csv` |
 
 ### 参数
 
@@ -37,7 +50,7 @@ build_host_pipeline.py (宿主库编排器)
 |------|--------|------|
 | `--species` | 必需 | 物种拉丁学名 |
 | `--taxid` | 必需 | NCBI Taxonomy ID |
-| `--stage` | 必需 | search / info / down / plot / all |
+| `--stage` | 必需 | search / info / down / convert / plot / all |
 | `--deepseek-api` | 环境变量 | DeepSeek API Key (AI 元数据清洗) |
 | `--ncbi-api` | 环境变量 | NCBI API Key |
 | `--work-dir` | `./public_data_pipeline_output` | 输出根目录 |
@@ -54,8 +67,9 @@ build_host_pipeline.py (宿主库编排器)
 {work_dir}/
   search/SRA_GSA_Merged_Final.csv              ← 搜索结果
   info/sra.list                                ← Run accession 列表
-  info/Global_Unified_Metadata_Core13.csv      ← 13 列统一元数据
-  down/{sample_name}/{accession}.fastq.gz      ← 下载的测序数据
+  info/Global_Unified_Metadata_Core14.csv      ← 14 列统一元数据
+  down/{sample_name}/{accession}.sra           ← 下载的测序数据 (原始 SRA)
+  down/{sample_name}/{accession}.fastq.gz      ← 转换后的测序数据 (convert 阶段)
   plot/from_search/Combined_Landscape_Full.*   ← 搜索数据可视化
   plot/from_info/Combined_Landscape_Full.*     ← 元数据可视化
 ```
@@ -102,7 +116,7 @@ build_host_pipeline.py (宿主库编排器)
 
 ## 3. gsa_sra.info.py — 全局元数据统一引擎
 
-**用途:** 从 SRA/GSA accession 列表出发，下载并解析 SRA XML 元数据 (esearch|efetch)，爬取 GSA 网页和 Excel，可选 AI (DeepSeek/Kimi) 推理/仲裁，BioProject→PubMed 文献追溯，分类学解析，产生 13 列标准化元数据 (CSV+TSV) 和交互式 datavzrd HTML 报告。
+**用途:** 从 SRA/GSA accession 列表出发，下载并解析 SRA XML 元数据 (esearch|efetch)，爬取 GSA 网页和 Excel，可选 AI (DeepSeek/Kimi) 推理/仲裁，BioProject→PubMed 文献追溯，分类学解析，产生 14 列标准化元数据 (CSV+TSV) 和交互式 datavzrd HTML 报告。
 
 ### 参数
 
@@ -123,8 +137,8 @@ build_host_pipeline.py (宿主库编排器)
 ### 输出
 ```
 {outdir}/
-  Global_Unified_Metadata_Core13.csv    ← 13 列核心元数据
-  Global_Unified_Metadata_Core13.tsv
+  Global_Unified_Metadata_Core14.csv    ← 14 列核心元数据
+  Global_Unified_Metadata_Core14.tsv
   Global_Unified_Metadata_Full.csv      ← 全部字段
   SRA_Results/                          ← SRA 处理中间文件
     1_raw_xml/{srr}.xml
@@ -140,8 +154,8 @@ build_host_pipeline.py (宿主库编排器)
   Report_Global_Unified_Metadata_Full/  ← datavzrd 交互报告
 ```
 
-### 核心 13 列
-`Run`, `ReleaseDate`, `CollectionDate`, `Location`, `Source`, `Tissue`, `Age_GrowthStage`, `ScientificName`, `TaxID`, `LibrarySource`, `CenterName`, `BioProject`, `PMID`
+### 核心 14 列
+`Run`, `ReleaseDate`, `CollectionDate`, `Location`, `Source`, `Tissue`, `Age_GrowthStage`, `ScientificName`, `TaxID`, `LibrarySource`, `CenterName`, `BioProject`, `BioSample`, `PMID`
 
 **工具依赖:** esearch, efetch (NCBI E-utilities CLI), datavzrd
 
@@ -170,7 +184,7 @@ accession 列表文件 (每行一个 Run ID)
 ### 输出
 ```
 {output}/
-  {sample_name}/{accession}.fastq.gz ← 下载的原始数据
+  {sample_name}/{accession}.sra      ← 下载的原始数据 (SRA)
   download_report_{timestamp}.csv    ← 下载状态报告
   failed_sra_{timestamp}.txt         ← 失败列表 (供重试)
 ```
@@ -179,7 +193,7 @@ accession 列表文件 (每行一个 Run ID)
 
 ### 下载策略
 - **CRR** (CNCB): NGDC FTP → HTTP 回退 → aria2c/wget/requests
-- **SRR/ERR/DRR** (NCBI): prefetch → fasterq-dump (自动)
+- **SRR/ERR/DRR** (NCBI): prefetch（SRA 下载；fasterq-dump 转换见 convert 阶段）
 
 ---
 
@@ -206,9 +220,9 @@ accession 列表文件 (每行一个 Run ID)
 
 ---
 
-## 6. build_host_pipeline.py — 宿主数据库构建编排器
+## 6. build_host_pipeline.py — 宿主参考编排器
 
-**用途:** 两阶段编排: `genome-down` (NCBI datasets 下载参考基因组) → `hostdb` (build_hostbase.py 构建 Kraken2/Bowtie2/HISAT2/Minimap2 索引)。全检查点化。
+**用途:** 两阶段编排: `genome-down` (多通道下载参考基因组: datasets → ngd → FTP → gget 自动回退；或 `--genome-fasta` 直接用自有 FASTA) → `hostdb` (build_hostbase.py 构建 Kraken2/Bowtie2/HISAT2/Minimap2 四索引)。全检查点化。
 
 ### 参数
 
@@ -219,10 +233,14 @@ accession 列表文件 (每行一个 Run ID)
 | `--stage` | 必需 | genome-down / hostdb / all |
 | `--work-dir` | `./build_host_pipeline_output` | 输出目录 |
 | `--genome-fasta` | — | 已有基因组 FASTA (跳过下载) |
+| `--download-source` | `auto` | 下载通道: auto / datasets / ngd / ftp / gget |
 | `--hostdb-tools` | `kraken2,bowtie2,hisat2,minimap2` | 建库工具 |
 | `--seq-types` | `dna-short,rna-short,nanopore,pacbio` | Minimap2 序列类型 |
-| `--k2-libs` | `archaea,bacteria,plasmid,fungi,protozoa,UniVec` | Kraken2 标准库 |
+| `--k2-libs` | `archaea,bacteria,plasmid,fungi,protozoa,UniVec` | Kraken2 标准库 (编排调用会覆盖 build_hostbase 自身默认 7 库) |
+| `--taxonomy-dir` | — | Kraken2 本地 Taxonomy 目录 |
+| `--ncbi-api` | — | NCBI API Key |
 | `--threads` | 30 | 线程数 |
+| `--force` / `--dry-run` | False | 强制重跑 / 仅预览 |
 
 ### 输入
 无 (或 `--genome-fasta` 跳过下载)
@@ -239,9 +257,10 @@ accession 列表文件 (每行一个 Run ID)
 ```
 
 ### 上下游衔接
-**→ virome_discovery_pipeline:** `hostdb/` 目录直接作为 `--host_db` 输入，`host_depletion.py` 自动识别子数据库
+**→ data_preprocessing_pipeline:** `hostdb/` 直接作为 `host_depletion.py -k/-x` 输入与发现管线 `--host_db`；
+**→ preprocess_unified.py:** 其 hostref 阶段自动调用本脚本。
 
-**工具依赖:** datasets (NCBI CLI), unzip, build_hostbase.py
+**工具依赖:** datasets (NCBI CLI), ncbi-genome-download (pip), gget (pip), requests, unzip, build_hostbase.py
 
 ---
 
@@ -259,7 +278,7 @@ accession 列表文件 (每行一个 Run ID)
 | `-t` / `--threads` | `os.cpu_count()` | 线程数 |
 | `--taxonomy` | — | Kraken2 本地 Taxonomy 目录 |
 | `--taxid` | — | 非模式物种 TaxID |
-| `--k2-libs` | `archaea,bacteria,plasmid,fungi,protozoa,UniVec` | Kraken2 标准库 |
+| `--k2-libs` | `archaea,bacteria,plasmid,fungi,protozoa,UniVec,UniVec_Core` | Kraken2 标准库 (独立运行默认 7 库; 经编排器传入时被覆盖为 6 库) |
 | `--add-library` | — | 补充自定义 FASTA |
 | `--force` | False | 强制重建 |
 
@@ -279,9 +298,9 @@ accession 列表文件 (每行一个 Run ID)
 
 ---
 
-## 8. download_host_genome.py — 参考基因组下载器
+## 8. download_host_genome.py — 参考基因组多通道下载器
 
-**用途:** NCBI datasets CLI 封装。下载核基因组 + GFF3 + seq-report。自动解压、合并多 FASTA、去重序列名、可选下载叶绿体/线粒体基因组。
+**用途:** 宿主参考基因组获取，四通道自动回退: `datasets` (NCBI datasets CLI, 官方首选) → `ngd` (ncbi-genome-download, 按 TaxID 并行) → `ftp` (E-utilities 定位 + HTTPS 直连) → `gget` (Ensembl/Ensembl Plants, NCBI 缺物种的非模式植物补充)。下载核基因组 + GFF3 + seq-report，自动解压、合并多 FASTA、去重序列名，可选下载叶绿体/线粒体基因组。
 
 ### 参数
 
@@ -289,6 +308,10 @@ accession 列表文件 (每行一个 Run ID)
 |------|--------|------|
 | `--species` | 必需 | 物种拉丁学名 |
 | `--outdir` | 必需 | 输出目录 |
+| `--source` | `auto` | 下载通道: auto / datasets / ngd / ftp / gget |
+| `--taxid` | — | NCBI Taxonomy ID (ngd 通道必需) |
+| `--ensembl-release` | — | Ensembl 版本 (gget 通道) |
+| `--ncbi-api` | — | NCBI API Key (提升速率) |
 | `--include-organelles` | False | 下载叶绿体和线粒体 |
 | `--min-length` | 0 | 最小序列长度 |
 | `--verify-only` | False | 仅验证现有下载 |
@@ -308,7 +331,7 @@ accession 列表文件 (每行一个 Run ID)
   mitochondrion/mitochondrion.fasta ← (可选) 线粒体
 ```
 
-**工具依赖:** datasets (NCBI CLI), unzip
+**工具依赖:** datasets (NCBI CLI), ncbi-genome-download (pip), gget (pip), requests, unzip
 
 ---
 
@@ -328,3 +351,63 @@ accession 列表文件 (每行一个 Run ID)
 ```
 python extract_sra_list.py --input merged.csv --output sra.list --filter-db SRA --filter-col Tissue --filter-val leaf
 ```
+
+---
+
+## 10. preprocess_unified.py — 统一预处理入口（convert → clean → [hostref] → deplete → [bbnorm]）
+
+**用途:** 从 `.sra` 一条命令跑到"宿主剔除后 clean reads"的公共数据 on-ramp。
+按阶段调用上游脚本（不嵌套子管道），产出目录名与 `data_preprocessing_pipeline/`
+及发现管线一致，因此输出可直接作为下游 `--input_reads` / `--reads_dir`。
+之所以放在本目录，是因为其中的 `convert`（`sra2fastx.py`）与 `hostref`
+（`download_host_genome.py` + `build_hostbase.py`）三个脚本只在本目录。
+
+### 5 阶段说明
+
+| # | 阶段 | 输入 → 输出 | 说明 |
+|---|------|-------------|------|
+| 1 | `convert` | `.sra` → `00_Converted/` | `sra2fastx.py`（已有 FASTQ 时 `--skip-convert`，并可改用 `--fastq-dir`） |
+| 2 | `clean` | FASTQ → `00a_CleanData/` | `data_preprocessing_pipeline/clean-data.py`（fastp → seqkit → clumpify） |
+| 3 | `hostref` | → `host_reference/hostdb/` | **可选**：给了 `--host-species`/`--host-fasta` 才跑；四通道下载 + 四索引构建 |
+| 4 | `deplete` | `00a_CleanData/` → `00b_HostDepletion/` | `host_depletion.py`（Kraken2 → 比对 → Ribodetector） |
+| 5 | `bbnorm` | `00b_HostDepletion/` → `00c_BBnorm/` | **可选**：`--bbnorm` 显式启用，默认不跑；`run_bbnorm.py`（target=70, mindepth=2） |
+
+### 参数
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `--sra-dir` / `--fastq-dir` | — | 输入二选一（.sra 目录 或 FASTQ.GZ 目录） |
+| `--outdir` / `-o` | `./preprocessed` | 输出根目录 |
+| `--skip-convert` / `--skip-clean` / `--skip-deplete` | False | 跳过对应阶段（跳过 deplete 时要求宿主库已存在） |
+| `--bbnorm` | False | 可选覆盖度归一化 → `00c_BBnorm/`；需 deplete 产物 |
+| `--kraken2-db` + `--step2-index` | — | 已有宿主库（与 hostref 二选一） |
+| `--host-species` / `--host-taxid` / `--host-fasta` | — | 现场构建宿主参考（`--host-taxid` 必填） |
+| `--host-work-dir` | `<outdir>/host_reference` | 宿主参考构建输出目录 |
+| `--host-download-source` | `auto` | 基因组下载通道 datasets→ngd→FTP 回退；gget 走 Ensembl |
+| `--tool` | `bowtie2` | 比对工具 bowtie2 / hisat2 / minimap2 |
+| `--seq-type` | `rna-short` | dna-short / rna-short / nanopore / pacbio |
+| `--dedup` / `--skip-clumpify` / `--clumpify-memory` | — / False / `10g` | clean 阶段（fastp 可选去重·默认关、跳过 clumpify、堆内存） |
+| `--threads` / `-t`、`--jobs` / `-j` | 40、4 | 总线程、并行任务数 |
+| `--tmp` | — | 临时目录 |
+
+### 输出
+
+```
+{outdir}/
+  00_Converted/       ← .sra → .fastq.gz
+  00a_CleanData/      ← fastp + clumpify + FASTA
+  00b_HostDepletion/  ← 去宿主 + 去 rRNA 后 reads
+  00c_BBnorm/         ← 覆盖度归一化 reads (仅 --bbnorm)
+  preprocess.log      ← 全流程日志
+  host_reference/     ← 仅 hostref 阶段 (genome/ + hostdb/ 四索引)
+```
+
+### 上下游衔接
+
+- **← 上游:** `data_preprocessing_pipeline` / 本目录 `hostdb/` 提供宿主库（`--kraken2-db`/`--step2-index`），
+  或由 `--host-species` 现场构建
+- **→ 下游:** `00b_HostDepletion/`（或加了 `--bbnorm` 时的 `00c_BBnorm/`）作为
+  `virome_discovery_pipeline/virome_pipeline.py --input_reads` 或
+  `virome_analysis_pipeline/auto_known_virus.py --reads_dir`
+- **说明:** 覆盖度归一化仅用于多样本深度差异大时的共组装前处理（默认关闭）；
+  与发现管线共用输出根目录时，`report_pipeline.py` 会在报告里展示 `00c_BBnorm` 阶段

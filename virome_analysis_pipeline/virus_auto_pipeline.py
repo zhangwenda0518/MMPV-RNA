@@ -20,6 +20,8 @@ import re
 import csv
 import tempfile
 import subprocess
+import shutil
+import atexit
 import warnings
 from pathlib import Path
 from collections import defaultdict
@@ -57,6 +59,15 @@ SDT_COLORS =[
     '#FFFF66', '#FFCC00', '#FF6600', '#E60000', '#8B0000'
 ]
 PLOT_DPI = 600
+
+# ── MAFFT 逐对 SDT 比对：全库统一定为 --auto ──
+# --localpair (L-INS-i) 内存复杂度 O(L^2)，L 为序列长度。
+# 实测：含 1.2 Mb 参考基因组的 pair 会让单个 tbfast 进程 RSS 涨到 327 GB，
+# 8 个 worker 并行时直接打爆 629 GB 内存的机器（OOM）。
+# --auto 对同一条 pair 峰值 RSS 仅 0.49 GB（差 670 倍），耗时 6分50秒。
+# 决策：全库统一 --auto，保证跨属 SDT 口径可比。
+# 注意：因算法变更，cache 键已加入算法标记，旧 --localpair cache 不会被复用。
+MAFFT_SDT_MODE = '--auto'
 
 # =============================================================================
 #[ 工具函数 ]
@@ -475,6 +486,100 @@ def _pw_worker(task):
     val = calc_sim_pair(args_for_calc)
     return i, j, val
 
+# =============================================================================
+#[ SDT原始版完全复刻：外部比对器逐对独立对齐 ]
+# =============================================================================
+def _sdt_exact_worker(task):
+    """
+    SDT原始版完全复刻。每条task：
+      1. 将两条序列写入临时FASTA
+      2. 调用外部比对器 (muscle/mafft/clustalw) 对齐这对序列
+      3. 读回对齐结果
+      4. 用SDT Get_Similarity公式计算identity
+    子进程（muscle/mafft/clustalw）在异常或中断时会被杀死，不留孤儿进程。
+    """
+    i, j, s1, s2, is_p, tmp_dir_str, aligner_type, aligner_path = task
+    tmp_dir = Path(tmp_dir_str)
+
+    in_file  = tmp_dir / f"sdt_pair_{i}_{j}.fasta"
+    out_file = tmp_dir / f"sdt_pair_{i}_{j}_aln.fasta"
+    proc = None
+
+    try:
+        rec1 = SeqRecord(Seq(s1), id=f"s{i}")
+        rec2 = SeqRecord(Seq(s2), id=f"s{j}")
+        with open(in_file, 'w') as f:
+            SeqIO.write([rec1, rec2], f, "fasta")
+
+        if aligner_type == 'muscle':
+            cmd = [aligner_path, '-in', str(in_file), '-out', str(out_file)]
+        elif aligner_type == 'mafft':
+            # 全库统一 --auto（FFT-NS-2 系列，内存 O(L)）。
+            # 历史教训：--localpair 对 1Mb+ 参考基因组会吃 300GB+ 内存导致 OOM。
+            cmd = [aligner_path, '--quiet', MAFFT_SDT_MODE, str(in_file)]
+        elif aligner_type == 'clustalw':
+            cmd = [aligner_path, '-INFILE=' + str(in_file),
+                   '-OUTFILE=' + str(out_file),
+                   '-type=PROTEIN' if is_p else '-type=DNA']
+
+        if aligner_type == 'mafft':
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
+                                    stderr=subprocess.PIPE, text=True)
+            stdout, _ = proc.communicate()
+            if proc.returncode != 0:
+                return i, j, np.nan
+            proc = None  # 正常结束，标记无需kill
+            with open(out_file, 'w') as f:
+                f.write(stdout)
+        else:
+            proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL,
+                                    stderr=subprocess.DEVNULL)
+            proc.wait()
+            if proc.returncode != 0:
+                return i, j, np.nan
+            proc = None  # 正常结束
+
+        if aligner_type == 'clustalw':
+            aln_recs = list(SeqIO.parse(out_file, 'clustal'))
+        else:
+            aln_recs = list(SeqIO.parse(out_file, 'fasta'))
+
+        if len(aln_recs) < 2:
+            return i, j, np.nan
+
+        # ── SDT Get_Similarity 的逐字复制 ──
+        aln_len = len(aln_recs[0].seq)
+        dist, gaps = 0, 0
+        for k in range(aln_len):
+            if aln_recs[0].seq[k] != '-' and aln_recs[1].seq[k] != '-':
+                if aln_recs[0].seq[k] != aln_recs[1].seq[k]:
+                    dist += 1
+            else:
+                gaps += 1
+
+        denom = aln_len - gaps
+        similarity = (1.0 - dist / denom) * 100.0 if denom > 0 else np.nan
+
+    except Exception:
+        similarity = np.nan
+    finally:
+        # 🔥 无论什么原因退出，确保外部子进程被杀死
+        if proc is not None:
+            try:
+                proc.kill()
+                proc.wait(timeout=5)
+            except Exception:
+                pass
+        if in_file.exists():
+            in_file.unlink()
+        if out_file.exists():
+            out_file.unlink()
+        dnd = tmp_dir / f"sdt_pair_{i}_{j}.dnd"
+        if dnd.exists():
+            dnd.unlink()
+
+    return i, j, similarity
+
 def build_mat_pw(recs, is_p, ign, workers, desc, metric, out_dir, cache_prefix, resume=False):
     n = len(recs)
     strs =[str(r.seq) for r in recs]
@@ -591,6 +696,105 @@ def build_mat_mafft(recs, is_p, ign, mafft, threads, desc, metric, out_dir, cach
     tmp_cache = cache_file.parent / (cache_file.stem + '.tmp.npy')
     np.save(tmp_cache, mat)
     tmp_cache.replace(cache_file)
+
+    return mat
+
+def build_mat_sdt_exact(recs, is_p, ign, aligner_path, aligner_type, threads, desc,
+                         out_dir, cache_prefix, resume=False):
+    """
+    SDT原始版完全复刻模式。
+    每对序列走和Brejnev Muhire 2014版完全相同的路径：
+    外部比对器逐对独立对齐 → Get_Similarity公式。
+    支持断点续传（每完成一轮就原子刷盘）。
+    Ctrl+C 中断时会终止所有 worker 及其子进程（muscle/mafft/clustalw），
+    不留孤儿进程。
+    """
+    n = len(recs)
+
+    cache_dir = out_dir / ".resume_cache"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    # cache 键加入算法模式：算法变更时旧 cache 自动失效，避免用错引擎的结果续传。
+    mode_tag = MAFFT_SDT_MODE.lstrip('-') if aligner_type == 'mafft' else 'na'
+    cache_file = cache_dir / f"{cache_prefix}_sdt_{aligner_type}_{mode_tag}_{n}.npy"
+
+    if resume and cache_file.exists():
+        try:
+            mat = np.load(cache_file)
+            if mat.shape == (n, n):
+                print(f"      🔄[SDT续传] 加载SDT比对缓存，已算对位秒跳过！")
+                return mat
+        except Exception:
+            pass
+
+    mat = np.full((n, n), np.nan)
+    strs = [str(r.seq) for r in recs]
+
+    tmp_dir = out_dir / ".sdt_align_tmp"
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+
+    def _cleanup_tmp():
+        try:
+            if tmp_dir.exists():
+                shutil.rmtree(tmp_dir)
+        except Exception:
+            pass
+
+    atexit.register(_cleanup_tmp)
+
+    tasks = []
+    for i in range(n):
+        for j in range(i + 1, n):
+            if np.isnan(mat[i, j]):
+                tasks.append((i, j, strs[i], strs[j], is_p,
+                              str(tmp_dir), aligner_type, aligner_path))
+
+    if not tasks:
+        _cleanup_tmp()
+        atexit.unregister(_cleanup_tmp)
+        return mat
+
+    print(f"      🏃 [{aligner_type}] 外部逐对独立比对 ({desc}), "
+          f"共 {len(tasks)} 对 ({n} 条序列)...")
+
+    ex = ProcessPoolExecutor(max_workers=threads)
+    try:
+        chunk_sz = max(1, len(tasks) // (threads * 4))
+        results = ex.map(_sdt_exact_worker, tasks, chunksize=chunk_sz)
+
+        flush_interval = max(1000, len(tasks) // 20)
+        save_counter = 0
+
+        with tqdm(total=len(tasks), desc=f"      🧬 {desc:<16}",
+                  unit="pair", leave=True) as pbar:
+            for i, j, val in results:
+                mat[i, j] = val
+                pbar.update(1)
+                save_counter += 1
+
+                if save_counter % flush_interval == 0:
+                    tmp_cache = cache_file.parent / (cache_file.stem + '.tmp.npy')
+                    np.save(tmp_cache, mat)
+                    tmp_cache.replace(cache_file)
+
+    except KeyboardInterrupt:
+        print(f"\n      ⚠️ 用户中断！正在终止 {threads} 个 worker 及所有外部子进程...")
+        ex.shutdown(wait=False, cancel_futures=True)
+        # worker 进程被强制终止后，其子进程(muscle/mafft)可能已变成孤儿。
+        # 主进程无法直接回收其他进程的子进程，但 daemon worker 退出时
+        # 操作系统的进程组清理会兜底收走它们。
+        raise
+    except Exception:
+        ex.shutdown(wait=False, cancel_futures=True)
+        raise
+    else:
+        ex.shutdown(wait=True)
+
+    tmp_cache = cache_file.parent / (cache_file.stem + '.tmp.npy')
+    np.save(tmp_cache, mat)
+    tmp_cache.replace(cache_file)
+
+    _cleanup_tmp()
+    atexit.unregister(_cleanup_tmp)
 
     return mat
 
@@ -826,10 +1030,21 @@ def run_mode(mode_name, args, seq_records, ext_dir, base_out_dir, organism, acce
 
         # 🌟 指针方法引入断点专属缓存签注
         def run_m(seqs, is_p, d, cache_prefix):
-            if args.align_method == 'mafft': 
-                return build_mat_mafft(seqs, is_p, args.ignore_ambiguous, args.mafft_path, args.threads, d, args.scoring_metric, sub_out_dir, cache_prefix, args.resume)
-            else: 
-                return build_mat_pw(seqs, is_p, args.ignore_ambiguous, args.threads, d, args.scoring_metric, sub_out_dir, cache_prefix, args.resume)
+            if args.align_method == 'mafft':
+                return build_mat_mafft(seqs, is_p, args.ignore_ambiguous,
+                                       args.mafft_path, args.threads, d,
+                                       args.scoring_metric, sub_out_dir,
+                                       cache_prefix, args.resume)
+            elif args.align_method == 'sdt_exact':
+                return build_mat_sdt_exact(seqs, is_p, args.ignore_ambiguous,
+                                           args.sdt_aligner_path,
+                                           args.sdt_aligner, args.threads, d,
+                                           sub_out_dir, cache_prefix,
+                                           args.resume)
+            else:
+                return build_mat_pw(seqs, is_p, args.ignore_ambiguous,
+                                    args.threads, d, args.scoring_metric,
+                                    sub_out_dir, cache_prefix, args.resume)
 
         if is_dedup_run:
             suffix_title = "(Deduplicated)"
@@ -1053,8 +1268,15 @@ def main():
     
     g2 = parser.add_argument_group('Phase 2: 并行算力编队与出图中心')
     g2.add_argument('--skip_similarity', action='store_true', help='只进行拦截降噪不执行比对分析')
-    g2.add_argument('--align_method', choices=['pairwise', 'mafft'], default='pairwise', help='排针架构')
+    g2.add_argument('--align_method', choices=['pairwise', 'mafft', 'sdt_exact'],
+                    default='sdt_exact',
+                    help='排针架构: sdt_exact(SDT原始版完全复刻,默认) / pairwise(Biopython逐对) / mafft(全局MSA)')
     g2.add_argument('--mafft_path', default='mafft', help='mafft路径')
+    g2.add_argument('--sdt_aligner', choices=['muscle', 'mafft', 'clustalw'],
+                    default='mafft',
+                    help='SDT复刻模式的外部比对器 (默认 mafft)')
+    g2.add_argument('--sdt_aligner_path', default='mafft',
+                    help='SDT复刻模式的外部比对器可执行文件路径')
     g2.add_argument('--threads', type=int, default=4, help='引擎线程阀门并发基数')
     g2.add_argument('--ignore_ambiguous', action='store_true', help='免疫由于序列脏点产生的人工算力惩罚')
     g2.add_argument('--scoring_metric', choices=['sdt_strict', 'blast_global'], default='sdt_strict', help='🎯 【基点法则】sdt_strict(不计空位) vs blast_global(严厉惩罚缺口)')

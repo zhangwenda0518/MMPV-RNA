@@ -1,0 +1,566 @@
+{
+ "detection_raw": {
+  "pairs": 5934,
+  "distinct_viruses": 379,
+  "distinct_samples": 887
+ },
+ "detection_pass": {
+  "pairs": 318,
+  "distinct_viruses": 96,
+  "distinct_samples": 251,
+  "top_viruses": [
+   [
+    "Citrus exocortis Yucatan viroid",
+    104
+   ],
+   [
+    "Passiflora latent virus",
+    19
+   ],
+   [
+    "Cymbidium mosaic virus",
+    13
+   ],
+   [
+    "Narcissus symptomless virus",
+    10
+   ],
+   [
+    "Impatiens necrotic spot virus",
+    10
+   ],
+   [
+    "Alfalfa-associated picorna-like virus 2",
+    8
+   ],
+   [
+    "Schlumbergera virus X",
+    6
+   ],
+   [
+    "Arabis mosaic virus",
+    5
+   ],
+   [
+    "Hemp virus T",
+    5
+   ],
+   [
+    "Beetleweed nepovirus",
+    5
+   ],
+   [
+    "Agave potexvirus 1",
+    5
+   ],
+   [
+    "Fabavirus betaviciae",
+    4
+   ],
+   [
+    "Potexvirus alternantherae",
+    4
+   ],
+   [
+    "Beet cryptic virus 1",
+    4
+   ],
+   [
+    "Cannabis partiti-like virus",
+    4
+   ]
+  ],
+  "molecule_types": {
+   "ssRNA": 110,
+   "ssRNA(+)": 155,
+   "RNA": 1,
+   "unknown": 1,
+   "ssDNA(+/-)": 5,
+   "dsRNA": 22,
+   "dsDNA-RT": 3,
+   "ssRNA(+/-)": 10,
+   "DNA": 2,
+   "ssRNA(-)": 9
+  },
+  "median_cov": 67.7,
+  "median_depth": 6.0,
+  "median_TPM": 592547.9,
+  "median_ANI": null,
+  "median_poisson": 0.79
+ },
+ "filter_kept": {
+  "pairs": 118,
+  "viruses": 71,
+  "samples": 89,
+  "per_virus": [
+   [
+    "Citrus exocortis Yucatan viroid",
+    16
+   ],
+   [
+    "Cymbidium mosaic virus",
+    6
+   ],
+   [
+    "Schlumbergera virus X",
+    5
+   ],
+   [
+    "Impatiens necrotic spot virus",
+    5
+   ],
+   [
+    "Passiflora latent virus",
+    4
+   ],
+   [
+    "Tobacco rattle virus",
+    3
+   ],
+   [
+    "Narcissus symptomless virus",
+    3
+   ],
+   [
+    "Verbena latent virus",
+    2
+   ],
+   [
+    "Beet capulavirus 1",
+    2
+   ],
+   [
+    "Iresine viroid 1",
+    2
+   ],
+   [
+    "Lettuce chlorosis virus",
+    2
+   ],
+   [
+    "Potato virus S",
+    2
+   ],
+   [
+    "Cannabis sativa amalgavirus 1",
+    2
+   ],
+   [
+    "Cannabis partiti-like virus",
+    2
+   ],
+   [
+    "Asclepias syriaca virus 1",
+    2
+   ],
+   [
+    "Arabis mosaic virus",
+    2
+   ],
+   [
+    "Fabavirus betaviciae",
+    2
+   ],
+   [
+    "Varicosavirus lactucae",
+    2
+   ],
+   [
+    "Lily mottle virus",
+    2
+   ],
+   [
+    "Cucumber mosaic virus satellite RNA CARNA-5",
+    1
+   ]
+  ],
+  "median_cov": 85.8,
+  "median_depth": 78.0,
+  "ge80cov": 67
+ },
+ "filter_discarded": {
+  "pairs": 200,
+  "viruses": 49,
+  "top_viruses": [
+   [
+    "Citrus exocortis Yucatan viroid",
+    88
+   ],
+   [
+    "Passiflora latent virus",
+    15
+   ],
+   [
+    "Alfalfa-associated picorna-like virus 2",
+    8
+   ],
+   [
+    "Narcissus symptomless virus",
+    7
+   ],
+   [
+    "Cymbidium mosaic virus",
+    7
+   ],
+   [
+    "Impatiens necrotic spot virus",
+    5
+   ],
+   [
+    "Hemp virus T",
+    5
+   ],
+   [
+    "Beetleweed nepovirus",
+    4
+   ],
+   [
+    "Agave potexvirus 1",
+    4
+   ],
+   [
+    "Potexvirus alternantherae",
+    3
+   ]
+  ],
+  "lt50cov": 69,
+  "lt5depth": 146
+ },
+ "per_virus_stats": {
+  "viruses": 96,
+  "top12_by_samples": [
+   [
+    "Citrus exocortis Yucatan viroid",
+    104,
+    67.6,
+    25.0
+   ],
+   [
+    "Passiflora latent virus",
+    19,
+    52.9,
+    349.8
+   ],
+   [
+    "Cymbidium mosaic virus",
+    13,
+    86.4,
+    3999.0
+   ],
+   [
+    "Narcissus symptomless virus",
+    10,
+    76.0,
+    1172.2
+   ],
+   [
+    "Impatiens necrotic spot virus",
+    10,
+    71.0,
+    233.4
+   ],
+   [
+    "Alfalfa-associated picorna-like virus 2",
+    8,
+    43.2,
+    1.4
+   ],
+   [
+    "Schlumbergera virus X",
+    6,
+    64.8,
+    2470.2
+   ],
+   [
+    "Agave potexvirus 1",
+    5,
+    55.9,
+    1343.0
+   ],
+   [
+    "Beetleweed nepovirus",
+    5,
+    59.8,
+    1257.2
+   ],
+   [
+    "Arabis mosaic virus",
+    5,
+    44.5,
+    394.7
+   ],
+   [
+    "Hemp virus T",
+    5,
+    48.4,
+    0.9
+   ],
+   [
+    "Beet cryptic virus 1",
+    4,
+    74.1,
+    3414.1
+   ]
+  ],
+  "single_sample_viruses": 56
+ },
+ "variant_analysis_input": {
+  "pairs": 118,
+  "viruses": 73,
+  "samples": 89,
+  "median_cov": 98.3,
+  "median_depth": 115.9,
+  "median_pi": 0.0034,
+  "median_shannon": 0.0158
+ },
+ "variant_qc": {
+  "qc_files": 71,
+  "pairs_scored": 115,
+  "n_pass": 115,
+  "n_fail": 0,
+  "total_variants": 22377,
+  "median_variants": 107,
+  "max_variants": 1014,
+  "median_ts_tv": 3.8,
+  "viruses_with_qc": 71,
+  "top_virus_variant_totals": [
+   [
+    "Passiflora_latent_virus_NC_008292.1",
+    2212
+   ],
+   [
+    "Schlumbergera_virus_X_NC_011659.1",
+    1977
+   ],
+   [
+    "Cymbidium_mosaic_virus_NC_001812.1",
+    1536
+   ],
+   [
+    "Potato_virus_S_NC_007289.1",
+    1450
+   ],
+   [
+    "Garlic_virus_B_NC_025789.1",
+    829
+   ],
+   [
+    "Arabis_mosaic_virus_NC_006056.1",
+    823
+   ],
+   [
+    "Garlic_virus_X_NC_001800.1",
+    757
+   ],
+   [
+    "Verbena_latent_virus_PV805050.1",
+    694
+   ],
+   [
+    "Tobacco_ringspot_virus_NC_005097.1",
+    670
+   ],
+   [
+    "Agave_potexvirus_1_PQ184856.1",
+    669
+   ],
+   [
+    "Narcissus_symptomless_virus_NC_008552.1",
+    615
+   ],
+   [
+    "Tobacco_rattle_virus_NC_003805.1",
+    511
+   ]
+  ]
+ },
+ "coinfection": {
+  "samples_in_matrix": 89,
+  "viruses_in_matrix": 71,
+  "samples_with_ge2": 18,
+  "max_viruses_one_sample": 5,
+  "distribution": {
+   "1": 71,
+   "2": 11,
+   "3": 4,
+   "4": 2,
+   "5": 1
+  }
+ },
+ "post_analysis": {
+  "virus_dirs": 73,
+  "with_vcf_merge": 72,
+  "with_vcf_viz": 72,
+  "with_matrices": 72,
+  "with_trees": 72
+ },
+ "assembly_evolution_columns": [
+  "Sample",
+  "Step",
+  "Total_Length",
+  "Non_N_Bases",
+  "N_Count",
+  "Contig_N50"
+ ],
+ "assembly_evolution_files": 117,
+ "assembly_evolution_sample": [
+  {
+   "Sample": "ERR2040123.NC_011659.1",
+   "Step": "1.DeNovo_Cleaned",
+   "Total_Length": "6587",
+   "Non_N_Bases": "6587",
+   "N_Count": "0",
+   "Contig_N50": "3746"
+  },
+  {
+   "Sample": "ERR2040123.NC_011659.1",
+   "Step": "2.PVGA_Extension",
+   "Total_Length": "6309",
+   "Non_N_Bases": "6309",
+   "N_Count": "0",
+   "Contig_N50": "5157"
+  },
+  {
+   "Sample": "ERR2040123.NC_011659.1",
+   "Step": "3.Pre_Fusion_Merge",
+   "Total_Length": "8903",
+   "Non_N_Bases": "8903",
+   "N_Count": "0",
+   "Contig_N50": "5157"
+  },
+  {
+   "Sample": "ERR2040283.NC_011659.1",
+   "Step": "1.DeNovo_Cleaned",
+   "Total_Length": "6340",
+   "Non_N_Bases": "6340",
+   "N_Count": "0",
+   "Contig_N50": "5209"
+  }
+ ],
+ "assembly": {
+  "virus_dirs": 73,
+  "total_sample_assemblies": 118,
+  "viruses_with_assemblies": 73,
+  "max_samples_one_virus": 16,
+  "top_assembly_viruses": [
+   [
+    "Citrus_exocortis_Yucatan_viroid_MZ463745.1",
+    16
+   ],
+   [
+    "Cymbidium_mosaic_virus_NC_001812.1",
+    6
+   ],
+   [
+    "Schlumbergera_virus_X_NC_011659.1",
+    5
+   ],
+   [
+    "Impatiens_necrotic_spot_virus_NC_003624.1",
+    4
+   ],
+   [
+    "Passiflora_latent_virus_NC_008292.1",
+    4
+   ],
+   [
+    "Tobacco_rattle_virus_NC_003805.1",
+    3
+   ],
+   [
+    "Narcissus_symptomless_virus_NC_008552.1",
+    3
+   ],
+   [
+    "Verbena_latent_virus_PV805050.1",
+    2
+   ],
+   [
+    "Beet_capulavirus_1_PQ682516.1",
+    2
+   ],
+   [
+    "Iresine_viroid_1_NC_003613.1",
+    2
+   ]
+  ]
+ },
+ "extraction": {
+  "virus_dirs": 73,
+  "total_full_genomes": 76,
+  "viruses_with_full": 57,
+  "max_one_virus": 6,
+  "top": [
+   [
+    "Cymbidium_mosaic_virus_NC_001812.1",
+    6
+   ],
+   [
+    "Citrus_exocortis_Yucatan_viroid_MZ463745.1",
+    3
+   ],
+   [
+    "Narcissus_symptomless_virus_NC_008552.1",
+    3
+   ],
+   [
+    "Schlumbergera_virus_X_NC_011659.1",
+    3
+   ],
+   [
+    "Arabis_mosaic_virus_NC_006056.1",
+    2
+   ],
+   [
+    "Beet_capulavirus_1_PQ682516.1",
+    2
+   ],
+   [
+    "Impatiens_necrotic_spot_virus_NC_003624.1",
+    2
+   ],
+   [
+    "Iresine_viroid_1_NC_003613.1",
+    2
+   ],
+   [
+    "Passiflora_latent_virus_NC_008292.1",
+    2
+   ],
+   [
+    "Potato_virus_S_NC_007289.1",
+    2
+   ]
+  ]
+ },
+ "similarity": {
+  "virus_dirs": 73,
+  "with_extraction_summary": 73,
+  "with_mode_filter": 73,
+  "genome_raw_N_median": 2.9,
+  "genome_raw_N_max": 67.4,
+  "fill_N_median": null,
+  "n_genomes_scored": 118
+ },
+ "dvg": {
+  "virus_dirs": 50,
+  "sample_runs_total": 67,
+  "empty_report_rows": 1,
+  "summary_report_files": [
+   "Virus_Specific_Plots",
+   "Empty_Report.csv"
+  ],
+  "empty_report_columns": "\"Note\"",
+  "gathered_beds": 0
+ },
+ "stage_set_consistency": {
+  "per_virus_02": 96,
+  "kept_viruses_02": 71,
+  "post_dirs": 73,
+  "variant_virus_dirs": 73,
+  "asm_dirs": 73,
+  "ext_dirs": 73,
+  "sim_dirs": 73,
+  "dvg_dirs": 50
+ }
+}

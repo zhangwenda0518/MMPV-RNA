@@ -2,7 +2,7 @@
 """
 virome_analysis.py — 病毒基因组下游分析 + GenBank 提交准备 v2.1
 ============================================================
-输入: all_plant_viruses.fasta (来自 08_Rescue)
+输入: HQ_plant_viruses.fasta (来自 08_Rescue)
 输出: 09_Virome_Analysis/
 
 阶段:
@@ -13,13 +13,19 @@ virome_analysis.py — 病毒基因组下游分析 + GenBank 提交准备 v2.1
   5. submission (Sequin) — .fsa + .tbl + .cmt → .sqn (tbl2asn)
 
 用法:
-  python virome_analysis.py -i out/08_Rescue/all_plant_viruses.fasta -o out/09_Virome_Analysis/ -t 40
+  python virome_analysis.py -i out/08_Rescue/HQ_plant_viruses.fasta -o out/09_Virome_Analysis/ -t 40
 """
 
 import argparse, os, sys, subprocess, logging, time, shutil
 from pathlib import Path
 from datetime import datetime
 from shutil import which
+
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+from mmpv_common.io_layout import layout_dirs as _layout_dirs, dir_name as _ldir
+_D = _layout_dirs(os.environ.get("MMPV_IO_LAYOUT", "legacy"))
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 
@@ -199,8 +205,8 @@ def run_submission(fasta, out_dir, feat_dir, tax_dir, hypo_dir, log):
 
 def main():
     p = argparse.ArgumentParser(description="病毒基因组下游分析 + NCBI 提交")
-    p.add_argument("-i", "--input", required=True, help="输入: all_plant_viruses.fasta")
-    p.add_argument("-o", "--output", default="./09_Virome_Analysis", help="输出目录")
+    p.add_argument("-i", "--input", required=True, help="输入: HQ_plant_viruses.fasta")
+    p.add_argument("-o", "--output", default=None, help="输出目录 (默认按 I/O 布局: legacy=09_Virome_Analysis, standard=11_ViromeAnalysis)")
     p.add_argument("-t", "--threads", type=int, default=40)
     p.add_argument("--suvtk-db", default=os.path.expanduser("~/database/virus-db/suvtk_db/"))
     p.add_argument("--rvdb-dir", default=os.path.expanduser("~/database/virus-db/RVDB-v31/"))
@@ -245,10 +251,12 @@ def main():
 
     # 6. 生成 ref_info.tsv (供 virome_analysis_pipeline/auto_known_virus.py 使用)
     ref_info = out / "ref_info.tsv"
+    if not args.output:
+        args.output = _D['d_analysis']
     if not ref_info.is_file():
         ref_builder = SCRIPT_DIR / "build_ref_info.py"
         if ref_builder.is_file():
-            pipeline_root = Path(args.output).parent if Path(args.output).name == "09_Virome_Analysis" else Path(args.output)
+            pipeline_root = Path(args.output).parent if Path(args.output).name == _D["d_analysis"] else Path(args.output)
             run(f"python {ref_builder} -o {pipeline_root}", log, "build ref_info.tsv")
 
     elapsed = time.time() - t0

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-rescue_pipeline.py -- 病毒基因组三支路级联拯救 v3.0
+rescue_pipeline.py -- 病毒基因组四支路级联拯救 v3.0
 ==================================================
 
-独立拯救脚本: 接收已聚类的 centroids + clusters + 拆分文件, 直接执行三支路拯救。
+独立拯救脚本: 接收已聚类的 centroids + clusters + 拆分文件, 直接执行四支路拯救。
 不重新聚类, 不重新过滤。聚类由 cluster_pipeline.py 完成, rescue 只做拯救。
 
 流程:
@@ -15,7 +15,7 @@ rescue_pipeline.py -- 病毒基因组三支路级联拯救 v3.0
 依赖: checkv, blastn, Virseqimprover.py
 """
 
-import argparse, subprocess, sys, os, threading, shutil, json
+import argparse, subprocess, sys, os, threading, shutil, json, re
 from pathlib import Path
 from datetime import datetime
 from collections import defaultdict
@@ -24,6 +24,61 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import pandas as pd
 from Bio import SeqIO
 from tqdm import tqdm
+
+# 跨管线统一 I/O 布局 (mmpv_common/, 仓库根): 目录名随 MMPV_IO_LAYOUT 解析
+# (编排器已 normalize 环境变量, 子进程导入本模块时快照即正确布局)
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+from mmpv_common.io_layout import layout_dirs as _layout_dirs
+_D = _layout_dirs(os.environ.get("MMPV_IO_LAYOUT", "legacy"))
+
+
+def _safe_tqdm(iterable, total=None, desc="", unit=""):
+    """TTY 下用 tqdm 进度条；非 TTY (日志重定向) 下用 print 定期打印进度。
+    解决 tqdm 在非 TTY 环境下 \r 刷新导致日志里进度条冻结的问题。"""
+    import sys, time
+    if sys.stderr.isatty():
+        return tqdm(iterable, total=total, desc=desc, unit=unit, file=sys.stderr)
+
+    if total is None:
+        try:
+            total = len(iterable)
+        except TypeError:
+            total = None
+
+    class _LogIter:
+        def __init__(self, it, total, desc):
+            self._it = iter(it)
+            self._total = total
+            self._desc = desc
+            self._n = 0
+            self._last_print = 0.0
+            self._last_pct = -1
+            self._t0 = time.time()
+
+        def __iter__(self):
+            return self
+
+        def __next__(self):
+            try:
+                item = next(self._it)
+            except StopIteration:
+                raise
+            self._n += 1
+            now = time.time()
+            pct = int(self._n / self._total * 100) if self._total else 0
+            if now - self._last_print >= 30 or pct != self._last_pct:
+                elapsed = int(now - self._t0)
+                if self._total:
+                    print(f"{self._desc}: {self._n}/{self._total} ({pct}%) [{elapsed}s]", flush=True)
+                else:
+                    print(f"{self._desc}: {self._n} [{elapsed}s]", flush=True)
+                self._last_print = now
+                self._last_pct = pct
+            return item
+
+    return _LogIter(iterable, total, desc)
 
 
 # ══════════════════════════════════════════════════════════════
@@ -78,25 +133,31 @@ def run_checkv(fasta, out_dir, db, threads=4):
 
 
 def parse_checkv(qs_path, threshold=90.0):
-    """解析 completeness.tsv (aai_completeness 列); 返回 (pass_ids, fail_ids, skip_ids)
-    skip_ids: aai_completeness=NA 的 contig (无法评估, 非病毒/无参考, 不进分支B)"""
+    """解析 completeness.tsv (aai_completeness 列); 返回 (pass_ids, fail_ids, skip_ids, meta)
+    skip_ids: aai_completeness=NA 的 contig
+    meta: {contig_id: {aai_confidence, aai_expected_length}} 供后续智能判断"""
     if not Path(qs_path).is_file():
-        return set(), set(), set()
+        return set(), set(), set(), {}
     df = pd.read_csv(qs_path, sep='\t')
     comp_col = 'aai_completeness' if 'aai_completeness' in df.columns else 'completeness'
     pass_ids = set()
     fail_ids = set()
     skip_ids = set()
+    meta = {}
     for _, row in df.iterrows():
         cid = str(row.get('contig_id', ''))
         val = row.get(comp_col, 0)
+        meta[cid] = {
+            'confidence': str(row.get('aai_confidence', '')).strip(),
+            'expected_len': float(row.get('aai_expected_length', 0) or 0),
+        }
         if pd.isna(val) or str(val).strip() in ('NA', 'Not-determined', ''):
             skip_ids.add(cid)
         elif float(val) >= threshold:
             pass_ids.add(cid)
         else:
             fail_ids.add(cid)
-    return pass_ids, fail_ids, skip_ids
+    return pass_ids, fail_ids, skip_ids, meta
 
 
 # ══════════════════════════════════════════════════════════════
@@ -117,12 +178,64 @@ def run_blastn(query, db, out, threads=4):
 # Virseqimprover 调用
 # ══════════════════════════════════════════════════════════════
 
+def _read_final_length(out_dir):
+    """从 VSI 的 output-log.txt 读 final_length (无则 None)"""
+    log = Path(out_dir) / "output-log.txt"
+    if not log.is_file():
+        return None
+    try:
+        for line in log.read_text(errors="ignore").splitlines():
+            m = re.search(r"final_length=(\d+)", line)
+            if m:
+                return int(m.group(1))
+    except Exception:
+        pass
+    return None
+
+
+def _read_seq_len(fa):
+    """读 fasta 第一条序列长度 (无则 None)"""
+    try:
+        for rec in SeqIO.parse(fa, "fasta"):
+            return len(rec.seq)
+    except Exception:
+        return None
+
+
+def _extract_vsi_error(log_path, out_dir):
+    """从 VSI 日志提取崩溃原因 (运行时明确输出)"""
+    text = ""
+    if Path(log_path).is_file():
+        text += Path(log_path).read_text(errors="ignore")
+    olog = Path(out_dir) / "output-log.txt"
+    if olog.is_file():
+        text += "\n" + olog.read_text(errors="ignore")
+    patterns = [
+        (r"libdivsufsort|generalized text length", "salmon index 崩溃 (scaffold 过短)"),
+        (r"spades", "SPAdes 组装失败"),
+        (r"MemoryError", "内存不足"),
+        (r"FileNotFoundError|No such file or directory", "文件缺失"),
+        (r"salmon", "salmon 崩溃"),
+        (r"CalledProcessError", "子命令返回非0"),
+        (r"Traceback", "Python 异常"),
+        (r"ERROR", "VSI 报告错误"),
+    ]
+    for pat, desc in patterns:
+        if re.search(pat, text):
+            return desc
+    lines = [l.strip() for l in text.splitlines() if l.strip()]
+    return "未知错误: " + (" | ".join(l[:80] for l in lines[-3:]) if lines else "无日志")
+
+
 def run_vsi(ref_fa, r1, r2, out_dir, threads, vsi_path, salmon_bin, checkv_db=None, genus_avg_len=0):
+    """运行 Virseqimprover。
+    返回 (scaffold_fa, status, reason):
+      status = "ok" 延伸成功 / "no_extend" 正常结束未延伸 / "error" 崩溃 / "timeout" 超时
+    """
     d = Path(out_dir); d.mkdir(parents=True, exist_ok=True)
     vsi = vsi_path if vsi_path and Path(vsi_path).is_file() else None
     if not vsi:
-        print("  [WARN] Virseqimprover.py 未找到")
-        return None, False
+        return None, "error", "Virseqimprover.py 未找到"
     cmd = ["python", str(vsi), "-1", str(r1), "-2", str(r2),
            "-scaffold", str(ref_fa), "-o", str(d),
            "-salmon", str(salmon_bin), "-t", str(threads)]
@@ -130,21 +243,36 @@ def run_vsi(ref_fa, r1, r2, out_dir, threads, vsi_path, salmon_bin, checkv_db=No
         cmd += ["-checkv_db", str(checkv_db)]
     if genus_avg_len > 0:
         cmd += ["-genus_avg_len", str(genus_avg_len)]
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=14400, check=False)
-    # 保存 VSI 输出
+    ok_marker = d / "run.ok"
+    if ok_marker.is_file():
+        for name in ["scaffold.fasta", "pilon_out.fasta"]:
+            f = d / name
+            if f.is_file() and f.stat().st_size > 0:
+                return str(f), "ok", "已完成"
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=14400, check=False)
+    except subprocess.TimeoutExpired:
+        print(f"    [VSI-TIMEOUT] {Path(ref_fa).stem[:50]} | 超过 4h", flush=True)
+        return None, "timeout", "VSI 超过 4h 超时"
     vsi_log = d / "vsi_stdout.log"
     with open(vsi_log, 'w') as lf:
         lf.write(result.stdout or "")
         if result.stderr:
             lf.write("\n=== STDERR ===\n")
             lf.write(result.stderr)
-    # 仅当 VSI 正常退出 (returncode=0) 且输出文件存在才认可
+    orig_len = _read_seq_len(ref_fa)
     if result.returncode == 0:
         for name in ["scaffold.fasta", "pilon_out.fasta"]:
             f = d / name
             if f.is_file() and f.stat().st_size > 0:
-                return str(f), True
-    return None, False
+                final_len = _read_final_length(d)
+                if final_len is not None and orig_len is not None and final_len > orig_len:
+                    ok_marker.write_text("ok")
+                    return str(f), "ok", f"延伸 {orig_len}→{final_len}bp"
+                return str(f), "no_extend", f"未延伸 (final={final_len or '?'}bp, orig={orig_len or '?'}bp)"
+        return None, "error", "VSI 正常结束但无 scaffold 输出"
+    reason = _extract_vsi_error(vsi_log, d)
+    return None, "error", reason
 
 
 # ══════════════════════════════════════════════════════════════
@@ -246,16 +374,26 @@ def _gather_cluster_reads(fastq_dir, samples, work_dir, prefix="multi"):
 
 def _contig_cluster_samples(contig_id, clusters, fasta_info=None, max_samples=10, flye_sample_map=None):
     """返回 contig 所在 cluster 的样本 ID 集合 (去重, 按 contig 长度取 top-N)。
-    Flye contig (contig_XXX) 优先使用 flye_sample_map 精确映射;
-    原始 contig 从 vclust clusters 解析样本前缀。
+    合并两种来源并去重:
+      - flye_sample_map 精确映射 (Flye contig 自身及同簇 Flye 成员)
+      - vclust clusters 成员前缀 (正常 contig)
     NC_/ref| 前缀返回 None (参考序列, 无需 rescue)。"""
-    # Flye contig → 精确映射优先
+    seen = set()
+    result = []
+
+    def _add(s):
+        if s not in seen:
+            seen.add(s)
+            result.append(s)
+        return max_samples > 0 and len(result) >= max_samples
+
+    # 1. Flye 精确映射 (contig 自身是 Flye 产物)
     if flye_sample_map and contig_id in flye_sample_map:
-        source_samples = flye_sample_map[contig_id]
-        if max_samples > 0 and len(source_samples) > max_samples:
-            source_samples = source_samples[:max_samples]
-        return source_samples
-    # 原始 contig → 查 clusters
+        for s in flye_sample_map[contig_id]:
+            if _add(s):
+                return result
+
+    # 2. 查 clusters 补充成员样本
     if clusters:
         for cname, info in clusters.items():
             if contig_id in info["members"]:
@@ -265,18 +403,31 @@ def _contig_cluster_samples(contig_id, clusters, fasta_info=None, max_samples=10
                                     reverse=True)
                 else:
                     ranked = list(info["members"])
-                seen = set(); samples = []
                 for m in ranked:
-                    s = m.split('_')[0]
-                    if s not in seen:
-                        seen.add(s); samples.append(s)
-                    if max_samples > 0 and len(samples) >= max_samples: break
-                return sorted(samples)
-    # 从 contig_id 解析样本前缀
-    parts = contig_id.split('_')
-    if len(parts) < 2 or parts[0].startswith('NC_') or parts[0].startswith('ref|'):
-        return None
-    return [parts[0]]
+                    if m == contig_id:
+                        continue
+                    if flye_sample_map and m in flye_sample_map:
+                        # Flye 成员 → 精确映射
+                        for s in flye_sample_map[m]:
+                            if _add(s):
+                                return result
+                    elif m.startswith('flye_'):
+                        # flye_ 前缀但无映射 → 跳过 (无 reads 可追溯)
+                        continue
+                    else:
+                        # 正常成员 → 前缀
+                        if _add(m.split('_')[0]):
+                            return result
+                break
+
+    # 3. 回退: 前缀解析
+    if not result:
+        parts = contig_id.split('_')
+        if len(parts) < 2 or parts[0].startswith('NC_') or parts[0].startswith('ref|'):
+            return None
+        return [parts[0]]
+
+    return result
 
 
 # ══════════════════════════════════════════════════════════════
@@ -325,17 +476,17 @@ def branch_a(ref_fasta, work_dir, checkv_db, threads, jobs, threshold=90.0):
 
         # 断点续传: completeness.tsv 已存在 → 直接解析
         if cv_tsv.is_file():
-            pids, fids, sids = parse_checkv(cv_tsv, threshold)
+            pids, fids, sids, _ = parse_checkv(cv_tsv, threshold)
         else:
             SeqIO.write(chunk, chunk_fa, "fasta")
             qs = run_checkv(chunk_fa, tmp_dir / "checkv_out", checkv_db, t_per)
-            pids, fids, sids = parse_checkv(qs, threshold)
+            pids, fids, sids, _ = parse_checkv(qs, threshold)
         for r in chunk:
             if r.id in pids:
                 lp.append(r)
             elif r.id in sids:
                 # NA 但 ≥2000bp → 还有机会, 当 fail 处理进分支 B/C
-                # NA 且 <2000bp → 短片段无蛋白基因, 跳过
+                # NA 且 <2000bp → short fragment无蛋白基因, 跳过
                 if len(r.seq) >= 2000:
                     lf.append(r)
                 else:
@@ -367,7 +518,22 @@ def branch_a(ref_fasta, work_dir, checkv_db, threads, jobs, threshold=90.0):
 # 分支 B: Virseqimprover reads 延伸
 # ══════════════════════════════════════════════════════════════
 
-def branch_b(fail_fa, fastq_dir, work_dir, checkv_db, threads, jobs, vsi_path, salmon_bin, clusters=None, fasta_info=None, max_vsi_samples=10, min_vsi_len=2000, threshold=90.0, genus_map=None, genus_lens=None, flye_sample_map=None):
+def _cleanup_merged(r1, r2, merged_reads_dir=None):
+    """删除单个 contig 的合并 reads (仅限 merged_reads 目录内), 释放磁盘。
+    绝不删除 00b 原始 reads / 软链接 (单样本 contig 直接引用 00b 路径)。"""
+    if merged_reads_dir is None:
+        return
+    mr = str(Path(merged_reads_dir).resolve())
+    for f in (r1, r2):
+        if f and os.path.isfile(f):
+            try:
+                if str(Path(f).resolve()).startswith(mr):
+                    os.unlink(f)
+            except OSError:
+                pass
+
+
+def branch_b(fail_fa, fastq_dir, work_dir, checkv_db, threads, jobs, vsi_path, salmon_bin, clusters=None, fasta_info=None, max_vsi_samples=10, min_vsi_len=2000, threshold=90.0, genus_map=None, genus_lens=None, flye_sample_map=None, seg_meta=None):
     """对 A 失败序列并行 Virseqimprover (cluster 内多样本 reads 聚合)。返回 (pass_fa, fail_fa, pass_count, fail_count)"""
     d = Path(work_dir) / "branch_b"; d.mkdir(parents=True, exist_ok=True)
     log_dir = d / "logs"; log_dir.mkdir(exist_ok=True)
@@ -384,10 +550,14 @@ def branch_b(fail_fa, fastq_dir, work_dir, checkv_db, threads, jobs, vsi_path, s
     if short_records:
         print(f"  分支 B: {len(short_records)} 条 <{min_vsi_len}bp → 跳过VSI直升分支C")
     if not vsi_records:
+        fail_fa_out = d / "branchB_fail.fasta"
+        SeqIO.write(list(fail_records), fail_fa_out, "fasta")
         print(f"  分支 B: 全部 <{min_vsi_len}bp, 全部直升分支C")
-        return None, fail_fa, 0, total
+        return None, str(fail_fa_out), 0, total
 
-    fail_records = vsi_records  # 仅 VSI 候选
+    # 所有长度达标的序列都进 VSI 任务池
+    # 属分类信息在 _do 内部用于决定 genus_avg_len 参数 (有属传实际值, 无属传 0)
+    fail_records = vsi_records
     total = len(fail_records)
 
     scaffold_dir = d / "scaffolds"; scaffold_dir.mkdir(exist_ok=True)
@@ -408,23 +578,35 @@ def branch_b(fail_fa, fastq_dir, work_dir, checkv_db, threads, jobs, vsi_path, s
         if not vsi_fa.is_file():
             vsi_fa = out_dir / "pilon_out.fasta"
 
-        if vsi_fa.is_file() and vsi_fa.stat().st_size > 0:
-            # 验证 VSI 确实正常完成 (stdout 有 Finished 且无 Traceback)
-            vsi_log = out_dir / "vsi_stdout.log"
-            vsi_completed = False
-            if vsi_log.is_file():
-                with open(vsi_log) as lf:
-                    content = lf.read()
-                    if "Finished growing scaffold" in content and "Traceback" not in content:
-                        vsi_completed = True
-            if vsi_completed:
+        ok_marker = out_dir / "run.ok"
+        fail_marker = out_dir / ".vsi_failed"
+        err_marker = out_dir / ".vsi_error"
+        if ok_marker.is_file():
+            if vsi_fa.is_file() and vsi_fa.stat().st_size > 0:
                 with lock: stats["ok"] += 1
-                return sid, str(vsi_fa), "VSI 完成 (resume)"
+                return sid, str(vsi_fa), "已完成"
+        elif err_marker.is_file():
+            # 延伸报错(崩溃/超时/缺reads): 最多重跑 1 次, 之后跳过进 branch C
+            retries = 0
+            try:
+                retries = int(err_marker.read_text().strip().split("|")[0])
+            except Exception:
+                pass
+            if retries <= 1:
+                err_marker.unlink()
+                print(f"    [RE-TRY] {sid[:50]} | 报错重跑 (第{retries}次)", flush=True)
             else:
-                # VSI 之前崩溃了, 删除残留重新跑
-                import shutil as _shutil
-                _shutil.rmtree(str(out_dir), ignore_errors=True)
-                print(f"    [RE-RUN] {sid[:50]} | VSI 之前崩溃, 重新运行", flush=True)
+                with lock: stats["skip"] += 1
+                return sid, None, "报错(已达重跑上限): " + err_marker.read_text()
+        elif fail_marker.is_file():
+            # 延伸失败(正常结束未延伸, 如低覆盖度) → 跳过, 不重跑
+            with lock: stats["skip"] += 1
+            return sid, None, "未延伸(跳过): " + fail_marker.read_text()
+        elif vsi_fa.is_file() and vsi_fa.stat().st_size > 0:
+            # 有输出目录但无 run.ok → 不完整的残留, 删除重新跑
+            import shutil as _shutil
+            _shutil.rmtree(str(out_dir), ignore_errors=True)
+            print(f"    [RE-RUN] {sid[:50]} | 清除残留, 重新运行", flush=True)
 
         sample_ids = _contig_cluster_samples(sid, clusters, fasta_info, max_vsi_samples, flye_sample_map=flye_sample_map) if clusters else [sample]
         if sample_ids is None:
@@ -432,7 +614,9 @@ def branch_b(fail_fa, fastq_dir, work_dir, checkv_db, threads, jobs, vsi_path, s
             return sid, None, "参考序列(不在cluster中)"
         r1, r2, nsamp = _gather_cluster_reads(fastq_dir, sample_ids, merged_reads_dir, prefix=sid[:80])
         if not r1:
-            with lock: stats["skip"] += 1
+            out_dir.mkdir(parents=True, exist_ok=True)
+            err_marker.write_text(f"1|reads 未找到 (samples: {sample_ids[:5]}{'...' if len(sample_ids)>5 else ''})")
+            with lock: stats["fail"] += 1
             return sid, None, f"reads 未找到 (samples: {sample_ids[:5]}{'...' if len(sample_ids)>5 else ''})"
 
         sf = scaffold_dir / f"{sid}.fasta"
@@ -440,19 +624,22 @@ def branch_b(fail_fa, fastq_dir, work_dir, checkv_db, threads, jobs, vsi_path, s
 
         # 查找属平均长度 (CheckV NA 时的备选截止条件)
         gal = 0
-        has_genus = False
         if genus_map and genus_lens:
             g = genus_map.get(sid) or genus_map.get(sample, "")
             g_clean = g.replace("g__", "").replace("G__", "")
-            gal = genus_lens.get(g_clean, genus_lens.get(g, 0))
-            has_genus = (gal > 0)
-
-        # CheckV NA 且无 genus → VSI 无法获知截止条件, 跳过直接进分支 C
-        if not has_genus:
-            with lock:
-                stats["skip"] += 1
-            print(f"    [SKIP-VSI] {sid[:60]} | CheckV NA + no genus => branch C", flush=True)
-            return sid, None, "无属分类(B分支C)"
+            # 多级回退: 原名 → 带 g__ 前缀 → 去 ICTV 前缀 (Acarallexivirus → Allexivirus)
+            gal = genus_lens.get(g_clean, 0) or genus_lens.get("g__" + g_clean, 0)
+            if gal == 0:
+                # ICTV 亚属名通常有前缀(Acar/Alpha/Beta...), 尝试去掉前缀匹配 NCBI 属名
+                for prefix in ("Acar", "Alpha", "Beta", "Gamma", "Delta", "Epsilon", "Zeta",
+                               "Eta", "Theta", "Iota", "Kappa", "Lambda", "Mu", "Nu", "Xi",
+                               "Omicron", "Pi", "Rho", "Sigma", "Tau", "Upsilon", "Phi"):
+                    if g_clean.startswith(prefix) and len(g_clean) > len(prefix) + 2:
+                        c = g_clean[len(prefix):]
+                        for c2 in (c, c.capitalize()):
+                            gal = genus_lens.get(c2, 0) or genus_lens.get("g__" + c2, 0)
+                            if gal > 0: break
+                        if gal > 0: break
 
         task_log = log_dir / f"{sid}.log"
         with open(task_log, "w") as lf:
@@ -461,31 +648,51 @@ def branch_b(fail_fa, fastq_dir, work_dir, checkv_db, threads, jobs, vsi_path, s
                      f"# Merged Reads: {r1}, {r2}\n# Scaffold: {sf}\n"
                      f"# Genus: {g if genus_map else 'N/A'} → avg_len: {gal}bp\n")
 
-        _, ok = run_vsi(sf, r1, r2, out_dir, threads_per_job, vsi_path, salmon_bin, checkv_db, genus_avg_len=gal)
+        _, vsi_status, vsi_reason = run_vsi(sf, r1, r2, out_dir, threads_per_job, vsi_path, salmon_bin, checkv_db, genus_avg_len=gal)
 
         vsi_fa = out_dir / "scaffold-truncated" / "scaffold.fasta"
         if not vsi_fa.is_file():
             vsi_fa = out_dir / "scaffold.fasta"
         if not vsi_fa.is_file():
             vsi_fa = out_dir / "pilon_out.fasta"
-        if ok and vsi_fa.is_file():
+        if vsi_status == "ok" and vsi_fa.is_file():
+            out_dir.mkdir(parents=True, exist_ok=True)
+            ok_marker.touch()
             with lock: stats["ok"] += 1
-            print(f"    [C-OK] {sid[:60]}  (reads from {nsamp} samples)  ✓", flush=True)
-            return sid, str(vsi_fa), f"VSI 完成 ({nsamp} samples)"
+            print(f"    [C-OK] {sid[:60]}  {vsi_reason}  ✓", flush=True)
+            _cleanup_merged(r1, r2, merged_reads_dir)
+            return sid, str(vsi_fa), vsi_reason
+        out_dir.mkdir(parents=True, exist_ok=True)
+        if vsi_status == "no_extend":
+            # 延伸失败(正常结束未延伸, 如低覆盖度) → 跳过, 不重跑
+            fail_marker.write_text(vsi_reason)
+            with lock: stats["skip"] += 1
+            print(f"    [NO-EXTEND] {sid[:60]}  {vsi_reason}", flush=True)
+            _cleanup_merged(r1, r2, merged_reads_dir)
+            return sid, None, vsi_reason
+        # 报错(崩溃/超时): 标记 .vsi_error (resume 时可重跑 1 次)
+        retries = 0
+        try:
+            retries = int(err_marker.read_text().strip().split("|")[0])
+        except Exception:
+            pass
+        err_marker.write_text(f"{retries + 1}|{vsi_reason}")
         with lock: stats["fail"] += 1
-        return sid, None, "VSI 失败" if ok else "VSI 无输出"
+        print(f"    [VSI-{vsi_status.upper()}] {sid[:60]}  {vsi_reason}", flush=True)
+        _cleanup_merged(r1, r2, merged_reads_dir)
+        return sid, None, f"[{vsi_status}] {vsi_reason}"
 
     print(f"  并行启动 {jobs} 个 Virseqimprover (各 {threads_per_job} 线程)...")
     results = {}
     if jobs > 1 and total > 1:
         with ThreadPoolExecutor(max_workers=jobs) as ex:
             futures = {ex.submit(_do, rec): rec.id for rec in fail_records}
-            for f in tqdm(as_completed(futures), total=total, desc="  分支 B", unit="task"):
+            for f in _safe_tqdm(as_completed(futures), total=total, desc="  分支 B", unit="task"):
                 sid, fa, msg = f.result()
                 if fa:
                     results[sid] = fa
     else:
-        for rec in tqdm(fail_records, desc="  分支 B", unit="task"):
+        for rec in _safe_tqdm(fail_records, desc="  分支 B", unit="task"):
             sid, fa, msg = _do(rec)
             if fa:
                 results[sid] = fa
@@ -499,13 +706,46 @@ def branch_b(fail_fa, fastq_dir, work_dir, checkv_db, threads, jobs, vsi_path, s
             vsi_records.append(rec)
 
     if not vsi_records:
-        return None, fail_fa, 0, total
+        # VSI 全部失败 → 所有原始序列写进 fail_fa → 分支 C 兜底 (不丢任何 contig)
+        fail_fa_out = d / "branchB_fail.fasta"
+        SeqIO.write(list(fail_records) + list(short_records), fail_fa_out, "fasta")
+        return None, str(fail_fa_out), 0, len(fail_records) + len(short_records)
 
     extended_fa = d / "branchB_extended.fasta"
     SeqIO.write(vsi_records, extended_fa, "fasta")
 
     qs = run_checkv(extended_fa, d / "checkv_out", checkv_db, threads)
-    pass_ids, fail_ids, skip_ids = parse_checkv(qs, threshold)
+    pass_ids, fail_ids, skip_ids, cv_meta = parse_checkv(qs, threshold)
+
+    # ── CheckV low-confidence 智能纠偏: 期望长度与属平均差 >20% → 用 genus ──
+    if fail_ids and genus_lens:
+        for cid in list(fail_ids):
+            info = cv_meta.get(cid, {})
+            if info.get('confidence', '') != 'low':
+                continue
+            cv_elen = info.get('expected_len', 0)
+            if cv_elen <= 0:
+                continue
+            gal = 0
+            for key in (cid, cid.split('_')[0]):
+                g = genus_map.get(key, '')
+                g_clean = g.replace('g__', '').replace('G__', '')
+                gal = genus_lens.get(g_clean, 0) or genus_lens.get("g__" + g_clean, 0)
+                if gal == 0:
+                    for prefix in ("Acar", "Alpha", "Beta", "Gamma", "Delta", "Epsilon",
+                                   "Zeta", "Eta", "Theta", "Iota", "Kappa", "Lambda", "Mu"):
+                        if g_clean.startswith(prefix) and len(g_clean) > len(prefix) + 2:
+                            c = g_clean[len(prefix):]
+                            for c2 in (c, c.capitalize()):
+                                gal = genus_lens.get(c2, 0) or genus_lens.get("g__" + c2, 0)
+                                if gal > 0: break
+                            if gal > 0: break
+                if gal > 0: break
+            if gal > 0:
+                diff = abs(cv_elen - gal) / gal
+                if diff > 0.20:
+                    fail_ids.discard(cid)
+                    skip_ids.add(cid)
 
     # ── CheckV=NA 或 <threshold 的 genus 回退拯救 ──
     # VSI 自身已停止延伸, CheckV 数值不可靠时, 用属平均长度兜底
@@ -518,13 +758,15 @@ def branch_b(fail_fa, fastq_dir, work_dir, checkv_db, threads, jobs, vsi_path, s
         for rec in vsi_records:
             if rec.id in rescue_candidates:
                 gal = 0
+                sinfo = None
                 for key in (rec.id, rec.id.split('_')[0]):
                     g = genus_map.get(key, '')
                     g_clean = g.replace('g__', '').replace('G__', '')
                     gal = genus_lens.get(g_clean, genus_lens.get(g, 0))
                     if gal > 0:
+                        sinfo = seg_meta.get(g_clean) if seg_meta else None
                         break
-                if gal > 0 and len(rec.seq) >= gal * genus_tol:
+                if _genus_len_ok(len(rec.seq), gal, sinfo, genus_tol):
                     pass_ids.add(rec.id)
                     genus_rescued.add(rec.id)
         if genus_rescued:
@@ -537,18 +779,25 @@ def branch_b(fail_fa, fastq_dir, work_dir, checkv_db, threads, jobs, vsi_path, s
     fail_fa_out = d / "branchB_fail.fasta"
     SeqIO.write([r for r in vsi_records if r.id in pass_ids], pass_fa, "fasta")
     fail_to_write = []
+    vsi_fail_n = 0
     for rec in fail_records:
-        in_fail = rec.id in fail_ids and rec.id not in genus_rescued
-        in_skip = rec.id in skip_ids and rec.id not in genus_rescued
-        if in_fail or in_skip:
-            vsi_match = [r for r in vsi_records if r.id == rec.id]
-            fail_to_write.append(vsi_match[0] if vsi_match else rec)
+        if rec.id in results:
+            # VSI 成功 → CheckV 决定 pass/fail
+            in_fail = rec.id in fail_ids and rec.id not in genus_rescued
+            in_skip = rec.id in skip_ids and rec.id not in genus_rescued
+            if in_fail or in_skip:
+                vsi_match = [r for r in vsi_records if r.id == rec.id]
+                fail_to_write.append(vsi_match[0] if vsi_match else rec)
+        else:
+            # VSI 失败 (超时/崩溃/未延伸/缺reads) → 原始序列进分支 C 兜底
+            vsi_fail_n += 1
+            fail_to_write.append(rec)
     # short_records (< min_vsi_len) 也加入 fail → 直升分支 C
     if short_records:
         fail_to_write.extend(short_records)
     SeqIO.write(fail_to_write, fail_fa_out, "fasta")
 
-    n_fail_total = len(fail_ids - genus_rescued) + len(skip_ids - genus_rescued) + len(short_records)
+    n_fail_total = len(fail_ids - genus_rescued) + len(skip_ids - genus_rescued) + len(short_records) + vsi_fail_n
     na_fail = len(skip_ids - genus_rescued)
     num_fail = len(fail_ids - genus_rescued)
     print(f"  分支 B: pass={len(pass_ids):,}  fail={n_fail_total} (含{len(short_records)}短序列直升C, {na_fail}条NA直升C, {num_fail}条<阈值直升C)")
@@ -621,8 +870,8 @@ def branch_c(fail_fa, fastq_dir, work_dir,
         # 主库: cdhit_combined.fasta (用户指定 → 自动搜索)
         if not cdhit_fa:
             for guess in [
-                Path(work_dir).parent.parent / "04_CLUSTER" / "2_cdhit" / "cdhit_combined.fasta",
-                Path(work_dir).parent / "04_CLUSTER" / "2_cdhit" / "cdhit_combined.fasta",
+                Path(work_dir).parent.parent / _D['d_cluster'] / "2_cdhit" / "cdhit_combined.fasta",
+                Path(work_dir).parent / _D['d_cluster'] / "2_cdhit" / "cdhit_combined.fasta",
             ]:
                 if guess.is_file():
                     cdhit_fa = str(guess)
@@ -718,9 +967,9 @@ def branch_c(fail_fa, fastq_dir, work_dir,
     print(f"  分支 C: BLASTN {len(fail_records)} 个 contigs (并行 {jobs} jobs)...")
     if jobs > 1 and len(fail_records) > 1:
         with ThreadPoolExecutor(max_workers=min(jobs, len(fail_records))) as ex:
-            list(tqdm(ex.map(_blast_one, fail_records), total=len(fail_records), desc="  BLASTN", unit="contig"))
+            list(_safe_tqdm(ex.map(_blast_one, fail_records), total=len(fail_records), desc="  BLASTN", unit="contig"))
     else:
-        for rec in tqdm(fail_records, desc="  BLASTN", unit="contig"):
+        for rec in _safe_tqdm(fail_records, desc="  BLASTN", unit="contig"):
             _blast_one(rec)
 
     # 统计
@@ -969,10 +1218,10 @@ def branch_c(fail_fa, fastq_dir, work_dir,
     # Phase 4: 执行
     if jobs > 1 and len(pending_groups) > 1:
         with ThreadPoolExecutor(max_workers=min(jobs, len(pending_groups))) as ex:
-            list(tqdm(ex.map(_do_group, pending_groups), total=len(pending_groups),
+            list(_safe_tqdm(ex.map(_do_group, pending_groups), total=len(pending_groups),
                      desc="  分支 C", unit="group"))
     else:
-        for gid in tqdm(list(pending_groups), desc="  分支 C", unit="group"):
+        for gid in _safe_tqdm(list(pending_groups), desc="  分支 C", unit="group"):
             _do_group(gid)
 
     if pass_records:
@@ -1053,8 +1302,77 @@ def _load_genus_len(genus_len_path, format_prefix='g__'):
             mapping[genus_clean] = avg_len
             if genus_clean != genus:
                 mapping[genus] = avg_len
+    # 2. 补充 ICTV→NCBI 映射: ICTV 亚属名 → NCBI 属名 → genus_lens 中的平均长度
+    ictv_map_path = Path(genus_len_path).parent / "ictv_to_ncbi_genus.json"
+    if ictv_map_path.is_file():
+        try:
+            ictv_ncbi = json.load(open(ictv_map_path))
+            added = 0
+            for ictv_name, ncbi_name in ictv_ncbi.items():
+                if ictv_name not in mapping and ncbi_name in mapping:
+                    mapping[ictv_name] = mapping[ncbi_name]
+                    added += 1
+            if added:
+                print(f"  ICTV→NCBI 映射补充: {added} 个 genus")
+        except Exception:
+            pass
+
     print(f"  genus_len 加载: {len(mapping)} 个 genus")
     return mapping
+
+
+def _load_genus_seg_meta(genus_len_path):
+    """加载 genus_len v2 表的节段属元数据 (第3列起: is_segmented/ref_min/ref_max).
+
+    旧版 2 列表 (genus/total) 无这些列, 返回空 dict, 调用方自动回退到属均值规则。
+    返回 {genus(原名与去g__前缀): {"is_segmented": bool, "ref_min": float, "ref_max": float}}
+    """
+    meta = {}
+    if not genus_len_path or not Path(genus_len_path).is_file():
+        return meta
+    with open(genus_len_path) as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith('#'):
+                continue
+            parts = line.split('\t')
+            if parts[0].strip().lower() == 'genus':   # 表头
+                if len(parts) < 5:
+                    return meta                        # 老表: 无节段列
+                continue
+            if len(parts) < 5:
+                continue
+            genus = parts[0].strip()
+            try:
+                is_seg = parts[2].strip().lower() in ('yes', 'true', '1')
+                rmin = float(parts[3])
+                rmax = float(parts[4])
+            except (ValueError, IndexError):
+                continue
+            if rmin <= 0 or rmax < rmin:
+                continue
+            for gname in (genus, genus.replace('g__', '').replace('G__', '')):
+                meta[gname] = {"is_segmented": is_seg, "ref_min": rmin, "ref_max": rmax}
+    if meta:
+        print(f"  genus_len 节段元数据: {sum(1 for v in meta.values() if v['is_segmented'])} 节段属 / {len(meta)}")
+    return meta
+
+
+def _genus_len_ok(contig_len, gal, seg_info, genus_tol=0.85):
+    """分支 B/D 长度判定 (节段属感知).
+
+    节段属且有范围信息: ref_min*tol <= 长度 <= ref_max*(2-tol)
+      -- tol=0.85 即下界允许短 15%, 上界允许长 15%; 范围覆盖该属全部完整单元
+         (单段到全基因组), 节段病毒的完整单段 contig 可被拯救。
+    非节段属 / 未知 / 无范围信息: 沿用旧规则 长度 >= 属平均长度*tol (单侧)。
+    """
+    if seg_info and seg_info.get("is_segmented") and seg_info.get("ref_min") and seg_info.get("ref_max"):
+        lo = seg_info["ref_min"] * genus_tol
+        hi = seg_info["ref_max"] * (2.0 - genus_tol)
+        return lo <= contig_len <= hi
+    if gal and gal > 0:
+        return contig_len >= gal * genus_tol
+    return False
 
 
 def branch_d(fail_fa, tax_tsv, genus_len_path, output_dir,
@@ -1093,6 +1411,8 @@ def branch_d(fail_fa, tax_tsv, genus_len_path, output_dir,
     # 加载 taxonomy 和 genus_len
     tax_map = _load_taxonomy(tax_tsv)
     genus_len_map = _load_genus_len(genus_len_path)
+    # v2 表节段属元数据 (老表为空 dict → 全部走属均值规则)
+    seg_meta = _load_genus_seg_meta(genus_len_path)
 
     rescued = []
     no_tax = 0
@@ -1121,10 +1441,16 @@ def branch_d(fail_fa, tax_tsv, genus_len_path, output_dir,
             no_genus_ref += 1
             continue
 
-        # 计算 fraction
-        fraction = contig_len / avg_len
-        if fraction >= genus_tol:
-            rec.description = f"genus_rescued genus={genus} len={contig_len}bp avg={avg_len:.0f}bp fraction={fraction:.2f}"
+        # 计算 fraction (节段属用范围判定, 其余沿用 >= genus_tol 均值)
+        sinfo = seg_meta.get(genus) if seg_meta else None
+        if _genus_len_ok(contig_len, avg_len, sinfo, genus_tol):
+            if sinfo and sinfo.get("is_segmented"):
+                lo = sinfo["ref_min"] * genus_tol
+                hi = sinfo["ref_max"] * (2.0 - genus_tol)
+                rec.description = (f"genus_rescued genus={genus} len={contig_len}bp "
+                                   f"range=[{lo:.0f},{hi:.0f}]bp mode=segmented_range")
+            else:
+                rec.description = f"genus_rescued genus={genus} len={contig_len}bp avg={avg_len:.0f}bp fraction={contig_len/avg_len:.2f}"
             rescued.append(rec)
         else:
             below_threshold += 1
@@ -1151,7 +1477,7 @@ def branch_d(fail_fa, tax_tsv, genus_len_path, output_dir,
                 status = "no_taxonomy"
             elif not al:
                 status = "no_genus_ref"
-            elif frac >= genus_tol:
+            elif _genus_len_ok(clen, al, seg_meta.get(g) if seg_meta else None, genus_tol):
                 status = "rescued"
             else:
                 status = "below_threshold"
@@ -1199,7 +1525,8 @@ def parse_vclust_clusters(tsv):
 def _write_rescue_report(out_dir, centroids_records, clusters,
                          fa_a_pass, fa_b_pass, fa_c_pass, fa_d_pass,
                          cnt_a, cnt_b, cnt_c, cnt_d, n_final,
-                         taxonomy_tsv=None, genus_lens_path=None, min_vsi_len=2000):
+                         taxonomy_tsv=None, genus_lens_path=None, min_vsi_len=2000,
+                         prepass=0):
     """生成 rescue 最终追踪报告 TSV + Markdown"""
     d = Path(out_dir); d.mkdir(parents=True, exist_ok=True)
 
@@ -1281,6 +1608,20 @@ def _write_rescue_report(out_dir, centroids_records, clusters,
                 desc = info.get('desc', '')
                 tf.write(f"{cid}\t{clen}\t{flen}\tD\tgenus_len\t{genus}\t{gal:.0f}\t{pct2}\t-\t{desc}\n")
 
+            # v6.6.1: 分支 C 的 Completo 直达 pass (BLASTN qcov≥98%) 此前没有对应分支,
+            # 它的 id 就是 contig id 且不进属组, 全被记成 fail, 273/9212 条 C 拯救在报告里凭空消失
+            elif cid in pass_c and cid not in contig_to_genus:
+                info = pass_c[cid]
+                flen = info['length']
+                pct2 = f"{flen/gal*100:.1f}%" if gal > 0 else "-"
+                desc = info.get('desc', '')
+                cv = "-"
+                for part in desc.split():
+                    if part.startswith('CheckV='):
+                        cv = part.replace('CheckV=', '')
+                        break
+                tf.write(f"{cid}\t{clen}\t{flen}\tC\tblastn_completo\t{genus}\t{gal:.0f}\t{pct2}\t{cv}\tBLASTN qcov≥98% 直达\n")
+
             elif cid in contig_to_genus:
                 gid = contig_to_genus[cid]
                 if gid in pass_c:
@@ -1316,15 +1657,18 @@ def _write_rescue_report(out_dir, centroids_records, clusters,
                 note = {
                     "too_short": f"<{min_vsi_len}bp",
                     "no_taxonomy": "无属分类",
-                    "should_rescue_but_skipped": "长度达标但未被拯救",
+                    "should_rescue_but_skipped": "Supported length but not rescued",
                     "below_all_thresholds": "未通过任何分支",
                     "unknown": "未拯救",
                 }.get(reason, reason)
                 tf.write(f"{cid}\t{clen}\t-\tfail\t-\t{genus}\t{gal:.0f}\t{pct}\t-\t{note}\n")
 
-    rescued = cnt_a + cnt_b + cnt_c + cnt_d
+    # v6.6.1: cnt_a 含 orchestrator 预通过 (prepass) 的免拯救 contig, 它们不在候选表内,
+    # 不能进候选表的「已拯救/未拯救」分母, 否则未拯救数与原因分布会自相矛盾 (原因数 > 未拯救数)
     total = len(centroids_records)
-    failed = total - rescued
+    rescued_rows = (cnt_a - max(0, prepass)) + cnt_b + cnt_c + cnt_d
+    rescued = cnt_a + cnt_b + cnt_c + cnt_d  # 含 prepass, 仅用于总量展示
+    failed = total - rescued_rows
 
     # 失败原因描述
     reason_labels = {
@@ -1342,20 +1686,28 @@ def _write_rescue_report(out_dir, centroids_records, clusters,
         mf.write(f"## 分支统计\n\n")
         mf.write(f"| 分支 | 策略 | 拯救数 | 占比 |\n")
         mf.write(f"|------|------|--------|------|\n")
-        mf.write(f"| A | CheckV ≥90% (蛋白完整) | {cnt_a} | {cnt_a/total*100:.1f}% |\n")
+        a_inrun = cnt_a - max(0, prepass)  # 与 TSV 行口径一致: 只数候选表内的 A 分支拯救
+        a_note = f"（另含 {prepass} 条免拯救 prepass, 不在候选表内）" if prepass else ""
+        mf.write(f"| A | CheckV ≥90% (蛋白完整) | {a_inrun} {a_note} | {a_inrun/total*100:.1f}% |\n")
         mf.write(f"| B | VSI reads延伸 + genus回退 | {cnt_b} | {cnt_b/total*100:.1f}% |\n")
         mf.write(f"| C | BLASTN + RGA/ragtag | {cnt_c} | {cnt_c/total*100:.1f}% |\n")
         mf.write(f"| D | genus_len 属水平兜底 | {cnt_d} | {cnt_d/total*100:.1f}% |\n")
-        mf.write(f"| **合计** | | **{rescued}** | **{rescued/total*100:.1f}%** |\n")
-        mf.write(f"| 未拯救 | | {failed} | {failed/total*100:.1f}% |\n\n")
+        mf.write(f"| **合计 (候选表内)** | | **{rescued_rows}** | **{rescued_rows/total*100:.1f}%** |\n")
+        mf.write(f"| 未拯救 (候选表内) | | {failed} | {failed/total*100:.1f}% |\n")
+        if prepass:
+            mf.write(f"| 免拯救 (prepass, 候选表外) | CheckV ≥90% | {prepass} | - |\n")
+        mf.write("\n")
 
         if fail_reasons:
             mf.write(f"## 未拯救原因分布\n\n")
-            mf.write(f"| 原因 | 数量 | 占比 |\n")
-            mf.write(f"|------|------|------|\n")
+            mf.write(f"| 原因 | 数量 | 占未拯救 |\n")
+            mf.write(f"|------|------|---------|\n")
+            _reasons_sum = sum(fail_reasons.values())
             for reason, count in sorted(fail_reasons.items(), key=lambda x: -x[1]):
                 label = reason_labels.get(reason, reason)
-                mf.write(f"| {label} | {count} | {count/failed*100:.1f}% |\n")
+                _pct = (count / failed * 100) if failed else 0.0
+                mf.write(f"| {label} | {count} | {_pct:.1f}% |\n")
+            mf.write(f"| **合计** | **{_reasons_sum}** | **{(_reasons_sum / failed * 100) if failed else 0.0:.1f}%** |\n")
             mf.write("\n")
 
         mf.write(f"最终无冗余 vOTU: **{n_final}**\n\n")
@@ -1370,7 +1722,7 @@ def _write_rescue_report(out_dir, centroids_records, clusters,
 # ══════════════════════════════════════════════════════════════
 
 def main():
-    p = argparse.ArgumentParser(description="病毒基因组三支路级联拯救 v3.0")
+    p = argparse.ArgumentParser(description="病毒基因组四支路级联拯救 v3.0 (A:CheckV≥90% → B:VSI → C:参考引导重建 → D:属长兜底)")
     p.add_argument("--centroids", "-c", required=True, help="输入 centroids FASTA")
     p.add_argument("--clusters-tsv", required=True, help="vclust 聚类结果 TSV")
     p.add_argument("--split-dir", required=True, help="per-cluster 拆分文件目录 (split_fastas/)")
@@ -1391,10 +1743,18 @@ def main():
     p.add_argument("--jobs", "-j", type=int, default=4, help="Virseqimprover 并行数")
     p.add_argument("--ani", type=float, default=0.95, help="最终 vclust ANI")
     p.add_argument("--qcov", type=float, default=0.85, help="最终 vclust QCOV")
-    p.add_argument("--resume", action="store_true", help="断点续传")
+    p.add_argument("--resume", action="store_true", default=True, help="断点续传 (默认开启, --no-resume 关闭)")
+    p.add_argument("--no-resume", action="store_false", dest="resume", help="禁用断点续传, 强制重跑")
     p.add_argument("--flye-sample-map", default=None,
                    help="Flye 共组装 contig→样本 映射 JSON (merge 阶段产出, 供 VSI/RGA reads 回退)")
     args = p.parse_args()
+
+    # 进程守护
+    try:
+        import process_guard
+        process_guard.install()
+    except Exception:
+        pass
 
     start = datetime.now()
     print(f"开始: {start.strftime('%Y-%m-%d %H:%M:%S')}")
@@ -1448,6 +1808,15 @@ def main():
         SeqIO.write(centroids_records, tmp_centroids, "fasta")
         fa_a_pass, fa_a_fail, cnt_a, cnt_a_fail = branch_a(str(tmp_centroids), out, args.checkv_db, args.threads, args.jobs, args.checkv_threshold)
 
+    # 合并 orchestrator 预通过的 CheckV pass 计数 (免拯救, 不在 rescue centroids 中)
+    # v6.6.1: n_pre 单独留存, 报告里必须与候选表内的拯救数分开记账
+    n_pre = 0
+    pre_pass_file = out / "branch_a_prepass.txt"
+    if pre_pass_file.is_file():
+        n_pre = sum(1 for _ in open(pre_pass_file))
+        cnt_a += n_pre
+        print(f"  分支 A: +{n_pre} 条预通过 (CheckV≥90%, 免拯救)")
+
     # 3. 分支 B: Virseqimprover
     print("\n── Step 2: 分支 B (VSI) ──")
     fa_b_pass = out / "branch_b" / "branchB_pass.fasta"
@@ -1461,11 +1830,13 @@ def main():
         # 加载属分类信息 (供 VSI 的 genus_avg_len 备选截止)
         genus_map = {}
         genus_lens = {}
+        seg_meta = {}
         if getattr(args, 'taxonomy_tsv', None):
             genus_map = _load_taxonomy(args.taxonomy_tsv)
         if getattr(args, 'genus_len', None):
             genus_lens = _load_genus_len(args.genus_len)
-        fa_b_pass, fa_b_fail, cnt_b, cnt_b_fail = branch_b(fa_a_fail, args.fastq_dir, out, args.checkv_db, args.threads, args.jobs, args.virseqimprover_path, args.salmon_bin, clusters, fasta_info, args.max_vsi_samples, args.min_vsi_len, args.checkv_threshold, genus_map=genus_map, genus_lens=genus_lens, flye_sample_map=flye_sample_map)
+            seg_meta = _load_genus_seg_meta(args.genus_len)
+        fa_b_pass, fa_b_fail, cnt_b, cnt_b_fail = branch_b(fa_a_fail, args.fastq_dir, out, args.checkv_db, args.threads, args.jobs, args.virseqimprover_path, args.salmon_bin, clusters, fasta_info, args.max_vsi_samples, args.min_vsi_len, args.checkv_threshold, genus_map=genus_map, genus_lens=genus_lens, flye_sample_map=flye_sample_map, seg_meta=seg_meta)
 
     # 4. 分支 C: BLASTN (纯比对)
     print("\n── Step 3: 分支 C (BLASTN) ──")
@@ -1500,13 +1871,10 @@ def main():
         cnt_d = sum(1 for _ in SeqIO.parse(fa_d_pass, "fasta"))
         fa_d_pass = str(fa_d_pass)
     else:
-        # 取最后一个可用的 fail_fa: C > B > A
+        # 分支 D 只处理分支 C 失败的下传。C 全 pass (fail 为空/不存在) 时 D 无任务,
+        # 绝不回退到 B/A fail (否则会重复处理 C 已 pass 的 contig, 合并时重复 ID)
         fail_for_d = fa_c_fail
-        if not fail_for_d or not Path(fail_for_d).is_file():
-            fail_for_d = fa_b_fail if (fa_b_fail and Path(fa_b_fail).is_file()) else None
-        if not fail_for_d:
-            fail_for_d = fa_a_fail if (fa_a_fail and Path(fa_a_fail).is_file()) else None
-        if fail_for_d and Path(fail_for_d).is_file():
+        if fail_for_d and Path(fail_for_d).is_file() and Path(fail_for_d).stat().st_size > 0:
             fa_d_pass, cnt_d = branch_d(fail_for_d, args.taxonomy_tsv, args.genus_len,
                                          out, args.genus_tolerance)
         else:
@@ -1561,7 +1929,8 @@ def main():
                           cnt_a, cnt_b, cnt_c, cnt_d, n_final,
                           taxonomy_tsv=getattr(args, 'taxonomy_tsv', None),
                           genus_lens_path=getattr(args, 'genus_len', None),
-                          min_vsi_len=args.min_vsi_len)
+                          min_vsi_len=args.min_vsi_len,
+                          prepass=n_pre)
 
     elapsed = (datetime.now() - start).total_seconds()
     print(f"\n{'=' * 60}")

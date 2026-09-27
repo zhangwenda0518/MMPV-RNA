@@ -1,0 +1,56 @@
+id	step	needs	deps	cmd
+# MMPV 数据库获取配方 — 由 scripts/db_setup/mmpv_db.py down 执行。
+# 列: id | step | needs | deps | cmd
+#   id     对应 mmpv_db_manifest.tsv 的 id；同一 id 多行 = 多步，按 step 升序执行
+#   step   同 id 内的执行顺序（10,20,30…）
+#   needs  需要的可执行文件，逗号分隔。两个特殊标记：
+#            dl       = 需要 curl 或 wget 之一
+#            db_build = 需要 build_virus_db.py 可用（即 utils/db_build/ 的 3 个自写脚本已收编）
+#          空 = 无要求。缺工具 / 缺 db_build 时 down 会跳过并说明原因。
+#   deps   必须先就位的其他 manifest id（逗号分隔）；不满足则跳过并告警
+#   cmd    bash 片段。可用变量：
+#            $DST     本条的部署路径（manifest 的 path 解析结果；dir 类为目录，file 类为文件）
+#            $PARENT  $DST 的父目录
+#            $DB      ${MMPV_DB_ROOT}
+#            $VIRUS_DB  $DB/virus-db        $PLANT  ${MMPV_PLANT_VIRUS_DB}
+#            $SHARE   共享库根              $TMP    临时目录
+#            $SRC     上游原始数据目录 ($SHARE/src)   $REPO  仓库根
+#            $THREADS 线程数（--threads，默认 60）
+#          另提供 shell 函数 dl <url> <outfile>，自带断点续传（curl 优先，回退 wget）。
+# 配方来源：DATABASE_SETUP.md §1–§6 的原文命令，只在路径上做参数化，命令本身不改。
+# ★ 没有配方 = 仓库内无可靠复现途径的条目，`down` 会列出来并指向文档对应小节。
+virus_db_genomad	10	genomad		genomad download-database "$DST"
+virus_db_checkv	10	checkv		checkv download_database "$DST"
+virus_db_suvtk	10	suvtk		suvtk download-database -o "$DST"
+virus_db_rdrpcatch	10	rdrpcatch		rdrpcatch databases -o "$PARENT"
+virus_db_virsorter2	10	virsorter		virsorter config --init-source --db-dir "$DST"
+virus_db_ct3	10	get_ct3_dbs		get_ct3_dbs -o "$DST" --hmm T --hallmark_tax T --refseq_tax T --mmseqs_cdd T --domain_list T --hhCDD T --hhPFAM T --hhPDB T
+kraken2_pluspfp	10	dl		mkdir -p "$DST" && dl "${MMPV_KRAKEN2_URL:-https://genome-idx.s3.amazonaws.com/kraken/k2_pluspfp_20260226.tar.gz}" "$TMP/k2_pluspfp.tar.gz" && tar -xzf "$TMP/k2_pluspfp.tar.gz" -C "$DST"
+taxonomy	10	dl		mkdir -p "$DST" && dl "https://ftp.ncbi.nlm.nih.gov/pub/taxonomy/taxdump.tar.gz" "$TMP/taxdump.tar.gz" && tar -xzf "$TMP/taxdump.tar.gz" -C "$DST"
+taxonomy	20	dl		mkdir -p "$TMP/new_taxdump" && dl "https://ftp.ncbi.nlm.nih.gov/pub/taxonomy/new_taxdump/new_taxdump.tar.gz" "$TMP/new_taxdump.tar.gz" && tar -xzf "$TMP/new_taxdump.tar.gz" -C "$TMP/new_taxdump" && find "$TMP/new_taxdump" -name fullnamelineage.dmp -exec cp -f {} "$DST/" \; && find "$TMP/new_taxdump" -name rankedlineage.dmp -exec cp -f {} "$DST/" \;
+vinfo_lineage	10	dl		mkdir -p "$TMP/new_taxdump" && dl "https://ftp.ncbi.nlm.nih.gov/pub/taxonomy/new_taxdump/new_taxdump.tar.gz" "$TMP/new_taxdump.tar.gz" && tar -xzf "$TMP/new_taxdump.tar.gz" -C "$TMP/new_taxdump" && find "$TMP/new_taxdump" -name fullnamelineage.dmp -exec cp -f {} "$DST" \;
+vranked_lineage	10	dl		mkdir -p "$TMP/new_taxdump" && dl "https://ftp.ncbi.nlm.nih.gov/pub/taxonomy/new_taxdump/new_taxdump.tar.gz" "$TMP/new_taxdump.tar.gz" && tar -xzf "$TMP/new_taxdump.tar.gz" -C "$TMP/new_taxdump" && find "$TMP/new_taxdump" -name rankedlineage.dmp -exec cp -f {} "$DST" \;
+taxid_map_prot	10	dl		dl "https://ftp.ncbi.nlm.nih.gov/pub/taxonomy/accession2taxid/prot.accession2taxid.gz" "$DST.gz" && gunzip -f "$DST.gz"
+taxid_map_nucl	10	dl		dl "https://ftp.ncbi.nlm.nih.gov/pub/taxonomy/accession2taxid/nucl_gb.accession2taxid.gz" "$DST.gz" && gunzip -f "$DST.gz"
+uniref90	20	dl,diamond		dl "https://ftp.uniprot.org/pub/databases/uniprot/uniref/uniref90/uniref90.fasta.gz" "$PARENT/uniref90.fasta.gz" && diamond makedb --in "$PARENT/uniref90.fasta.gz" -d "$DST" --threads "$THREADS"
+nr_db	20	dl,diamond	taxid_map_prot	dl "https://ftp.ncbi.nlm.nih.gov/blast/db/FASTA/nr.gz" "$PARENT/nr.gz" && diamond makedb --in "$PARENT/nr.gz" -d "$DST" --taxonmap "$DB/taxonomy/prot.accession2taxid" --taxonnodes "$DB/taxonomy/nodes.dmp" --threads "$THREADS"
+virus_db_viroids	20	dl,makeblastdb		dl "http://bioinfo.bti.cornell.edu/ftp/program/VirusDetect/virus_database/v248/U100/viroids.fasta" "$DST/viroids.fasta" && makeblastdb -in "$DST/viroids.fasta" -dbtype nucl -out "$DST/viroids.fasta.blast.db"
+# ── RVDB 派生链：上游 fasta（基底）→ build_virus_db.py → 各软件专用库 ──
+# build_virus_db.py 产出 {prefix}.<db>，其中 diamond 与 CAT 的产出名和管线期望不一致，
+# 故这两条末尾各补一步 ln -sf 别名（详见 doc/DB_DEPLOYMENT.md §3.2）。
+# RVDB 若需显式蛋白 fasta，用 MMPV_RVDB_PROT / MMPV_RVDB30_PROT 覆盖。
+# 注：这 5 条依赖 db_build 标记 —— 辅助脚本未收编前 down 会明确拒绝运行。
+src_rvdb31	10	dl		dl "https://github.com/fzer/rvdbtools/raw/main/db/RVDB_v31.fasta.gz" "$DST"
+virus_db_rvdb31_metabuli	30	db_build	src_rvdb31,taxonomy	python "$REPO/virome_discovery_pipeline/build_virus_db.py" --nuc-fasta "$SRC/RVDB/RVDB_v31.fasta" ${MMPV_RVDB_PROT:+--prot-fasta "$MMPV_RVDB_PROT"} --db-prefix RVDB_viroids --work-dir "$VIRUS_DB/RVDB-v31" --tax-dir "$DB/taxonomy" --databases metabuli --threads "$THREADS" --skip-step1
+virus_db_rvdb31_mmseqs	30	db_build	src_rvdb31,taxonomy	python "$REPO/virome_discovery_pipeline/build_virus_db.py" --prot-fasta "${MMPV_RVDB_PROT:-$SRC/RVDB/RVDB_v31.fasta}" --db-prefix RVDB --work-dir "$VIRUS_DB/RVDB-v31" --tax-dir "$DB/taxonomy" --databases mmseqs --threads "$THREADS" --skip-step1
+virus_db_rvdb30_mmseqs	30	db_build	src_rvdb31,taxonomy	python "$REPO/virome_discovery_pipeline/build_virus_db.py" --prot-fasta "${MMPV_RVDB30_PROT:-$SRC/RVDB/RVDB_v30.fasta}" --db-prefix RVDB --work-dir "$VIRUS_DB/RVDB-30" --tax-dir "$DB/taxonomy" --databases mmseqs --threads "$THREADS" --skip-step1
+virus_db_rvdb31_diamond	30	db_build	src_rvdb31,taxonomy	python "$REPO/virome_discovery_pipeline/build_virus_db.py" --prot-fasta "${MMPV_RVDB_PROT:-$SRC/RVDB/RVDB_v31.fasta}" --db-prefix RVDB_viroids --work-dir "$VIRUS_DB/RVDB-v31" --tax-dir "$DB/taxonomy" --databases diamond --threads "$THREADS" --skip-step1 && ln -sf RVDB_viroids.dmnd "$DST/U-RVDBv31.0-prot_unique.dmnd"
+virus_db_rvdb31_cat	30	db_build	src_rvdb31,taxonomy	python "$REPO/virome_discovery_pipeline/build_virus_db.py" --prot-fasta "${MMPV_RVDB_PROT:-$SRC/RVDB/RVDB_v31.fasta}" --db-prefix RVDB_viroids --work-dir "$VIRUS_DB/RVDB-v31" --tax-dir "$DB/taxonomy" --databases CAT --threads "$THREADS" --skip-step1 && ln -sfn RVDB_viroids.CAT-db "$VIRUS_DB/RVDB-v31/CAT-db"
+# ACVirus：DATABASE_SETUP §3.7 原文命令，仅路径参数化
+virus_db_acvirus	10	ACVirus	virus_db_vmr	ACVirus create_db --vmr "$VIRUS_DB/VMR_MSL41.v1.20260320.xlsx" --dbpath "$DST"
+# VMR 官方表：由公开的 ACVirus 仓库 database/ 目录提供（DATABASE_SETUP §3.7）；版本号可用 MMPV_VMR_FILE 覆盖
+virus_db_vmr	10	git		git clone --depth 1 "${MMPV_ACVIRUS_REPO:-https://github.com/icelu/ACVirus.git}" "$TMP/ACVirus" && mkdir -p "$PARENT" && cp -f "$TMP/ACVirus/database/${MMPV_VMR_FILE:-VMR_MSL41.v1.20260320.xlsx}" "$DST"
+# ViraLM / DNABERT-2 模型：DATABASE_SETUP §2.6 原文 gdown（Google Drive ID 可用 MMPV_VIRALM_GID 覆盖）
+virus_db_viralm	10	gdown		mkdir -p "$DST" && ( cd "$TMP" && gdown --id "${MMPV_VIRALM_GID:-1EQVPmFbpLGrBLU0xCtZBpwvXrtrRxic1}" -O viralm_model.tar.gz ) && tar -xzf "$TMP/viralm_model.tar.gz" -C "$DST"
+# VP 蛋白库：DATABASE_SETUP §1.1 的 viral.1.protein.faa.gz + diamond makedb，落到代码回退路径
+virus_db_vp_diamond	20	dl,diamond		dl "https://ftp.ncbi.nlm.nih.gov/refseq/release/viral/viral.1.protein.faa.gz" "$PARENT/viral.1.protein.faa.gz" && mkdir -p "$DST" && diamond makedb --in "$PARENT/viral.1.protein.faa.gz" -d "$DST/viral_protein.dmnd" --threads "$THREADS"

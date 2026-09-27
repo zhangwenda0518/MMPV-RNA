@@ -11,8 +11,9 @@ eve_genome_scan.py — 单基因组 EVE 筛查 worker (断点续传)
       --id2div id2div.tsv --rvdb-db RVDB.dmnd [--fast] [--blastn-viroid] \
       [--stages 1,2,3] [--force] [--cleanup]
 
-断点续传语义: 阶段产物文件存在即视为完成 (空文件 = 已完成且零结果),
+断点续传语义: **请求的每个阶段**的产物文件存在即视为完成 (空文件 = 已完成且零结果),
 重发同一命令即从断点继续; --force 删除旧产物全量重跑.
+注意完成判定是逐阶段的: `--stage 1` 跑完不会让后续 `--stage 2,3` 被跳过.
 """
 
 import argparse
@@ -25,8 +26,9 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
-from eve_scan_core import (EveConfig, STAGE_DIRS, check_tools, cleanup_stage_files,
-                           logmsg, safe_dir, stage1_discover, stage2_verdict,
+from eve_scan_core import (EVALUE, HOST_BS, MERGE_D, VIRAL_BS, WINDOW, EveConfig,
+                           STAGE_DIRS, check_tools, cleanup_stage_files, logmsg,
+                           safe_dir, stage1_discover, stage2_verdict,
                            stage3_annotate, stage_viroid, summarize_genome)
 
 SUMMARY_SUFFIX = "_eve_summary.tsv"
@@ -66,8 +68,25 @@ def parse_stages(spec):
     return out
 
 
-def genome_done(outdir, name):
-    return (Path(outdir) / STAGE_DIRS["summary"] / f"{name}{SUMMARY_SUFFIX}").exists()
+def genome_done(outdir, name, stages, viroid=False, skip_s3=False):
+    """断点判定: 请求的每个阶段的产物都存在 (且 summary 在) 才算完成.
+
+    只看 summary 会把"只跑了部分阶段的一次运行"误判成完成: 那次写出的 summary
+    整列都是 undetermined, 此后任何 stage 组合都会被跳过并在 --merge 里被当成
+    真的 undetermined 统计, --force 是唯一出路. 按阶段产物判定后, 补跑缺失阶段
+    即可 (已完成的阶段各自短路).
+    """
+    base = Path(outdir)
+    need = [base / STAGE_DIRS["summary"] / f"{name}{SUMMARY_SUFFIX}"]
+    if "discover" in stages:
+        need.append(base / STAGE_DIRS["loci"] / name / f"{name}.loci.bed")
+    if "verdict" in stages:
+        need.append(base / STAGE_DIRS["verdict"] / name / f"{name}.s2_verdict.tsv")
+    if "annotate" in stages and not skip_s3:
+        need.append(base / STAGE_DIRS["rvdb"] / name / f"{name}.s3_rvdb.tsv")
+    if viroid:
+        need.append(base / STAGE_DIRS["summary"] / f"{name}_viroid.tsv")
+    return all(p.exists() for p in need)
 
 
 def resolve_genome_fa(genome, outdir, name, stages):
@@ -108,8 +127,10 @@ def run_genome(job):
     log = setup_logger(job.get("log_path"))
     log.info("=== %s 开始 (stages=%s) ===", name, ",".join(sorted(job["stages"])))
     try:
-        if not job["force"] and genome_done(outdir, name):
-            log.info("已完成 (summary 存在), 跳过; --force 可重跑")
+        if not job["force"] and genome_done(outdir, name, job["stages"],
+                                            job.get("viroid", False),
+                                            job.get("skip_s3", False)):
+            log.info("已完成 (请求的阶段产物齐全), 跳过; --force 可重跑")
             return {"name": name, "status": "skip", "elapsed": 0}
 
         stages = job["stages"]
@@ -197,11 +218,11 @@ def build_parser():
                    help="samtools 可执行文件 (默认 PATH)")
     # 参数
     g = p.add_argument_group("运行参数")
-    g.add_argument("--window", type=int, default=50000)
-    g.add_argument("--merge-distance", type=int, default=300)
-    g.add_argument("--evalue", default="1e-5")
-    g.add_argument("--host-bs", type=float, default=50)
-    g.add_argument("--viral-bs", type=float, default=50)
+    g.add_argument("--window", type=int, default=WINDOW)
+    g.add_argument("--merge-distance", type=int, default=MERGE_D)
+    g.add_argument("--evalue", default=EVALUE)
+    g.add_argument("--host-bs", type=float, default=HOST_BS)
+    g.add_argument("--viral-bs", type=float, default=VIRAL_BS)
     g.add_argument("--cmd-timeout", type=int, default=0,
                    help="单条外部命令超时 (秒); 0=不限 (防工具挂死占核)")
     return p

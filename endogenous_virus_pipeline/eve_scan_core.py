@@ -92,13 +92,25 @@ FAMILY_KEYWORDS = [
     ("phage", "Phage"), ("mycovir", "Mycovirus"),
 ]
 
-# 阶段 -> 子目录名 (MMPV 编号目录惯例)
-STAGE_DIRS = {
-    "loci":    "01_Loci",
-    "verdict": "02_Verdict",
-    "rvdb":    "03_RVDB",
-    "summary": "04_Summary",
-}
+# 阶段 -> 子目录名 (MMPV 编号目录惯例; 目录名统一由 mmpv_common.io_layout
+# 注册表给出 —— legacy/standard 两布局下 EVE 内部编号同名, 输出根约定:
+# legacy=用户 -o 任意, standard=<项目>/06_EVE。导入失败时回退内置字面量,
+# 保证本模块在脱离仓库环境时仍可独立运行。)
+try:
+    import sys as _sys
+    _EVE_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if _EVE_REPO_ROOT not in _sys.path:
+        _sys.path.insert(0, _EVE_REPO_ROOT)
+    from mmpv_common.io_layout import dir_name as _eve_layout_dir
+    STAGE_DIRS = {k: _eve_layout_dir("e_" + k)
+                  for k in ("loci", "verdict", "rvdb", "summary")}
+except Exception:  # pragma: no cover - 脱离仓库环境的兜底
+    STAGE_DIRS = {
+        "loci":    "01_Loci",
+        "verdict": "02_Verdict",
+        "rvdb":    "03_RVDB",
+        "summary": "04_Summary",
+    }
 
 SAFE_CHARS = set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-")
 
@@ -256,7 +268,12 @@ def restore_coordinates(raw_tsv, hits_bed, window_note=""):
 
     raw_tsv 列 (OUTFMT1): qseqid qlen sseqid slen stitle evalue bitscore
                           qcovhsp pident length qstart qend
-    qseqid 形如 <contig>_sliding:<块起点0based>-<块终点>
+    qseqid 形如 <contig>_sliding:<块起点1based闭区间>-<块终点> —— seqkit sliding
+    的产物, 两端都是 1-based 闭区间 (即 csvtk 的 :START-END 语义), 不是 0-based.
+    qstart/qend 也是 1-based 闭区间. 两者都转成 BED 的 0-based 半开:
+        gs = 块起点 + qstart - 1        (基因组上的 1-based 位置)
+        BED start = gs - 1             BED end = ge  (= 1-based 闭区间终点)
+    这里没有 strand 处理: OUTFMT1 不请求 qframe/sframe, 位点是无方向区间.
     输出 BED: contig \t start0 \t end \t <原始行>
     """
     n_hit = 0
@@ -416,6 +433,7 @@ def verdict_loci(raw_tsv, id2div_map, verdict_tsv, host_bs=HOST_BS, viral_bs=VIR
             except ValueError:
                 continue
     n_v = n_h = n_u = 0
+    unmapped = set()
     with open(verdict_tsv, "w", encoding="utf-8") as fo:
         fo.write("locus\tverdict\tbest_viral_id\tbest_viral_bs\t"
                  "best_plant_id\tbest_plant_bs\n")
@@ -424,6 +442,8 @@ def verdict_loci(raw_tsv, id2div_map, verdict_tsv, host_bs=HOST_BS, viral_bs=VIR
             bp_id, bp = "", 0.0
             for bs, sid in hits[locus]:
                 dv = id2div_map.get(sid, "?")
+                if dv == "?":
+                    unmapped.add(sid)
                 if dv == "viral" and bs > bv:
                     bv_id, bv = sid, bs
                 elif dv == "plant" and bs > bp:
@@ -439,6 +459,13 @@ def verdict_loci(raw_tsv, id2div_map, verdict_tsv, host_bs=HOST_BS, viral_bs=VIR
                 n_u += 1
             fo.write(f"{locus}\t{v}\t{bv_id}\t{fmt_num(bv)}\t"
                      f"{bp_id}\t{fmt_num(bp)}\n")
+    # 未映射的 sseqid 一律不参与两侧对比: 若 id2div 表分隔符不对或与 pv_dmnd 版本
+    # 不匹配, 全部位点会静默落成 undetermined / Stage3 候选为 0 而退出码仍是 0.
+    # 这里把它喊出来 —— 阈值内的正常情况是 0 条.
+    if unmapped:
+        logmsg(f"WARN stage2: {len(unmapped)} 个 sseqid 不在 id2div 表里 "
+               f"(最多列出 3 个: {sorted(unmapped)[:3]}); 这些命中不参与 "
+               f"viral/plant 两侧对比, 检查 id2div 与 pv_dmnd 是否配套")
     return n_v, n_h, n_u
 
 
@@ -485,7 +512,10 @@ def summarize_genome(name, outdir):
                 if k not in rvdb or bs > rvdb[k][0]:
                     rvdb[k] = (bs, c[10] if len(c) > 10 else "")
     with open(loci_d / f"{name}.loci.bed", encoding="utf-8") as fi, open(summ, "w", encoding="utf-8") as fo:
-        fo.write("genome\tlocus\tverdict\tref_family\tref_sseqid\tref_bitscore\t"
+        # 12 列, 不含 genome —— 基因组名在文件名与目录名里, 汇总时由 merge_all 补首列.
+        # 这里多写一列会让 merge_all 拼出 14 字段而表头只有 13 个名字, 按列名读的
+        # 消费者 (pandas / csv.DictReader) 每一列都右移一位.
+        fo.write("locus\tverdict\tref_family\tref_sseqid\tref_bitscore\t"
                  "ref_qcov\tbest_viral_sp\tbest_viral_bs\tbest_plant_sp\t"
                  "best_plant_bs\trvdb_stitle\trvdb_bitscore\n")
         for line in fi:
@@ -497,7 +527,7 @@ def summarize_genome(name, outdir):
             b = best.get(lk, [""] * 7)
             v = verd.get(lk, ["", "undetermined", "", "", "", ""])
             r = rvdb.get(lk, ("", ""))
-            fo.write(f"{name}\t{locus}\t{v[1]}\t"
+            fo.write(f"{locus}\t{v[1]}\t"
                      f"{b[2] if len(b) > 2 else ''}\t{b[1] if len(b) > 1 else ''}\t"
                      f"{b[4] if len(b) > 4 else ''}\t{b[5] if len(b) > 5 else ''}\t"
                      f"{v[2]}\t{v[3]}\t{v[4]}\t{v[5]}\t{r[1]}\t"
@@ -527,15 +557,24 @@ def merge_all(outdir):
             fh.readline()
             for line in fh:
                 c = line.rstrip("\n").split("\t")
+                if len(c) < 3:
+                    continue
+                if len(c) == 12 + 1:
+                    # 旧布局 (13 列, 首列是重复的 genome) 的 summary: 丢掉首列,
+                    # 否则按 12 列索引会整行错位. 新写的 summary 恒为 12 列.
+                    # 只认这一个宽度 —— 别的宽度是别的东西 (截断行, 或 eve_kingdom.py
+                    # 那套 15 列的旧格式), 一律交给下面的补齐/告警, 不要静默丢首列.
+                    c = c[1:]
+                    line = "\t".join(c) + "\n"
                 all_rows.append((name, line.rstrip("\n")))
-                if c[2] == "viral_supported":
+                if c[1] == "viral_supported":
                     n_v += 1
-                elif c[2] == "host_like":
+                elif c[1] == "host_like":
                     n_h += 1
                 else:
                     n_u += 1
-                fam = c[3] or "Other_viral"
-                if c[2] == "viral_supported":
+                fam = c[2] or "Other_viral"
+                if c[1] == "viral_supported":
                     fam_g.setdefault(fam, {})
                     fam_g[fam][name] = fam_g[fam].get(name, 0) + 1
         counts[name] = (n_v, n_h, n_u)
@@ -543,12 +582,24 @@ def merge_all(outdir):
         fo.write("genome\tviral_supported\thost_like\tundetermined\n")
         for g in sorted(counts):
             fo.write(f"{g}\t{counts[g][0]}\t{counts[g][1]}\t{counts[g][2]}\n")
-    with gzip.open(outdir / "kingdom_loci_all.tsv.gz", "wt", encoding="utf-8") as z:
-        z.write("genome\tlocus\tverdict\tref_family\tref_sseqid\tref_bitscore\t"
+    loci_hdr = ("genome\tlocus\tverdict\tref_family\tref_sseqid\tref_bitscore\t"
                 "ref_qcov\tbest_viral_sp\tbest_viral_bs\tbest_plant_sp\t"
-                "best_plant_bs\trvdb_stitle\trvdb_bitscore\n")
+                "best_plant_bs\trvdb_stitle\trvdb_bitscore")
+    width = loci_hdr.count("\t") + 1
+    n_ragged = 0
+    with gzip.open(outdir / "kingdom_loci_all.tsv.gz", "wt", encoding="utf-8") as z:
+        z.write(loci_hdr + "\n")
         for g_, row in all_rows:
-            z.write(g_ + "\t" + row + "\n")
+            c = row.split("\t")
+            if len(c) != width - 1:
+                # 单基因组 summary 被截断/多列: 补空或截尾到 12 列, 保证汇总表恒为
+                # 矩形 (列名对齐才读得对), 同时计数告警而不是静默错位.
+                n_ragged += 1
+                c = (c + [""] * 12)[:12]
+            z.write(g_ + "\t" + "\t".join(c) + "\n")
+    if n_ragged:
+        logmsg(f"WARN merge: {n_ragged} 行 summary 列数不是 12, 已补齐/截尾; "
+               f"检查对应 <NAME>_eve_summary.tsv 是否被截断")
     with open(outdir / "family_by_genome.tsv", "w", encoding="utf-8") as fo:
         genomes = sorted(counts)
         fo.write("family\t" + "\t".join(genomes) + "\n")
@@ -906,8 +957,81 @@ def stage_viroid(cfg, name, outdir, genome_fa, threads, log, force=False):
     return out
 
 
+# ---------------- 测序污染筛查 ----------------
+# 为什么必须有这一步: 候选里混进 phiX174 (Illumina 建库的 spike-in) 或其它常见细菌/载体
+# 序列时, 它们会打中病毒参考库里的噬菌体条目, 然后被当成"病毒信号"一路走到底 ——
+# 在千基因组级别的汇总里, 这类位点能占到两成以上 (上游研究实测 Phage 层 11,855/41,887
+# 元件, 占 28%, 其质控记录直接写明"Phage 类含 phiX 污染")。我们的管线此前**没有任何
+# 污染筛查**, 所以这一层是补上的缺口。
+#
+# 判定方式与上游研究一致, 用**参考 accession 前缀 + 标题关键词**: 不要求再跑一次比对,
+# 只对已有命中做判定, 因此可以事后对任何一次跑完的结果追加筛查。
+CONTAM_ACC_PREFIX = (
+    "NP_0406", "NP_0407",     # phiX174 蛋白 (NCBI 编号段固定)
+    "YP_51237",               # Escherichia phage ID2, phiX 近缘
+)
+CONTAM_TITLE_KEYWORDS = (
+    "phix", "phi x", "escherichia phage",
+)
+# 输出表头: 测试直接 import CONTAM_HDR 引用, 避免两头各抄一份
+CONTAM_HDR = ("query_id\tn_hits\tn_contam_hits\tcontam_frac\ttop_contam_ref\t"
+              "top_contam_title\n")
+
+
+def is_contaminant_hit(sseqid, stitle=""):
+    """这条 hit 的参考序列是不是已知测序污染源 (phiX/大肠杆菌噬菌体)."""
+    sid = (sseqid or "").strip()
+    if any(sid.startswith(p) for p in CONTAM_ACC_PREFIX):
+        return True
+    low = (stitle or "").lower()
+    return any(k in low for k in CONTAM_TITLE_KEYWORDS)
+
+
+def contamination_scan(raw_tsv, out_tsv):
+    """逐 query 统计污染命中占比 -> CONTAM_HDR 表; 返回 (n_query, n_contaminated).
+
+    `contam_frac` 是**该 query 的全部命中里**污染命中占的比例 —— 单看命中数会把
+    "打中一次 phiX 的长 contig" 和 "整条都是 phiX" 混为一谈, 占比才分得开。
+    下游按 frac 阈值 (配合 n_contam_hits) 过滤; 本函数不下结论, 只报事实。
+    """
+    tot = {}
+    contam = {}
+    top = {}
+    with open(raw_tsv, encoding="utf-8") as f:
+        for line in f:
+            p = line.rstrip("\n").split("\t")
+            if len(p) < 2 or p[0] == "qseqid":
+                continue
+            q = p[0]
+            tot[q] = tot.get(q, 0) + 1
+            stitle = p[11] if len(p) > 11 else ""
+            if is_contaminant_hit(p[1], stitle):
+                contam[q] = contam.get(q, 0) + 1
+                # 记录该 query 的污染命中最强的那个参考 (按 bitscore)
+                try:
+                    bs = float(p[9])
+                except (ValueError, IndexError):
+                    bs = 0.0
+                if q not in top or bs > top[q][0]:
+                    top[q] = (bs, p[1], stitle)
+    n_contam = 0
+    with open(out_tsv, "w", encoding="utf-8") as fo:
+        fo.write(CONTAM_HDR)
+        for q in sorted(tot):
+            nc = contam.get(q, 0)
+            if not nc:
+                continue
+            n_contam += 1
+            bs, sid, st = top[q]
+            fo.write("%s\t%d\t%d\t%.3f\t%s\t%s\n"
+                     % (q, tot[q], nc, nc / tot[q], sid, st[:80]))
+    return len(tot), n_contam
+
+
 # ---------------- 中间文件清理 ----------------
-# (victim_stem, guard_stem): guard 存在才允许删 victim (终表永不被删)
+# (victim_stem, guard_stem): guard 存在才允许删 victim (终表永不被删).
+# 两侧都必须查它真实的扩展名与阶段目录 —— 早期版本把护栏扩展名硬编码成 .tsv,
+# 于是 s1_hits/loci_bed 两条 .bed 护栏永远不存在, 那两条规则从不生效.
 _CLEANUP_STEMS = (
     ("chunks", "s1_raw"),
     ("s1_raw", "s1_hits"),
@@ -916,10 +1040,21 @@ _CLEANUP_STEMS = (
     ("cand3_fa", "s3_rvdb"),
     ("cand3_bed", "s3_rvdb"),
 )
-# victim stem -> (扩展名, 所在阶段目录)
-_CLEANUP_META = {"chunks": ("fna", "loci"), "s1_raw": ("tsv", "loci"),
-                 "s1_hits": ("bed", "loci"), "s2_raw": ("tsv", "verdict"),
-                 "cand3_fa": ("fna", "rvdb"), "cand3_bed": ("bed", "rvdb")}
+# stem -> (磁盘文件名主体, 扩展名, 所在阶段目录).
+# 主体未必等于这里的键: loci.bed 的主体是 "loci" (不是 "loci_bed"), cand3.fa 的主体是
+# "cand3" (不是 "cand3_fa"). 早期版本按键直接拼文件名, 且护栏扩展名写死成 .tsv,
+# 于是六条规则里有四条指向了根本不存在的路径 —— 清理看着"成功"却什么都没删.
+_CLEANUP_META = {
+    "chunks":     ("chunks", "fna", "loci"),
+    "s1_raw":     ("s1_raw", "tsv", "loci"),
+    "s1_hits":    ("s1_hits", "bed", "loci"),
+    "loci_bed":   ("loci", "bed", "loci"),
+    "s2_raw":     ("s2_raw", "tsv", "verdict"),
+    "s2_verdict": ("s2_verdict", "tsv", "verdict"),
+    "cand3_fa":   ("cand3", "fa", "rvdb"),
+    "cand3_bed":  ("cand3", "bed", "rvdb"),
+    "s3_rvdb":    ("s3_rvdb", "tsv", "rvdb"),
+}
 
 
 def cleanup_stage_files(outdir, name):
@@ -930,10 +1065,12 @@ def cleanup_stage_files(outdir, name):
     """
     freed = 0
     for victim_stem, guard_stem in _CLEANUP_STEMS:
-        ext, stage = _CLEANUP_META[victim_stem]
-        d = Path(outdir) / STAGE_DIRS[stage] / name
-        victim = d / f"{name}.{victim_stem}.{ext}"
-        guard = d / f"{name}.{guard_stem}.tsv"
+        v_stem, v_ext, v_stage = _CLEANUP_META[victim_stem]
+        g_stem, g_ext, g_stage = _CLEANUP_META[guard_stem]
+        victim = (Path(outdir) / STAGE_DIRS[v_stage] / name
+                  / f"{name}.{v_stem}.{v_ext}")
+        guard = (Path(outdir) / STAGE_DIRS[g_stage] / name
+                 / f"{name}.{g_stem}.{g_ext}")
         if victim.exists() and guard.exists():
             try:
                 freed += victim.stat().st_size

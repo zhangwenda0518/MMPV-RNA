@@ -1,0 +1,143 @@
+# =============================================================================
+# virome_phylo_pipeline — datasets.yaml 通用数据集配置
+# 新病毒使用方式：在 datasets 下加一个条目，路径可用 {base} / {dir} 占位符。
+# 所有脚本从此文件读注册表/配色/坐标，不再硬编码病毒专属内容。
+#
+# 【换环境怎么改】按优先级：
+#   1) 设环境变量（不改文件）：MMPV_DATA_BASE / MMPV_RESULTS / MMPV_PYPOPART /
+#      MMPV_BEAST / MMPV_BEAST_CP / MMPV_BEAST_JLP / MMPV_ANNOT_DIR
+#   2) 或只改下面 base / results 两行
+#   3) 仓库内资源用 {repo} 自动定位（本地与服务器都成立），无需改
+# 占位符：{repo} 仓库根 · {base} 数据根 · {results} 产物根 · {dir} 条目自身目录
+# =============================================================================
+
+# 数据根目录（可用环境变量覆盖，覆盖后无需动本文件）
+base: ${MMPV_DATA_BASE:-/home/zhangwenda/MMPV-paper/results_PSTVd_GCVA_20260905}
+
+# 运行产物根目录（phylo_results 等；{results} 占位符）
+results: ${MMPV_RESULTS:-{repo}/virome_phylo_pipeline/phylo_results}
+
+# 注释 GB 目录（analysis 管线 virus-annotations 产物；缺失则相关步骤跳过）
+annotations: ${MMPV_ANNOT_DIR:-}
+
+# 运行环境（仓库内资源用 {repo}；服务器专属工具可用环境变量覆盖）
+env:
+  beast_cp: ${MMPV_BEAST_CP:-/home/zhangwenda/bdsky-override:/home/zhangwenda/mambaforge/lib/beast.jar:/home/zhangwenda/mambaforge/lib/beast-beagle.jar}
+  beast_jlp: ${MMPV_BEAST_JLP:-/home/zhangwenda/mambaforge/lib}
+  # 仓库内工具：本地/服务器都在 <repo>/biosoft/pypopart/src → 自动定位
+  pypopart_path: ${MMPV_PYPOPART:-{repo}/biosoft/pypopart/src}
+  # 历史坑: 代码读 env.beast_bin/env.beast2_bin 但 yaml 里没这俩键, 靠 PATH/硬编码兜底;
+  # 显式写明 (BEAST1.10.4, 无 BEAST2); 默认走 PATH, 可用环境变量覆盖
+  beast_bin: ${MMPV_BEAST:-beast}
+
+
+# 着色方案（可按数据集/新病毒扩展）
+colors:
+  host:
+    "Lycium barbarum": "#0F4D92"
+    "Lycium ruthenicum": "#D9544D"
+    "Lycium chinense": "#8BCF8B"
+    "Lycium": "#767676"
+    "Unknown": "#CFCECE"
+  location:
+    "Ningxia": "#0F4D92"
+    "Beijing": "#D9544D"
+    "Neimenggu": "#8B6F47"
+    "Guangdong": "#8BCF8B"
+    "Gansu": "#9A4D8E"
+    "Qinghai": "#767676"
+    "Jiangsu": "#767676"
+    "Unknown": "#CFCECE"
+
+# 采样点经纬度（地理图用；新病毒可自行扩展）
+province:
+  "Ningxia": [38.47, 106.27]
+  "Beijing": [39.90, 116.41]
+  "Guangdong": [23.13, 113.26]
+  "Gansu": [36.06, 103.79]
+  "Neimenggu": [40.82, 111.75]
+  "Qinghai": [36.62, 101.78]
+  "Jiangsu": [32.06, 118.80]
+  "Unknown": [35.0, 108.0]
+
+# ── 已知数据集注册表 ──────────────────────────────────────────────
+datasets:
+  GCVA:
+    dir: "{base}/GCVA/phylo_gcva_full_20260831/Cytorhabdovirus_sp_lycii_OR489165.1/gcva_analysis"
+    fasta: mafft.aln.fasta             # 相对 dir (全长比对, 实测 145 条 × 16,310 bp)
+    metadata: gcva_dates_enriched.csv    # 相对 dir (含 name/date/location/host)
+    accession: OR489165.1               # NCBI accession (online efetch 用)
+    species: "Cytorhabdovirus sp. 'lycii'"  # 学名 (NCBI organism 名, 注意单引号)
+    # 注释 gb (analysis 管线 virus-annotations 产物; capheine/gene_dating 的 CDS 参考来源)
+    # 由顶层 annotations 提供目录; 未设 MMPV_ANNOT_DIR 时该字段为空 → 相关步骤跳过
+    annotation_gb: "{annotations}/OR489165.1.gb"
+    # AlphaFold 结构目录 (batch_draw_pymol 正选择位点 3D 映射用; 无结构文件则跳过渲染)
+    pdb_dir: ""
+    work: phylogeography_skyline         # 系统地理工作目录名（相对 dir）
+    # 变异热点图输出子目录（相对 dir；GCVA=figures_main, PSTVd=haplo_outputs）
+    popgen_out: figures_main
+    # 清理工具额外扫描的目录（相对 dir）
+    clean_dirs:
+      - phylogeography_bdsky_v2
+    # 基因坐标（熵谱/基因变异图标注用；无基因注释的病毒可省去）
+    genes:
+      - [N, 436, 1950, "#0F4D92"]
+      - [P, 2499, 4046, "#3775BA"]
+      - [P4, 4305, 5024, "#42949E"]
+      - [M, 5480, 6340, "#8BCF8B"]
+      - [G, 6742, 7368, "#E9A6A1"]
+      - [L, 7562, 14344, "#9A4D8E"]
+    # 基因边界 CSV（gene_mapping 输入，相对 dir；存在才跑基因变异图）
+    genes_csv: gcva_genes.csv
+    # 单倍型网络（build_haplo_outputs）；统一相对 {dir}，不再写绝对长路径
+    # 2026-09-22 实测: 原配置的 {base}/.../gcva_145/gcva_145.nogap.fasta 目录已不存在
+    #   (数据搬迁)，改用 dir 内的全长比对；如需专用去 gap 版，替换下面 fasta 即可
+    haplo:
+      fasta: "{dir}/mafft.aln.fasta"
+      meta: "{dir}/gcva_dates_enriched.csv"
+      out: "{dir}/haplo_outputs"
+      recombinants:                      # 网络图中红色三角标记的重组子
+        - CRR1440128
+        - CRR283459
+        - CRR527041
+        - CRR527047
+        - CRR527048
+        - CRR527050
+        - SRR15037484
+        - SRR15037495
+        - SRR2344935
+        - SRR8191334
+
+  PSTVD:
+    dir: "{base}/PSTVd/phylo_pstvd_full_20260831/Potato_spindle_tuber_viroid_NC_002030.1"
+    fasta: pstvd_mafft.aln.fasta
+    metadata: phylo_metadata_norm.csv
+    accession: NC_002030.1
+    species: "Potato spindle tuber viroid"
+    # 注释 gb (analysis 产物; viroid 无 CDS, capheine 不适用, 但保留来源供其他用途)
+    annotation_gb: "{annotations}/NC_002030.1.gb"
+    work: phylogeography
+    popgen_out: haplo_outputs
+    clean_dirs:
+      - phylogeography_bdsky
+    # ⚠️ 2026-09-22 实测: dir 内 pstvd_mafft.aln.fasta 为 0 字节（同目录 checkpoint
+    #    却有 align/tree/clock/popgen.done，疑似比对文件在后续操作中被清空）；
+    #    非空替代品: phylogeny/qc/clean.fasta。重跑 pipeline 会重建比对。
+    haplo:
+      fasta: "{dir}/pstvd_mafft.aln.fasta"
+      meta: "{dir}/phylo_metadata_norm.csv"
+      out: "{dir}/haplo_outputs"
+
+  PSTVD_FULL:
+    # ⚠️ 2026-09-22 实测: 原值 "{results}/pstvd_full_20260831/..." 不存在
+    #    （{results} 默认指向 <repo>/virome_phylo_pipeline/phylo_results，
+    #     该目录实际只放诊断脚本，非数据目录）
+    #    实际数据与 PSTVD 条目同处一份 → 两条目当前指向同一目录；
+    #    PSTVD 为历史条目（原指 analysis_v2），PSTVD_FULL 为 full 版，如需区分请分别指定 dir
+    dir: "{base}/PSTVd/phylo_pstvd_full_20260831/Potato_spindle_tuber_viroid_NC_002030.1"
+    fasta: pstvd_mafft.aln.fasta
+    metadata: phylo_metadata_norm.csv
+    accession: NC_002030.1
+    species: "Potato spindle tuber viroid"
+    annotation_gb: "{annotations}/NC_002030.1.gb"
+

@@ -1,6 +1,7 @@
 __pycache__/
+*.pyc
 public_metadata_pipeline/public_data_pipeline_output/
-public_metadata_pipeline/build_host_pipeline_output/
+build_host_pipeline_output/
 database/*
 !database/final.cluster.ref.fasta
 *.jar
@@ -14,6 +15,7 @@ dist/
 
 # Logs
 *.log
+.Rhistory
 
 # Test output
 test_output/
@@ -26,3 +28,69 @@ search_results/GSA_Results/1_xls_cache/
 metadata_gui/build/
 metadata_gui/dist/
 metadata_gui/*.spec
+
+# Generated reports (pipeline HTML 输出, 体积大且可再生)
+reports/
+Pipeline_Summary_Report.html
+pipeline_report_*.html
+
+# 备份/一次性脚本归档 (保留在本地磁盘, 不入库)
+archive/
+*.bak
+*.bak_*
+*.orig
+
+# GUI 运行残留
+metadata_gui/error.log
+metadata_gui/startup.log
+metadata_gui/test_output.log
+metadata_gui/report_out*.html
+metadata_gui/unified_metadata_out*.csv
+submission_gui/report_out*.html
+submission_gui/unified_metadata_out*.csv
+submission_gui/samples/_test_roundtrip_out.*
+
+# 工具状态目录
+.mimosa/
+.wisp/
+.impeccable/
+.publication_metadata_plots/
+
+# 管线运行结果 / 备份 / 草稿 (本地保留, 不入库)
+virome_phylo_pipeline/phylo_results/
+virome_phylo_pipeline/_backup_utils_flatten_20260827/
+virome_phylo_pipeline/_scratch_tests/
+virome_phylo_pipeline/_archive_codeml_20260830/
+virome_phylo_pipeline/cache/
+virome_analysis_pipeline/server_checks/
+virome_analysis_pipeline/*.pdf
+virome_analysis_pipeline/virus_detection_summary.tsv
+virome_analysis_pipeline/coabundance_*.csv
+virome_analysis_pipeline/extraction_status.tsv
+virome_analysis_pipeline/_dev_smoke/_tmp_plots/
+virome_analysis_pipeline/_debug_stage1.py
+
+# 个人文献与笔记 (版权 PDF / 个人研究提纲)
+文献/
+jian.md
+
+# 第三方工具本地安装 (含嵌套 .git, 不入库; 服务器端另行维护)
+biosoft/EasyHap/
+biosoft/VirPhyKit/
+biosoft/YR-MPE/
+biosoft/treedater/
+biosoft/viralclust/
+biosoft/shinyTempSignal/
+biosoft/vfam_trees/
+biosoft/pyhmmer_runner.py
+biosoft/pyhmmer_viralverify.py
+biosoft/pyhmmersearch.py
+
+# AI 工具状态目录
+.workbuddy/
+.workbuddy-ai/
+
+# 个人文献下载 / 论文工作区 / 外部参考仓库副本 (本地保留, 不入库)
+文献自动下载/
+external_ref/
+MMPV-RNA-paper/

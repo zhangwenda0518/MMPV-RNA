@@ -22,7 +22,7 @@ unified_metadata.py — 统一元数据模板生成器 v1.0
   # 从 suvtk 产出生成统一模板
   python unified_metadata.py \\
       --taxonomy 1_taxonomy/taxonomy.tsv \\
-      --metadata Global_Unified_Metadata_Core13.tsv \\
+      --metadata Global_Unified_Metadata_Core14.tsv \\
       --run-title my_project \\
       -o ./submission/
 
@@ -71,9 +71,9 @@ UNIFIED_COLUMNS = OrderedDict([
     ("src-Isolation-source",   {"required": False, "group": "src", "desc": "分离来源描述"}),
     ("src-Note",               {"required": False, "group": "src", "desc": "额外备注"}),
     ("src-Tissue_type",        {"required": False, "group": "src", "desc": "组织类型"}),
-    ("src-Collected_by",       {"required": False, "group": "src", "desc": "采集人 (Core13 CenterName)"}),
-    ("src-Cultivar",           {"required": False, "group": "src", "desc": "栽培品种 (Core13 Source)"}),
-    ("src-Dev_stage",          {"required": False, "group": "src", "desc": "发育阶段 (Core13 Age_GrowthStage)"}),
+    ("src-Collected_by",       {"required": False, "group": "src", "desc": "采集人 (Core14 CenterName)"}),
+    ("src-Cultivar",           {"required": False, "group": "src", "desc": "栽培品种 (Core14 Source)"}),
+    ("src-Dev_stage",          {"required": False, "group": "src", "desc": "发育阶段 (Core14 Age_GrowthStage)"}),
 
     # === GenBank 提交字段 ===
     ("gb-sample_name",         {"required": True,  "group": "gb", "desc": "GenBank 记录名 (≤50字符)"}),
@@ -142,21 +142,21 @@ def load_taxonomy(tax_tsv):
 def load_metadata(meta_file, log=None):
     """加载元数据表 — 自动优先 Global_Unified_Metadata_Full.tsv。
 
-    若传入的是 Core13.tsv, 自动在同目录查找 Full.tsv 替代。
+    若传入的是 Core14.tsv, 自动在同目录查找 Full.tsv 替代。
     Full 列 (34): Run, BioSample, Platform, CollectionDate, Location, Source,
                   Tissue, Age_GrowthStage, ScientificName, TaxID, CenterName,
                   BioProject, PMID, SRAStudy, Sample, LibraryLayout, ...
-    Core13 列 (13): Run, ReleaseDate, CollectionDate, Location, Source, Tissue,
+    Core14 列 (14): Run, ReleaseDate, CollectionDate, Location, Source, Tissue,
                     Age_GrowthStage, ScientificName, TaxID, LibrarySource,
-                    CenterName, BioProject, PMID
+                    CenterName, BioProject, BioSample, PMID
     """
     if not meta_file or not os.path.exists(meta_file):
         return {}
 
     # ── 自动优先 Full ──
     actual_file = meta_file
-    if 'Core13' in str(meta_file):
-        full_candidate = str(meta_file).replace('Core13', 'Full')
+    if 'Core14' in str(meta_file):
+        full_candidate = str(meta_file).replace('Core14', 'Full')
         if os.path.exists(full_candidate):
             actual_file = full_candidate
             if log:
@@ -328,7 +328,7 @@ def generate_metadata_csv(seqs, meta_lookup, species_map, args, log):
         if geo_loc and geo_loc.lower() in ('nan', 'not_provided', ''):
             geo_loc = ''
 
-        # 宿主: Core13 ScientificName > --host > auto-host (taxonomy + ref_info)
+        # 宿主: Core14 ScientificName > --host > auto-host (taxonomy + ref_info)
         host = ref.get('host', '')
         if not host or host.lower() in ('nan', 'not_provided', ''):
             host = args.host or ''
@@ -336,7 +336,7 @@ def generate_metadata_csv(seqs, meta_lookup, species_map, args, log):
             species_name = species_map.get(contig, taxonomy)
             host = infer_host_from_name(species_name)
         tissue = ref.get('tissue', args.tissue or '')
-        # Core13 额外字段 → NCBI source modifiers
+        # Core14 额外字段 → NCBI source modifiers
         cultivar = ref.get('source', '')    # Source = "Ningqi No.1" 品种
         dev_stage = ref.get('age_stage', '') # Age_GrowthStage = "3 year"
         # 收集人: CenterName (如 Beijing Forestry University)
@@ -381,8 +381,8 @@ def generate_metadata_csv(seqs, meta_lookup, species_map, args, log):
             "src-Note": note,
             "src-Tissue_type": tissue,
             "src-Collected_by": collected_by,
-            "src-Cultivar": cultivar,        # ← Core13 Source 字段
-            "src-Dev_stage": dev_stage,       # ← Core13 Age_GrowthStage 字段
+            "src-Cultivar": cultivar,        # ← Core14 Source 字段
+            "src-Dev_stage": dev_stage,       # ← Core14 Age_GrowthStage 字段
 
             "gb-sample_name": isolate[:50],
             "gb-title": args.title or f"{taxonomy} genome sequencing",
@@ -757,7 +757,7 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument('--taxonomy', required=True, help='suvtk taxonomy.tsv')
-    parser.add_argument('--metadata', help='Global_Unified_Metadata.tsv 或 Core13.tsv (自动优先同目录 Full.tsv)')
+    parser.add_argument('--metadata', help='Global_Unified_Metadata.tsv 或 Core14.tsv (自动优先同目录 Full.tsv)')
     parser.add_argument('--run-title', default='viral_submission', help='运行标题')
     parser.add_argument('-o', '--output', default='./submission/', help='输出目录')
     parser.add_argument('--assembler', default='MEGAHIT;1.2.9;default parameters')
@@ -778,7 +778,7 @@ def main():
                         help='交互式补全缺失元数据 (VAPiD 风格)')
     parser.add_argument('--skip-validate', action='store_true', help='跳过验证')
     parser.add_argument('--reference-metadata', dest='ref_meta',
-                        help='public_metadata_pipeline 输出的 Core13.tsv (参考元数据: 日期/地点/组织)')
+                        help='public_metadata_pipeline 输出的 Core14.tsv (参考元数据: 日期/地点/组织)')
     parser.add_argument('--submission-bioproject',
                         help='你自己的 BioProject ID (PRJNA...) — 公共数据的 PRJNA 仅供参考')
     parser.add_argument('--submission-biosample-prefix',
@@ -843,7 +843,7 @@ def main():
     export_biosample_csv(df, out_dir, log)
 
     # 导出 miuvig/assembly (含全部 MIUVIG 必填字段)
-    # 从 Core13 自动推断 samp_taxon_id
+    # 从 Core14 自动推断 samp_taxon_id
     samp_taxon = args.samp_taxon_id or ''
     if not samp_taxon and meta_lookup:
         # 取第一条有 ScientificName 的记录

@@ -354,14 +354,15 @@ def main():
         pass
     elif meta_file is None or not os.path.exists(meta_file):
         script_dir = Path(__file__).resolve().parent
-        gsa_script = script_dir.parent / "metadata" / "gsa_sra.info.py"
-        default_outdir = args.meta_outdir or os.path.join(os.path.dirname(args.outdir), "sra_results")
-        default_meta = os.path.join(default_outdir, "Global_Unified_Metadata_Core13.tsv")
+        pub_pipeline = script_dir.parents[1] / "public_metadata_pipeline"
+        gsa_script = pub_pipeline / "gsa_sra.info.py"
+        default_outdir = args.meta_outdir or str(pub_pipeline / "public_data_pipeline_output" / "info")
+        default_meta = os.path.join(default_outdir, "Global_Unified_Metadata_Core14.tsv")
 
         if os.path.exists(default_meta):
             meta_file = default_meta
         elif args.sra_list and os.path.exists(args.sra_list) and gsa_script.exists():
-            print(f"⏳ 未找到元数据文件，自动运行 metadata/gsa_sra.info.py 生成...")
+            print(f"⏳ 未找到元数据文件，自动运行 public_metadata_pipeline/gsa_sra.info.py 生成...")
             cmd = [
                 sys.executable, str(gsa_script),
                 "-i", args.sra_list,

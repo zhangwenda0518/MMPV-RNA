@@ -5,7 +5,7 @@
 
 Usage:
     python discovery2analysis.py \
-        --centroids 04_CLUSTER/centroids/final_centroids.fasta \
+        --centroids 04_CLUSTER/4_centroids/final_centroids.fasta \
         --taxonomy 05_Taxonomy/integrated/final_integrated_classification.tsv \
         --output_prefix my_project
 
@@ -25,15 +25,20 @@ import argparse
 import hashlib
 import os
 import sys
+from pathlib import Path
 
 
 def parse_args():
     parser = argparse.ArgumentParser(
         description="discovery → analysis pipeline 格式转换"
     )
-    parser.add_argument("--centroids", required=True,
-                        help="发现管线输出的 centroids FASTA (如 04_CLUSTER/centroids/final_centroids.fasta)")
-    parser.add_argument("--taxonomy", required=True,
+    parser.add_argument("--from-discovery", dest="from_discovery", default=None,
+                        help="发现管线输出根目录 (自动定位 centroids + taxonomy, "
+                             "兼容 legacy 与 standard 两种 I/O 布局; 给出本参数后 "
+                             "--centroids/--taxonomy 可省略; 同时登记 90_Handoff 台账)")
+    parser.add_argument("--centroids", default=None,
+                        help="发现管线输出的 centroids FASTA (如 04_CLUSTER/4_centroids/final_centroids.fasta)")
+    parser.add_argument("--taxonomy", default=None,
                         help="发现管线输出的 taxonomy TSV (如 05_Taxonomy/integrated/final_integrated_classification.tsv)")
     parser.add_argument("--output_prefix", required=True,
                         help="输出文件前缀 (生成 <prefix>.reference.fasta 和 <prefix>.ref_info.tsv)")
@@ -126,8 +131,45 @@ def load_centroids(fasta_path, min_length):
 def main():
     args = parse_args()
 
+    # ── --from-discovery: 自动定位输入 (兼容 legacy / standard 布局) ──
+    if args.from_discovery:
+        repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        if repo_root not in sys.path:
+            sys.path.insert(0, repo_root)
+        from mmpv_common import io_layout as _iol
+
+        droot = Path(args.from_discovery)
+        if not droot.is_dir():
+            print(f"[ERROR] --from-discovery 目录不存在: {droot}", file=sys.stderr)
+            sys.exit(1)
+        cen = _iol.locate_centroids(droot)
+        tax = _iol.locate_taxonomy(droot)
+        if not cen or not tax:
+            print("[ERROR] 自动定位失败:\n"
+                  f"  centroids: {cen or '未找到 (找 */*/final_centroids.fasta)'}\n"
+                  f"  taxonomy:  {tax or '未找到 (找 */*/integrated/final_integrated_classification.tsv)'}",
+                  file=sys.stderr)
+            sys.exit(1)
+        args.centroids, args.taxonomy = str(cen), str(tax)
+        print(f"[INFO] --from-discovery 自动定位 (布局感知):")
+        print(f"       centroids: {cen}")
+        print(f"       taxonomy:  {tax}")
+        manifest = _iol.write_boundary(
+            droot, "discovery->analysis",
+            {"centroids": args.centroids, "taxonomy": args.taxonomy,
+             "reference": f"{args.output_prefix}.reference.fasta",
+             "ref_info": f"{args.output_prefix}.ref_info.tsv"},
+            produced_by="discovery2analysis.py --from-discovery")
+        print(f"       handoff:   {manifest}")
+
     # 验证输入
-    for fpath, label in [(args.centroids, "centroids"), (args.taxonomy, "taxonomy")]:
+    missing = [(getattr(args, k), label) for k, label in
+               [("centroids", "centroids"), ("taxonomy", "taxonomy")]]
+    for fpath, label in missing:
+        if not fpath:
+            print(f"[ERROR] --{label} 未指定 (或改用 --from-discovery 自动定位)",
+                  file=sys.stderr)
+            sys.exit(1)
         if not os.path.exists(fpath):
             print(f"[ERROR] Cannot find {label} file: {fpath}", file=sys.stderr)
             sys.exit(1)
@@ -209,7 +251,7 @@ def main():
     print(f"   python virome_analysis_pipeline/auto_known_virus.py \\")
     print(f"       --reference {ref_fasta} \\")
     print(f"       --ref_info {ref_info} \\")
-    print(f"       --reads_dir <00b_HostDepletion/> \\")
+    print(f"       --reads_dir <去宿主 reads 目录: legacy=00b_HostDepletion / standard=02_HostDepleted> \\")
     print(f"       --output_dir <output/>")
 
 

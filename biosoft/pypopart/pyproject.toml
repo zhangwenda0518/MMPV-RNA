@@ -1,0 +1,154 @@
+[build-system]
+requires = ["hatchling", "hatch-vcs"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pypopart"
+dynamic = ["version"]
+description = "Pure Python implementation of PopART haplotype network analysis"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "GPL-3.0-or-later" }
+authors = [{ name = "Adam Taranto" }]
+
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+]
+
+dependencies = ["biopython", "click", "networkx", "numpy", "scipy"]
+
+[project.optional-dependencies]
+gui = ["dash[diskcache]", "dash-bootstrap-components", "dash-cytoscape"]
+viz = ["matplotlib", "plotly"]
+speed = ["numba"]
+all = ["pypopart[gui,viz,speed]"]
+dev = [
+    "hatch",
+    "ipykernel",
+    "numpydoc-validation",
+    "pre-commit",
+    "pytest",
+    "pytest-benchmark",
+    "pytest-cov",
+    "ruff",
+]
+
+docs = [
+    "zensical",
+    "mkdocstrings-python",
+    "pymdown-extensions",
+]
+
+
+[project.urls]
+documentation = "https://github.com/adamtaranto/pypopart"
+homepage = "https://github.com/adamtaranto/pypopart"
+repository = "https://github.com/adamtaranto/pypopart"
+
+[project.scripts]
+pypopart = "pypopart.cli:main"
+pypopart-gui = "pypopart.gui:main"
+
+[tool.hatch.build]
+exclude = ["environment.yml", ".github", ".vscode"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pypopart"]
+
+[tool.hatch.version]
+source = "vcs"
+
+[tool.hatch.version.vcs]
+tag-pattern = "v*"         # Git tags starting with 'v' will be used for versioning
+fallback-version = "0.0.0"
+
+[tool.hatch.build.hooks.vcs]
+version-file = "src/pypopart/_version.py"
+
+[tool.pytest.ini_options]
+addopts = "-v -m 'not benchmark'"
+markers = ["benchmark: performance benchmarks (excluded from the default run)"]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 88
+fix = true
+
+[tool.ruff.lint]
+select = [
+    "C", # mccabe rules
+    "F", # pyflakes rules
+    "E", # pycodestyle error rules
+    "W", # pycodestyle warning rules
+    "B", # flake8-bugbear rules
+    "I", # isort rules
+    "D", # pydocstyle rules
+]
+ignore = [
+    "C901", # max-complexity-10
+    "E501", # line-too-long
+    "B905", # `zip()` without an explicit `strict=` parameter
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "numpy"
+
+[tool.ruff.format]
+indent-style = "space"
+quote-style = "single"
+
+# Mirror [tool.isort] below. Ruff does not read [tool.isort], so without this
+# the ruff "I" rules and the isort CI step disagree on import order.
+[tool.ruff.lint.isort]
+force-sort-within-sections = true
+known-first-party = ["pypopart"]
+known-third-party = ["Bio", "click", "networkx", "numpy", "scipy"]
+
+[tool.isort]
+profile = "black"
+known_third_party = ["Bio", "click", "networkx", "numpy", "scipy"]
+known_first_party = ["pypopart"]
+default_section = "THIRDPARTY"
+force_sort_within_sections = true
+
+[tool.numpydoc_validation]
+checks = [
+    "all",  # report on all checks
+    "ES01", # but don't require an extended summary
+    "EX01", # or examples
+    "SA01", # or a see also section
+    "SS06", # and don't require the summary to fit on one line
+]
+exclude = [ # don't report on checks for these
+    # Dunders: their contract is the data model's, not ours - a Returns
+    # section on __len__ or __hash__ is noise, not documentation.
+    '\.__init__$',
+    '\.__repr__$',
+    '\.__str__$',
+    '\.__len__$',
+    '\.__eq__$',
+    '\.__hash__$',
+    '\.__iter__$',
+    '\.__getitem__$',
+    '\.__contains__$',
+]
+override_SS05 = [ # allow docstrings to start with these words
+    '^Process ',
+    '^Assess ',
+    '^Access ',
+]
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+
+[tool.pydocstyle]
+convention = "numpy"
+# Ignore files in directories named "tests"
+match-dir = "((?!tests).)*"

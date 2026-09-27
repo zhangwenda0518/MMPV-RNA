@@ -184,8 +184,10 @@ class UnifiedVirusPipeline:
 
     def _load_ref_info_smart(self):
         if not self.args.ref_info or not os.path.exists(self.args.ref_info):
-            self.logger.error("❌ 必须提供 --ref_info (本地 TSV)")
-            sys.exit(1)
+            self.logger.warning("⚠ --ref_info not provided, using FASTA headers as species names")
+            for acc in self.ref_length_dict:
+                self.tax_map[acc] = {"taxid": "Unannotated", "species": acc, "segment": ""}
+            return
             
         acc_synonyms = ['Accession', 'accession', 'Virus GENBANK accession', 'ID']
         tax_synonyms = ['Taxid', 'taxonomy_id', 'taxid']
@@ -374,7 +376,7 @@ class UnifiedVirusPipeline:
         
         if self.args.tool == 'salmon':
             read_arg = f"-1 '{sample['r1']}' -2 '{sample['r2']}'" if sample['r2'] else f"-r '{sample['r1']}'"
-            full_cmd = f"/usr/bin/time -v salmon quant -i '{self.index_path}' -p {threads} -l A {read_arg} -o '{quant_dir}' --writeMappings | {samtools_pipe}"
+            full_cmd = f"/usr/bin/time -v salmon quant -i '{self.index_path}' -p {threads} -l A {read_arg} -o '{quant_dir}' --writeMappings /dev/stdout | {samtools_pipe}"
             sf_file = quant_dir / "quant.sf"
         else:
             quant_args = f"--pseudobam '{sample['r1']}' '{sample['r2']}'" if sample['r2'] else f"--single -l 200 -s 50 --pseudobam '{sample['r1']}'"
@@ -595,8 +597,12 @@ class UnifiedVirusPipeline:
             .alias("Poisson_Ratio")
         ])
         
-        ref_meta_df = pl.read_csv(self.args.ref_info, separator='\t', ignore_errors=True, truncate_ragged_lines=True, quote_char=None)
-        acc_col_name = next((col for col in ['Accession', 'accession', 'Virus GENBANK accession', 'ID'] if col in ref_meta_df.columns), None)
+        if self.args.ref_info and os.path.exists(self.args.ref_info):
+            ref_meta_df = pl.read_csv(self.args.ref_info, separator='\t', ignore_errors=True, truncate_ragged_lines=True, quote_char=None)
+            acc_col_name = next((col for col in ['Accession', 'accession', 'Virus GENBANK accession', 'ID'] if col in ref_meta_df.columns), None)
+        else:
+            ref_meta_df = None
+            acc_col_name = None
         
         if acc_col_name:
             ref_meta_df = ref_meta_df.with_columns(pl.col(acc_col_name).cast(pl.Utf8).str.strip_chars().str.replace(r"\.\d+$", "").alias("_safe_acc"))
@@ -672,8 +678,32 @@ class UnifiedVirusPipeline:
         sp_thresh = self.args.sp_thresh
         df_confirmed = merged_df.filter((pl.col("Avg_Read_ANI").is_not_null()) & (pl.col("Avg_Read_ANI") >= sp_thresh) | (pl.col("Avg_Read_ANI").is_null())).with_columns(pl.col("_Final_Species_Target").alias("Adjusted_Species"))
         df_novel = merged_df.filter((pl.col("Avg_Read_ANI").is_not_null()) & (pl.col("Avg_Read_ANI") < sp_thresh)).with_columns(pl.concat_str([pl.lit("s__unclassified_"), pl.col("_Final_Species_Target").str.replace_all(" ", "_")]).alias("Adjusted_Species"))
-        
-        base_cols = ["Sample", "taxid", "Adjusted_Species", "Species_NCBI", "Species_ICTV", "Rep_Accession", "Rep_Length", "Rep_Coverage(%)", "Rep_MeanDepth", "Asm_EM_Reads", "Uniq_Reads", "Multi_Reads", "Unique(%)", "Avg_Read_ANI", "Avg_Pi", "Asm_CPM", "Asm_RPM", "Asm_FPKM", "Asm_TPM", "Asm_Rel_Abund(%)", "Predicted_Support", "Poisson_Ratio", "Segment_Accessions", "Rep_Reads", "Molecule_type", "Molecule_Type2"]
+
+        # ── is_segmented: 物种在参考库中是否多段 (从 ref_info 全库 Segment 聚合, 非仅检出段) ──
+        ref_seg_df = None
+        if ref_meta_df is not None and 'Segment' in ref_meta_df.columns:
+            try:
+                seg_sp = [c for c in ('Species_NCBI', 'Species_ICTV') if c in ref_meta_df.columns]
+                if seg_sp:
+                    ref_seg_df = (ref_meta_df
+                                  .filter(pl.col('Segment').is_not_null() & (pl.col('Segment').str.strip_chars() != ''))
+                                  .group_by(seg_sp)
+                                  .agg(pl.col('Segment').n_unique().alias('_n_seg'))
+                                  .with_columns(pl.coalesce([pl.col(c) for c in seg_sp]).alias('_sp_key')))
+            except Exception:
+                ref_seg_df = None
+        if ref_seg_df is not None:
+            df_confirmed = (df_confirmed
+                            .join(ref_seg_df.select(['_sp_key', '_n_seg']),
+                                  left_on='Adjusted_Species', right_on='_sp_key', how='left')
+                            .with_columns((pl.col('_n_seg').fill_null(0) > 1).alias('is_segmented'))
+                            .drop('_n_seg'))
+        else:
+            df_confirmed = df_confirmed.with_columns(pl.lit(False).alias('is_segmented'))
+        if 'is_segmented' not in df_novel.columns:
+            df_novel = df_novel.with_columns(pl.lit(False).alias('is_segmented'))
+
+        base_cols = ["Sample", "taxid", "Adjusted_Species", "is_segmented", "Species_NCBI", "Species_ICTV", "Rep_Accession", "Rep_Length", "Rep_Coverage(%)", "Rep_MeanDepth", "Asm_EM_Reads", "Uniq_Reads", "Multi_Reads", "Unique(%)", "Avg_Read_ANI", "Avg_Pi", "Asm_CPM", "Asm_RPM", "Asm_FPKM", "Asm_TPM", "Asm_Rel_Abund(%)", "Predicted_Support", "Poisson_Ratio", "Segment_Accessions", "Rep_Reads", "Molecule_type", "Molecule_Type2"]
         extra_cols = [c for c in merged_df.columns if c not in base_cols and c not in ['seqid', 'gene_total_cov', 'gene_avr_cov', 'Avg_Read_Len', 'Base_Parsed_Species', '_Final_Species_Target']]
         if 'gene_total_cov' in merged_df.columns: extra_cols.extend(['gene_total_cov', 'gene_avr_cov'])
         final_cols = [c for c in (base_cols + extra_cols) if c in df_confirmed.columns]
@@ -813,7 +843,7 @@ def main():
     io_group.add_argument('--single_end', action='store_true', help='强制单端模式')
     db_group = parser.add_argument_group('🗄️ 数据库参数')
     db_group.add_argument('-r', '--reference', required=True, help='全局参考基因组 FASTA')
-    db_group.add_argument('--ref_info', type=str, required=True, help='本地参考信息 TSV 文件')
+    db_group.add_argument('--ref_info', type=str, required=False, help='本地参考信息 TSV 文件')
     db_group.add_argument('--taxid_clusters', type=str, help='同义 TaxID 映射文件')
     perf_group = parser.add_argument_group('🚀 核心引擎与并发')
     perf_group.add_argument('--tool', choices=['kallisto', 'salmon', 'bowtie2', 'bwa', 'minimap2', 'strobealign', 'bwa-mem2', 'hisat2'], default='bowtie2', help='比对工具 (伪比对/传统比对)')

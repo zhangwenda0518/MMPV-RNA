@@ -1,0 +1,15 @@
+参照表: /home/zhangwenda/database/taxonomy/genus_family_ref.tsv
+  行数 234804，列 Genus,NCBI_Family,NCBI_n,VMR_Family,VMR_n,Domain
+  可用行 234804（丢弃含空属名或双参照皆空的 0 行）
+  去重后属数: NCBI 侧 234526，VMR 侧 2929
+  [A] 一属多科：NCBI 侧 0 个属（占 0.000%），VMR 侧 0 个属（占 0.000%）
+
+  [B] 置空清单 /tmp/rc64_legacy/species_containment_blanked.tsv
+      可回查行数 1283（双名法 Species + 有 Family）
+      其中该属在参照表中「一属多科」的行 0
+      并集口径会豁免的行 0（NCBI 侧任一科相容 0 / VMR 侧 0）-> 首行口径潜在误伤上限 0.00%
+
+  [B] 置空清单 /tmp/rc64_cascade/species_containment_blanked.tsv
+      可回查行数 58（双名法 Species + 有 Family）
+      其中该属在参照表中「一属多科」的行 0
+      并集口径会豁免的行 0（NCBI 侧任一科相容 0 / VMR 侧 0）-> 首行口径潜在误伤上限 0.00%

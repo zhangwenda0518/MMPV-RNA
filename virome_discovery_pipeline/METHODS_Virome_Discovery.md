@@ -1,0 +1,44 @@
+# Methods（节选）：MMPV-RNA 病毒组发现与注释流程
+
+> 供 MANUSCRIPT.md 合并使用；数据来源口径：公共测序数据（NCBI SRA + CNCB GSA）经 `public_metadata_pipeline` 检索、标准化与下载，本地测序数据另行整理。
+> 所有版本号以服务器 mambaforge 环境实测为准；默认参数均对应代码仓库各编排器的 argparse 默认值（公共数据管道 `public_data_pipeline.py` v3.1、宿主库管道 `build_host_pipeline.py` v3.1、发现主编排器 `virome_pipeline.py` v2.3）。
+
+## Public sequencing data acquisition and host reference database construction
+
+### Public sequencing data acquisition
+
+Public metatranscriptomic datasets were acquired through a five-stage metadata pipeline (`public_data_pipeline.py`, v3.1) parameterized by host species name and NCBI TaxID. In the search stage, records were retrieved in parallel from NCBI SRA via E-utilities (esearch/efetch) and from CNCB GSA via web scraping, restricted to transcriptomic libraries (the "biomol rna" property), then merged and deduplicated into a unified accession table; in detailed mode, per-run SRA XML and GSA Excel records were parsed to extract deep biological features (tissue, age/growth stage, and location), with optional large-language-model (DeepSeek) assisted cleaning of free-text fields. In the metadata-unification stage, each Run accession was resolved into a standardized core table (Run, release date, collection date, location, source, tissue, age/growth stage, scientific name, TaxID, library source, center, BioProject, and PMID); local rule-based extraction was arbitrated against LLM inference (DeepSeek/Kimi) for ambiguous records, and BioProject identifiers were traced to PubMed literature for citation provenance. In the download stage, raw sequencing archives were retrieved from NGDC (CRR accessions) via aria2c with FTP/HTTP protocol fallback and from NCBI (SRR/ERR/DRR accessions) via SRA Toolkit prefetch, both supporting resumable transfer. In the conversion stage, downloaded SRA archives were converted to FASTQ with fasterq-dump. A final visualization stage rendered a 3×2 panel publication figure summarizing the temporal, database, institutional, tissue, geographic, and developmental-stage distributions of the assembled cohort.
+
+### Host reference database construction
+
+To support host-read depletion, a competitive host reference database was built for each host species (`build_host_pipeline.py`, v3.1). Reference genome assemblies (nuclear genome, GFF3 annotation, and sequence report) were downloaded with the NCBI datasets CLI and merged into a single deduplicated FASTA. Four complementary indexes were then compiled from this genome: a Kraken2 database (with taxonomy download or symlink, standard libraries including archaea, bacteria, plasmid, fungi, protozoa, and UniVec, and host TaxID injected into sequence headers for non-model species), a Bowtie2 index, a HISAT2 index, and Minimap2 indexes for dna-short, rna-short, nanopore, and pacbio read presets.
+
+## Virome discovery workflow
+
+### Overview
+
+We developed MMPV-RNA, an end-to-end metatranscriptomic virome discovery pipeline implemented as a Python-orchestrated workflow (`virome_pipeline.py`, v2.3). The pipeline proceeds through fifteen sequential stages—quality control (clean), host depletion (deplete), assembly (assembly), multi-tool virus identification (identification), hierarchical false-positive filtering (filter), extension (cobra), cross-sample merging (merge), clustering (cluster), taxonomy assignment (taxonomy), host prediction (host), quality assessment (checkv), rescue (rescue), downstream analysis (analysis), evidence-integrated verification (analysis_verify), and reporting (report)—with checkpoint-based resume support and full provenance logging.
+
+### Data preprocessing and host read depletion
+
+Raw reads were adapter-trimmed and quality-filtered with fastp, converted to FASTA with seqkit, and processed with Clumpify (k-mer-based clustering with reordering to improve compression and accelerate overlap-based assembly). Host-origin reads were removed via a three-step strategy: (i) coarse taxonomic filtering with Kraken2 (confidence 0.2; viral taxid 10239 retained); (ii) fine-grained alignment against the host genome using Bowtie2 (alternatively HISAT2 or minimap2), discarding concordantly mapped read pairs; and (iii) ribosomal RNA depletion with Ribodetector. Optional k-mer abundance normalization (BBNorm) has been moved to the data preprocessing pipeline and is disabled by default.
+
+### De novo assembly and candidate virus identification
+
+Metatranscriptomic assemblies were generated per-sample with rnaSPAdes (rnaviralspades mode), MEGAHIT, or Penguin; contigs shorter than the stage-specific minimum length threshold were discarded. Viral contigs were identified by a consensus panel of ten complementary tools run in parallel: geNomad, DIAMOND BLASTX against three reference protein databases (viral proteins, nr, UniProt), RdRp-Catch, ViraLM, VirBot, VirSorter2 (groups dsDNAphage, NCLDV, RNA, ssDNA, Lavidaviridae), ViralVerify, VirHunter, Metabuli, and a dedicated BLASTN module for viroid-like sequences. Contigs of 200–1000 bp were channeled into a viroid candidate set; candidates ≥1000 bp entered the virus catalog. Hits were called at E-value ≤1e−5. Candidate sequences were subsequently subject to two-layer false-positive screening: (i) DIAMOND BLASTX against UniRef90 (E-value ≤1e−3) with top-hit majority voting restricted to viral taxids and curated viral keywords; and (ii) translated MMseqs2 search against the Conserved Domain Database (CDD), classifying each contig by domain-level evidence into viral-domain (tier 1), host-protein (tier 2), or root-level (tier 3) categories, applied under default (rescue-oriented), strict, or raw modes.
+
+### Sequence extension, cross-sample merging, and clustering
+
+Viral candidate contigs were extended against original reads with COBRA-Meta (k-mer range 21–141, linkage mismatch 2) after BWA-MEM2 mapping and CoverM depth estimation. Per-sample extensions were merged, and fragmented extensions were further scaffolded by metaFlye (`--subassemblies`) with native read-to-sample tracing recorded for provenance. Redundancy reduction used a two-tier strategy: reference-guided pre-clustering with CD-HIT against a merged ICTV/NCBI reference genome set (ANI ≥0.95, query coverage ≥0.85), followed by Leiden-based graph clustering (vclust) on novel sequences only, yielding representative centroids (final_centroids.fasta).
+
+### Taxonomy assignment and host prediction
+
+Viral taxonomy was assigned by an eight-tool ensemble—geNomad, Metabuli, CAT/BAT, DIAMOND LCA, VITAP, MMseqs2, ACVirus, and vConTACT3—each benchmarked against curated databases (RVDB v31; VMR MSL40; ACVirus database). Per-tool eight-rank lineages were integrated through a weighted-voting consensus engine (R) producing final assignments with per-rank agreement and confidence scores. Host prediction followed a precedence decision tree: ICTV-approved host annotations > RNAVirHost > PhaBOX2/CHERRY.
+
+### Genome completeness assessment and HQ catalog construction
+
+Completeness was evaluated with CheckV against its reference genome database. A four-branch cascade rescued incomplete genomes: (A) direct pass-through of genomes with CheckV completeness ≥90%; (B) iterative read-based extension of failed genomes with Virseqimprover (internally Salmon quantification plus RagTag scaffolding) followed by re-assessment; (C) reference-guided extension via dc-megablast BLASTN against custom viral databases with gap-filling; and (D) genus-level length-based recovery where inferred genomes fell within ±15% of congeneric average lengths. High-quality (HQ) plant viral operational taxonomic units (vOTUs) were deduplicated across branches with vclust to yield the final HQ catalog.
+
+### Downstream analysis, annotation verification, and evidence integration
+
+HQ catalogs underwent structural annotation with suvtk (taxonomy inference, feature table extraction) and hypothetical-protein validation via DIAMOND/HMMER searches against RVDB. Viral abundance and prevalence were quantified by Salmon across all input libraries. Novel-virus claims were adjudicated through a five-layer evidence chain: (i) CDD domain verification of rescued sequences; (ii) nucleotide/amino-acid identity aggregation; (iii) weighted evidence scoring (score = 0.30·BLASTN + 0.30·BLASTX + 0.40·domain, where domain = max(CDD, CT3-HMM viral-profile evidence), so complementary profile evidence fills CDD blind spots without double counting) yielding KEEP/REVIEW/DROP verdicts; (iv) retention filtering (≥1000 bp); and (v) ACVirus re-classification complemented by family-level phylogenetic placement. GenBank-ready submission packages (.sqn) were generated with tbl2asn, applying local-sequence-ID formatting required by NCBI validators. Circularization of viroid-like candidates was inferred by terminal self-BLASTN (identity ≥95%, query coverage ≥90%). All stages emitted structured TSV summaries consolidated into an interactive HTML report with Sankey flow visualization.
