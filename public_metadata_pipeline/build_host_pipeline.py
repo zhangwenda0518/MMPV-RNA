@@ -158,9 +158,12 @@ class BuildHostPipeline:
         UI.info(f"merging {len(fasta_files)} fasta files -> {merged_fasta}")
 
         seen_ids, dup_count = set(), 0
+        # FASTA 规范不允许 # 注释行 (bowtie2-build 会拒绝), 元数据写旁车 .meta.txt
+        meta_path = merged_fasta + '.meta.txt'
+        with open(meta_path, 'w', encoding='utf-8') as meta:
+            meta.write(f"Merged host genome: {self.args.species}\n")
+            meta.write(f"Created: {datetime.now().isoformat()}\n")
         with open(merged_fasta, 'w', encoding='utf-8') as out:
-            out.write(f"# Merged host genome: {self.args.species}\n")
-            out.write(f"# Created: {datetime.now().isoformat()}\n#\n")
             for fa in fasta_files:
                 try:
                     if fa.endswith('.gz'):

@@ -139,11 +139,13 @@ def merge_and_deduplicate(
     duplicate_count = 0
     total_bp = 0
 
+    # FASTA 规范不允许 # 注释行 (bowtie2-build 会拒绝), 元数据写旁车 .meta.txt
+    with open(output_path + '.meta.txt', 'w', encoding='utf-8') as meta_f:
+        meta_f.write(f"Merged host genome\n")
+        meta_f.write(f"Created: {datetime.now().isoformat()}\n")
+        meta_f.write(f"Source files: {len(fasta_files)}\n")
+
     with open(output_path, 'w', encoding='utf-8') as out_f:
-        out_f.write(f"# Merged host genome\n")
-        out_f.write(f"# Created: {datetime.now().isoformat()}\n")
-        out_f.write(f"# Source files: {len(fasta_files)}\n")
-        out_f.write(f"#\n")
 
         for fa_path in fasta_files:
             basename = os.path.basename(fa_path)
