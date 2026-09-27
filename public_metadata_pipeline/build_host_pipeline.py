@@ -92,7 +92,7 @@ class BuildHostPipeline:
             if shutil.which('datasets'):
                 cmd = (
                     f'datasets download genome taxon {shlex.quote(self.args.species)} '
-                    f'--filename {shlex.quote(genome_zip)} --include genome,gff3,seq-report'
+                    f'--filename {shlex.quote(genome_zip)} --reference --include genome,gff3,seq-report'
                 )
                 if self.args.ncbi_api:
                     cmd += f' --api-key {shlex.quote(self.args.ncbi_api)}'
