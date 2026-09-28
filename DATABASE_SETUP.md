@@ -371,14 +371,14 @@ hostdb/
 └── minimap2/      # Minimap2 比对索引
 ```
 
-**[可选]** 标准 Kraken2 预建通用索引 (host_depletion.py 去宿主第一步, config 引用 `k2_pluspfp_20260626`)。默认流程是自建宿主库 (见 §6 开头的 build_host_pipeline.py, 有基因组数据即可建 kraken2/bowtie2/hisat2/minimap2 四索引); 无参考基因组或需通用去宿主时才用下面的大库:
+**[可选]** 标准 Kraken2 预建通用索引 (host_depletion.py 去宿主第一步, config 引用 `k2_pluspfp_20260226`)。默认流程是自建宿主库 (见 §6 开头的 build_host_pipeline.py, 有基因组数据即可建 kraken2/bowtie2/hisat2/minimap2 四索引); 无参考基因组或需通用去宿主时才用下面的大库:
 
 ```bash
 # Ben Langmead 预建索引: https://benlangmead.github.io/aws-indexes/k2
-mkdir -p ~/database/kraken2/k2_pluspfp_20260626
-wget -c https://genome-idx.s3.amazonaws.com/kraken/k2_pluspfp_20260626.tar.gz \
-    -O - | tar -xz -C ~/database/kraken2/k2_pluspfp_20260626
-# 注: 20260626 起 tar 约 173GB(解压 ~260GB), 不再是旧版 ~50GB; 建议用 aria2c 多线程
+mkdir -p ~/database/kraken2/k2_pluspfp_20260226
+wget -c https://genome-idx.s3.amazonaws.com/kraken/k2_pluspfp_20260226.tar.gz \
+    -O - | tar -xz -C ~/database/kraken2/k2_pluspfp_20260226
+# 注: 新版体积远超早期 ~50GB(实测 0226 tar 已 ~180GB); 建议用 aria2c 多线程下载
 # 若该日期版本已下架, 从索引页取最新 k2_pluspfp_YYYYMMDD 并同步改 pipeline_config.yaml
 ```
 

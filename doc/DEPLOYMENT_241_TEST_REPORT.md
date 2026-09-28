@@ -85,10 +85,10 @@ EVE 管线单元测试（`pixi run eve-test`）：阳性/阴性对照全部通�
    与 UniProt 降级/正常两种输出的路径没对齐。 cosmetic。
 6. **UniRef90 库在 246 上是 `.dmnd.gz` 压缩存放**，清单 probe 要求解压版；241 已 gunzip
    （84G）。k2 通用库同款压缩存放问题：20260226 的 `hash.k2d.gz` 解压方案**废弃**，
-   改用官方预建 **k2_pluspfp_20260626**（tar ~173GB，注意 20260626 起体积不再是旧版 ~50GB）。
-   k2_pluspfp 本身已降级为**可选**通用库（manifest required=no）：默认流程是
-   自建宿主库（`build_host_pipeline.py` 四索引，E2E 已验证）；下载 + 内网接力部署
-   全自动进行中（246 aria2c → rsync 241 → 解压 → kraken2-inspect 校验 → 清旧 0226）。
+   k2_pluspfp 已降级为**可选**通用库（manifest required=no）：默认流程是自建宿主库
+   （`build_host_pipeline.py` 四索引，E2E 已验证）。**最终决策：不部署 k2_pluspfp**
+   （本次为部署测试，无需通用大库）；曾启动的 20260626 官方包下载(173GB)已中止，
+   残留已清理，config/文档引用维持 0226；需要时按 `DATABASE_SETUP.md` §6 单点下载最新版。
 7. **gpu env**：`pixi install` 只装 default；gpu 需 `pixi install -e gpu`（可选）。
 8. **virome_phylo_pipeline（A12）**：BEAST/RDP5/PAML/TempMig 等按文档属独立部署，
    本次未部署（mafft/iqtree/treetime/R 等 pixi 侧已就位）。

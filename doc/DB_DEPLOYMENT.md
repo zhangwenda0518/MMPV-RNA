@@ -20,7 +20,7 @@
 |---|---|---|
 | 1 | 旧路径必须留软链接 | 配置层（`pipeline_config.yaml`）虽然支持 `${MMPV_DB_ROOT:-...}`，但**核心代码有 6 处绕过配置硬编码 `~/database/...`**，其中 `filter_virus.py` 的 CDD 三件套是**当前实际生效**的路径（编排器根本不传 CLI 覆盖）。详见 §5。 |
 | 2 | 软链接指向**绝对路径** | 相对软链接会随链接所在目录失效。`mmpv_db.py link` 统一建绝对链接。 |
-| 3 | 共享盘不能是网络文件系统（至少 Kraken2 库不能） | `k2_pluspfp` 解压后约 260GB(20260626 起)，靠 page cache 加速；NFS 上会让去宿主阶段慢到不可用。其余库放网络盘可以。 |
+| 3 | 共享盘不能是网络文件系统（至少 Kraken2 库不能） | `k2_pluspfp` 解压后约 300GB(以索引页现版为准)，靠 page cache 加速；NFS 上会让去宿主阶段慢到不可用。其余库放网络盘可以。 |
 
 反向来说**不需要**的前提：不需要改 `pipeline_config.yaml`、不需要改任何 Python 代码、
 不需要重新下载数据库。数据搬到新位置后旧路径变成软链接，所有消费者照常工作。
@@ -73,7 +73,7 @@ ${MMPV_DATA_SHARE}/                      # 共享库根，例: /data/mmpv
 │   │   └── VMR_MSL41.v1.20260320.xlsx
 │   ├── taxonomy/                        # taxdump + new_taxdump 产物 + accession2taxid
 │   ├── cdd/cdd-db/                      # mmseqs 库（cdd_db 是文件前缀，单元是它所在目录）
-│   ├── kraken2/k2_pluspfp_20260626/     # 解压 ~260GB，别放网络盘
+│   ├── kraken2/k2_pluspfp_20260226/     # 解压 ~300GB，别放网络盘
 │   ├── uniport_db/uniref90/             # 目录名拼写就是 uniport_db（历史笔误，勿改）
 │   ├── nr_db/nr.dmnd
 │   ├── nt-db/nt_viruses/

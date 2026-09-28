@@ -72,7 +72,7 @@ profiles:
       tax_jobs: 4
 
     deplete: &deplete_default
-      kraken2_db:   ${MMPV_KRAKEN2_DB:-/home/zhangwenda/database/kraken2/k2_pluspfp_20260626}
+      kraken2_db:   ${MMPV_KRAKEN2_DB:-/home/zhangwenda/database/kraken2/k2_pluspfp_20260226}   # 可选通用库; 默认流程=自建宿主库(host_db)
       keep_taxids:  10239    # 从 Kraken2 classified 池中救回病毒 reads; 设空字符串关闭
       vmtouch:      false    # 将 Kraken2 数据库锁定到 page cache 加速 I/O
       confidence:   0.2     # Kraken2 分类置信度阈值 (默认: 0.2)

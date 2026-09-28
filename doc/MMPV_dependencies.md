@@ -259,7 +259,7 @@
 | 数据库 | 默认路径 |
 |---|---|
 | host_db | `~/database/host_db/` |
-| Kraken2 宿主库 | `~/database/kraken2/k2_pluspfp_20260626`（标准预建索引, 下载见 DATABASE_SETUP §6） |
+| Kraken2 宿主库 | `~/database/kraken2/k2_pluspfp_20260226`（标准预建索引, 下载见 DATABASE_SETUP §6） |
 | CheckV DB | `~/database/virus-db/checkv-db-v1.7/` |
 | genus_lens | `~/database/virus-db/db/genus_lens`（+ `genus_lens_no_prefix.json`；构建脚本 make_genus-length.py 已收编 utils/db_build/） |
 | 植物病毒参考 | `~/plant_virus_db/3.final-ref-virus.db/final.complete_ref.fasta` 等 |
@@ -314,7 +314,7 @@
 | `MMPV_DB_ROOT` | 数据库根 | `/home/zhangwenda/database` |
 | `MMPV_VIRUS_DB` | 病毒库根 | `{MMPV_DB_ROOT}/virus-db` |
 | `MMPV_HOST_DB` | 宿主库根 | `{MMPV_DB_ROOT}/host_db/` |
-| `MMPV_KRAKEN2_DB` | Kraken2 宿主库 | `{MMPV_DB_ROOT}/kraken2/k2_pluspfp_20260626` |
+| `MMPV_KRAKEN2_DB` | Kraken2 宿主库 | `{MMPV_DB_ROOT}/kraken2/k2_pluspfp_20260226` |
 | `MMPV_CHECKV_DB` | CheckV 数据库 | `{MMPV_DB_ROOT}/virus-db/checkv-db-v1.7` |
 | `MMPV_PLANT_VIRUS_DB` | 植物病毒参考库根 | `/home/zhangwenda/plant_virus_db` |
 | `MMPV_SALMON` / `MMPV_DIAMOND` / `MMPV_RAGTAG` / `MMPV_VIRBOT` | 工具可执行文件 | 见配置文件 |
