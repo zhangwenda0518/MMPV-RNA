@@ -25,7 +25,7 @@ virus_db_suvtk	10	suvtk		suvtk download-database -o "$DST"
 virus_db_rdrpcatch	10	rdrpcatch		rdrpcatch databases -o "$PARENT"
 virus_db_virsorter2	10	virsorter		virsorter config --init-source --db-dir "$DST"
 virus_db_ct3	10	get_ct3_dbs		get_ct3_dbs -o "$DST" --hmm T --hallmark_tax T --refseq_tax T --mmseqs_cdd T --domain_list T --hhCDD T --hhPFAM T --hhPDB T
-kraken2_pluspfp	10	dl		mkdir -p "$DST" && dl "${MMPV_KRAKEN2_URL:-https://genome-idx.s3.amazonaws.com/kraken/k2_pluspfp_20260226.tar.gz}" "$TMP/k2_pluspfp.tar.gz" && tar -xzf "$TMP/k2_pluspfp.tar.gz" -C "$DST"
+kraken2_pluspfp	10	dl		mkdir -p "$DST" && dl "${MMPV_KRAKEN2_URL:-https://genome-idx.s3.amazonaws.com/kraken/k2_pluspfp_20260626.tar.gz}" "$TMP/k2_pluspfp.tar.gz" && tar -xzf "$TMP/k2_pluspfp.tar.gz" -C "$DST"
 taxonomy	10	dl		mkdir -p "$DST" && dl "https://ftp.ncbi.nlm.nih.gov/pub/taxonomy/taxdump.tar.gz" "$TMP/taxdump.tar.gz" && tar -xzf "$TMP/taxdump.tar.gz" -C "$DST"
 taxonomy	20	dl		mkdir -p "$TMP/new_taxdump" && dl "https://ftp.ncbi.nlm.nih.gov/pub/taxonomy/new_taxdump/new_taxdump.tar.gz" "$TMP/new_taxdump.tar.gz" && tar -xzf "$TMP/new_taxdump.tar.gz" -C "$TMP/new_taxdump" && find "$TMP/new_taxdump" -name fullnamelineage.dmp -exec cp -f {} "$DST/" \; && find "$TMP/new_taxdump" -name rankedlineage.dmp -exec cp -f {} "$DST/" \;
 vinfo_lineage	10	dl		mkdir -p "$TMP/new_taxdump" && dl "https://ftp.ncbi.nlm.nih.gov/pub/taxonomy/new_taxdump/new_taxdump.tar.gz" "$TMP/new_taxdump.tar.gz" && tar -xzf "$TMP/new_taxdump.tar.gz" -C "$TMP/new_taxdump" && find "$TMP/new_taxdump" -name fullnamelineage.dmp -exec cp -f {} "$DST" \;
