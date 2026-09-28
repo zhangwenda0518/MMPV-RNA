@@ -1,6 +1,8 @@
-# MMPV v3.0 — Massive Meta-mining of Plant Viruses
+# MMPV v3.1 — Massive Meta-mining of Plant Viruses
 
 **大规模宏植物病毒挖掘与分析平台**
+
+**中文** | [English](README_EN.md)
 
 > 从公共测序数据中高通量鉴定植物病毒及其他病毒的完整闭环 — 含公共数据挖掘、病毒从头发现（de novo）、已知病毒定量/变异/进化深度分析。
 
