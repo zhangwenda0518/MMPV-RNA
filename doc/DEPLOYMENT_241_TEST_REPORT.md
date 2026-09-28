@@ -84,14 +84,18 @@ EVE 管线单元测试（`pixi run eve-test`）：阳性/阴性对照全部通�
 5. **`filter_summary.tsv` 计数与实际不符**（显示 0/0，实际 CDD 保留 7/9）——报告聚合读的键
    与 UniProt 降级/正常两种输出的路径没对齐。 cosmetic。
 6. **UniRef90 库在 246 上是 `.dmnd.gz` 压缩存放**，清单 probe 要求解压版；241 已 gunzip
-   （84G）。`hash.k2d.gz`（176G）同款，解压在后台进行中（约 30-60 分钟）。
+   （84G）。k2 通用库同款压缩存放问题：20260226 的 `hash.k2d.gz` 解压方案**废弃**，
+   改用官方预建 **k2_pluspfp_20260626**（tar ~173GB，注意 20260626 起体积不再是旧版 ~50GB）。
+   k2_pluspfp 本身已降级为**可选**通用库（manifest required=no）：默认流程是
+   自建宿主库（`build_host_pipeline.py` 四索引，E2E 已验证）；下载 + 内网接力部署
+   全自动进行中（246 aria2c → rsync 241 → 解压 → kraken2-inspect 校验 → 清旧 0226）。
 7. **gpu env**：`pixi install` 只装 default；gpu 需 `pixi install -e gpu`（可选）。
 8. **virome_phylo_pipeline（A12）**：BEAST/RDP5/PAML/TempMig 等按文档属独立部署，
    本次未部署（mafft/iqtree/treetime/R 等 pixi 侧已就位）。
 
 ## 5. 数据库清单核对（`mmpv_db.py --share ~ verify`，截至发稿）
 
-- **必需项**: 24/25 就位；唯一在途 `kraken2_pluspfp`（文件已到，`hash.k2d.gz` 解压中）。
+- **必需项**: 24/24 全部就位（kraken2_pluspfp 已按决策从必需降为可选项，见 §4.6）。
 - **可选项**: 就位 16/25（genomad/checkv/virsorter2/viralverify/viroids/RVDB 全家/
   vitap/acvirus/suvtk/ct3/CAT 外层/ncbi-virus/ncbi-virus_ref/plant_ref 等）。
   **nr_db 按决策不部署**（UniRef90 与 NR 二选一，默认 UniRef90，见 `DATABASE_SETUP.md` §1.2
