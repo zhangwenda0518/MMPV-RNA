@@ -93,10 +93,12 @@ EVE 管线单元测试（`pixi run eve-test`）：阳性/阴性对照全部通�
 
 - **必需项**: 24/25 就位；唯一在途 `kraken2_pluspfp`（文件已到，`hash.k2d.gz` 解压中）。
 - **可选项**: 就位 16/25（genomad/checkv/virsorter2/viralverify/viroids/RVDB 全家/
-  vitap/acvirus/ictv/ncbi-virus_ref/ncbi-virus/plant_ref/suvtk 等）；
-  在途或待补 9 项：nr_db(250G, 队列中)、ct3、RVDB-30、CAT-db(40G)、phabox、VirBot ref、
-  viralm 模型(GDrive 需代理)、pyhmmer hmm、Diamond_VirusProtein。
-  后台 rsync（246→241）继续按 P2→P3 顺序搬运，全部为可选降级项。
+  vitap/acvirus/ictv/ncbi-virus_ref/ncbi-virus/plant_ref/suvtk 等）。
+  **nr_db 按决策不部署**（UniRef90 与 NR 二选一，默认 UniRef90，见 `DATABASE_SETUP.md` §1.2
+  与 manifest 注记；半成品 152G 已清除，P3 传输脚本已收尾）。
+  其余 8 项可选（ct3、RVDB-30、CAT-db、phabox、VirBot ref、viralm 模型(GDrive 需代理)、
+  pyhmmer hmm、Diamond_VirusProtein、nt_viruses）在途或待补，均为降级项，
+  后台 rsync（246→241）继续搬运。
 
 ## 6. 复现命令速查（241）
 

@@ -19,7 +19,7 @@ genus_family_ref	build	file	db	taxonomy/genus_family_ref.tsv		~1MB	yes	virome_pi
 cdd_db	build	dir	db	cdd/cdd-db	cdd_db	~30GB	yes	filter_virus.py DEFAULTS['CDD_DB']; 由 build_cdd_databases.sh 建
 kraken2_pluspfp	download	dir	db	kraken2/k2_pluspfp_20260226	hash.k2d	~50GB	yes	去宿主第一步; 路径在 pipeline_config.yaml deplete.kraken2_db
 uniref90	build	file	db	uniport_db/uniref90/uniref90.dmnd		~50GB	yes	注意目录名拼写就是 uniport_db（历史笔误，勿改）
-nr_db	build	file	db	nr_db/nr.dmnd		~250GB	no	Diamond BLASTX 去假阳性; 缺失只降级不致命
+nr_db	build	file	db	nr_db/nr.dmnd		~250GB	no	Diamond BLASTX 去假阳性; 与 UniRef90 二选一(默认 UniRef90), 缺失只降级不致命; 241 部署按此决策未装
 nt_viruses	build	dir	db	nt-db/nt_viruses	nt_viruses	~10GB	no	panvirome_novel_known.py 用
 host_db	build	dir	db	host_db	kraken2	~60GB	yes	去宿主自定义库; 由 public_metadata_pipeline/build_host_pipeline.py 建
 virus_db_genomad	download	dir	db	virus-db/genomad_db	genomad_db	~14GB	yes	genomad download-database; --genomad-db

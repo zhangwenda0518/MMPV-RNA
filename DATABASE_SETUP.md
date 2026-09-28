@@ -34,6 +34,10 @@ diamond makedb --in nr.gz \
     --threads 60
 ```
 
+> **与 §1.4 UniRef90 二选一（默认 UniRef90）**：管线入口分别是 pipeline_config.yaml 的
+> `nr_db` 与 `uniprot_db`，默认走 `uniref90.dmnd`；NR 缺失时识别段自动降级（跳过 NR 抢救验证）。
+> 仅当需要 NR 级全覆盖去假阳性时才部署 nr（~250GB）。
+
 ### 1.3 ClusteredNR (加速替代)
 
 ```
