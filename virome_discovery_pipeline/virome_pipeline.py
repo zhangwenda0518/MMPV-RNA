@@ -415,7 +415,9 @@ class ViromePipeline:
                 getattr(self.args, 'coassembly', False)
                 or any(
                     (cobra_d and cobra_d.is_dir() and any(
-                        p.is_dir() for p in cobra_d.iterdir()
+                        # 样本目录内必须确有产物文件 (失败残留的空壳目录不算)
+                        p.is_dir() and any(f.is_file() for f in p.rglob('*'))
+                        for p in cobra_d.iterdir()
                         if p.name not in ('cobra.log','checkpoint_status.json')
                     ))
                     for cobra_d in d.get('_cobra_dirs', [d['cobra']])
@@ -432,8 +434,12 @@ class ViromePipeline:
                 or (d.get('_centroids_v2') and (d['_centroids_v2'] / 'final_centroids.fasta').is_file())
             ),
             'taxonomy': lambda: (
-                (d['taxonomy'] / 'Votus.integrated' / 'final_integrated_classification.tsv').is_file()
-                and (d['taxonomy'] / 'Votus.integrated' / 'final_integrated_classification.tsv').stat().st_size > 100
+                # 现行产物路径 integrated/; Votus.integrated 为历史旧名兜底
+                any(
+                    (d['taxonomy'] / sub / 'final_integrated_classification.tsv').is_file()
+                    and (d['taxonomy'] / sub / 'final_integrated_classification.tsv').stat().st_size > 100
+                    for sub in ('integrated', 'Votus.integrated')
+                )
             ),
             'host':     lambda: (
                 (d['host_pred'] / 'ensemble_host_summary.tsv').is_file()
@@ -883,6 +889,21 @@ class ViromePipeline:
         self.d['cobra'] = self.d['root'] / layout_dir_name('d_cobra', self.layout)
         return self.d['cobra']
 
+    def _cobra_candidate_source(self):
+        """COBRA (raw 模式) 的病毒候选来源目录。
+
+        契约: 必须是 02a_Identification (原始候选); 仅当 02a 不存在时回退 02b_Filter
+        并告警 (过滤产物命名不同, raw 模式可能逐样本找不到候选 — 241/246 实测)。
+        返回 (src_dir, warning_or_None)。
+        """
+        if self.d['ident'].is_dir():
+            return self.d['ident'], None
+        if self.d['filter'].is_dir():
+            return (self.d['filter'],
+                    "02a_Identification 不存在, 回退 02b_Filter — raw 模式可能逐样本找不到候选")
+        return (self.d['ident'],
+                "02a/02b 均不存在, COBRA 将以空候选集运行")
+
     # ── Step 3a: COBRA 延伸 ──
     def run_cobra(self):
         self._resolve_cobra_dir()
@@ -914,16 +935,14 @@ class ViromePipeline:
             asm_tools = [self.args.assembler] if self.args.assembler != 'all' else all_tools
         self.log.info("  Auto-detect 组装工具: %s", ','.join(asm_tools))
 
-        # 病毒候选来源: 逐级选择 (cdd > uniprot > raw)
-        virus_mode = getattr(self.args, 'virus_mode', 'cdd')
-        if virus_mode == 'raw':
-            virsorter_src = self.d['ident']
-        elif virus_mode == 'uniprot':
-            virsorter_src = self.d['filter']
-        else:  # cdd (default)
-            virsorter_src = self.d['filter'] if self.d['filter'].is_dir() else self.d['ident']
-        self.log.info("  病毒候选来源 (%s): %s", virus_mode, virsorter_src)
-        # COBRA 内部只用 raw 模式 (我们的目录结构已解决文件查找问题)
+        # 病毒候选来源: COBRA 内部只用 raw 模式 → 输入契约是 02a_Identification 的
+        # 原始候选 ({sample}_virus.all.candidate.fasta)。02b_Filter 是过滤产物
+        # (命名/结构不同), 传给 raw 模式会逐样本找不到候选 — 241/246 双机实测 8/8 失败。
+        # 注意 args.virus_mode 是【鉴定阶段】的模式, 与 COBRA 输入无关, 不参与选择。
+        virsorter_src, src_warn = self._cobra_candidate_source()
+        if src_warn:
+            self.log.warning("  ⚠ %s", src_warn)
+        self.log.info("  病毒候选来源 (raw): %s", virsorter_src)
         cobra_virus_mode = 'raw'
 
         parts = [
@@ -947,8 +966,17 @@ class ViromePipeline:
             parts.append("--verbose")
 
         ok, _ = run_cmd(' '.join(parts), self.log, "COBRA Pipeline", str(self.d['cobra'] / "cobra.log"))
+        # 失败必须抛出: 主循环 except 会记入 failed_stages 且【不写 .ok】。
+        # 旧行为只 warning → 失败阶段也被标记完成, 下轮被旧 .ok 跳过 (241/246 实测复现)。
+        produced = [p for p in self.d['cobra'].iterdir()
+                    if p.is_dir() and any(p.iterdir())
+                    and p.name not in ('cobra.log', 'checkpoint_status.json')]
+        if not ok and not produced:
+            raise RuntimeError(
+                "COBRA 全部样本失败 (无任何样本产物) — 检查 "
+                f"{self.d['cobra'] / 'cobra.log'}; 常见原因: virsorter_dir 目录错配")
         if not ok:
-            self.log.warning("COBRA 阶段部分任务失败, 检查日志。")
+            self.log.warning("COBRA 部分样本失败 (%d 个样本目录有产物), 检查 cobra.log", len(produced))
 
         self.log.info("  COBRA 阶段完成")
         self.log.info("  输出: %s", self.d['cobra'])
