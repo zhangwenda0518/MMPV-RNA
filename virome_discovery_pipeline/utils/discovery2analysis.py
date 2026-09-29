@@ -143,20 +143,38 @@ def main():
             print(f"[ERROR] --from-discovery 目录不存在: {droot}", file=sys.stderr)
             sys.exit(1)
         cen = _iol.locate_centroids(droot)
-        tax = _iol.locate_taxonomy(droot)
-        if not cen or not tax:
+        tax_list = _iol.locate_taxonomy(droot)
+        if not cen or not tax_list:
             print("[ERROR] 自动定位失败:\n"
                   f"  centroids: {cen or '未找到 (找 */*/final_centroids.fasta)'}\n"
-                  f"  taxonomy:  {tax or '未找到 (找 */*/integrated/final_integrated_classification.tsv)'}",
+                  "  taxonomy:  未找到 (找 taxonomy/integrated/ 或 */*.integrated/"
+                  "final_integrated_classification.tsv)",
                   file=sys.stderr)
             sys.exit(1)
-        args.centroids, args.taxonomy = str(cen), str(tax)
+        args.centroids = str(cen)
+        # taxonomy 产物逐样本一份 ({sample}.integrated/) → 合并成临时总表再加载
+        # (各样本 contig_id 不重叠; 聚合 integrated/ 仅单样本时代存在)
+        if len(tax_list) == 1:
+            args.taxonomy = str(tax_list[0])
+        else:
+            import tempfile
+            merged_map = {}
+            for tp in tax_list:
+                for k, v in load_taxonomy(str(tp)).items():
+                    merged_map.setdefault(k, v)
+            tmp_tax = Path(tempfile.gettempdir()) / (
+                f"merged_taxonomy_{hashlib.md5(str(cen).encode()).hexdigest()[:8]}.tsv")
+            cols = list(next(iter(merged_map.values())).keys()) if merged_map else []
+            with open(tmp_tax, "w", encoding="utf-8", newline="") as fh:
+                fh.write("contig_id\n" + "\n".join(cols) + "\n")
+                for cid, rec in merged_map.items():
+                    fh.write(cid + "\n" + "\n".join(str(rec.get(c, "")) for c in cols) + "\n")
         print(f"[INFO] --from-discovery 自动定位 (布局感知):")
         print(f"       centroids: {cen}")
         print(f"       taxonomy:  {tax}")
         manifest = _iol.write_boundary(
             droot, "discovery->analysis",
-            {"centroids": args.centroids, "taxonomy": args.taxonomy,
+            {"centroids": args.centroids, "taxonomy": args.taxonomy, "taxonomy_files": str(len(tax_list)),
              "reference": f"{args.output_prefix}.reference.fasta",
              "ref_info": f"{args.output_prefix}.ref_info.tsv"},
             produced_by="discovery2analysis.py --from-discovery")

@@ -1,0 +1,501 @@
+Cohort	contig_id	Genus	Species	Family_true	Category	n_samples	prevalence_pct	checkv	length	genome_hit	pid	qcov	hit_locus	tier
+Alternaria_alternata	SRR26155732_clean_NODE_1187_length_4157_cov_310.214496	Nanovirus	Nanovirus necropumiliviciae	Nanoviridae	植物病毒	12	100.00		4157	none				T3_no_hit
+Aphis_gossypii	SRR36562182_clean_NODE_28_length_10655_cov_39.238235	NA	Geminiviridae sp.	Geminiviridae	植物病毒	6	100.00		10655	none				T3_no_hit
+Aphis_gossypii	SRR36562183_clean_NODE_17995_length_500_cov_1.077283	Begomovirus	Begomovirus solanumdelhiense	Geminiviridae	植物病毒				500	none				T3_no_hit
+Aphis_gossypii	SRR36562185_clean_NODE_10175_length_1132_cov_2.491974	NA	Cressdnaviricota sp.	NA	植物病毒?				1132	none				T3_no_hit
+Aphis_gossypii	SRR36562186_clean_NODE_546_length_4961_cov_28.240794	NA	Nucleocytoviricota sp. D1	NA	植物病毒?	6	100.00		4961	none				T3_no_hit
+Aphis_gossypii	SRR36562186_clean_NODE_9764_length_1207_cov_7.895062	NA	Nucleocytoviricota sp.	NA	植物病毒?				1207	none				T3_no_hit
+Fusarium_nematophilum	SRR29516377_clean_NODE_10087_length_1008_cov_6.118717	Begomovirus	Begomovirus nicotianacubaense	Geminiviridae	植物病毒				1008	none				T3_no_hit
+Fusarium_nematophilum	SRR29516377_clean_NODE_1108_length_4556_cov_14.323221	NA	NA	NA	植物病毒?	5	100.00		4556	none				T3_no_hit
+Fusarium_nematophilum	SRR29516378_clean_NODE_1675_length_3904_cov_124.673453	Tungrovirus	Tungrovirus oryzae	Caulimoviridae	植物病毒	5	100.00		3904	none				T3_no_hit
+Fusarium_nematophilum	SRR29516379_clean_NODE_1082_length_4587_cov_161.302836	NA	NA	NA	植物病毒?	5	100.00		4587	none				T3_no_hit
+Lycium_amarum	CRR2703952_clean_NODE_1049_length_1324_cov_36.537170	NA	NA	Caulimoviridae	植物病毒				1324	none				T3_no_hit
+Lycium_amarum	CRR2703952_clean_NODE_11255_length_504_cov_0.772622	NA	Caulimovirus MSa3	Caulimoviridae	植物病毒				504	none				T3_no_hit
+Lycium_amarum	CRR2703952_clean_NODE_1300_length_1232_cov_4.830889	Caulimovirus	Pseudovirus solani	Caulimoviridae	植物病毒				1232	none				T3_no_hit
+Lycium_amarum	CRR2703952_clean_NODE_1388_length_1201_cov_1.364362	Soymovirus	Soymovirus maculaglycinis	Caulimoviridae	植物病毒	1	50.00		1201	none				T3_no_hit
+Lycium_amarum	CRR2703952_clean_NODE_1622_length_1137_cov_3.602444	Caulimovirus	Pseudovirus solani	Caulimoviridae	植物病毒				1137	ningxia	96.2	89.7	nSX00006:119134540-119135561	T1_recent_EVE
+Lycium_amarum	CRR2703952_clean_NODE_1739_length_1113_cov_27.500962	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				1113	none				T3_no_hit
+Lycium_amarum	CRR2703952_clean_NODE_1797_length_1104_cov_3.408341	Caulimovirus	Pseudovirus solani	Caulimoviridae	植物病毒				1104	none				T3_no_hit
+Lycium_amarum	CRR2703952_clean_NODE_2089_length_1042_cov_10.491228	Caulimovirus	Pseudovirus brassicae	Caulimoviridae	植物病毒				1042	none				T3_no_hit
+Lycium_amarum	CRR2703952_clean_NODE_2259_length_1013_cov_4.236170	Badnavirus	Badnavirus tessellotheobromae	Caulimoviridae	植物病毒				1013	heiguo	97.0	71.9	Chr01:207139465-207140192	T2_partial_match
+Lycium_amarum	CRR2703952_clean_NODE_2376_length_992_cov_4.365615	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				992	ningxia	97.5	52.1	nSX00009:110811005-110811523	T2_partial_match
+Lycium_amarum	CRR2703952_clean_NODE_2520_length_970_cov_3.558528	Begomovirus	Begomovirus solanumaraguaense	Geminiviridae	植物病毒				970	none				T3_no_hit
+Lycium_amarum	CRR2703952_clean_NODE_2535_length_968_cov_3.827933	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				968	none				T3_no_hit
+Lycium_amarum	CRR2703952_clean_NODE_2699_length_945_cov_59.236239	Badnavirus	Badnavirus venabougainvilleae	Caulimoviridae	植物病毒				945	zhonghua	96.9	99.9	Chr07:59221836-59222790	T1_recent_EVE
+Lycium_amarum	CRR2703952_clean_NODE_2750_length_939_cov_1.822171	Caulimovirus	Pseudovirus brassicae	Caulimoviridae	植物病毒				939	none				T3_no_hit
+Lycium_amarum	CRR2703952_clean_NODE_3169_length_886_cov_7.307503	Caulimovirus	Pseudovirus brassicae	Caulimoviridae	植物病毒				886	none				T3_no_hit
+Lycium_amarum	CRR2703952_clean_NODE_3408_length_861_cov_2.921320	Soymovirus	Soymovirus maculaglycinis	Caulimoviridae	植物病毒				861	none				T3_no_hit
+Lycium_amarum	CRR2703952_clean_NODE_3501_length_852_cov_16.711168	Caulimovirus	Pseudovirus brassicae	Caulimoviridae	植物病毒				852	none				T3_no_hit
+Lycium_amarum	CRR2703952_clean_NODE_3520_length_850_cov_6.555985	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				850	none				T3_no_hit
+Lycium_amarum	CRR2703952_clean_NODE_4029_length_806_cov_8.841746	Caulimovirus	Pseudovirus brassicae	Caulimoviridae	植物病毒				806	none				T3_no_hit
+Lycium_amarum	CRR2703952_clean_NODE_4348_length_784_cov_5.355837	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				784	none				T3_no_hit
+Lycium_amarum	CRR2703952_clean_NODE_4420_length_779_cov_5.161473	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				779	none				T3_no_hit
+Lycium_amarum	CRR2703952_clean_NODE_5615_length_700_cov_6.846890	Caulimovirus	Pseudovirus brassicae	Caulimoviridae	植物病毒				700	none				T3_no_hit
+Lycium_amarum	CRR2703952_clean_NODE_5769_length_692_cov_11.101777	Badnavirus	Badnavirus venabougainvilleae	Caulimoviridae	植物病毒				692	zhonghua	97.8	99.3	Chr07:59237709-59238412	T1_recent_EVE
+Lycium_amarum	CRR2703952_clean_NODE_5780_length_692_cov_2.549273	Caulimovirus	Caulimovirus latensarmoraciae	Caulimoviridae	植物病毒				692	none				T3_no_hit
+Lycium_amarum	CRR2703952_clean_NODE_7228_length_625_cov_5.634058	Caulimovirus	Pseudovirus zeae	Caulimoviridae	植物病毒				625	none				T3_no_hit
+Lycium_amarum	CRR2703952_clean_NODE_7368_length_620_cov_2.919561	Caulimovirus	Pseudovirus brassicae	Caulimoviridae	植物病毒				620	none				T3_no_hit
+Lycium_amarum	CRR2703952_clean_NODE_740_length_1496_cov_16.721012	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				1496	none				T3_no_hit
+Lycium_amarum	CRR2703952_clean_NODE_758_length_1479_cov_2.037696	Badnavirus	Ambrosia asymptomatic virus 2 UKM-2007	Caulimoviridae	植物病毒				1479	none				T3_no_hit
+Lycium_amarum	CRR2703952_clean_NODE_7642_length_611_cov_1.197026	NA	Red clover bacilliform virus	Caulimoviridae	植物病毒				611	none				T3_no_hit
+Lycium_amarum	CRR2703952_clean_NODE_819_length_1439_cov_8.233529	Soymovirus	Soymovirus crispocestri	Caulimoviridae	植物病毒	2	100.00		1439	none				T3_no_hit
+Lycium_amarum	CRR2703952_clean_NODE_8542_length_579_cov_8.272727	Caulimovirus	Pseudovirus brassicae	Caulimoviridae	植物病毒				579	none				T3_no_hit
+Lycium_amarum	CRR2703952_clean_NODE_8927_length_567_cov_1.198381	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				567	none				T3_no_hit
+Lycium_amarum	CRR2703952_clean_NODE_9139_length_561_cov_0.807377	Soymovirus	Soymovirus maculaglycinis	Caulimoviridae	植物病毒	0	0.00		561	none				T3_no_hit
+Lycium_amarum	CRR2703952_clean_NODE_9277_length_556_cov_1.594203	Badnavirus	Badnavirus betasasacchari	Caulimoviridae	植物病毒				556	none				T3_no_hit
+Lycium_amarum	CRR2703952_clean_NODE_92_length_2746_cov_4.732884	Soymovirus	Soymovirus maculaglycinis	Caulimoviridae	植物病毒	2	100.00		2746	none				T3_no_hit
+Lycium_amarum	CRR2703952_clean_NODE_962_length_1362_cov_3.591932	Caulimovirus	Pseudovirus evelknieveli	Caulimoviridae	植物病毒				1362	none				T3_no_hit
+Lycium_barbarum	CRR1126140_clean_NODE_1152_length_1124_cov_1.621313	Pylecuvirus	Pylecuvirus petroselini*	Geminiviridae	植物病毒				1124	none				T3_no_hit
+Lycium_barbarum	CRR1126140_clean_NODE_131_length_3071_cov_3.536024	Dioscovirus	Dioscovirus dioscoreae	Caulimoviridae	植物病毒	1	0.32		3071	none				T3_no_hit
+Lycium_barbarum	CRR1126140_clean_NODE_1462_length_995_cov_1.277657	Dioscovirus	Dioscovirus dioscoreae	Caulimoviridae	植物病毒				995	none				T3_no_hit
+Lycium_barbarum	CRR1126140_clean_NODE_1581_length_952_cov_27.237770	Dioscovirus	Badnavirus reterubi	Caulimoviridae	植物病毒				952	none				T3_no_hit
+Lycium_barbarum	CRR1126140_clean_NODE_169_length_2756_cov_4.338427	Dioscovirus	Dioscovirus dioscoreae	Caulimoviridae	植物病毒				2756	none				T3_no_hit
+Lycium_barbarum	CRR1126140_clean_NODE_1712_length_911_cov_2.213604	Dioscovirus	Dioscovirus dioscoreae	Caulimoviridae	植物病毒				911	none				T3_no_hit
+Lycium_barbarum	CRR1126140_clean_NODE_1720_length_909_cov_1.124402	Dioscovirus	Dioscovirus dioscoreae	Caulimoviridae	植物病毒				909	none				T3_no_hit
+Lycium_barbarum	CRR1126140_clean_NODE_1918_length_859_cov_1.022901	Dioscovirus	Dioscovirus dioscoreae	Caulimoviridae	植物病毒	0	0.00		859	none				T3_no_hit
+Lycium_barbarum	CRR1126140_clean_NODE_2692_length_717_cov_1.186335	Dioscovirus	Dioscovirus dioscoreae	Caulimoviridae	植物病毒				717	none				T3_no_hit
+Lycium_barbarum	CRR1126140_clean_NODE_2752_length_709_cov_2.108491	Badnavirus	Badnavirus alphamaculaflavicannae	Caulimoviridae	植物病毒				709	none				T3_no_hit
+Lycium_barbarum	CRR1126140_clean_NODE_2852_length_693_cov_6.058065	Badnavirus	Badnavirus reterubi	Caulimoviridae	植物病毒				693	none				T3_no_hit
+Lycium_barbarum	CRR1126140_clean_NODE_312_length_2126_cov_16.749148	Dioscovirus	Dioscovirus dioscoreae	Caulimoviridae	植物病毒	2	0.64		2126	none				T3_no_hit
+Lycium_barbarum	CRR1126140_clean_NODE_3274_length_642_cov_1.182777	Badnavirus	Badnavirus fici	Caulimoviridae	植物病毒				642	none				T3_no_hit
+Lycium_barbarum	CRR1126140_clean_NODE_3695_length_600_cov_0.639469	Badnavirus	NA	Caulimoviridae	植物病毒				600	none				T3_no_hit
+Lycium_barbarum	CRR1126140_clean_NODE_3885_length_584_cov_3.054795	Badnavirus	Badnavirus epsilonvirgamusae	Caulimoviridae	植物病毒	1	0.32		584	none				T3_no_hit
+Lycium_barbarum	CRR1126140_clean_NODE_393_length_1869_cov_11.276169	Dioscovirus	Dioscovirus dioscoreae	Caulimoviridae	植物病毒	2	0.64		1869	none				T3_no_hit
+Lycium_barbarum	CRR1126140_clean_NODE_532_length_1639_cov_3.394636	Badnavirus	Badnavirus venabougainvilleae	Caulimoviridae	植物病毒				1639	none				T3_no_hit
+Lycium_barbarum	CRR1126140_clean_NODE_917_length_1246_cov_1.200341	Dioscovirus	Dioscovirus dioscoreae	Caulimoviridae	植物病毒	1	0.32		1246	none				T3_no_hit
+Lycium_barbarum	CRR1126145_clean_NODE_441_length_803_cov_0.787671	Badnavirus	Badnavirus venabougainvilleae	Caulimoviridae	植物病毒				803	zhonghua	98.2	56.9	Chr07:59221835-59222301	T2_partial_match
+Lycium_barbarum	CRR1440131_clean_NODE_24_length_3317_cov_32.870838	Soymovirus	Soymovirus crispocestri	Caulimoviridae	植物病毒				3317	none				T3_no_hit
+Lycium_barbarum	CRR1440131_clean_NODE_5_length_5023_cov_167.943838	Soymovirus	Soymovirus maculaglycinis	Caulimoviridae	植物病毒	15	4.81		5023	none				T3_no_hit
+Lycium_barbarum	CRR1440131_clean_NODE_7755_length_514_cov_1.011338	Soymovirus	Soymovirus malvae	Caulimoviridae	植物病毒				514	none				T3_no_hit
+Lycium_barbarum	CRR1440132_clean_NODE_1057_length_918_cov_1.776331	NA	Red clover bacilliform virus	Caulimoviridae	植物病毒				918	none				T3_no_hit
+Lycium_barbarum	CRR1440132_clean_NODE_112_length_2136_cov_1.819195	Soymovirus	Soymovirus malvae	Caulimoviridae	植物病毒	6	1.92		2136	none				T3_no_hit
+Lycium_barbarum	CRR1440132_clean_NODE_231_length_1704_cov_1.760270	Soymovirus	Soymovirus malvae	Caulimoviridae	植物病毒	2	0.64		1704	none				T3_no_hit
+Lycium_barbarum	CRR1440133_clean_NODE_1369_length_809_cov_1.964674	Soymovirus	Soymovirus crispocestri	Caulimoviridae	植物病毒	0	0.00		809	none				T3_no_hit
+Lycium_barbarum	CRR1440134_clean_NODE_379_length_1398_cov_4.217358	Soymovirus	Soymovirus crispocestri	Caulimoviridae	植物病毒				1398	none				T3_no_hit
+Lycium_barbarum	CRR1440134_clean_NODE_412_length_1350_cov_1.577134	Soymovirus	Soymovirus crispocestri	Caulimoviridae	植物病毒	5	1.60		1350	none				T3_no_hit
+Lycium_barbarum	CRR1440134_clean_NODE_578_length_1162_cov_1.959596	Soymovirus	Soymovirus maculaglycinis	Caulimoviridae	植物病毒	5	1.60		1162	none				T3_no_hit
+Lycium_barbarum	CRR1440136_clean_NODE_706_length_3151_cov_19.444769	Badnavirus	Badnavirus gammavirgamusae	Caulimoviridae	植物病毒	3	0.96		3151	none				T3_no_hit
+Lycium_barbarum	CRR1440137_clean_NODE_1617_length_1969_cov_6.758966	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				1969	none				T3_no_hit
+Lycium_barbarum	CRR1440137_clean_NODE_6001_length_648_cov_1.773913	Petuvirus	Petuvirus venapetuniae	Caulimoviridae	植物病毒				648	none				T3_no_hit
+Lycium_barbarum	CRR2703948_clean_NODE_63_length_4732_cov_9.345353	NA	NA	NA	植物病毒?	2	0.64		4732	none				T3_no_hit
+Lycium_barbarum	CRR527046_clean_NODE_1964_length_1158_cov_3.867281	Rosadnavirus	Rosadnavirus maculaviolae	Caulimoviridae	植物病毒	1	0.32		1158	none				T3_no_hit
+Lycium_barbarum	CRR527053_clean_NODE_87_length_1910_cov_6.771366	Soymovirus	Soymovirus maculaglycinis	Caulimoviridae	植物病毒	1	0.32		1910	none				T3_no_hit
+Lycium_barbarum	CRR527055_clean_NODE_147_length_1967_cov_6.914467	Caulimovirus	Caulimovirus venafragariae	Caulimoviridae	植物病毒	2	0.64		1967	none				T3_no_hit
+Lycium_barbarum	CRR527055_clean_NODE_1903_length_897_cov_2.065534	Soymovirus	Soymovirus hibisci	Caulimoviridae	植物病毒	2	0.64		897	none				T3_no_hit
+Lycium_barbarum	CRR732647_clean_NODE_1822_length_727_cov_0.558104	Soymovirus	Soymovirus malvae	Caulimoviridae	植物病毒				727	none				T3_no_hit
+Lycium_barbarum	CRR732649_clean_NODE_325_length_1374_cov_5.978478	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				1374	none				T3_no_hit
+Lycium_barbarum	CRR732650_clean_NODE_941_length_549_cov_0.970588	Soymovirus	Soymovirus malvae	Caulimoviridae	植物病毒				549	none				T3_no_hit
+Lycium_barbarum	CRR732651_clean_NODE_3983_length_522_cov_0.550111	Soymovirus	Soymovirus hibisci	Caulimoviridae	植物病毒				522	none				T3_no_hit
+Lycium_barbarum	CRR732658_clean_NODE_191_length_2332_cov_2.160407	NA	NA	NA	植物病毒?	8	2.56		2332	none				T3_no_hit
+Lycium_barbarum	CRR732660_clean_NODE_117_length_3474_cov_2.995888	NA	Geminiviridae sp.	Geminiviridae	植物病毒	8	2.56		3474	none				T3_no_hit
+Lycium_barbarum	CRR891451_clean_NODE_740_length_590_cov_2.382979	Nanovirus	Nanovirus astragalirani	Nanoviridae	植物病毒				590	none				T3_no_hit
+Lycium_barbarum	CRR891456_clean_NODE_475_length_751_cov_0.924779	Soymovirus	Soymovirus maculavaccinii	Caulimoviridae	植物病毒				751	none				T3_no_hit
+Lycium_barbarum	CRR891457_clean_NODE_39_length_1327_cov_75.184211	Badnavirus	Badnavirus venabougainvilleae	Caulimoviridae	植物病毒				1327	zhonghua	97.2	51.8	Chr01:140243808-140244496	T2_partial_match
+Lycium_barbarum	SRR15037480_clean_NODE_724_length_787_cov_6.697479	Badnavirus	Badnavirus venabougainvilleae	Caulimoviridae	植物病毒				787	zhonghua	99.0	62.0	Chr07:59222065-59222553	T2_partial_match
+Lycium_barbarum	SRR15037503_clean_NODE_216_length_924_cov_2.938895	Badnavirus	NA	Caulimoviridae	植物病毒				924	zhonghua	99.2	41.3	Chr01:93115602-93115984	T2_partial_match
+Lycium_barbarum	SRR17208220_clean_NODE_670_length_1003_cov_2.052688	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				1003	none				T3_no_hit
+Lycium_barbarum	SRR17208221_clean_NODE_185_length_1603_cov_2.905229_self_circular	Soymovirus	Soymovirus maculavaccinii	Caulimoviridae	植物病毒	7	2.24		1603	none				T3_no_hit
+Lycium_barbarum	SRR17208223_clean_NODE_550_length_1149_cov_1.433086	Badnavirus	Badnavirus etainflatheobromae	Caulimoviridae	植物病毒				1149	none				T3_no_hit
+Lycium_barbarum	SRR17208224_clean_NODE_774_length_1040_cov_2.522234	Badnavirus	Badnavirus etainflatheobromae	Caulimoviridae	植物病毒	1	0.32		1040	none				T3_no_hit
+Lycium_barbarum	SRR17208225_clean_NODE_1881_length_718_cov_0.953488	Soymovirus	Soymovirus malvae	Caulimoviridae	植物病毒				718	none				T3_no_hit
+Lycium_barbarum	SRR17208226_clean_NODE_179_length_1695_cov_2.687423	Badnavirus	Badnavirus tessellopolysciatis	Caulimoviridae	植物病毒	3	0.96		1695	none				T3_no_hit
+Lycium_barbarum	SRR17208227_clean_NODE_2092_length_665_cov_1.881757	Badnavirus	Badnavirus venabougainvilleae	Caulimoviridae	植物病毒				665	none				T3_no_hit
+Lycium_barbarum	SRR17208228_clean_NODE_385_length_1143_cov_6.078505	Soymovirus	Chrysanthemum yellow edge associated virus 2	Caulimoviridae	植物病毒				1143	none				T3_no_hit
+Lycium_barbarum	SRR17208228_clean_NODE_587_length_997_cov_17.809524	Badnavirus	Badnavirus venabougainvilleae	Caulimoviridae	植物病毒				997	none				T3_no_hit
+Lycium_barbarum	SRR17208233_clean_NODE_2138_length_613_cov_1.140741	Badnavirus	Badnavirus etainflatheobromae	Caulimoviridae	植物病毒				613	none				T3_no_hit
+Lycium_barbarum	SRR22742698_clean_NODE_8159_length_573_cov_1.028000	Badnavirus	Badnavirus venabougainvilleae	Caulimoviridae	植物病毒				573	ningxia	99.0	70.3	nSX00005:138509501-138509904	T2_partial_match
+Lycium_barbarum	SRR22742702_clean_NODE_653_length_3210_cov_12.593561	Tungrovirus	Tungrovirus oryzae	Caulimoviridae	植物病毒	4	1.28		3210	none				T3_no_hit
+Lycium_barbarum	SRR23107135_clean_NODE_21633_length_1140_cov_13.286785	Badnavirus	Badnavirus venabougainvilleae	Caulimoviridae	植物病毒				1140	none				T3_no_hit
+Lycium_barbarum	SRR23107135_clean_NODE_23897_length_1084_cov_1.754698	Soymovirus	Soymovirus crispocestri	Caulimoviridae	植物病毒				1084	none				T3_no_hit
+Lycium_barbarum	SRR23107135_clean_NODE_4914_length_2114_cov_10.341499	Begomovirus	Begomovirus bauri	Geminiviridae	植物病毒	2	0.64		2114	none				T3_no_hit
+Lycium_barbarum	SRR23107136_clean_NODE_1348_length_3523_cov_9.115072	NA	NA	NA	植物病毒?	2	0.64		3523	none				T3_no_hit
+Lycium_barbarum	SRR23107136_clean_NODE_15965_length_1643_cov_2.870701	NA	NA	NA	植物病毒?				1643	none				T3_no_hit
+Lycium_barbarum	SRR23107136_clean_NODE_2035_length_3167_cov_5.896574	NA	NA	Caulimoviridae	植物病毒	2	0.64		3167	none				T3_no_hit
+Lycium_barbarum	SRR23107136_clean_NODE_21732_length_1441_cov_5.636696	NA	NA	NA	植物病毒?				1441	none				T3_no_hit
+Lycium_barbarum	SRR23107136_clean_NODE_31385_length_1209_cov_1.593310	NA	NA	NA	植物病毒?				1209	none				T3_no_hit
+Lycium_barbarum	SRR23107136_clean_NODE_35754_length_1128_cov_16.475829	NA	NA	NA	植物病毒?				1128	none				T3_no_hit
+Lycium_barbarum	SRR23107136_clean_NODE_41162_length_1042_cov_1.865841	NA	NA	NA	植物病毒?				1042	none				T3_no_hit
+Lycium_barbarum	SRR23107136_clean_NODE_55650_length_870_cov_4.155583	Soymovirus	Soymovirus crispocestri	Caulimoviridae	植物病毒				870	none				T3_no_hit
+Lycium_barbarum	SRR23107136_clean_NODE_59551_length_835_cov_1.814961	NA	Geminiviridae sp.	Geminiviridae	植物病毒				835	none				T3_no_hit
+Lycium_barbarum	SRR23107139_clean_NODE_14234_length_1186_cov_2.690925	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				1186	none				T3_no_hit
+Lycium_barbarum	SRR23107139_clean_NODE_20449_length_979_cov_2.540839	Begomovirus	Begomovirus abelmoschusenation	Geminiviridae	植物病毒				979	none				T3_no_hit
+Lycium_barbarum	SRR23107141_clean_NODE_23849_length_845_cov_3.308290	Cavemovirus	Cavemovirus deltaepiphylli	Caulimoviridae	植物病毒				845	none				T3_no_hit
+Lycium_barbarum	SRR23107141_clean_NODE_5961_length_1648_cov_44.219683	NA	NA	NA	植物病毒?				1648	none				T3_no_hit
+Lycium_barbarum	SRR23215181_clean_NODE_8415_length_561_cov_1.055328	Nanovirus	Nanovirus astragalirani	Nanoviridae	植物病毒				561	none				T3_no_hit
+Lycium_barbarum	SRR23561020_clean_NODE_59_length_2100_cov_2.252097	Begomovirus	Begomovirus abelmoschusenation	Geminiviridae	植物病毒	7	2.24		2100	none				T3_no_hit
+Lycium_barbarum	SRR23561022_clean_NODE_2186_length_759_cov_0.746356	Badnavirus	Badnavirus betavirgamusae	Caulimoviridae	植物病毒				759	none				T3_no_hit
+Lycium_barbarum	SRR23561025_clean_NODE_4687_length_503_cov_1.113953	Badnavirus	Badnavirus venabougainvilleae	Caulimoviridae	植物病毒				503	none				T3_no_hit
+Lycium_barbarum	SRR23759246_clean_NODE_1107_length_700_cov_0.848485	Nanovirus	Nanovirus astragalirani	Nanoviridae	植物病毒				700	none				T3_no_hit
+Lycium_barbarum	SRR24100142_clean_NODE_676_length_627_cov_1.817204	Soymovirus	Soymovirus maculaglycinis	Caulimoviridae	植物病毒	0	0.00		627	none				T3_no_hit
+Lycium_barbarum	SRR24100149_clean_NODE_917_length_597_cov_0.757576	Soymovirus	Soymovirus maculavaccinii	Caulimoviridae	植物病毒				597	none				T3_no_hit
+Lycium_barbarum	SRR24305226_clean_NODE_1495_length_4601_cov_20.840548	Badnavirus	NA	Caulimoviridae	植物病毒	9	2.88		4601	none				T3_no_hit
+Lycium_barbarum	SRR24305226_clean_NODE_5969_length_1055_cov_2.613035	Nanovirus	Nanovirus necropumiliviciae	Nanoviridae	植物病毒				1055	none				T3_no_hit
+Lycium_barbarum	SRR24305228_clean_NODE_9597_length_544_cov_0.437367	Caulimovirus	Caulimovirus tessellobrassicae	Caulimoviridae	植物病毒				544	none				T3_no_hit
+Lycium_barbarum	SRR25775929_clean_NODE_68_length_1172_cov_4.212011	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				1172	none				T3_no_hit
+Lycium_barbarum	SRR25775930_clean_NODE_607_length_603_cov_0.850943	Badnavirus	NA	Caulimoviridae	植物病毒				603	none				T3_no_hit
+Lycium_barbarum	SRR25775936_clean_NODE_517_length_560_cov_0.743326	Badnavirus	Badnavirus venabougainvilleae	Caulimoviridae	植物病毒				560	none				T3_no_hit
+Lycium_barbarum	SRR27483475_clean_NODE_40_length_1714_cov_2.658745	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				1714	none				T3_no_hit
+Lycium_barbarum	SRR27483481_clean_NODE_1806_length_625_cov_1.974638	Soymovirus	Soymovirus hibisci	Caulimoviridae	植物病毒	18	5.77		625	none				T3_no_hit
+Lycium_barbarum	SRR27483482_clean_NODE_2_length_4125_cov_14.587858	Soymovirus	Soymovirus malvae	Caulimoviridae	植物病毒				4125	none				T3_no_hit
+Lycium_barbarum	SRR27880474_clean_NODE_2983_length_582_cov_0.326130	Soymovirus	Soymovirus hibisci	Caulimoviridae	植物病毒				582	none				T3_no_hit
+Lycium_barbarum	SRR27880475_clean_NODE_5_length_4067_cov_2.562093	Caulimovirus	Caulimovirus incidianthi	Caulimoviridae	植物病毒	4	1.28		4067	none				T3_no_hit
+Lycium_barbarum	SRR27880476_clean_NODE_162_length_1514_cov_11.394865	Begomovirus	Begomovirus solanumflavusvietnamense	Geminiviridae	植物病毒	4	1.28		1514	none				T3_no_hit
+Lycium_barbarum	SRR27880476_clean_NODE_61_length_2117_cov_3.094912	Caulimovirus	Caulimovirus incidianthi	Caulimoviridae	植物病毒				2117	none				T3_no_hit
+Lycium_barbarum	SRR27880477_clean_NODE_852_length_808_cov_1.880272	Soymovirus	Soymovirus maculavaccinii	Caulimoviridae	植物病毒	1	0.32		808	none				T3_no_hit
+Lycium_barbarum	SRR33528972_clean_NODE_1106_length_591_cov_2.513514	NA	Cressdnaviricota sp.	NA	植物病毒?				591	heiguo	98.8	61.8	Chr02:117413176-117413514	T2_partial_match
+Lycium_barbarum	SRR33536650_clean_NODE_11349_length_752_cov_3.416789	Badnavirus	Badnavirus venabougainvilleae	Caulimoviridae	植物病毒				752	zhonghua	99.5	50.0	Chr07:59237561-59237928	T2_partial_match
+Lycium_barbarum	SRR35911578_clean_NODE_1067_length_733_cov_3.245455	Badnavirus	Badnavirus venabougainvilleae	Caulimoviridae	植物病毒				733	none				T3_no_hit
+Lycium_barbarum	SRR35911578_clean_NODE_132_length_1611_cov_3.632640	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				1611	none				T3_no_hit
+Lycium_barbarum	SRR6206200_clean_NODE_10660_length_554_cov_0.698545	Badnavirus	Badnavirus etainflatheobromae	Caulimoviridae	植物病毒				554	none				T3_no_hit
+Lycium_barbarum	SRR8191320_clean_NODE_1095_length_538_cov_1.350538	Soymovirus	Soymovirus eleocharis	Caulimoviridae	植物病毒	0	0.00		538	none				T3_no_hit
+Lycium_barbarum	SRR8191330_clean_NODE_2208_length_579_cov_10.802372	Badnavirus	Badnavirus venabougainvilleae	Caulimoviridae	植物病毒				579	heiguo	97.2	93.3	Chr06:186093301-186093844	T1_recent_EVE
+Lycium_barbarum	SRR8293189_clean_NODE_908_length_634_cov_0.682709	Begomovirus	Begomovirus ipomoeae	Geminiviridae	植物病毒				634	none				T3_no_hit
+Lycium_barbarum	SRR8293190_clean_NODE_2163_length_525_cov_0.522124	Begomovirus	Begomovirus abelmoschusenation	Geminiviridae	植物病毒				525	none				T3_no_hit
+Lycium_barbarum	SRR8293198_clean_NODE_1629_length_511_cov_0.869863	Badnavirus	Badnavirus venavitis	Caulimoviridae	植物病毒				511	none				T3_no_hit
+Lycium_barbarum	SRR8293198_clean_NODE_828_length_621_cov_2.864964	Badnavirus	Badnavirus venabougainvilleae	Caulimoviridae	植物病毒				621	zhonghua	99.5	69.1	Chr07:59221846-59222275	T2_partial_match
+Lycium_chinense	CRR283456_clean_NODE_2389_length_785_cov_37.411517	Badnavirus	Badnavirus venabougainvilleae	Caulimoviridae	植物病毒				785	ningxia	96.6	97.6	nSX00005:138537387-138538156	T1_recent_EVE
+Lycium_chinense	CRR283456_clean_NODE_5793_length_559_cov_2.991770	Caulimovirus	NA	Caulimoviridae	植物病毒				559	heiguo	97.2	88.4	Chr02:1631450-1631950	T1_recent_EVE
+Lycium_chinense	CRR283458_clean_NODE_1506_length_908_cov_3.285030	Caulimovirus	NA	Caulimoviridae	植物病毒				908	zhonghua	97.3	99.2	Chr09:2564599-2565490	T1_recent_EVE
+Lycium_chinense	CRR283458_clean_NODE_7251_length_504_cov_3.914153	Begomovirus	Begomovirus abelmoschusenation	Geminiviridae	植物病毒				504	ningxia	99.2	72.4	nSX00007:1778434-1778800	T2_partial_match
+Lycium_chinense	CRR283459_clean_NODE_1764_length_1774_cov_1.612581	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				1774	none				T3_no_hit
+Lycium_chinense	CRR283459_clean_NODE_19050_length_597_cov_1.429389	Badnavirus	Ambrosia asymptomatic virus 2 UKM-2007	Caulimoviridae	植物病毒				597	none				T3_no_hit
+Lycium_chinense	CRR283459_clean_NODE_19157_length_595_cov_1.758621	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				595	none				T3_no_hit
+Lycium_chinense	CRR283459_clean_NODE_24469_length_518_cov_1.044944	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				518	none				T3_no_hit
+Lycium_chinense	SRR12805576_clean_NODE_1070_length_895_cov_1.644769	Soymovirus	Soymovirus maculaglycinis	Caulimoviridae	植物病毒	1	4.00		895	none				T3_no_hit
+Lycium_chinense	SRR12805577_clean_NODE_1662_length_809_cov_8.436141	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				809	none				T3_no_hit
+Lycium_chinense	SRR12805577_clean_NODE_1825_length_783_cov_1.888732	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				783	none				T3_no_hit
+Lycium_chinense	SRR12805577_clean_NODE_3473_length_614_cov_1.707948	Caulimovirus	Caulimovirus venafragariae	Caulimoviridae	植物病毒	2	8.00		614	none				T3_no_hit
+Lycium_chinense	SRR12805577_clean_NODE_3942_length_583_cov_2.666667	Badnavirus	NA	Caulimoviridae	植物病毒				583	none				T3_no_hit
+Lycium_chinense	SRR12805577_clean_NODE_394_length_1355_cov_12.329173	Soymovirus	Soymovirus malvae	Caulimoviridae	植物病毒				1355	none				T3_no_hit
+Lycium_chinense	SRR12805577_clean_NODE_5584_length_509_cov_4.043578	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				509	none				T3_no_hit
+Lycium_chinense	SRR12805578_clean_NODE_1606_length_817_cov_0.344086	Soymovirus	Caulimovirus incidianthi	Caulimoviridae	植物病毒				817	zhonghua	96.4	97.7	Chr09:2569106-2569904	T1_recent_EVE
+Lycium_chinense	SRR12805578_clean_NODE_246_length_1644_cov_5.088479	Begomovirus	Begomovirus solanumaraguaense	Geminiviridae	植物病毒				1644	none				T3_no_hit
+Lycium_chinense	SRR12805578_clean_NODE_5572_length_505_cov_1.479167	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				505	none				T3_no_hit
+Lycium_chinense	SRR12805578_clean_NODE_621_length_1154_cov_1.364477	Soymovirus	Soymovirus maculaglycinis	Caulimoviridae	植物病毒	2	8.00		1154	none				T3_no_hit
+Lycium_chinense	SRR12805579_clean_NODE_1390_length_885_cov_73.764778	Badnavirus	Badnavirus venabougainvilleae	Caulimoviridae	植物病毒				885	none				T3_no_hit
+Lycium_chinense	SRR12805579_clean_NODE_2_length_5020_cov_3.079442	Badnavirus	Badnavirus alphasacchari	Caulimoviridae	植物病毒	14	56.00		5020	none				T3_no_hit
+Lycium_chinense	SRR12805582_clean_NODE_19_length_3468_cov_2.332253	Soymovirus	Soymovirus crispocestri	Caulimoviridae	植物病毒	5	20.00		3468	none				T3_no_hit
+Lycium_chinense	SRR12805582_clean_NODE_2487_length_693_cov_1.722581	Capulavirus	Capulavirus medicagonis	Geminiviridae	植物病毒				693	none				T3_no_hit
+Lycium_chinense	SRR12805582_clean_NODE_3687_length_596_cov_2.615679	Nanovirus	Nanovirus astragalirani	Nanoviridae	植物病毒				596	none				T3_no_hit
+Lycium_chinense	SRR12805582_clean_NODE_385_length_1325_cov_2.952875	NA	Red clover bacilliform virus	Caulimoviridae	植物病毒				1325	none				T3_no_hit
+Lycium_chinense	SRR12805583_clean_NODE_1235_length_874_cov_6.258427	Begomovirus	Begomovirus solanumaraguaense	Geminiviridae	植物病毒				874	none				T3_no_hit
+Lycium_chinense	SRR12805583_clean_NODE_382_length_1335_cov_2.374802	Soymovirus	Soymovirus maculaglycinis	Caulimoviridae	植物病毒	2	8.00		1335	none				T3_no_hit
+Lycium_chinense	SRR16071801_clean_NODE_1_length_8312_cov_1186.893919_self_circular	Soymovirus	Soymovirus maculaglycinis	Caulimoviridae	植物病毒	0	0.00		8312	none				T3_no_hit
+Lycium_chinense	SRR16071801_clean_NODE_371_length_1014_cov_2.306057	Cavemovirus	Cavemovirus collusipomeae	Caulimoviridae	植物病毒				1014	none				T3_no_hit
+Lycium_chinense	SRR23107134_clean_NODE_18666_length_1388_cov_7.120913	NA	NA	NA	植物病毒?				1388	ningxia	98.7	26.9	nSX00002:144036531-144036924	T3_no_hit
+Lycium_chinense	SRR23107134_clean_NODE_20638_length_1318_cov_1.417671	NA	NA	NA	植物病毒?	2	8.00		1318	none				T3_no_hit
+Lycium_chinense	SRR23107134_clean_NODE_62857_length_661_cov_2.872449	Begomovirus	Begomovirus birdi	Geminiviridae	植物病毒				661	none				T3_no_hit
+Lycium_chinense	SRR23107134_clean_NODE_71385_length_604_cov_1.235405	Badnavirus	Badnavirus thetavirgamusae	Caulimoviridae	植物病毒				604	none				T3_no_hit
+Lycium_chinense	SRR23107143_clean_NODE_13956_length_1582_cov_3.457256	NA	NA	NA	植物病毒?				1582	none				T3_no_hit
+Lycium_chinense	SRR23107143_clean_NODE_14465_length_1559_cov_3.890983	NA	NA	NA	植物病毒?				1559	none				T3_no_hit
+Lycium_chinense	SRR23107143_clean_NODE_19279_length_1366_cov_3.917247	Badnavirus	NA	Caulimoviridae	植物病毒				1366	none				T3_no_hit
+Lycium_chinense	SRR23107143_clean_NODE_27263_length_1148_cov_1.433488	Dioscovirus	Dioscovirus dioscoreae	Caulimoviridae	植物病毒	1	4.00		1148	none				T3_no_hit
+Lycium_chinense	SRR23107143_clean_NODE_28288_length_1125_cov_1.867871	Badnavirus	Badnavirus tessellopandani	Caulimoviridae	植物病毒				1125	none				T3_no_hit
+Lycium_chinense	SRR23107143_clean_NODE_3702_length_2542_cov_2.481571	NA	Nanoviridae sp.	Nanoviridae	植物病毒	3	12.00		2542	none				T3_no_hit
+Lycium_chinense	SRR23107143_clean_NODE_65139_length_667_cov_9.873737	Badnavirus	Badnavirus venabougainvilleae	Caulimoviridae	植物病毒				667	zhonghua	97.6	75.1	Chr07:59221980-59222484	T2_partial_match
+Lycium_chinense	SRR23107143_clean_NODE_71935_length_624_cov_1.845735	NA	NA	NA	植物病毒?				624	none				T3_no_hit
+Lycium_chinense	SRR23107144_clean_NODE_13684_length_1649_cov_2.296954	Badnavirus	Badnavirus gammasacchari	Caulimoviridae	植物病毒				1649	none				T3_no_hit
+Lycium_chinense	SRR23107144_clean_NODE_30840_length_1121_cov_3.613550	NA	NA	NA	植物病毒?				1121	none				T3_no_hit
+Lycium_chinense	SRR23107144_clean_NODE_39024_length_978_cov_1.425414	Begomovirus	Begomovirus abelmoschusenation	Geminiviridae	植物病毒				978	none				T3_no_hit
+Lycium_chinense	SRR23107144_clean_NODE_58007_length_757_cov_1.758772	NA	NA	NA	植物病毒?	1	4.00		757	none				T3_no_hit
+Lycium_chinense	SRR23107144_clean_NODE_64718_length_702_cov_2.753577	Badnavirus	Badnavirus venavitis	Caulimoviridae	植物病毒				702	none				T3_no_hit
+Lycium_chinense	SRR23107145_clean_NODE_16679_length_1232_cov_1.604832	Soymovirus	Soymovirus crispocestri	Caulimoviridae	植物病毒				1232	none				T3_no_hit
+Lycium_chinense	SRR23107145_clean_NODE_2138_length_2652_cov_2.728189	NA	NA	NA	植物病毒?				2652	none				T3_no_hit
+Lycium_chinense	SRR23107145_clean_NODE_4405_length_2097_cov_10.808794	Begomovirus	Begomovirus bauri	Geminiviridae	植物病毒	3	12.00		2097	none				T3_no_hit
+Lycium_chinense	SRR23107145_clean_NODE_47291_length_676_cov_1.427861	Badnavirus	Badnavirus zetainflatheobromae	Caulimoviridae	植物病毒				676	none				T3_no_hit
+Lycium_chinense	SRR23107145_clean_NODE_53226_length_628_cov_1.396396	NA	Nanoviridae sp.	Nanoviridae	植物病毒				628	none				T3_no_hit
+Lycium_chinense	SRR23107145_clean_NODE_5687_length_1921_cov_3.227273	NA	NA	NA	植物病毒?				1921	none				T3_no_hit
+Lycium_chinense	SRR23107145_clean_NODE_56938_length_602_cov_1.506616	Soymovirus	Soymovirus maculavaccinii	Caulimoviridae	植物病毒				602	none				T3_no_hit
+Lycium_chinense	SRR24100136_clean_NODE_5286_length_509_cov_1.093182	Soymovirus	Soymovirus maculaglycinis	Caulimoviridae	植物病毒	4	16.00		509	none				T3_no_hit
+Lycium_chinense	SRR24100136_clean_NODE_80_length_1925_cov_9.812500	NA	Cressdnaviricota sp.	NA	植物病毒?				1925	none				T3_no_hit
+Lycium_chinense	SRR24100136_clean_NODE_867_length_992_cov_1.306609	Soymovirus	Soymovirus maculaglycinis	Caulimoviridae	植物病毒				992	none				T3_no_hit
+Lycium_chinense	SRR24100137_clean_NODE_2719_length_636_cov_2.306878	Badnavirus	Badnavirus alphacolocalasiae	Caulimoviridae	植物病毒				636	none				T3_no_hit
+Lycium_chinense	SRR24100138_clean_NODE_2643_length_658_cov_0.899830	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				658	none				T3_no_hit
+Lycium_chinense	SRR24100138_clean_NODE_483_length_1191_cov_2.782531	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				1191	none				T3_no_hit
+Lycium_chinense	SRR24100140_clean_NODE_506_length_1291_cov_5.228314	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				1291	none				T3_no_hit
+Lycium_chinense	SRR24100140_clean_NODE_573_length_1246_cov_3.203059	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				1246	none				T3_no_hit
+Lycium_chinense	SRR24315637_clean_NODE_1111_length_929_cov_9.530374	Petuvirus	Petuvirus venapetuniae	Caulimoviridae	植物病毒				929	none				T3_no_hit
+Lycium_chinense	SRR24315637_clean_NODE_2560_length_676_cov_1.930348	Soymovirus	Soymovirus malvae	Caulimoviridae	植物病毒				676	none				T3_no_hit
+Lycium_chinense	SRR24315637_clean_NODE_486_length_1231_cov_4.866149	Petuvirus	Petuvirus venapetuniae	Caulimoviridae	植物病毒				1231	none				T3_no_hit
+Lycium_chinense	SRR24315637_clean_NODE_625_length_1127_cov_3.701139	Soymovirus	Soymovirus maculaglycinis	Caulimoviridae	植物病毒				1127	none				T3_no_hit
+Lycium_chinense	SRR24315638_clean_NODE_1714_length_841_cov_2.959635	Soymovirus	Soymovirus maculaglycinis	Caulimoviridae	植物病毒				841	none				T3_no_hit
+Lycium_chinense	SRR24315639_clean_NODE_307_length_1454_cov_6.084721	NA	Red clover bacilliform virus	Caulimoviridae	植物病毒				1454	none				T3_no_hit
+Lycium_chinense	SRR24320196_clean_NODE_562_length_1465_cov_3.293822	NA	Caulimovirus MSa3	Caulimoviridae	植物病毒				1465	none				T3_no_hit
+Lycium_chinense	SRR24320196_clean_NODE_601_length_1434_cov_4.833211	Dioscovirus	Red clover bacilliform virus	Caulimoviridae	植物病毒				1434	none				T3_no_hit
+Lycium_chinense	SRR24320196_clean_NODE_9040_length_516_cov_6.203160	NA	Caulimovirus MSa3	Caulimoviridae	植物病毒				516	none				T3_no_hit
+Lycium_chinense	SRR24320198_clean_NODE_10_length_3610_cov_23.543681	Soymovirus	Soymovirus maculaglycinis	Caulimoviridae	植物病毒	12	48.00		3610	none				T3_no_hit
+Lycium_chinense	SRR24320198_clean_NODE_287_length_1678_cov_2.937072	Soymovirus	Soymovirus maculaglycinis	Caulimoviridae	植物病毒	3	12.00		1678	none				T3_no_hit
+Lycium_chinense	SRR24320198_clean_NODE_7370_length_550_cov_5.102725	Soymovirus	Soymovirus maculavaccinii	Caulimoviridae	植物病毒				550	none				T3_no_hit
+Lycium_chinense	SRR24320200_clean_NODE_130_length_1930_cov_53.529887	Soymovirus	Soymovirus malvae	Caulimoviridae	植物病毒				1930	none				T3_no_hit
+Lycium_chinense	SRR24320200_clean_NODE_1953_length_887_cov_1.745700	Soymovirus	Soymovirus maculaglycinis	Caulimoviridae	植物病毒	5	20.00		887	none				T3_no_hit
+Lycium_chinense	SRR24320200_clean_NODE_7251_length_521_cov_4.584821	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				521	none				T3_no_hit
+Lycium_chinense	SRR24320200_clean_NODE_7721_length_507_cov_1.221198	NA	NA	NA	植物病毒?				507	none				T3_no_hit
+Lycium_chinense	SRR26036449_clean_NODE_1125_length_3469_cov_2.613958	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒	0	0.00		3469	none				T3_no_hit
+Lycium_chinense	SRR26036449_clean_NODE_11597_length_1478_cov_2.319573	Badnavirus	NA	Caulimoviridae	植物病毒				1478	none				T3_no_hit
+Lycium_chinense	SRR26036449_clean_NODE_12344_length_1428_cov_1.627306	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				1428	none				T3_no_hit
+Lycium_chinense	SRR26036449_clean_NODE_12540_length_1415_cov_1.269001	NA	Caulimovirus MSa3	Caulimoviridae	植物病毒				1415	none				T3_no_hit
+Lycium_chinense	SRR26036449_clean_NODE_13186_length_1376_cov_2.201842	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				1376	none				T3_no_hit
+Lycium_chinense	SRR26036449_clean_NODE_13286_length_1370_cov_2.408635	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				1370	none				T3_no_hit
+Lycium_chinense	SRR26036449_clean_NODE_133_length_6142_cov_16.996210	Welwivirus	Welwivirus welwitschiae	Geminiviridae	植物病毒	0	0.00		6142	none				T3_no_hit
+Lycium_chinense	SRR26036449_clean_NODE_1394_length_3269_cov_8.742804	Badnavirus	Caulimovirus MSa3	Caulimoviridae	植物病毒	0	0.00		3269	none				T3_no_hit
+Lycium_chinense	SRR26036449_clean_NODE_14284_length_1316_cov_8.862430	Badnavirus	NA	Caulimoviridae	植物病毒				1316	none				T3_no_hit
+Lycium_chinense	SRR26036449_clean_NODE_14590_length_1299_cov_1.619086	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				1299	none				T3_no_hit
+Lycium_chinense	SRR26036449_clean_NODE_15481_length_1252_cov_2.211196	Caulimovirus	Piper DNA virus 1	Caulimoviridae	植物病毒				1252	none				T3_no_hit
+Lycium_chinense	SRR26036449_clean_NODE_16890_length_1188_cov_2.434081	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				1188	none				T3_no_hit
+Lycium_chinense	SRR26036449_clean_NODE_17031_length_1181_cov_3.318592	Badnavirus	Badnavirus betadioscoreae	Caulimoviridae	植物病毒	0	0.00		1181	none				T3_no_hit
+Lycium_chinense	SRR26036449_clean_NODE_18589_length_1118_cov_5.315789	NA	Caulimovirus MSa3	Caulimoviridae	植物病毒				1118	none				T3_no_hit
+Lycium_chinense	SRR26036449_clean_NODE_19167_length_1098_cov_1.702439	Badnavirus	Ambrosia asymptomatic virus 2 UKM-2007	Caulimoviridae	植物病毒				1098	none				T3_no_hit
+Lycium_chinense	SRR26036449_clean_NODE_19602_length_1081_cov_3.058532	Badnavirus	Badnavirus gammavirgamusae	Caulimoviridae	植物病毒				1081	none				T3_no_hit
+Lycium_chinense	SRR26036449_clean_NODE_1988_length_2920_cov_2.473832	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				2920	none				T3_no_hit
+Lycium_chinense	SRR26036449_clean_NODE_20127_length_1062_cov_137.435794	Caulimovirus	Caulimovirus tessellodahliae	Caulimoviridae	植物病毒	0	0.00		1062	none				T3_no_hit
+Lycium_chinense	SRR26036449_clean_NODE_20144_length_1062_cov_2.026289	Caulimovirus	Caulimovirus tessellodahliae	Caulimoviridae	植物病毒	0	0.00		1062	none				T3_no_hit
+Lycium_chinense	SRR26036449_clean_NODE_22811_length_980_cov_1.109151	Badnavirus	Badnavirus sp.	Caulimoviridae	植物病毒				980	none				T3_no_hit
+Lycium_chinense	SRR26036449_clean_NODE_23298_length_967_cov_0.989933	NA	NA	Caulimoviridae	植物病毒				967	none				T3_no_hit
+Lycium_chinense	SRR26036449_clean_NODE_23609_length_958_cov_1.994350	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				958	none				T3_no_hit
+Lycium_chinense	SRR26036449_clean_NODE_24447_length_935_cov_3.475638	Caulimovirus	Caulimovirus MSa3	Caulimoviridae	植物病毒	0	0.00		935	none				T3_no_hit
+Lycium_chinense	SRR26036449_clean_NODE_24575_length_932_cov_1.577416	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				932	none				T3_no_hit
+Lycium_chinense	SRR26036449_clean_NODE_25845_length_899_cov_1.589588	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				899	none				T3_no_hit
+Lycium_chinense	SRR26036449_clean_NODE_2681_length_2655_cov_3.746321	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				2655	none				T3_no_hit
+Lycium_chinense	SRR26036449_clean_NODE_27707_length_855_cov_1.203325	NA	Caulimovirus MSa3	Caulimoviridae	植物病毒				855	none				T3_no_hit
+Lycium_chinense	SRR26036449_clean_NODE_28506_length_838_cov_1.410458	Badnavirus	Caulimovirus MSa3	Caulimoviridae	植物病毒	0	0.00		838	none				T3_no_hit
+Lycium_chinense	SRR26036449_clean_NODE_30134_length_805_cov_1.316940	Vaccinivirus	Vaccinivirus cadovaccinii	Caulimoviridae	植物病毒				805	none				T3_no_hit
+Lycium_chinense	SRR26036449_clean_NODE_30414_length_799_cov_2.278237	NA	Caulimovirus MSa3	Caulimoviridae	植物病毒				799	none				T3_no_hit
+Lycium_chinense	SRR26036449_clean_NODE_30515_length_797_cov_2.671271	Dioscovirus	Dioscovirus dioscoreae	Caulimoviridae	植物病毒	0	0.00		797	none				T3_no_hit
+Lycium_chinense	SRR26036449_clean_NODE_31497_length_778_cov_1.539007	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				778	none				T3_no_hit
+Lycium_chinense	SRR26036449_clean_NODE_31_length_9055_cov_16.475395	Badnavirus	Badnavirus betadioscoreae	Caulimoviridae	植物病毒	0	0.00		9055	none				T3_no_hit
+Lycium_chinense	SRR26036449_clean_NODE_32453_length_760_cov_1.679767	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				760	none				T3_no_hit
+Lycium_chinense	SRR26036449_clean_NODE_3309_length_2473_cov_10.335417	Soymovirus	Caulimovirus MSa3	Caulimoviridae	植物病毒	0	0.00		2473	none				T3_no_hit
+Lycium_chinense	SRR26036449_clean_NODE_33151_length_748_cov_1.373333	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				748	none				T3_no_hit
+Lycium_chinense	SRR26036449_clean_NODE_33346_length_744_cov_2.660209	Badnavirus	Badnavirus zetadioscoreae	Caulimoviridae	植物病毒	0	0.00		744	none				T3_no_hit
+Lycium_chinense	SRR26036449_clean_NODE_33552_length_741_cov_1.520958	Caulimovirus	Caulimovirus tessellobrassicae	Caulimoviridae	植物病毒				741	none				T3_no_hit
+Lycium_chinense	SRR26036449_clean_NODE_33572_length_740_cov_28.932534	Caulimovirus	Caulimovirus glycinis	Caulimoviridae	植物病毒				740	none				T3_no_hit
+Lycium_chinense	SRR26036449_clean_NODE_34922_length_719_cov_2.543344	Badnavirus	NA	Caulimoviridae	植物病毒	0	0.00		719	none				T3_no_hit
+Lycium_chinense	SRR26036449_clean_NODE_35094_length_717_cov_1.256211	Badnavirus	NA	Caulimoviridae	植物病毒				717	none				T3_no_hit
+Lycium_chinense	SRR26036449_clean_NODE_35339_length_713_cov_1.459375	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				713	none				T3_no_hit
+Lycium_chinense	SRR26036449_clean_NODE_35736_length_707_cov_1.044164	Tungrovirus	Badnavirus gammavirgamusae	Caulimoviridae	植物病毒	0	0.00		707	none				T3_no_hit
+Lycium_chinense	SRR26036449_clean_NODE_36013_length_702_cov_1.969793	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				702	none				T3_no_hit
+Lycium_chinense	SRR26036449_clean_NODE_36149_length_700_cov_2.346093	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				700	none				T3_no_hit
+Lycium_chinense	SRR26036449_clean_NODE_38042_length_674_cov_1.440932	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				674	none				T3_no_hit
+Lycium_chinense	SRR26036449_clean_NODE_38996_length_661_cov_3.863946	NA	Caulimovirus MSa3	Caulimoviridae	植物病毒				661	none				T3_no_hit
+Lycium_chinense	SRR26036449_clean_NODE_39759_length_652_cov_1.680484	NA	Caulimovirus MSa3	Caulimoviridae	植物病毒				652	none				T3_no_hit
+Lycium_chinense	SRR26036449_clean_NODE_40213_length_647_cov_1.296167	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				647	none				T3_no_hit
+Lycium_chinense	SRR26036449_clean_NODE_40745_length_641_cov_1.367958	Badnavirus	NA	Caulimoviridae	植物病毒				641	none				T3_no_hit
+Lycium_chinense	SRR26036449_clean_NODE_41808_length_629_cov_4.969424	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				629	none				T3_no_hit
+Lycium_chinense	SRR26036449_clean_NODE_421_length_4438_cov_5.576403	Petuvirus	Petuvirus venapetuniae	Caulimoviridae	植物病毒	0	0.00		4438	none				T3_no_hit
+Lycium_chinense	SRR26036449_clean_NODE_42583_length_621_cov_1.395985	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				621	none				T3_no_hit
+Lycium_chinense	SRR26036449_clean_NODE_42652_length_620_cov_1.837294	Rosadnavirus	Caulimovirus MSa3	Caulimoviridae	植物病毒				620	none				T3_no_hit
+Lycium_chinense	SRR26036449_clean_NODE_42767_length_619_cov_1.252747	Ruflodivirus	Ruflodivirus deformatiorudbeckiae	Caulimoviridae	植物病毒	0	0.00		619	none				T3_no_hit
+Lycium_chinense	SRR26036449_clean_NODE_44322_length_603_cov_1.467925	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				603	none				T3_no_hit
+Lycium_chinense	SRR26036449_clean_NODE_44854_length_598_cov_1.123810	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				598	none				T3_no_hit
+Lycium_chinense	SRR26036449_clean_NODE_45332_length_593_cov_1.505769	Soymovirus	Soymovirus malvae	Caulimoviridae	植物病毒	0	0.00		593	none				T3_no_hit
+Lycium_chinense	SRR26036449_clean_NODE_45826_length_588_cov_2.339806	Badnavirus	NA	Caulimoviridae	植物病毒				588	none				T3_no_hit
+Lycium_chinense	SRR26036449_clean_NODE_4636_length_2196_cov_3.479981	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒	0	0.00		2196	none				T3_no_hit
+Lycium_chinense	SRR26036449_clean_NODE_46883_length_579_cov_1.772727	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				579	none				T3_no_hit
+Lycium_chinense	SRR26036449_clean_NODE_47497_length_574_cov_1.335329	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				574	none				T3_no_hit
+Lycium_chinense	SRR26036449_clean_NODE_47634_length_573_cov_0.664000	Tungrovirus	Tungrovirus agapanthi	Caulimoviridae	植物病毒				573	none				T3_no_hit
+Lycium_chinense	SRR26036449_clean_NODE_50579_length_548_cov_2.056842	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				548	none				T3_no_hit
+Lycium_chinense	SRR26036449_clean_NODE_50912_length_546_cov_1.116279	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				546	none				T3_no_hit
+Lycium_chinense	SRR26036449_clean_NODE_51367_length_542_cov_2.230277	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				542	none				T3_no_hit
+Lycium_chinense	SRR26036449_clean_NODE_51591_length_541_cov_1.091880	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				541	none				T3_no_hit
+Lycium_chinense	SRR26036449_clean_NODE_53881_length_524_cov_2.230599	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				524	none				T3_no_hit
+Lycium_chinense	SRR26036449_clean_NODE_54933_length_517_cov_1.626126	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				517	none				T3_no_hit
+Lycium_chinense	SRR26036449_clean_NODE_55256_length_515_cov_1.341629	NA	Caulimovirus MSa3	Caulimoviridae	植物病毒				515	none				T3_no_hit
+Lycium_chinense	SRR26036449_clean_NODE_55620_length_512_cov_6.059226	Soymovirus	Soymovirus malvae	Caulimoviridae	植物病毒				512	none				T3_no_hit
+Lycium_chinense	SRR26036449_clean_NODE_57038_length_503_cov_1.472093	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				503	none				T3_no_hit
+Lycium_chinense	SRR26036449_clean_NODE_60_length_7545_cov_4.460118	NA	Caulimovirus MSa3	Caulimoviridae	植物病毒	0	0.00		7545	none				T3_no_hit
+Lycium_chinense	SRR26036449_clean_NODE_6992_length_1866_cov_1.912437	Badnavirus	Badnavirus maculapiperis	Caulimoviridae	植物病毒	0	0.00		1866	none				T3_no_hit
+Lycium_chinense	SRR26036449_clean_NODE_81_length_7003_cov_6.725830	Badnavirus	Badnavirus camelliae	Caulimoviridae	植物病毒	0	0.00		7003	none				T3_no_hit
+Lycium_chinense	SRR26036449_clean_NODE_8290_length_1739_cov_2.174070	NA	Caulimovirus MSa3	Caulimoviridae	植物病毒				1739	none				T3_no_hit
+Lycium_chinense	SRR26036449_clean_NODE_8370_length_1731_cov_1.044632	Begomovirus	Begomovirus solanumdelhiense	Geminiviridae	植物病毒				1731	none				T3_no_hit
+Lycium_chinense	SRR26036449_clean_NODE_8588_length_1710_cov_1.764814	Badnavirus	Badnavirus epsiloninflatheobromae	Caulimoviridae	植物病毒				1710	none				T3_no_hit
+Lycium_chinense	SRR26036449_clean_NODE_8749_length_1697_cov_1.966749	Badnavirus	Caulimovirus MSa3	Caulimoviridae	植物病毒	0	0.00		1697	none				T3_no_hit
+Lycium_chinense	SRR26036449_clean_NODE_9007_length_1674_cov_4.966271	NA	Caulimovirus MSa3	Caulimoviridae	植物病毒				1674	none				T3_no_hit
+Lycium_ruthenicum	CRR126176_clean_NODE_4942_length_549_cov_6.207983	Petuvirus	Petuvirus venapetuniae	Caulimoviridae	植物病毒				549	none				T3_no_hit
+Lycium_ruthenicum	CRR126177_clean_NODE_931_length_999_cov_1.543197	Petuvirus	Petuvirus venapetuniae	Caulimoviridae	植物病毒				999	none				T3_no_hit
+Lycium_ruthenicum	CRR126178_clean_NODE_155_length_1605_cov_4.646214	Petuvirus	Petuvirus venapetuniae	Caulimoviridae	植物病毒				1605	none				T3_no_hit
+Lycium_ruthenicum	CRR126178_clean_NODE_3633_length_597_cov_1.089695	Petuvirus	Petuvirus venapetuniae	Caulimoviridae	植物病毒				597	none				T3_no_hit
+Lycium_ruthenicum	CRR126178_clean_NODE_3706_length_591_cov_7.287645	Badnavirus	Badnavirus tessellotheobromae	Caulimoviridae	植物病毒				591	heiguo	99.6	44.3	Chr09:155559061-155559323	T2_partial_match
+Lycium_ruthenicum	CRR126179_clean_NODE_1257_length_941_cov_0.955069	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				941	none				T3_no_hit
+Lycium_ruthenicum	CRR126179_clean_NODE_2247_length_774_cov_2.388017	Soymovirus	Caulimovirus deformatiolamii	Caulimoviridae	植物病毒				774	heiguo	98.0	97.3	Chr02:1633669-1634422	T1_recent_EVE
+Lycium_ruthenicum	CRR126179_clean_NODE_2620_length_732_cov_0.658574	Badnavirus	Badnavirus venabougainvilleae	Caulimoviridae	植物病毒				732	none				T3_no_hit
+Lycium_ruthenicum	CRR126180_clean_NODE_1279_length_922_cov_4.689046	Soymovirus	Soymovirus malvae	Caulimoviridae	植物病毒				922	none				T3_no_hit
+Lycium_ruthenicum	CRR126180_clean_NODE_1435_length_885_cov_1.714286	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				885	heiguo	99.6	62.4	Chr09:16783590-16784139	T2_partial_match
+Lycium_ruthenicum	CRR126181_clean_NODE_1741_length_801_cov_3.471154	Nanovirus	Nanovirus astragalirani	Nanoviridae	植物病毒				801	heiguo	99.5	54.4	Chr05:148715081-148715517	T2_partial_match
+Lycium_ruthenicum	CRR126182_clean_NODE_1746_length_826_cov_1.921647	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				826	none				T3_no_hit
+Lycium_ruthenicum	CRR126183_clean_NODE_2039_length_789_cov_2.720670	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				789	none				T3_no_hit
+Lycium_ruthenicum	CRR126185_clean_NODE_254_length_1526_cov_60.453544	Soymovirus	Soymovirus maculaglycinis	Caulimoviridae	植物病毒				1526	zhonghua	96.5	50.2	Chr01:126178526-126179302	T2_partial_match
+Lycium_ruthenicum	CRR126186_clean_NODE_119_length_1867_cov_8.501672	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				1867	none				T3_no_hit
+Lycium_ruthenicum	CRR126186_clean_NODE_5907_length_562_cov_12.257669	Nanovirus	Nanovirus astragalirani	Nanoviridae	植物病毒				562	heiguo	99.8	81.7	Chr12:68211624-68212083	T1_recent_EVE
+Lycium_ruthenicum	CRR126187_clean_NODE_1986_length_901_cov_6.210145	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				901	heiguo	97.2	43.7	Chr06:173982148-173982542	T2_partial_match
+Lycium_ruthenicum	CRR126187_clean_NODE_5631_length_587_cov_7.875486	Nanovirus	Nanovirus astragalirani	Nanoviridae	植物病毒				587	heiguo	100.0	100.0	Chr05:148714926-148715513	T1_recent_EVE
+Lycium_ruthenicum	CRR126187_clean_NODE_5650_length_587_cov_0.700389	Soymovirus	Soymovirus maculavaccinii	Caulimoviridae	植物病毒				587	none				T3_no_hit
+Lycium_ruthenicum	CRR126190_clean_NODE_223_length_1456_cov_7.817787	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				1456	none				T3_no_hit
+Lycium_ruthenicum	CRR126190_clean_NODE_5002_length_531_cov_2.076419	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				531	none				T3_no_hit
+Lycium_ruthenicum	CRR126191_clean_NODE_222_length_2133_cov_4.611650	Begomovirus	Begomovirus abelmoschusenation	Geminiviridae	植物病毒	5	1.45		2133	none				T3_no_hit
+Lycium_ruthenicum	CRR126191_clean_NODE_284_length_2008_cov_2.028941	NA	Cressdnaviricota sp.	NA	植物病毒?	2	0.58		2008	none				T3_no_hit
+Lycium_ruthenicum	CRR126192_clean_NODE_11363_length_556_cov_0.921325	Begomovirus	Begomovirus abelmoschusenation	Geminiviridae	植物病毒				556	heiguo	98.2	59.2	Chr12:105633381-105633710	T2_partial_match
+Lycium_ruthenicum	CRR126193_clean_NODE_1097_length_1719_cov_1.095383	NA	NA	NA	植物病毒?				1719	none				T3_no_hit
+Lycium_ruthenicum	CRR126193_clean_NODE_6782_length_888_cov_1.963190	Soymovirus	Caulimovirus incidianthi	Caulimoviridae	植物病毒				888	heiguo	98.2	98.8	Chr02:1633823-1634700	T1_recent_EVE
+Lycium_ruthenicum	CRR126193_clean_NODE_7888_length_823_cov_3.981333	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				823	heiguo	98.8	82.5	Chr01:2089397-2090075	T1_recent_EVE
+Lycium_ruthenicum	CRR126199_clean_NODE_1498_length_1272_cov_5.819850	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				1272	zhonghua	96.0	45.8	Chr06:42506697-42507279	T2_partial_match
+Lycium_ruthenicum	CRR126200_clean_NODE_6681_length_825_cov_5.506649	Badnavirus	NA	Caulimoviridae	植物病毒				825	heiguo	99.0	57.5	Chr08:160941492-160941976	T2_partial_match
+Lycium_ruthenicum	CRR126200_clean_NODE_9617_length_670_cov_1.527638	Soymovirus	Soymovirus malvae	Caulimoviridae	植物病毒				670	none				T3_no_hit
+Lycium_ruthenicum	CRR126201_clean_NODE_3813_length_524_cov_1.483370	Nanovirus	Nanovirus astragalirani	Nanoviridae	植物病毒				524	heiguo	99.2	72.3	Chr10:23773917-23774287	T2_partial_match
+Lycium_ruthenicum	CRR126203_clean_NODE_10191_length_534_cov_20.056399	Badnavirus	Badnavirus venabougainvilleae	Caulimoviridae	植物病毒				534	heiguo	98.6	81.3	Chr06:186093177-186093614	T1_recent_EVE
+Lycium_ruthenicum	CRR126204_clean_NODE_374_length_563_cov_0.548980	Begomovirus	Begomovirus abelmoschusenation	Geminiviridae	植物病毒				563	none				T3_no_hit
+Lycium_ruthenicum	CRR126205_clean_NODE_8345_length_672_cov_0.622705	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				672	heiguo	99.0	45.4	Chr01:183870741-183871046	T2_partial_match
+Lycium_ruthenicum	CRR2065090_clean_NODE_1728_length_634_cov_1.996435	Nanovirus	Nanovirus astragalirani	Nanoviridae	植物病毒				634	heiguo	97.6	52.4	Chr05:148715221-148715553	T2_partial_match
+Lycium_ruthenicum	CRR339656_clean_NODE_1134_length_610_cov_3.232775	Nanovirus	Nanovirus astragalirani	Nanoviridae	植物病毒				610	heiguo	99.4	60.7	Chr11:161367530-161367883	T2_partial_match
+Lycium_ruthenicum	CRR339657_clean_NODE_311_length_898_cov_8.778182	Begomovirus	Begomovirus cajani	Geminiviridae	植物病毒	5	1.45		898	none				T3_no_hit
+Lycium_ruthenicum	CRR339662_clean_NODE_199_length_1226_cov_1.999133	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				1226	none				T3_no_hit
+Lycium_ruthenicum	CRR339670_clean_NODE_1876_length_628_cov_2.684685	Nanovirus	Nanovirus astragalirani	Nanoviridae	植物病毒				628	heiguo	100.0	35.2	Chr02:124618035-124618256	T2_partial_match
+Lycium_ruthenicum	CRR527056_clean_NODE_13082_length_898_cov_1.980606	NA	Umbilicaria phaea caulimovirus-like 1	Caulimoviridae	植物病毒				898	zhonghua	97.0	59.5	Chr04:126873057-126873591	T2_partial_match
+Lycium_ruthenicum	CRR527056_clean_NODE_23959_length_560_cov_0.712526	NA	Caulimovirus MSa3	Caulimoviridae	植物病毒	0	0.00		560	none				T3_no_hit
+Lycium_ruthenicum	CRR527057_clean_NODE_427_length_1132_cov_9.191690	Soymovirus	Soymovirus maculaglycinis	Caulimoviridae	植物病毒	9	2.60		1132	heiguo	97.6	88.3	Chr11:2688275-2689275	T1_recent_EVE
+Lycium_ruthenicum	CRR527057_clean_NODE_491_length_1081_cov_9.584325	Soymovirus	Soymovirus crispocestri	Caulimoviridae	植物病毒	9	2.60		1081	heiguo	97.7	84.7	Chr11:2661551-2662467	T1_recent_EVE
+Lycium_ruthenicum	CRR527057_clean_NODE_88_length_1731_cov_9.763571	Soymovirus	Orthotospovirus tomatonecromaculae	Caulimoviridae	植物病毒	6	1.73		1731	heiguo	96.4	92.8	Chr11:2579997-2581604	T1_recent_EVE
+Lycium_ruthenicum	CRR527058_clean_NODE_12366_length_1299_cov_4.247961	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				1299	none				T3_no_hit
+Lycium_ruthenicum	CRR527058_clean_NODE_20534_length_1044_cov_3.869207	NA	Callicarpa mosaic-associated virus 1	NA	植物病毒?				1044	none				T3_no_hit
+Lycium_ruthenicum	CRR527058_clean_NODE_241_length_3442_cov_8.728703	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒	132	38.15		3442	heiguo	96.1	30.9	Chr06:152635551-152636624	T2_partial_match
+Lycium_ruthenicum	CRR527058_clean_NODE_25633_length_938_cov_2.336416	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				938	none				T3_no_hit
+Lycium_ruthenicum	CRR527058_clean_NODE_27008_length_912_cov_3.196663	Badnavirus	Ambrosia asymptomatic virus 2 UKM-2007	Caulimoviridae	植物病毒				912	none				T3_no_hit
+Lycium_ruthenicum	CRR527058_clean_NODE_2771_length_2074_cov_3.927036	Badnavirus	Badnavirus venaribis	Caulimoviridae	植物病毒				2074	none				T3_no_hit
+Lycium_ruthenicum	CRR527058_clean_NODE_27918_length_895_cov_2.698297	NA	NA	NA	植物病毒?				895	none				T3_no_hit
+Lycium_ruthenicum	CRR527058_clean_NODE_28387_length_886_cov_5.013530	Badnavirus	Metavirus unidrosophilae	Caulimoviridae	植物病毒	2	0.58		886	none				T3_no_hit
+Lycium_ruthenicum	CRR527058_clean_NODE_29842_length_862_cov_2.631179	Begomovirus	Begomovirus abelmoschusenation	Geminiviridae	植物病毒				862	none				T3_no_hit
+Lycium_ruthenicum	CRR527058_clean_NODE_29845_length_862_cov_2.552598	Dioscovirus	Dioscovirus dioscoreae	Caulimoviridae	植物病毒	2	0.58		862	none				T3_no_hit
+Lycium_ruthenicum	CRR527058_clean_NODE_39114_length_730_cov_1.509893	Begomovirus	Cotton leaf curl virus-[Pakistan:Multan]	Geminiviridae	植物病毒				730	none				T3_no_hit
+Lycium_ruthenicum	CRR527058_clean_NODE_55743_length_566_cov_3.517241	Begomovirus	Begomovirus ipomoeae	Geminiviridae	植物病毒				566	none				T3_no_hit
+Lycium_ruthenicum	CRR527058_clean_NODE_6895_length_1602_cov_3.697842	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				1602	none				T3_no_hit
+Lycium_ruthenicum	CRR527059_clean_NODE_1165_length_3430_cov_4.143581	NA	Nanoviridae sp.	Nanoviridae	植物病毒	2	0.58		3430	none				T3_no_hit
+Lycium_ruthenicum	CRR527059_clean_NODE_15214_length_1511_cov_3.236439	Badnavirus	Badnavirus epsilondioscoreae	Caulimoviridae	植物病毒	2	0.58		1511	none				T3_no_hit
+Lycium_ruthenicum	CRR527059_clean_NODE_17358_length_1417_cov_4.839286	Badnavirus	Ambrosia asymptomatic virus 2 UKM-2007	Caulimoviridae	植物病毒				1417	none				T3_no_hit
+Lycium_ruthenicum	CRR527059_clean_NODE_19430_length_1332_cov_5.885624	Badnavirus	Ambrosia asymptomatic virus 2 UKM-2007	Caulimoviridae	植物病毒	2	0.58		1332	none				T3_no_hit
+Lycium_ruthenicum	CRR527059_clean_NODE_22505_length_1227_cov_5.189775	Badnavirus	Badnavirus aglaonemae	Caulimoviridae	植物病毒	2	0.58		1227	none				T3_no_hit
+Lycium_ruthenicum	CRR527059_clean_NODE_39413_length_850_cov_2.765766	Begomovirus	Begomovirus sidavariatialagoense	Geminiviridae	植物病毒				850	none				T3_no_hit
+Lycium_ruthenicum	CRR527059_clean_NODE_4151_length_2477_cov_3.545341	Badnavirus	Badnavirus tessellocitri	Caulimoviridae	植物病毒	2	0.58		2477	none				T3_no_hit
+Lycium_ruthenicum	CRR527059_clean_NODE_43069_length_791_cov_2.727019	Badnavirus	Badnavirus wisteriae	Caulimoviridae	植物病毒				791	none				T3_no_hit
+Lycium_ruthenicum	CRR527059_clean_NODE_44707_length_766_cov_2.621934	Begomovirus	Begomovirus manihotisafricaense	Geminiviridae	植物病毒				766	none				T3_no_hit
+Lycium_ruthenicum	CRR527059_clean_NODE_46570_length_740_cov_4.004498	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				740	none				T3_no_hit
+Lycium_ruthenicum	CRR527059_clean_NODE_4973_length_2341_cov_4.692681	Badnavirus	Ambrosia asymptomatic virus 2 UKM-2007	Caulimoviridae	植物病毒				2341	none				T3_no_hit
+Lycium_ruthenicum	CRR527059_clean_NODE_51456_length_680_cov_4.494234	Badnavirus	NA	Caulimoviridae	植物病毒				680	heiguo	98.5	79.4	Chr08:160941690-160942216	T2_partial_match
+Lycium_ruthenicum	CRR527059_clean_NODE_5312_length_2292_cov_5.647589	Petuvirus	Petuvirus venapetuniae	Caulimoviridae	植物病毒	2	0.58		2292	none				T3_no_hit
+Lycium_ruthenicum	CRR527059_clean_NODE_5483_length_2269_cov_3.411202	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒	2	0.58		2269	none				T3_no_hit
+Lycium_ruthenicum	CRR527059_clean_NODE_60875_length_583_cov_5.972549	Caulimovirus	Caulimovirus puerariae	Caulimoviridae	植物病毒	2	0.58		583	none				T3_no_hit
+Lycium_ruthenicum	CRR527059_clean_NODE_63433_length_561_cov_7.329918	Caulimovirus	Caulimovirus puerariae	Caulimoviridae	植物病毒	2	0.58		561	none				T3_no_hit
+Lycium_ruthenicum	CRR527059_clean_NODE_64534_length_552_cov_2.770355	Badnavirus	Badnavirus venaribis	Caulimoviridae	植物病毒	2	0.58		552	none				T3_no_hit
+Lycium_ruthenicum	CRR527059_clean_NODE_68312_length_523_cov_3.333333	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				523	none				T3_no_hit
+Lycium_ruthenicum	CRR527059_clean_NODE_7184_length_2065_cov_7.678715	Petuvirus	Petuvirus venapetuniae	Caulimoviridae	植物病毒	34	9.83		2065	none				T3_no_hit
+Lycium_ruthenicum	CRR527059_clean_NODE_7_length_7721_cov_9.530858	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				7721	none				T3_no_hit
+Lycium_ruthenicum	CRR635819_clean_NODE_169_length_1559_cov_2.309556	Soymovirus	Soymovirus virgarachidis	Caulimoviridae	植物病毒	11	3.18		1559	none				T3_no_hit
+Lycium_ruthenicum	CRR635821_clean_NODE_667_length_945_cov_13.069954	Nanovirus	Nanovirus astragalirani	Nanoviridae	植物病毒				945	heiguo	98.9	60.0	Chr03:10567391-10567958	T2_partial_match
+Lycium_ruthenicum	CRR635822_clean_NODE_2185_length_604_cov_6.389831	Begomovirus	Begomovirus abelmoschusenation	Geminiviridae	植物病毒				604	heiguo	99.2	62.3	Chr08:552008-552383	T2_partial_match
+Lycium_ruthenicum	CRR635823_clean_NODE_1035_length_751_cov_3.460177	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				751	heiguo	96.7	65.0	Chr06:173982149-173982637	T2_partial_match
+Lycium_ruthenicum	SRR12149107_clean_NODE_1821_length_607_cov_3.140449	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				607	none				T3_no_hit
+Lycium_ruthenicum	SRR12149119_clean_NODE_5172_length_595_cov_0.888889	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				595	none				T3_no_hit
+Lycium_ruthenicum	SRR12958745_clean_NODE_1854_length_613_cov_1.637037	Badnavirus	Badnavirus venazanthoxyli	Caulimoviridae	植物病毒				613	none				T3_no_hit
+Lycium_ruthenicum	SRR12958747_clean_NODE_3147_length_500_cov_7.100703	Badnavirus	Badnavirus venabougainvilleae	Caulimoviridae	植物病毒				500	none				T3_no_hit
+Lycium_ruthenicum	SRR12958747_clean_NODE_416_length_985_cov_1.208333	Badnavirus	NA	Caulimoviridae	植物病毒				985	none				T3_no_hit
+Lycium_ruthenicum	SRR12958748_clean_NODE_1635_length_658_cov_3.887179	Badnavirus	Badnavirus venabougainvilleae	Caulimoviridae	植物病毒				658	heiguo	98.3	53.2	Chr06:186093438-186093785	T2_partial_match
+Lycium_ruthenicum	SRR12958750_clean_NODE_362_length_1120_cov_1.134670	Badnavirus	Badnavirus maculaucubae	Caulimoviridae	植物病毒				1120	none				T3_no_hit
+Lycium_ruthenicum	SRR12958752_clean_NODE_1478_length_658_cov_0.483761	Begomovirus	Begomovirus abelmoschusenation	Geminiviridae	植物病毒				658	heiguo	97.4	68.7	Chr09:100385223-100385675	T2_partial_match
+Lycium_ruthenicum	SRR12958752_clean_NODE_886_length_775_cov_1.685185	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				775	none				T3_no_hit
+Lycium_ruthenicum	SRR12958754_clean_NODE_256_length_1183_cov_1.945946	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				1183	none				T3_no_hit
+Lycium_ruthenicum	SRR12958754_clean_NODE_8_length_3290_cov_2.403482	Petuvirus	Petuvirus venapetuniae	Caulimoviridae	植物病毒				3290	none				T3_no_hit
+Lycium_ruthenicum	SRR18635263_clean_NODE_64_length_1526_cov_3.526497	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				1526	none				T3_no_hit
+Lycium_ruthenicum	SRR23524798_clean_NODE_655_length_705_cov_18.379747	Badnavirus	Badnavirus venabougainvilleae	Caulimoviridae	植物病毒				705	heiguo	98.8	72.9	Chr06:186072352-186072869	T2_partial_match
+Lycium_ruthenicum	SRR23560922_clean_NODE_1450_length_708_cov_0.883465	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				708	none				T3_no_hit
+Lycium_ruthenicum	SRR23560923_clean_NODE_2508_length_575_cov_1.882470	Begomovirus	Begomovirus abelmoschusenation	Geminiviridae	植物病毒				575	none				T3_no_hit
+Lycium_ruthenicum	SRR24330281_clean_NODE_250_length_1398_cov_2.641509	Begomovirus	Begomovirus solanumflavusvietnamense	Geminiviridae	植物病毒	46	13.29		1398	none				T3_no_hit
+Lycium_ruthenicum	SRR24330281_clean_NODE_5030_length_517_cov_10.042793	Badnavirus	Badnavirus venabougainvilleae	Caulimoviridae	植物病毒				517	heiguo	100.0	71.0	Chr06:186072184-186072551	T2_partial_match
+Lycium_ruthenicum	SRR24330283_clean_NODE_2265_length_736_cov_2.355958	Soymovirus	Soymovirus malvae	Caulimoviridae	植物病毒	1	0.29		736	none				T3_no_hit
+Lycium_ruthenicum	SRR24330283_clean_NODE_4581_length_558_cov_1.270103	Soymovirus	Soymovirus crispocestri	Caulimoviridae	植物病毒				558	none				T3_no_hit
+Lycium_ruthenicum	SRR24330285_clean_NODE_327_length_1273_cov_12.550833	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				1273	ningxia	96.3	77.9	nSX00002:21370317-21371320	T2_partial_match
+Lycium_ruthenicum	SRR24330285_clean_NODE_4777_length_509_cov_2.415138	Nanovirus	Nanovirus astragalirani	Nanoviridae	植物病毒				509	none				T3_no_hit
+Lycium_ruthenicum	SRR28001714_clean_NODE_449_length_928_cov_0.518044	NA	Tomato necrotic ring virus	Pithoviridae	植物病毒?	136	39.31		928	none				T3_no_hit
+Lycium_ruthenicum	SRR28001715_clean_NODE_3279_length_525_cov_1.096491	Begomovirus	Begomovirus abelmoschusenation	Geminiviridae	植物病毒				525	none				T3_no_hit
+Lycium_ruthenicum	SRR29424253_clean_NODE_646_length_789_cov_1.360335	Begomovirus	Begomovirus abelmoschusenation	Geminiviridae	植物病毒				789	none				T3_no_hit
+Lycium_ruthenicum	SRR29849506_clean_NODE_182_length_1244_cov_10.163108	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				1244	none				T3_no_hit
+Lycium_ruthenicum	SRR29849506_clean_NODE_2771_length_532_cov_0.590414	Begomovirus	Begomovirus abelmoschusenation	Geminiviridae	植物病毒				532	none				T3_no_hit
+Lycium_ruthenicum	SRR30397902_clean_NODE_1373_length_549_cov_2.855042	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				549	none				T3_no_hit
+Lycium_ruthenicum	SRR30397904_clean_NODE_649_length_852_cov_2.026958	Begomovirus	Begomovirus solanumflavushuangbaiense	Geminiviridae	植物病毒	177	51.16		852	none				T3_no_hit
+Lycium_ruthenicum	SRR30397906_clean_NODE_1018_length_561_cov_0.616803	Solendovirus	Solendovirus venanicotianae	Caulimoviridae	植物病毒				561	none				T3_no_hit
+Lycium_ruthenicum	SRR30397906_clean_NODE_208_length_1040_cov_0.754912	Solendovirus	Solendovirus venanicotianae	Caulimoviridae	植物病毒	1	0.29		1040	none				T3_no_hit
+Lycium_ruthenicum	SRR30397906_clean_NODE_22_length_2323_cov_0.969333	Solendovirus	Solendovirus venanicotianae	Caulimoviridae	植物病毒	1	0.29		2323	none				T3_no_hit
+Lycium_ruthenicum	SRR30397906_clean_NODE_842_length_607_cov_0.985019	Solendovirus	Solendovirus venanicotianae	Caulimoviridae	植物病毒				607	none				T3_no_hit
+Lycium_ruthenicum	SRR30397916_clean_NODE_932_length_658_cov_1.468376	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				658	none				T3_no_hit
+Lycium_ruthenicum	SRR30397918_clean_NODE_13_length_2939_cov_3.802512	Caulimovirus	Caulimovirus incidianthi	Caulimoviridae	植物病毒				2939	none				T3_no_hit
+Lycium_ruthenicum	SRR30490429_clean_NODE_435_length_1016_cov_1.318134	NA	NA	Caulimoviridae	植物病毒				1016	none				T3_no_hit
+Lycium_ruthenicum	SRR30490431_clean_NODE_433_length_940_cov_1.118800	NA	Chrysanthemum yellow edge associated virus 2	Caulimoviridae	植物病毒				940	none				T3_no_hit
+Lycium_ruthenicum	SRR30490433_clean_NODE_35_length_2240_cov_2.002769	Petuvirus	Petuvirus venapetuniae	Caulimoviridae	植物病毒	36	10.40		2240	none				T3_no_hit
+Lycium_ruthenicum	SRR30490434_clean_NODE_199_length_1286_cov_1.969497	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				1286	none				T3_no_hit
+Lycium_ruthenicum	SRR30784138_clean_NODE_1414_length_903_cov_1.668675	Badnavirus	NA	Caulimoviridae	植物病毒				903	none				T3_no_hit
+Lycium_ruthenicum	SRR30784145_clean_NODE_145_length_1462_cov_1.949604	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				1462	none				T3_no_hit
+Lycium_ruthenicum	SRR30784146_clean_NODE_9_length_4337_cov_3.524390	Caulimovirus	Caulimovirus incidianthi	Caulimoviridae	植物病毒	87	25.14		4337	none				T3_no_hit
+Lycium_ruthenicum	SRR30784147_clean_NODE_7156_length_528_cov_2.116484	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				528	none				T3_no_hit
+Lycium_ruthenicum	SRR30784152_clean_NODE_1713_length_575_cov_2.025896	NA	Nanoviridae sp.	Nanoviridae	植物病毒				575	none				T3_no_hit
+Lycium_ruthenicum	SRR30784154_clean_NODE_585_length_958_cov_2.213559	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				958	none				T3_no_hit
+Lycium_ruthenicum	SRR30784156_clean_NODE_7142_length_605_cov_1.695489	Begomovirus	Begomovirus coheni	Geminiviridae	植物病毒				605	none				T3_no_hit
+Lycium_ruthenicum	SRR30788691_clean_NODE_629_length_705_cov_1.609177	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				705	heiguo	97.2	82.4	Chr08:168163459-168164035	T1_recent_EVE
+Lycium_ruthenicum	SRR30788695_clean_NODE_568_length_856_cov_12.149425	Badnavirus	Badnavirus venabougainvilleae	Caulimoviridae	植物病毒				856	heiguo	98.3	41.8	Chr06:186072271-186072632	T2_partial_match
+Lycium_ruthenicum	SRR30788697_clean_NODE_397_length_589_cov_25.761628	Badnavirus	Badnavirus venabougainvilleae	Caulimoviridae	植物病毒				589	none				T3_no_hit
+Lycium_ruthenicum	SRR31836779_clean_NODE_132_length_1333_cov_6.234921	Badnavirus	Badnavirus venabougainvilleae	Caulimoviridae	植物病毒				1333	heiguo	97.3	44.4	Chr06:186072274-186072869	T2_partial_match
+Lycium_ruthenicum	SRR31836785_clean_NODE_610_length_703_cov_1.652381	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				703	none				T3_no_hit
+Lycium_ruthenicum	SRR31836787_clean_NODE_19_length_2569_cov_16.109776	Begomovirus	Begomovirus solanumflavusvietnamense	Geminiviridae	植物病毒	190	54.91		2569	none				T3_no_hit
+Lycium_ruthenicum	SRR31836788_clean_NODE_185_length_1205_cov_8.183746	Badnavirus	Badnavirus venabougainvilleae	Caulimoviridae	植物病毒				1205	heiguo	98.1	42.7	Chr06:186072352-186072869	T2_partial_match
+Lycium_ruthenicum	SRR32314923_clean_NODE_2111_length_918_cov_1.553846	Welwivirus	Welwivirus welwitschiae	Geminiviridae	植物病毒				918	none				T3_no_hit
+Lycium_ruthenicum	SRR32314935_clean_NODE_430_length_820_cov_5.524766	Badnavirus	Badnavirus venabougainvilleae	Caulimoviridae	植物病毒				820	heiguo	97.0	84.1	Chr06:186093329-186094037	T1_recent_EVE
+Lycium_ruthenicum	SRR32314938_clean_NODE_670_length_824_cov_1.617843	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				824	none				T3_no_hit
+Lycium_ruthenicum	SRR32314940_clean_NODE_581_length_965_cov_3.348655	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				965	none				T3_no_hit
+Lycium_ruthenicum	SRR32588710_clean_NODE_1294_length_820_cov_2.879518	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				820	none				T3_no_hit
+Lycium_ruthenicum	SRR32588710_clean_NODE_2689_length_620_cov_1.014625	Badnavirus	Badnavirus venabougainvilleae	Caulimoviridae	植物病毒				620	none				T3_no_hit
+Lycium_ruthenicum	SRR32588711_clean_NODE_2065_length_705_cov_1.549051	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				705	none				T3_no_hit
+Lycium_ruthenicum	SRR36345652_clean_NODE_357_length_1494_cov_4.146376	NA	Caulimovirus MSa3	Caulimoviridae	植物病毒				1494	none				T3_no_hit
+Lycium_ruthenicum	SRR36345652_clean_NODE_419_length_1391_cov_14.455235	Soymovirus	Soymovirus maculaglycinis	Caulimoviridae	植物病毒	5	1.45		1391	heiguo	96.9	79.9	Chr11:2513960-2515072	T2_partial_match
+Lycium_ruthenicum	SRR36345652_clean_NODE_682_length_1161_cov_3.089154	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				1161	none				T3_no_hit
+Lycium_ruthenicum	SRR36345653_clean_NODE_614_length_1214_cov_2.484663	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				1214	none				T3_no_hit
+Lycium_ruthenicum	SRR36345653_clean_NODE_74_length_2784_cov_3.403172	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒	12	3.47		2784	none				T3_no_hit
+Lycium_ruthenicum	SRR36345653_clean_NODE_900_length_1048_cov_6.186667	NA	Caulimovirus MSa3	Caulimoviridae	植物病毒				1048	none				T3_no_hit
+Lycium_ruthenicum	SRR36345654_clean_NODE_1249_length_867_cov_2.122166	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				867	none				T3_no_hit
+Lycium_ruthenicum	SRR36345654_clean_NODE_2368_length_678_cov_3.704132	Soymovirus	Soymovirus maculaglycinis	Caulimoviridae	植物病毒	4	1.16		678	none				T3_no_hit
+Lycium_ruthenicum	SRR36345654_clean_NODE_2682_length_648_cov_25.568696	Soymovirus	Soymovirus maculaglycinis	Caulimoviridae	植物病毒				648	none				T3_no_hit
+Lycium_ruthenicum	SRR36345654_clean_NODE_992_length_946_cov_1.872852	Soymovirus	Orthotospovirus tomatonecromaculae	Caulimoviridae	植物病毒	4	1.16		946	none				T3_no_hit
+Lycium_ruthenicum	SRR36345656_clean_NODE_1300_length_905_cov_1.905048	Soymovirus	Soymovirus malvae	Caulimoviridae	植物病毒				905	none				T3_no_hit
+Lycium_ruthenicum	SRR36345656_clean_NODE_206_length_1894_cov_6.605711	NA	Caulimovirus MSa3	Caulimoviridae	植物病毒				1894	none				T3_no_hit
+Lycium_ruthenicum	SRR36345656_clean_NODE_2159_length_732_cov_1.534143	Badnavirus	Badnavirus venabougainvilleae	Caulimoviridae	植物病毒				732	none				T3_no_hit
+Lycium_ruthenicum	SRR36345656_clean_NODE_575_length_1262_cov_2.222035	Soymovirus	Soymovirus maculavaccinii	Caulimoviridae	植物病毒				1262	none				T3_no_hit
+Lycium_ruthenicum	SRR36966014_clean_NODE_15171_length_529_cov_2.328947	Nanovirus	Nanovirus astragalirani	Nanoviridae	植物病毒				529	none				T3_no_hit
+Lycium_ruthenicum	SRR36966014_clean_NODE_2512_length_1856_cov_4.432978	Soymovirus	Soymovirus maculaglycinis	Caulimoviridae	植物病毒	23	6.65		1856	none				T3_no_hit
+Lycium_ruthenicum	SRR36966014_clean_NODE_6478_length_1085_cov_1.801383	Badnavirus	Badnavirus venazanthoxyli	Caulimoviridae	植物病毒				1085	none				T3_no_hit
+Lycium_ruthenicum	SRR36966015_clean_NODE_10754_length_707_cov_3.288644	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				707	none				T3_no_hit
+Lycium_ruthenicum	SRR36966015_clean_NODE_13663_length_574_cov_3.041916	Badnavirus	Badnavirus tessellotheobromae	Caulimoviridae	植物病毒	1	0.29		574	none				T3_no_hit
+Lycium_ruthenicum	SRR36966015_clean_NODE_5389_length_1206_cov_6.661959	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				1206	none				T3_no_hit
+Lycium_ruthenicum	SRR36966016_clean_NODE_15372_length_552_cov_1.916493	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				552	none				T3_no_hit
+Lycium_ruthenicum	SRR36966016_clean_NODE_2341_length_2001_cov_43.017635	Soymovirus	Soymovirus maculaglycinis	Caulimoviridae	植物病毒	3	0.87		2001	heiguo	96.7	64.2	Chr03:170137076-170138360	T2_partial_match
+Lycium_ruthenicum	SRR36966016_clean_NODE_4595_length_1415_cov_5.549180	Badnavirus	NA	Caulimoviridae	植物病毒				1415	none				T3_no_hit
+Lycium_ruthenicum	SRR36966019_clean_NODE_1907_length_958_cov_2.146893	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				958	none				T3_no_hit
+Lycium_ruthenicum	SRR36966021_clean_NODE_3_length_8420_cov_1411.845813_self_circular	Soymovirus	Soymovirus maculaglycinis	Caulimoviridae	植物病毒	0	0.00		8420	none				T3_no_hit
+Lycium_ruthenicum	SRR36966023_clean_NODE_3406_length_792_cov_1.785814	Nanovirus	Nanovirus astragalirani	Nanoviridae	植物病毒				792	none				T3_no_hit
+Lycium_ruthenicum	SRR36966024_clean_NODE_351_length_1144_cov_5.332400	Soymovirus	Soymovirus malvae	Caulimoviridae	植物病毒	4	1.16		1144	none				T3_no_hit
+Lycium_ruthenicum	SRR36966027_clean_NODE_3140_length_1168_cov_6.701370	Badnavirus	NA	Caulimoviridae	植物病毒				1168	none				T3_no_hit
+Lycium_ruthenicum	SRR8191344_clean_NODE_797_length_720_cov_4.023184	Badnavirus	Badnavirus venabougainvilleae	Caulimoviridae	植物病毒				720	zhonghua	99.5	58.8	Chr07:59221848-59222271	T2_partial_match
+Lycium_ruthenicum	SRR8293181_clean_NODE_1999_length_601_cov_1.717803	Badnavirus	Badnavirus venabougainvilleae	Caulimoviridae	植物病毒				601	heiguo	100.0	48.1	Chr06:186072184-186072473	T2_partial_match
+Lycium_ruthenicum	SRR8293181_clean_NODE_2862_length_524_cov_1.780488	NA	NA	Geminiviridae	植物病毒	47	13.58		524	none				T3_no_hit
+Lycium_ruthenicum	SRR8293184_clean_NODE_3462_length_602_cov_3.094518	Begomovirus	Begomovirus solanumseverugosi	Geminiviridae	植物病毒				602	none				T3_no_hit
+Lycium_ruthenicum	SRR8293184_clean_NODE_3_length_4995_cov_54.636327	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒	47	13.58		4995	none				T3_no_hit
+Lycium_ruthenicum	SRR8293194_clean_NODE_418_length_1070_cov_1.988967	Nanovirus	Nanovirus astragalirani	Nanoviridae	植物病毒				1070	none				T3_no_hit
+Lycium_ruthenicum	SRR8293197_clean_NODE_1169_length_809_cov_2.229620	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				809	none				T3_no_hit
+Lycium_ruthenicum	SRR8293197_clean_NODE_666_length_1000_cov_1.720604	Cavemovirus	Cavemovirus collusipomeae	Caulimoviridae	植物病毒				1000	none				T3_no_hit
+Lycium_ruthenicum	SRR9192451_clean_NODE_1067_length_656_cov_1.572899	Soymovirus	Soymovirus maculaglycinis	Caulimoviridae	植物病毒				656	heiguo	97.8	82.8	Chr02:1631002-1631552	T1_recent_EVE
+Lycium_ruthenicum	SRR9192452_clean_NODE_1808_length_600_cov_2.233397	Nanovirus	Nanovirus astragalirani	Nanoviridae	植物病毒				600	heiguo	99.3	46.3	Chr07:182013110-182013388	T2_partial_match
+Lycium_ruthenicum	SRR9192452_clean_NODE_498_length_917_cov_2.377962	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				917	none				T3_no_hit
+Lycium_ruthenicum	SRR9192452_clean_NODE_825_length_783_cov_2.233803	Soymovirus	Soymovirus maculaglycinis	Caulimoviridae	植物病毒	1	0.29		783	none				T3_no_hit
+Lycium_ruthenicum	SRR9192452_clean_NODE_898_length_760_cov_1.602620	Soymovirus	Soymovirus maculaglycinis	Caulimoviridae	植物病毒	1	0.29		760	none				T3_no_hit
+Lycium_ruthenicum	SRR9192456_clean_NODE_375_length_997_cov_0.923160	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				997	heiguo	96.9	87.0	Chr05:9004328-9005196	T1_recent_EVE
+Lycium_ruthenicum	SRR9192456_clean_NODE_561_length_885_cov_11.035714	Caulimovirus	Caulimovirus sp.	Caulimoviridae	植物病毒				885	none				T3_no_hit
+Lycium_ruthenicum	SRR9192456_clean_NODE_803_length_777_cov_0.799716	Begomovirus	Begomovirus abelmoschusenation	Geminiviridae	植物病毒				777	heiguo	97.2	59.3	Chr02:110881574-110882035	T2_partial_match
+Lycium_barbarum	NC_015507.1	Badnavirus	Badnavirus betavirgamusae	Caulimoviridae	植物病毒				MISSING	none				T3_no_hit
+Lycium_ruthenicum	contig_111	Soymovirus	Soymovirus maculaglycinis	Caulimoviridae	植物病毒				MISSING	none				T3_no_hit
+Lycium_ruthenicum	contig_1270	Badnavirus	Badnavirus venavitis	Caulimoviridae	植物病毒				MISSING	none				T3_no_hit
+Lycium_ruthenicum	contig_1556	Badnavirus	Badnavirus venazanthoxyli	Caulimoviridae	植物病毒				MISSING	none				T3_no_hit
+Lycium_ruthenicum	contig_908	Badnavirus	Badnavirus maculapiperis	Caulimoviridae	植物病毒				MISSING	none				T3_no_hit

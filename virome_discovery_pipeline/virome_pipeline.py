@@ -434,8 +434,12 @@ class ViromePipeline:
                 or (d.get('_centroids_v2') and (d['_centroids_v2'] / 'final_centroids.fasta').is_file())
             ),
             'taxonomy': lambda: (
-                # 现行产物路径 integrated/; Votus.integrated 为历史旧名兜底
+                # 真实产物形态 = 逐样本 {sample}.integrated/final_integrated_classification.tsv;
+                # 聚合 integrated/ 与历史旧名 Votus.integrated/ 兜底
                 any(
+                    p.is_file() and p.stat().st_size > 100
+                    for p in d['taxonomy'].glob('*final_integrated_classification.tsv')
+                ) or any(
                     (d['taxonomy'] / sub / 'final_integrated_classification.tsv').is_file()
                     and (d['taxonomy'] / sub / 'final_integrated_classification.tsv').stat().st_size > 100
                     for sub in ('integrated', 'Votus.integrated')

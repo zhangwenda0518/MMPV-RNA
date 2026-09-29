@@ -209,7 +209,9 @@ class TestLocateAndManifest(unittest.TestCase):
                      root / "05_Taxonomy/integrated/final_integrated_classification.tsv")
             self.assertEqual(iol.locate_centroids(root),
                              root / "04_CLUSTER/4_centroids/final_centroids.fasta")
-            self.assertIsNotNone(iol.locate_taxonomy(root))
+            tax = iol.locate_taxonomy(root)
+            self.assertIsInstance(tax, list) and self.assertTrue(tax)
+            self.assertIn("integrated", str(tax[0]))
 
     def test_locate_legacy_old_centroid_names(self):
         for old in ("04_centroids", "4.centroids"):
@@ -228,7 +230,21 @@ class TestLocateAndManifest(unittest.TestCase):
                      root / "07_Taxonomy/integrated/final_integrated_classification.tsv")
             self.assertEqual(iol.locate_centroids(root),
                              root / "06_CLUSTER/centroids/final_centroids.fasta")
-            self.assertIsNotNone(iol.locate_taxonomy(root))
+            tax = iol.locate_taxonomy(root)
+            self.assertIsInstance(tax, list) and self.assertTrue(tax)
+            self.assertEqual(tax[0], root / "07_Taxonomy/integrated/final_integrated_classification.tsv")
+
+    def test_locate_taxonomy_per_sample_files(self):
+        """taxonomy 真实形态 = 逐样本 {sample}.integrated/; locate_taxonomy 返回全部"""
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            tax = root / "07_Taxonomy"
+            for s in ("S1", "S2"):
+                f = tax / f"{s}.integrated" / "final_integrated_classification.tsv"
+                f.parent.mkdir(parents=True, exist_ok=True)
+                f.write_text("contig_id\n", encoding="utf-8")
+            got = iol.locate_taxonomy(root)
+            assert isinstance(got, list) and len(got) == 2, got
 
     def test_manifest_idempotent(self):
         with tempfile.TemporaryDirectory() as td:

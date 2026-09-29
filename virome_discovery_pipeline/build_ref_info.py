@@ -78,21 +78,20 @@ def main():
 
     # R 共识 (05_Taxonomy)
     r_data = {}
-    r_tsv = root / _D['d_taxonomy'] / "Votus.integrated" / "final_integrated_classification.tsv"
-    if not r_tsv.is_file():
-        tax_dir = root / _D['d_taxonomy']
-        for d in tax_dir.glob("*.integrated"):
-            candidate = d / "final_integrated_classification.tsv"
-            if candidate.is_file():
-                r_tsv = candidate
-                break
-        else:
-            d2 = tax_dir / "integrated"
-            c2 = d2 / "final_integrated_classification.tsv"
-            if c2.is_file():
-                r_tsv = c2
-    if r_tsv.is_file():
-        for r in _read_tsv(r_tsv):
+    # taxonomy 产物逐样本一份 ({sample}.integrated/); 全部合并 (旧版只取第一个
+    # 匹配, 多样本项目会丢其余样本的注释 → ref_info 不完整)
+    tax_dir = root / _D['d_taxonomy']
+    r_tsvs = []
+    agg = tax_dir / "integrated" / "final_integrated_classification.tsv"
+    if agg.is_file():
+        r_tsvs.append(agg)
+    for d in sorted(tax_dir.glob("*.integrated")):
+        c = d / "final_integrated_classification.tsv"
+        if c.is_file() and c not in r_tsvs:
+            r_tsvs.append(c)
+    if r_tsvs:
+        for r_tsv in r_tsvs:
+          for r in _read_tsv(r_tsv):
             cid = r.get("contig_id","").strip('"')
             if cid:
                 r_data[cid] = {

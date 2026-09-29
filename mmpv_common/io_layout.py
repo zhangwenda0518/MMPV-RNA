@@ -356,18 +356,29 @@ def locate_centroids(root: Path) -> Optional[Path]:
     return None
 
 
-def locate_taxonomy(root: Path) -> Optional[Path]:
-    """定位 8 工具加权投票的整合分类表 (两布局)。"""
+def locate_taxonomy(root: Path) -> list:
+    """定位整合分类表, 返回路径列表 (调用方需合并多文件)。
+
+    taxonomy 产物的真实形态是【逐样本】 `{sample}.integrated/final_integrated_classification.tsv`
+    (tax_dir 由编排器按样本建立); 聚合 `integrated/` 目录仅在单样本时代存在。
+    返回顺序: 聚合文件优先 (若在), 否则全部逐样本文件 (排序稳定)。
+    """
     root = Path(root)
+    out = []
     for layout in LAYOUTS:
         p = root / _DIR_TABLE[layout]['d_taxonomy'] / TAXONOMY_RELPATH
         if p.is_file():
-            return p
-    if root.is_dir():
-        hits = sorted(root.glob(f"*/*/integrated/{os.path.basename(TAXONOMY_RELPATH)}"))
-        if hits:
-            return hits[0]
-    return None
+            out.append(p)
+    if not out and root.is_dir():
+        hits = sorted(root.glob(f"*/*.integrated/{os.path.basename(TAXONOMY_RELPATH)}"))
+        out.extend(hits)
+        if not out:
+            # 聚合层兜底 (历史目录形态): taxonomy/integrated/ 或 taxonomy/Votus.integrated/
+            for sub in ("integrated", "Votus.integrated"):
+                p = root / _DIR_TABLE["legacy"]['d_taxonomy'] / sub / os.path.basename(TAXONOMY_RELPATH)
+                if p.is_file():
+                    out.append(p)
+    return out
 
 
 def write_boundary(root: Path, boundary: str, entries: Dict[str, str],

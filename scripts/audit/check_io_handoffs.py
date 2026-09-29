@@ -22,6 +22,7 @@ standard 布局 (doc/IO_LAYOUT_DESIGN.md) 下上下游衔接断裂。
    归档为 archive/auto_known_virus.orphan_utils_20260915.py; archive/ 本身不扫描)
   virome_discovery_pipeline/integrated_summary.py     审计专用 (仅 scripts/audit 引用)
   endogenous_virus_pipeline/tests/      legacy fixture 测试
+  virome_discovery_pipeline/tests/      测试 fixture 同理 (legacy 目录名是测试对象)
 
 用法:
   python scripts/audit/check_io_handoffs.py           # 打印报告, FAIL 即退出码 1
@@ -55,7 +56,7 @@ WHITELIST = (
     "mmpv_common/io_layout.py", "mmpv_common/tests/",
     "phylo_results/", "_debug_stage1",
     "integrated_summary.py",
-    "endogenous_virus_pipeline/tests/",
+    "endogenous_virus_pipeline/tests/", "virome_discovery_pipeline/tests/",
 )
 
 
