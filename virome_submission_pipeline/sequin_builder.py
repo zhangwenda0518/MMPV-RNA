@@ -52,8 +52,7 @@ import os
 import sys
 import json
 import re
-import random
-import string
+import hashlib
 import logging
 from pathlib import Path
 from datetime import datetime
@@ -96,9 +95,14 @@ def sanitize_filename(name, max_len=50):
     return name[:max_len]
 
 
-def random_id(length=5):
-    """Cenote-Taker3 风格的随机 5 位 ID"""
-    return ''.join(random.choices(string.ascii_uppercase + string.digits, k=length))
+def stable_id(taxon, seq, length=5):
+    """确定性派生 5 位隔离株后缀 (S1-④, 替代旧 random_id)
+
+    输入取该病毒的 taxon 与代表序列的前 200 bp: 同一输入恒得同一 ID,
+    重跑不再产生不同产物名 (旧实现用无种子 random, 每次随机)。
+    """
+    digest = hashlib.sha1(f"{taxon}|{len(seq)}|{seq[:200]}".encode('utf-8')).hexdigest()
+    return digest[:length].upper()
 
 
 def load_taxonomy(tax_tsv):
@@ -305,27 +309,32 @@ class SequinBuilder:
         """为一个病毒构建全套 Sequin 文件"""
         taxonomy = vgroup['taxonomy']
         fname_base = sanitize_filename(taxonomy)
-        isolate_id = f"{fname_base}_{random_id()}"
+        # 代表序列: 该病毒第一条 contig 的核酸序列 (ID 由 taxon+序列确定性派生, S1-④)
+        rep_seq = ''
+        if vgroup['seqs']:
+            rep_seq = self.fna_seqs.get(vgroup['seqs'][0]['contig'], '')
+        isolate_id = f"{fname_base}_{stable_id(taxonomy, rep_seq)}"
         ssras = sorted(vgroup['sras'])
         genome_type, genome_struc = build_genome_type(taxonomy)
 
         # 收集该病毒所有序列的元数据
         meta = self._collect_meta(ssras)
 
+        # isolate_id 已含 fname_base, 文件名不再重复拼接 (S1-④)
         # ── 1. .fsa (Sequin FASTA with embedded metadata) ──
-        fsa_path = self.sequin_dir / f"{fname_base}_{isolate_id}.fsa"
+        fsa_path = self.sequin_dir / f"{isolate_id}.fsa"
         self._write_fsa(fsa_path, vgroup, taxonomy, isolate_id, meta, genome_type)
 
         # ── 2. .tbl (feature table for this virus) ──
-        tbl_path = self.sequin_dir / f"{fname_base}_{isolate_id}.tbl"
+        tbl_path = self.sequin_dir / f"{isolate_id}.tbl"
         self._write_tbl(tbl_path, vgroup)
 
         # ── 3. .cmt (structured comment) ──
-        cmt_path = self.sequin_dir / f"{fname_base}_{isolate_id}.cmt"
+        cmt_path = self.sequin_dir / f"{isolate_id}.cmt"
         self._write_cmt(cmt_path, vgroup, meta)
 
         # ── 4. .src (source modifier, 备用) ──
-        src_path = self.sequin_dir / f"{fname_base}_{isolate_id}.src"
+        src_path = self.sequin_dir / f"{isolate_id}.src"
         self._write_src(src_path, vgroup, taxonomy, isolate_id, meta)
 
         # 汇总行
@@ -387,7 +396,9 @@ class SequinBuilder:
                 # [isolation_source=...] [collection_date=...]
                 # [metagenome_source=...] [SRA=...] [Biosample=...] [Bioproject=...]
                 # [moltype=cRNA]
-                gcode = 11 if 'ssRNA' in genome_type else 1
+                # gcode 统一标准密码子表 1 (S1-③): Rhabdoviridae 等植物病毒通用
+                # transl_table=1; 旧的 11 是细菌/质体表, 不适用于负链 RNA 病毒
+                gcode = 1
                 mol_type = 'cRNA' if 'RNA' in genome_type else 'DNA'
                 topology = self.topology_map.get(contig, 'linear')
 
@@ -424,7 +435,11 @@ class SequinBuilder:
                         f.write(line + '\n')
 
     def _write_cmt(self, path, vgroup, meta):
-        """写结构化注释 (.cmt)"""
+        """写结构化注释 (.cmt)
+
+        NCBI 要求 START/END 成对 (StructuredCommentSuffix, S1-②):
+        每个块的 END 紧跟各自键值之后, 两块互不嵌套。
+        """
         with open(path, 'w', encoding='utf-8') as f:
             f.write("StructuredCommentPrefix\t##Genome-Assembly-Data-START##\n")
             f.write(f"Assembly Method\t{self.assembler}\n")
@@ -432,7 +447,7 @@ class SequinBuilder:
             f.write(f"Annotation Pipeline\t{self.annotation_pipeline}\n")
             if self.enrichment:
                 f.write(f"Viral Enrichment\t{self.enrichment}\n")
-            f.write("\n")
+            f.write("StructuredCommentSuffix\t##Genome-Assembly-Data-END##\n")
 
             # MIUVIG 部分
             f.write("StructuredCommentPrefix\t##MIUVIG-Data-START##\n")
@@ -444,6 +459,7 @@ class SequinBuilder:
                 f.write(f"collection_date\t{meta['collection_date']}\n")
             n_contigs = len(vgroup['seqs'])
             f.write(f"number_contig\t{n_contigs}\n")
+            f.write("StructuredCommentSuffix\t##MIUVIG-Data-END##\n")
 
     def _write_src(self, path, vgroup, taxonomy, isolate_id, meta):
         """写 source modifier (.src) — 备用格式"""

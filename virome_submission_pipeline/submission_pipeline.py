@@ -44,7 +44,7 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 from mmpv_common.io_layout import layout_dirs as _layout_dirs
-_D = _layout_dirs(os.environ.get("MMPV_IO_LAYOUT", "legacy"))
+_D = _layout_dirs(os.environ.get("MMPV_IO_LAYOUT"))
 from pathlib import Path
 from datetime import datetime
 from Bio import SeqIO
@@ -141,15 +141,45 @@ def setup_logger(out_dir):
 
 
 def run(cmd, log, step_name, check=False):
-    """执行命令, 容忍失败"""
+    """执行命令, 容忍失败
+
+    返回 True 仅当子进程 exit code == 0。check=True 时非零退出抛
+    CalledProcessError (行为保持); check=False 时不再无条件返回 True,
+    避免 table2asn/suvtk 失败却被当成成功 (stderr 尾部会打印到日志)。
+    """
     log.info("[%s] %s", step_name, cmd[:120])
     try:
-        subprocess.run(cmd, shell=True, check=check, executable='/bin/bash')
-        log.info("[%s] ✓", step_name)
-        return True
+        p = subprocess.run(cmd, shell=True, check=check, executable='/bin/bash',
+                           stderr=subprocess.PIPE, text=True)
     except subprocess.CalledProcessError as e:
         log.error("[%s] ✗ (exit=%d)", step_name, e.returncode)
+        for line in (e.stderr or '').strip().splitlines()[-10:]:
+            log.error("[%s]   %s", step_name, line)
         return False
+    except OSError as e:
+        # 例如 /bin/bash 不存在 (非 Linux 环境): 按失败处理而不是崩溃
+        log.error("[%s] ✗ 无法执行: %s", step_name, e)
+        return False
+    if p.returncode != 0:
+        log.error("[%s] ✗ (exit=%d)", step_name, p.returncode)
+        for line in (p.stderr or '').strip().splitlines()[-10:]:
+            log.error("[%s]   %s", step_name, line)
+        return False
+    if p.stderr:
+        log.debug("[%s] stderr:\n%s", step_name, p.stderr[-2000:])
+    log.info("[%s] ✓", step_name)
+    return True
+
+
+def _ncbi_email(log=None):
+    """NCBI 联系邮箱: 优先环境变量 NCBI_EMAIL; 取不到返回空串并告警
+
+    不在代码里硬编码任何邮箱 (含示例/真实邮箱)。
+    """
+    email = os.environ.get("NCBI_EMAIL", "").strip()
+    if not email and log is not None:
+        log.warning("  未设置 NCBI_EMAIL 环境变量: template.sbt 联系邮箱留空, 提交前必须补全")
+    return email
 
 
 def _find_suvtk_output(work_dir, rel_path, min_size=100):
@@ -192,6 +222,264 @@ def _detect_keep_fasta(work_dir):
                 print(f"[*] 回退 HQ 全集 FASTA: {hq}")
                 return str(hq)
     return None
+
+
+# ══════════════════════════════════════════════════════════════
+# 出 .sqn 前的硬校验 gate (S1-⑦)
+# ══════════════════════════════════════════════════════════════
+
+# 位置写法: 常规两列 a..b (可含 < > 部分标记) / 旧版 complement(a..b) / join(a..b,c..d)
+_COMPLEMENT_LOC_RE = re.compile(r'^complement\(\s*(.*?)\s*\)$', re.IGNORECASE)
+_SEGMENT_LOC_RE = re.compile(r'[<>]?(\d+)\s*\.\.\s*[<>]?(\d+)')
+
+# source.src 必填列 (与 suvtk table2asn 前既有校验保持一致)
+_SRC_REQUIRED_COLS = ("Collection_date", "geo_loc_name", "Lat_Lon",
+                      "Bioproject", "Biosample", "SRA")
+
+_REVCOMP_TABLE = str.maketrans('ACGTNRYKMSWBDHV', 'TGCANYRMKSWVHDB')
+
+
+def _revcomp(seq):
+    """反向互补 (支持 IUPAC 简并碱基)"""
+    return seq.translate(_REVCOMP_TABLE)[::-1]
+
+
+def _placeholder_pattern():
+    """占位符正则: 优先跨文件 import unified_metadata.PLACEHOLDER_RE
+
+    导入失败 (如 SCRIPT_DIR 不在 sys.path) 时回退等价副本。
+    """
+    try:
+        if str(SCRIPT_DIR) not in sys.path:
+            sys.path.insert(0, str(SCRIPT_DIR))
+        from unified_metadata import PLACEHOLDER_RE
+        return PLACEHOLDER_RE
+    except Exception:
+        return (r'XXXX|YYYY-MM-DD|DD-Mmm-YYYY|Country:Region|PRJNAXXXX|SAMNXXXXXXXX'
+                r'|XX\.[Xx0-9]{1,3}\s*N|XXX\.[Xx0-9]{1,3}\s*E|XX\.[Xx]{1,3}')
+
+
+def _gate_locate(workdir, explicit, names, rel_dirs):
+    """定位 gate 输入: 显式路径优先, 否则按常规目录 + 递归查找"""
+    if explicit:
+        p = Path(explicit)
+        return p if p.is_file() else None
+    wd = Path(workdir)
+    for rel in rel_dirs:
+        for n in names:
+            p = wd / rel / n
+            if p.is_file():
+                return p
+    for n in names:
+        hits = sorted(wd.rglob(n))
+        if hits:
+            return hits[0]
+    return None
+
+
+def _parse_cds_location(col1, col2=None):
+    """解析 .tbl 位置列 → (segments, strand, is_partial); 无法解析返回 None
+
+    - 常规: col1, col2 两列 (列1 > 列2 = 负链反转区间; < > 为部分标记)
+    - 旧版: 单列 complement(a..b)
+    - join/order(a..b,c..d): 按片段累加 (仅校验长度)
+    """
+    text = col1.strip() if col2 is None else f"{col1.strip()}..{col2.strip()}"
+    strand = 1
+    m = _COMPLEMENT_LOC_RE.match(text)
+    if m:
+        strand = -1
+        text = m.group(1).strip()
+    elif col2 is not None:
+        # 5 列格式负链 = 反转区间 (列1 > 列2)
+        try:
+            n1 = int(col1.strip().replace('>', '').replace('<', ''))
+            n2 = int(col2.strip().replace('>', '').replace('<', ''))
+            if n1 > n2:
+                strand = -1
+        except ValueError:
+            pass
+    is_partial = ('<' in text) or ('>' in text)
+    low = text.lower()
+    if low.startswith('join(') or low.startswith('order('):
+        inner = text[text.find('(') + 1: text.rfind(')')]
+        seg_texts = [s for s in re.split(r'[,\s]+', inner) if s]
+    else:
+        seg_texts = [text]
+    segments = []
+    for st in seg_texts:
+        m2 = _SEGMENT_LOC_RE.fullmatch(st)
+        if not m2:
+            return None
+        a, b = int(m2.group(1)), int(m2.group(2))
+        segments.append((min(a, b), max(a, b)))
+    if not segments:
+        return None
+    return segments, strand, is_partial
+
+
+def validate_submission_gate(workdir, logger, tbl_path=None, fna_path=None,
+                             src_path=None):
+    """出 .sqn 前的硬校验 gate (S1-⑦)
+
+    在 suvtk table2asn 运行前调用; 检查:
+      1) featuretable.tbl 每个 CDS: 坐标可解析 (含负链反转区间 / complement(a..b)),
+         长度 %3==0、坐标不越界 → ERROR; 起始/终止密码子非规范 → WARN
+      2) qualifier 值 (gene/product/locus_tag/note 等) 含内嵌 tab/换行 → ERROR
+      3) source.src 必填列 (_SRC_REQUIRED_COLS) 非空且不命中占位符 → ERROR
+
+    任一 ERROR → 打印汇总并返回 False, 调用方应中止该步骤 (不标记成功);
+    全部通过返回 True。--skip-gate 可在调用方显式跳过。
+    """
+    log = logger
+    errors, warnings = [], []
+    n_cds = 0
+
+    tbl = _gate_locate(workdir, tbl_path,
+                       ("featuretable_updated.tbl", "featuretable.tbl"),
+                       ("analyze_hypothetical", "suvtk.features_output", "2_features"))
+    fna = _gate_locate(workdir, fna_path, ("reoriented_nucleotide_sequences.fna",),
+                       ("suvtk.features_output", "2_features"))
+    src = _gate_locate(workdir, src_path, ("source.src",),
+                       ("suvtk_submission", "submission", "metadata_output", "3_metadata"))
+
+    log.info("─" * 40 + "\n  提交前硬校验 (gate)\n" + "─" * 40)
+    if not tbl:
+        errors.append("未找到 featuretable(.tbl): 无法校验 CDS 坐标/qualifier")
+    if not fna:
+        errors.append("未找到 .fna 核酸序列: 无法校验 CDS 长度/密码子")
+    if not src:
+        errors.append("未找到 source.src: 必填列无法校验")
+
+    # 载入核酸序列 (校验坐标/密码子用)
+    seqs = {}
+    if fna:
+        try:
+            for rec in SeqIO.parse(str(fna), "fasta"):
+                seqs[rec.id] = str(rec.seq).upper().replace('U', 'T')
+        except Exception as e:                       # 文件解析失败按 ERROR 收集
+            errors.append(f"{fna.name} 解析失败: {e}")
+
+    # ── 1+2. featuretable.tbl ──
+    if tbl:
+        try:
+            tbl_text = tbl.read_text(encoding='utf-8', errors='replace')
+        except OSError as e:
+            tbl_text = ''
+            errors.append(f"{tbl.name} 读取失败: {e}")
+        cur_id = None
+        for i, raw in enumerate(tbl_text.split('\n'), 1):
+            line = raw.rstrip('\r')
+            if not line.strip():
+                continue
+            if line.startswith('>Feature '):
+                ids = line.split('>Feature ', 1)[1].split()
+                cur_id = ids[0] if ids else None
+                if len(ids) > 1:
+                    warnings.append(f"{tbl.name}:{i} >Feature 行含多个 ID {ids[:3]} "
+                                    "→ 按第一个 ID 归属 (旧版语法)")
+                continue
+            stripped = line.strip()
+            if line[0] in '\t ':
+                # qualifier 行: 值含内嵌 tab/换行 → ERROR (S1-⑦②)
+                kv = stripped.split('\t')
+                if len(kv) > 2:
+                    errors.append(f"{tbl.name}:{i} qualifier {kv[0]!r} 值含内嵌 tab/换行: "
+                                  f"{stripped[:60]!r}")
+                continue
+            # 位置行: 仅 CDS 参与坐标校验
+            parts = stripped.split()
+            if not parts or parts[-1] != 'CDS':
+                continue
+            n_cds += 1
+            loc_cols = parts[:-1]
+            if len(loc_cols) == 1:
+                parsed = _parse_cds_location(loc_cols[0])
+            elif len(loc_cols) == 2:
+                parsed = _parse_cds_location(loc_cols[0], loc_cols[1])
+            else:
+                parsed = None
+            if parsed is None:
+                errors.append(f"{tbl.name}:{i} CDS 位置无法解析: {stripped[:60]!r}")
+                continue
+            segments, strand, is_partial = parsed
+            cds_len = sum(e - s + 1 for s, e in segments)
+            if cds_len % 3 != 0:
+                errors.append(f"{tbl.name}:{i} CDS 长度 {cds_len} 非 3 倍数 "
+                              f"(位置 {stripped[:40]!r})")
+            seq = seqs.get(cur_id) if cur_id else None
+            if seq is None:
+                errors.append(f"{tbl.name}:{i} 特征 ID {cur_id!r} 在 "
+                              f"{fna.name if fna else '.fna'} 中不存在")
+                continue
+            lo = min(s for s, _ in segments)
+            hi = max(e for _, e in segments)
+            if lo < 1 or hi > len(seq):
+                errors.append(f"{tbl.name}:{i} 坐标 {lo}..{hi} 超出 {cur_id} "
+                              f"长度 {len(seq)}")
+                continue
+            # 起始/终止密码子 (单片段、非部分标记时检查; 异常仅 WARN)
+            if len(segments) == 1 and not is_partial:
+                s0, e0 = segments[0]
+                sub = seq[s0 - 1:e0]
+                if strand == -1:
+                    sub = _revcomp(sub)
+                if len(sub) >= 6:
+                    if sub[:3] != 'ATG':
+                        warnings.append(f"{tbl.name}:{i} {cur_id} 起始密码子 {sub[:3]} "
+                                        "非 ATG")
+                    if sub[-3:] not in ('TAA', 'TAG', 'TGA'):
+                        warnings.append(f"{tbl.name}:{i} {cur_id} 终止密码子 {sub[-3:]} "
+                                        "非 TAA/TAG/TGA")
+
+    # ── 3. source.src 必填列 ──
+    if src:
+        ph_re = re.compile(_placeholder_pattern())
+        try:
+            with open(src, encoding='utf-8-sig') as vf:
+                header = vf.readline().rstrip('\n').rstrip('\r').split('\t')
+                missing_cols = [c for c in _SRC_REQUIRED_COLS if c not in header]
+                if missing_cols:
+                    errors.append(f"{src.name} 缺少必填列: {', '.join(missing_cols)}")
+                n_rows, n_bad, bad_hits = 0, 0, []
+                for ln, vline in enumerate(vf, 2):
+                    if not vline.strip():
+                        continue
+                    n_rows += 1
+                    vmap = dict(zip(header, vline.rstrip('\n').rstrip('\r').split('\t')))
+                    for c in _SRC_REQUIRED_COLS:
+                        if c not in header:
+                            continue
+                        val = str(vmap.get(c, '')).strip()
+                        if not val or ph_re.search(val):
+                            n_bad += 1
+                            if len(bad_hits) < 5:
+                                bad_hits.append(f"L{ln} {c}={val!r}")
+                            break
+                if n_bad:
+                    errors.append(f"{src.name} 必填列空值/占位符: {n_bad}/{n_rows} 行 "
+                                  f"({'; '.join(bad_hits)}) — 提交前必须补齐")
+                else:
+                    log.info("  source.src 必填列校验通过 (%d 行)", n_rows)
+        except OSError as e:
+            errors.append(f"{src.name} 读取失败: {e}")
+
+    # ── 汇总 ──
+    for w in warnings[:10]:
+        log.warning("  [WARN] %s", w)
+    if len(warnings) > 10:
+        log.warning("  ... 另有 %d 条 WARN", len(warnings) - 10)
+    if errors:
+        log.error("  提交前硬校验未通过: %d ERROR, %d WARN (CDS %d 个)",
+                  len(errors), len(warnings), n_cds)
+        for e in errors[:20]:
+            log.error("  [ERROR] %s", e)
+        if len(errors) > 20:
+            log.error("  ... 另有 %d 条 ERROR", len(errors) - 20)
+        log.error("  修复后重跑; 确需跳过请显式加 --skip-gate")
+        return False
+    log.info("  ✓ 提交前硬校验通过 (CDS %d 个, WARN %d 条)", n_cds, len(warnings))
+    return True
 
 
 # ══════════════════════════════════════════════════════════════
@@ -738,6 +1026,8 @@ def main():
     p_disc.add_argument('--force-features', action='store_true')
     p_disc.add_argument('--force-hypo', action='store_true')
     p_disc.add_argument('--export-metadata', action='store_true')
+    p_disc.add_argument('--skip-gate', action='store_true',
+                        help='显式跳过出 .sqn 前的硬校验 gate (CDS 长度/密码子/qualifier/source.src)')
 
     args = parser.parse_args()
 
@@ -858,7 +1148,7 @@ def main():
     log.info("  工作目录: %s", work_dir)
     log.info("  管道类型: %s — %s",
              pipeline_type,
-             f"1种病毒 × {len(virus_list[0]['n_samples']) if virus_list else '?'} 个样本" if pipeline_type == 'analysis'
+             f"1种病毒 × {virus_list[0]['n_samples'] if virus_list else '?'} 个样本" if pipeline_type == 'analysis'
              else "多病毒, 每病毒1条代表序列")
     log.info("  输出模式: %s", args.mode)
     log.info("=" * 60)
@@ -1051,7 +1341,11 @@ def main():
 
         # 生成 source.src (TSV 格式, suvtk table2asn 要求)
         # ref: suvtk docs — Sequence_ID, Organism, Isolate, Collection_date, geo_loc_name, Lat_Lon, ...
-        if not src_file.exists():
+        # NOTE: Collection_date/geo_loc_name/Lat_Lon 不写死默认值 (旧版本硬编码 2024 /
+        #       China:Ningxia, 把推测写成观测); 必须由用户补齐后重新生成。
+        if src_file.exists():
+            log.info("  复用已存在的 source.src: %s (如需重新生成请先删除)", src_file)
+        else:
             # 从 taxonomy 和 ref_info 读取实际数据
             ref_info_path = work_dir.parent / _D["d_analysis"] / "ref_info.tsv"
             has_ref_info = ref_info_path.is_file()
@@ -1072,19 +1366,51 @@ def main():
                     if organism in ("nan", "", "NA", None):
                         organism = "unclassified plant virus"
                     isolate = f"NXGQ{isolate_counter:03d}"  # NingXia GouQi unique ID
-                    sf.write(f"{cid}\t{organism}\t{isolate}\t2024\t"
-                            f"China:Ningxia\t\t\t\t\t\tTRUE\tplant virome\tLycium chinense\n")
+                    sf.write("\t".join([cid, organism, isolate,
+                                        "", "", "", "", "", "", "", "TRUE",
+                                        "plant virome", "Lycium chinense"]) + "\n")
                 if not has_ref_info:
                     # fallback: generate from FASTA
                     for rec in SeqIO.parse(str(fasta), "fasta"):
                         isolate_counter += 1
                         isolate = f"NXGQ{isolate_counter:03d}"
-                        sf.write(f"{rec.id}\tunclassified plant virus\t{isolate}\t2024\t"
-                                f"China:Ningxia\t\t\t\t\t\tTRUE\tplant virome\tLycium chinense\n")
+                        sf.write("\t".join([rec.id, "unclassified plant virus", isolate,
+                                            "", "", "", "", "", "", "", "TRUE",
+                                            "plant virome", "Lycium chinense"]) + "\n")
             log.info("  生成 source.src (%d 条)", isolate_counter)
+
+        # source.src 必填列校验: Collection_date/Lat_Lon/Bioproject/Biosample/SRA 为空时显式告警
+        _required_src_cols = ("Collection_date", "geo_loc_name", "Lat_Lon",
+                              "Bioproject", "Biosample", "SRA")
+        try:
+            with open(src_file) as vf:
+                vh = vf.readline().rstrip("\n").split("\t")
+                n_rows, n_bad = 0, 0
+                empty_cols = set()
+                for vline in vf:
+                    if not vline.strip():
+                        continue
+                    n_rows += 1
+                    vals = vline.rstrip("\n").split("\t")
+                    vmap = dict(zip(vh, vals))
+                    for c in _required_src_cols:
+                        if not vmap.get(c, "").strip():
+                            empty_cols.add(c)
+                    if any(not vmap.get(c, "").strip() for c in _required_src_cols):
+                        n_bad += 1
+                if empty_cols:
+                    log.warning("  ⚠️ source.src 必填列未填: %s (%d/%d 行不完整) — "
+                                "提交前必须人工补齐, 否则 table2asn 会失败",
+                                ", ".join(sorted(empty_cols)), n_bad, n_rows)
+                else:
+                    log.info("  source.src 必填列校验通过 (%d 行)", n_rows)
+        except OSError as e:
+            log.warning("  source.src 校验读取失败: %s", e)
 
         # 生成 template.sbt (NCBI ASN.1 格式, table2asn 兼容)
         # NOTE: ASN.1 解析对格式极其敏感, 每个字段必须单独一行
+        # 联系邮箱来自 NCBI_EMAIL 环境变量, 取不到留空并告警 (不硬编码邮箱)
+        email = _ncbi_email(log)
         if not sbt_file.exists():
             with open(sbt_file, "w") as sf:
                 sf.write(
@@ -1106,7 +1432,7 @@ def main():
                     '        sub "Ningxia",\n'
                     '        country "China",\n'
                     '        street "Ningxia University",\n'
-                    '        email "zhangwenda@example.com",\n'
+                    '        email "' + email + '",\n'
                     '        postal-code "750021"\n'
                     '      }\n'
                     '    }\n'
@@ -1160,16 +1486,16 @@ def main():
                     '    }\n'
                     '  }\n'
                     '}\n'
-                    'Seqdesc ::= user {\n'
-                    '  type str "Submission",\n'
-                    '  data {\n'
-                    '    {\n'
-                    '      label str "AdditionalComment",\n'
-                    '      data str "ALT EMAIL:zhangwenda@example.com"\n'
-                    '    }\n'
-                    '  }\n'
-                    '}\n'
-                    'Seqdesc ::= user {\n'
+                    + (('Seqdesc ::= user {\n'
+                        '  type str "Submission",\n'
+                        '  data {\n'
+                        '    {\n'
+                        '      label str "AdditionalComment",\n'
+                        '      data str "ALT EMAIL:' + email + '"\n'
+                        '    }\n'
+                        '  }\n'
+                        '}\n') if email else '')
+                    + 'Seqdesc ::= user {\n'
                     '  type str "Submission",\n'
                     '  data {\n'
                     '    {\n'
@@ -1183,8 +1509,21 @@ def main():
 
         comments_file = Path(str(comments_cmt) + ".cmt")  # suvtk 自动加 .cmt
 
+        # 4.5 出 .sqn 前硬校验 gate (S1-⑦): 任一 ERROR → 中止 table2asn (不标记成功)
+        gate_ok = True
+        if args.skip_gate:
+            log.warning("  --skip-gate: 跳过提交前硬校验 gate")
+        else:
+            gate_ok = validate_submission_gate(
+                work_dir, log,
+                tbl_path=updated_tbl,
+                fna_path=str(reoriented_fna) if reoriented_fna else None,
+                src_path=str(src_file))
+
         # 5. suvtk table2asn → .sqn
-        if reoriented_fna and reoriented_fna.exists() and updated_tbl and os.path.exists(updated_tbl):
+        if not gate_ok:
+            log.error("  提交前硬校验未通过 → 跳过 suvtk table2asn (确需跳过请加 --skip-gate)")
+        elif reoriented_fna and reoriented_fna.exists() and updated_tbl and os.path.exists(updated_tbl):
             if not comments_file.exists():
                 log.warning("  comments.cmt 不存在, 跳过 suvtk table2asn")
             elif not sbt_file.exists():

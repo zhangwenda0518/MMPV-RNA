@@ -63,7 +63,11 @@ LOG = setup_logger()
 # ══════════════════════════════════════════════════════════════
 
 class CdsEntry:
-    """featuretable.tbl 中的一条 CDS 记录"""
+    """featuretable.tbl 中的一条 CDS 记录
+
+    start/end 恒为归一化坐标 (start <= end); strand=-1 时 to_tbl_lines
+    按反转区间 (大坐标在前) 写出, 符合 NCBI 5 列 feature table 规范。
+    """
     __slots__ = ('seq_id', 'start', 'end', 'strand',
                  'cds_index', 'product', 'inferences', 'notes')
 
@@ -135,16 +139,115 @@ class ProteinEntry:
 
 
 class BlastHit:
-    """一条 blastp 命中结果"""
-    __slots__ = ('query', 'sseqid', 'pident', 'evalue', 'bitscore', 'stitle')
+    """一条 blastp / diamond / hmmscan 命中结果"""
+    __slots__ = ('query', 'sseqid', 'pident', 'evalue', 'bitscore', 'stitle', 'tool')
 
-    def __init__(self, query, sseqid, pident, evalue, bitscore, stitle):
+    def __init__(self, query, sseqid, pident, evalue, bitscore, stitle, tool=''):
         self.query = query
         self.sseqid = sseqid
         self.pident = float(pident)
         self.evalue = float(evalue)
         self.bitscore = float(bitscore)
         self.stitle = stitle
+        self.tool = tool   # 真实来源: DIAMOND / HMMER / BLASTP; 外部文件为空
+
+
+# ══════════════════════════════════════════════════════════════
+# 工具来源标记与版本探测 (写 /inference 用, 不伪造来源/版本)
+# ══════════════════════════════════════════════════════════════
+
+_RUN_TOOL_VERSIONS = {}        # 工具标记 → 本次运行探测到的版本
+_TOOL_VERSION_CACHE = {}
+_NO_TOOL_WARNED = False
+
+
+def _probe_tool_version(tool_bin):
+    """探测外部工具版本号 (diamond --version / hmmscan -h / blastp --version)
+
+    探测失败返回 'unknown' (inference 中如实写 unknown, 不编造版本)。
+    """
+    key = str(tool_bin)
+    if key in _TOOL_VERSION_CACHE:
+        return _TOOL_VERSION_CACHE[key]
+    version = 'unknown'
+    base = os.path.basename(key).lower()
+    if 'hmm' in base:
+        cmds = [f"{key} -h"]
+    else:
+        cmds = [f"{key} --version", f"{key} -version"]
+    for cmd in cmds:
+        try:
+            p = subprocess.run(cmd, shell=True, capture_output=True,
+                               text=True, encoding='utf-8', errors='replace',
+                               timeout=30)
+        except Exception:
+            continue
+        text = (p.stdout or '') + '\n' + (p.stderr or '')
+        m = re.search(r'(\d+\.\d+(?:\.\d+)?)', text)
+        if m:
+            version = m.group(1)
+            break
+    if version == 'unknown':
+        LOG.warning("[版本探测] 无法获取 %s 版本, inference 将写 unknown", tool_bin)
+    _TOOL_VERSION_CACHE[key] = version
+    return version
+
+
+def _tool_version_for(tool):
+    """inference 使用的版本: 优先本次运行探测值, 否则现场探测默认二进制"""
+    if tool not in ('DIAMOND', 'HMMER', 'BLASTP'):
+        return 'unknown'
+    if tool in _RUN_TOOL_VERSIONS:
+        return _RUN_TOOL_VERSIONS[tool]
+    return _probe_tool_version({'DIAMOND': 'diamond', 'HMMER': 'hmmscan',
+                                'BLASTP': 'blastp'}[tool])
+
+
+def _line_with_tool(line, tag):
+    """给 outfmt-6 结果行补第 14 列工具来源标记 (已有标记则原样保留)"""
+    s = line.rstrip('\n')
+    if not s:
+        return line if line.endswith('\n') else line + '\n'
+    if len(s.split('\t')) >= 14:
+        return s + '\n'
+    return s + '\t' + tag + '\n'
+
+
+def _tag_tool(path, tag):
+    """给 outfmt-6 结果文件补工具来源标记 (写回原文件)"""
+    if not os.path.exists(path):
+        return
+    try:
+        with open(path, 'r') as f:
+            lines = [_line_with_tool(ln, tag) for ln in f]
+        with open(path, 'w') as f:
+            f.writelines(lines)
+    except OSError as e:
+        LOG.warning("  结果文件补工具标记失败 (%s): %s", path, e)
+
+
+def _build_inference(blast_hit):
+    """按命中真实来源生成 /inference 字符串
+
+    DIAMOND → alignment:DIAMOND:<version>;evalue=<e>
+    HMMER   → protein motif:HMMER:<version>
+    外部文件无来源标记 → 不写 inference (仅告警一次)
+    """
+    global _NO_TOOL_WARNED
+    tool = (getattr(blast_hit, 'tool', '') or '').upper()
+    if tool == 'DIAMOND':
+        return (f"alignment:DIAMOND:{_tool_version_for('DIAMOND')};"
+                f"evalue={blast_hit.evalue:.1e}")
+    if tool == 'HMMER':
+        return f"protein motif:HMMER:{_tool_version_for('HMMER')}"
+    if tool == 'BLASTP':
+        return (f"alignment:BLASTP:{_tool_version_for('BLASTP')};"
+                f"evalue={blast_hit.evalue:.1e}")
+    if not _NO_TOOL_WARNED:
+        LOG.warning("  命中无工具来源标记 (外部 --blast 文件?): 不写 inference。"
+                    "如确为 blastp 结果, 可在结果文件每行追加第 14 列 BLASTP")
+        _NO_TOOL_WARNED = True
+    return ''
 
 
 # ══════════════════════════════════════════════════════════════
@@ -160,8 +263,20 @@ def _count_lines(filepath):
     return count
 
 
+# 旧版 known_virus_submit 残留语法: 位置列写成 complement(a..b) (flatfile 风格)
+_LEGACY_COMPLEMENT_RE = re.compile(
+    r'^complement\(\s*[<>]?(\d+)\s*\.\.\s*[<>]?(\d+)\s*\)$', re.IGNORECASE)
+
+
 def parse_featuretable(tbl_path):
-    """解析 featuretable.tbl，返回 {seq_id: [CdsEntry, ...]}"""
+    """解析 featuretable.tbl，返回 {seq_id: [CdsEntry, ...]}
+
+    兼容服务器上旧版 known_virus_submit 残留的 .tbl 语法 (S1-①):
+      - `>Feature id1 id2 id3` 单行多 ID → 按第一个 ID 归属 (WARN, 建议重新生成 tbl)
+      - `complement(a..b)` 单列位置 → 解析括号内坐标, strand = -1 (WARN)
+    负链反转区间写法 (列1 > 列2) 与 complement(a..b) 均归一化为 start=小, end=大,
+    strand=-1, 保证 to_tbl_lines 重新写出的位置行仍是负链反转区间。
+    """
     if not os.path.exists(tbl_path):
         LOG.error("featuretable.tbl 不存在: %s", tbl_path)
         sys.exit(1)
@@ -172,6 +287,8 @@ def parse_featuretable(tbl_path):
     current_cds = None
     seq_count = 0
     cds_total = 0
+    n_legacy_complement = 0
+    n_multi_id = 0
 
     with open(tbl_path, 'r', encoding='utf-8') as f:
         pbar = tqdm(f, total=total_lines, desc="[1] 解析 featuretable.tbl",
@@ -180,28 +297,41 @@ def parse_featuretable(tbl_path):
         for raw_line in pbar:
             line = raw_line.rstrip('\n')
 
-            # >Feature 行 → 新序列
+            # >Feature 行 → 新序列 (旧版可能一行多个 ID: 按第一个归属, 不串位)
             if line.startswith('>Feature '):
-                current_seq = line.split('>Feature ', 1)[1].strip()
-                records.setdefault(current_seq, [])
+                ids = line.split('>Feature ', 1)[1].split()
+                if len(ids) > 1:
+                    n_multi_id += 1
                 current_cds = None
+                if not ids:
+                    continue
+                current_seq = ids[0]
+                records.setdefault(current_seq, [])
                 seq_count += 1
                 continue
 
-            # CDS 行: 数字 tab 数字 tab CDS
+            # CDS 行: 数字 tab 数字 tab CDS (旧版可能写 complement(a..b) 单列位置)
             stripped = line.strip()
             parts = stripped.split()
+            cds_span = None
             if len(parts) >= 3 and parts[2] == 'CDS':
-                current_cds = None
                 try:
                     s = int(parts[0].replace('>', '').replace('<', ''))
                     e = int(parts[1].replace('>', '').replace('<', ''))
+                    cds_span = (s, e, 1 if s <= e else -1)
                 except ValueError:
+                    cds_span = None
+            elif parts and parts[-1] == 'CDS' and _LEGACY_COMPLEMENT_RE.match(parts[0]):
+                m = _LEGACY_COMPLEMENT_RE.match(parts[0])
+                cds_span = (int(m.group(1)), int(m.group(2)), -1)
+                n_legacy_complement += 1
+            if cds_span is not None:
+                if current_seq is None:
                     continue
-
-                strand = 1 if s <= e else -1
+                s, e, strand = cds_span
+                start, end = (s, e) if s <= e else (e, s)
                 idx = len(records[current_seq]) + 1
-                current_cds = CdsEntry(current_seq, s, e, strand, idx)
+                current_cds = CdsEntry(current_seq, start, end, strand, idx)
                 records[current_seq].append(current_cds)
                 cds_total += 1
                 continue
@@ -217,6 +347,12 @@ def parse_featuretable(tbl_path):
                     current_cds.notes.append(attr.split('note\t', 1)[1])
 
     hypo_count = sum(1 for v in records.values() for c in v if c.is_hypothetical)
+    if n_legacy_complement:
+        LOG.warning("  ⚠️ 旧版语法: %d 行位置写成 complement(a..b) (旧版 known_virus_submit 残留), "
+                    "已按负链解析; 建议重新生成 tbl: %s", n_legacy_complement, tbl_path)
+    if n_multi_id:
+        LOG.warning("  ⚠️ 旧版语法: %d 个 >Feature 行含多个 ID (旧版 known_virus_submit 残留), "
+                    "已按第一个 ID 归属; 建议重新生成 tbl: %s", n_multi_id, tbl_path)
     LOG.info("[1] 解析 featuretable.tbl: %d 条序列, %d 个 CDS, %d 个 hypothetical",
              seq_count, cds_total, hypo_count)
     return records
@@ -626,6 +762,9 @@ def run_diamond(hypotheticals, db_path, output_file, threads=8, evalue=1e-3,
             if stdout:
                 LOG.error("  stdout: %s", stdout[:500])
         else:
+            # 记录真实来源与版本, 并给结果行补第 14 列 DIAMOND 标记
+            _RUN_TOOL_VERSIONS['DIAMOND'] = _probe_tool_version(diamond_bin)
+            _tag_tool(output_file, 'DIAMOND')
             hit_lines = sum(1 for _ in open(output_file)) if os.path.exists(output_file) else 0
             if hit_lines == 0 and stderr:
                 LOG.warning("  diamond 无命中结果, stderr: %s", stderr[:500])
@@ -715,7 +854,8 @@ def run_hmmscan(hypotheticals, hmm_db, output_file, threads=8, evalue=1e-3,
             if stderr:
                 LOG.error("  stderr: %s", stderr[:500])
         else:
-            # 解析 hmmscan --tblout → 转换为 diamond outfmt 6 格式
+            # 解析 hmmscan --tblout → 转换为 diamond outfmt 6 格式 (带 HMMER 来源标记)
+            _RUN_TOOL_VERSIONS['HMMER'] = _probe_tool_version(hmmscan_bin)
             hit_count = _convert_hmmer_tblout(tmp_tbl, output_file)
             elapsed = time.time() - start_time
             LOG.info("[4c] hmmscan 完成 → %s (耗时 %.0fs, %d hits)",
@@ -752,11 +892,12 @@ def _convert_hmmer_tblout(tblout_path, output_path):
             score = parts[5]
 
             # 转为 diamond outfmt 6: qseqid sseqid pident ... evalue bitscore stitle
-            # HMM 没有 pident, 用 score 替代; 没有坐标信息填 0
+            # HMM 没有 pident/坐标, 占位 0; 第 14 列记录真实来源 HMMER
             fout.write('\t'.join([
                 query, target_acc, '0.0', '0', '0', '0',
                 '0', '0', '0', '0',
-                evalue, score, target
+                evalue, score, target,
+                'HMMER'
             ]) + '\n')
             hit_count += 1
     return hit_count
@@ -815,6 +956,9 @@ def run_blastp(hypotheticals, db_path, output_file, threads=8, evalue=1e-3):
             if stderr:
                 LOG.error("  stderr: %s", stderr[:500])
         else:
+            # 记录真实来源与版本, 并给结果行补第 14 列 BLASTP 标记
+            _RUN_TOOL_VERSIONS['BLASTP'] = _probe_tool_version('blastp')
+            _tag_tool(output_file, 'BLASTP')
             elapsed = time.time() - start_time
             LOG.info("[4] blastp 完成 → %s (耗时 %.0fs)", output_file, elapsed)
     except subprocess.CalledProcessError as e:
@@ -843,11 +987,11 @@ def _merge_blast_files(diamond_file, hmmer_file, merged_file):
                 diamond_queries.add(line.split('\t')[0])
 
     with open(merged_file, 'w') as fout:
-        # 先写 diamond 结果
+        # 先写 diamond 结果 (按来源文件补 DIAMOND 标记)
         with open(diamond_file, 'r') as f:
             for line in f:
                 if line.strip():
-                    fout.write(line)
+                    fout.write(_line_with_tool(line, 'DIAMOND'))
 
         # hmmscan 补刀: 只写 diamond 没命中的 query
         added = 0
@@ -857,7 +1001,7 @@ def _merge_blast_files(diamond_file, hmmer_file, merged_file):
                     continue
                 query = line.split('\t')[0]
                 if query not in diamond_queries:
-                    fout.write(line)
+                    fout.write(_line_with_tool(line, 'HMMER'))
                     added += 1
 
     LOG.info("[合并] diamond=%d 条, hmmscan 补充=%d 条 → %s",
@@ -921,6 +1065,8 @@ def parse_blast_results(blast_file, annot_table=None):
                 if real_name:
                     stitle = real_name
 
+            # 第 14 列 (可选): 工具来源标记 DIAMOND / HMMER / BLASTP
+            tool = parts[13].strip().upper() if len(parts) > 13 else ''
             hit = BlastHit(
                 query=query,
                 sseqid=sseqid,
@@ -928,6 +1074,7 @@ def parse_blast_results(blast_file, annot_table=None):
                 evalue=parts[10],
                 bitscore=parts[11],
                 stitle=stitle,
+                tool=tool,
             )
 
             all_hits.setdefault(key, []).append(hit)
@@ -1030,11 +1177,11 @@ def write_updated_featuretable(records, blast_results, output_path):
                 if cds.is_hypothetical and blast_hit:
                     product_name = _sanitize_product_name(blast_hit.stitle)
                     cds.product = product_name
-                    inf = (f"alignment:BLASTP:2.16.0:"
-                           f"evalue={blast_hit.evalue:.1e};"
-                           f"pident={blast_hit.pident:.1f}%;"
-                           f"{blast_hit.sseqid}")
-                    cds.inferences.append(inf)
+                    # inference 按命中真实来源写 (DIAMOND / HMMER / BLASTP),
+                    # 不再统一伪造为 BLASTP:2.16.0 / pident
+                    inf = _build_inference(blast_hit)
+                    if inf:
+                        cds.inferences.append(inf)
                     updated_count += 1
 
                 for line in cds.to_tbl_lines():

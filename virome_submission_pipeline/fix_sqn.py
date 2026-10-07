@@ -19,7 +19,7 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 from mmpv_common.io_layout import layout_dirs as _layout_dirs
-_D = _layout_dirs(os.environ.get("MMPV_IO_LAYOUT", "legacy"))
+_D = _layout_dirs(os.environ.get("MMPV_IO_LAYOUT"))
 
 BASE = Path(os.environ.get('MMPV_SUBMIT_BASE', '/home/zhangwenda/virus/data-2026/data-test'))
 MIX = Path(os.environ.get('MMPV_SUBMIT_MIX', '/home/zhangwenda/virus/ningxiagouqi/11.merge_assembly/mix/out'))
@@ -49,9 +49,10 @@ HOST_MAP = {
     'mix': 'Lycium spp. (mixed samples)',
 }
 
-# 本地测序序列 (无 SRA 元数据) 的占位默认值, 提交前人工补
-DEFAULT_DATE = '2024'
-DEFAULT_GEO = 'China:Ningxia'
+# 本地测序序列 (无 SRA 元数据) 不留默认值: 空串 + 告警, 提交前必须人工补
+# (旧版默认 '2024'/'China:Ningxia' 属于把推测写成观测)
+DEFAULT_DATE = ''
+DEFAULT_GEO = ''
 
 # NCBI 参考序列 accession 前缀 (提交时剔除)
 # 兼容两种格式: RefSeq (NC_024458.1) 与 GenBank 传统 accession (HM590055.1, 无下划线)
@@ -99,9 +100,14 @@ def extract_sra(contig):
 
 
 def fmt_date(s):
+    """日期格式化为 DD-Mmm-YYYY
+
+    只接受完整日期 (%Y-%m-%d / %Y/%m/%d / %d-%b-%Y); 年份 (YYYY) 等不完整
+    输入原样返回, 不补全为 '01-Jan-YYYY' (凭空精确到日 = 把推测写成观测)。
+    """
     if not s:
         return ''
-    for fm in ('%Y-%m-%d', '%Y/%m/%d', '%d-%b-%Y', '%Y'):
+    for fm in ('%Y-%m-%d', '%Y/%m/%d', '%d-%b-%Y'):
         try:
             return datetime.strptime(s[:10], fm).strftime('%d-%b-%Y')
         except ValueError:
@@ -149,11 +155,17 @@ def keep_blocks(tbl, keep_ids):
 
 
 def rewrite_sbt(sbt_path, name):
-    """改 template.sbt: 真实邮箱 + 按数据集宿主的标题"""
+    """改 template.sbt: 联系邮箱 (NCBI_EMAIL 环境变量) + 按数据集宿主的标题
+
+    不再硬编码任何邮箱; 环境变量取不到时把邮箱替换为空串并告警。
+    """
     host = HOST_MAP.get(name, 'plant')
     title = f'Plant virome of {host} in Ningxia, China'
+    email = os.environ.get('NCBI_EMAIL', '').strip()
+    if not email:
+        print(f'[{name}] ⚠️ 未设置 NCBI_EMAIL 环境变量: .sbt 联系邮箱留空, 提交前必须补全')
     txt = sbt_path.read_text(encoding='utf-8')
-    txt = txt.replace('zhangwenda@example.com', 'zhangwenda05@163.com')
+    txt = txt.replace('zhangwenda@example.com', email)
     txt = txt.replace('Plant virome of Lycium chinense in Ningxia, China', title)
     txt = txt.replace('Submission Title:None', f'Submission Title:{title}')
     sbt_path.write_text(txt, encoding='utf-8')
@@ -189,6 +201,8 @@ def process(name, out_root, meta_all):
     src_lines = ['Sequence_ID\tOrganism\tIsolate\tCollection_date\tgeo_loc_name\t'
                  'Lat_Lon\tBioproject\tBiosample\tSRA\tSegment\tMetagenomic\tMetagenome_source\tHost']
     n_sra_meta = 0
+    n_missing_date = 0
+    n_missing_geo = 0
     for i, r in enumerate(kept, 1):
         sra = extract_sra(r.id)
         md = meta_all.get(sra, {}) if sra else {}
@@ -196,7 +210,11 @@ def process(name, out_root, meta_all):
             n_sra_meta += 1
         org = tax_map.get(r.id, '') or 'unclassified plant virus'
         date = fmt_date(md.get('CollectionDate', '')) or DEFAULT_DATE
+        if not date:
+            n_missing_date += 1
         geo = fmt_geo(md.get('Location', '')) or DEFAULT_GEO
+        if not geo:
+            n_missing_geo += 1
         bp = md.get('BioProject', '')
         bs = md.get('BioSample', '')
         host = md.get('ScientificName', '') or HOST_MAP.get(name, 'plant')
@@ -204,6 +222,9 @@ def process(name, out_root, meta_all):
         src_lines.append('\t'.join([
             r.id, org, iso, date, geo, '', bp, bs, sra, '',
             'TRUE', 'plant virome', host]))
+    if n_missing_date or n_missing_geo:
+        print(f'[{name}] ⚠️ 元数据缺失: Collection_date 留空 {n_missing_date}/{len(kept)}, '
+              f'geo_loc_name 留空 {n_missing_geo}/{len(kept)} — 提交前必须人工补全')
     src_out = sub / 'id_norm' / 'source_filled.src'
     src_out.parent.mkdir(parents=True, exist_ok=True)
     src_out.write_text('\n'.join(src_lines) + '\n', encoding='utf-8')

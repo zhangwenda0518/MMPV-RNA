@@ -214,7 +214,11 @@ def extract_sra(contig):
 
 
 def geo_to_latlon(geo_loc):
-    """从城市/地区名推断经纬度 (约值, NCBI 接受)"""
+    """从城市/地区名推断经纬度 (约值, NCBI 接受)
+
+    只对已知城市精确匹配; 匹配不到时返回空串, 不返回国家中心点等臆测坐标
+    (把推测写成观测会在 NCBI 处产生错误的采样位置)。调用方负责留空/告警。
+    """
     if not geo_loc or geo_loc.lower() in ('country:region', 'nan', 'not_provided', ''):
         return ''
     loc_lower = geo_loc.lower()
@@ -254,9 +258,7 @@ def geo_to_latlon(geo_loc):
     for city, latlon in china_cities.items():
         if city in loc_lower:
             return latlon
-    # 如果 Location 包含 "China" 但没有具体城市, 用中国中心点
-    if 'china' in loc_lower:
-        return '35.86 N 104.19 E'
+    # 无具体城市匹配: 不臆造坐标 (国家中心点 = 推测, 不能当观测提交)
     return ''
 
 
@@ -365,6 +367,13 @@ def generate_metadata_csv(seqs, meta_lookup, species_map, args, log):
 
         isolate = f"{sanitize_filename(taxonomy)}_{sra}"
 
+        # ── Lat_Lon: 只接受 --lat-lon 或已知城市匹配; 匹配不到留空占位并告警 ──
+        latlon_auto = geo_to_latlon(geo_loc)
+        if (not args.lat_lon and not latlon_auto and geo_loc
+                and geo_loc.lower() not in ('country:region', 'nan', 'not_provided', '')):
+            log.warning("  %s: Location '%s' 无匹配城市, Lat_Lon 留空占位 — 请手动填写实际坐标",
+                        contig, geo_loc)
+
         rows.append({
             "organism": taxonomy,
             "sequence_name": contig,
@@ -374,7 +383,7 @@ def generate_metadata_csv(seqs, meta_lookup, species_map, args, log):
 
             "src-Isolate": isolate,
             "src-geo_loc_name": geo_loc or "Country:Region",
-            "src-Lat_Lon": args.lat_lon or geo_to_latlon(geo_loc) or "XX.XX N XXX.XX E",
+            "src-Lat_Lon": args.lat_lon or latlon_auto or "XX.XX N XXX.XX E",
             "src-Host": host,
             "src-Segment": "",
             "src-Isolation-source": args.isolation_source or '',
@@ -491,8 +500,22 @@ def create_authorset_sbt(config_dict, out_dir, metadata_df, log):
     addr = config_dict.get('Address', {})
     authors_str = metadata_df['authors'].iloc[0] if 'authors' in metadata_df.columns else 'Author, First'
 
-    # 解析作者列表
-    author_list = [a.strip() for a in authors_str.replace(';', ',').split(',') if a.strip()]
+    # 解析作者列表 (S1-⑤): 先按 ';' 分人, 每人再按第一个 ',' 拆 last/first;
+    # "单名" (无逗号) 整串作 last, first 留空。
+    # 旧实现 replace(';', ',').split(',') 会把 "Last, First; Last2, First2"
+    # 切成 4 个 "作者" 并互相错位。
+    author_list = []
+    for chunk in authors_str.split(';'):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        if ',' in chunk:
+            last, first = chunk.split(',', 1)
+        else:
+            last, first = chunk, ''
+        author_list.append((last.strip(), first.strip()))
+    if not author_list:
+        author_list = [('Author', 'First')]
 
     with open(sbt_path, 'w', encoding='utf-8') as f:
         f.write("Submit-block ::= {\n")
@@ -517,13 +540,10 @@ def create_authorset_sbt(config_dict, out_dir, metadata_df, log):
         f.write("  cit {\n")
         f.write("    authors {\n")
         f.write("      names std {\n")
-        for i, author in enumerate(author_list, 1):
-            parts = author.strip().split()
-            last = parts[-1] if parts else "Author"
-            first = parts[0] if len(parts) >= 2 else ""
+        for i, (last, first) in enumerate(author_list, 1):
             f.write("        {\n")
             f.write("          name name {\n")
-            f.write(f"            last \"{last}\",\n")
+            f.write(f"            last \"{last or 'Author'}\",\n")
             f.write(f"            first \"{first}\"\n")
             f.write("          }\n")
             if i == len(author_list):
@@ -657,7 +677,10 @@ def inject_interactive_metadata(out_dir, df, log):
 def export_miuvig_assembly(out_dir, log, assembler, sequencer, enrichment,
                           env_broad_scale=None, env_local_scale=None, env_medium=None,
                           samp_taxon_id=None, project_name=None, source_uvig=None, mol_type='cRNA'):
-    """生成 miuvig.tsv 和 assembly.tsv (覆盖 MIUVIG 全部必填字段)"""
+    """生成 miuvig.tsv 和 assembly.tsv (覆盖 MIUVIG 全部必填字段)
+
+    无值/占位的键直接省略不写 (S1-⑥), 避免占位字面量原样进 .cmt/.sqn。
+    """
     miuvig_path = Path(out_dir) / "miuvig.tsv"
 
     # MIUVIG 必填字段清单 (v6.3.0)
@@ -676,14 +699,15 @@ def export_miuvig_assembly(out_dir, log, assembler, sequencer, enrichment,
         ("env_broad_scale",       env_broad_scale or "anthropogenic terrestrial biome [ENVO:01000219]"),
         ("env_local_scale",       env_local_scale or "agricultural field [ENVO:00000114]"),
         ("env_medium",            env_medium or "plant-associated soil [ENVO:00005789]"),
-        ("geo_loc_name",          "placeholder — see source.src"),             # 每条序列不同
-        ("collection_date",       "placeholder — see source.src"),
-        ("lat_lon",               "placeholder — see source.src"),
+        # 每条序列不同: 无值时省略该键, 不写占位字面量 (S1-⑥)
+        ("geo_loc_name",          None),
+        ("collection_date",       None),
+        ("lat_lon",               None),
         # === 必填 (测序 + 样本) ===
         ("samp_taxon_id",         samp_taxon_id or "plant metagenome [NCBITaxon:1297885]"),
         ("project_name",          project_name or "MMPV-RNA viral metagenomics"),
         ("seq_meth",              sequencer),                                  # 测序仪
-        ("samp_name",             "placeholder — see source.src"),             # 每条序列不同
+        ("samp_name",             None),   # 每条序列不同: 无值时省略该键 (S1-⑥)
         # === 推荐 (Recommended) ===
         ("feat_pred",             "pyrodigal-gv;0.3.2"),
         ("ref_db",                "BFVD;2023_02;https://bfvd.steineggerlab.workers.dev"),
@@ -704,9 +728,18 @@ def export_miuvig_assembly(out_dir, log, assembler, sequencer, enrichment,
 
     with open(miuvig_path, 'w') as f:
         f.write("MIUVIG_parameter\tvalue\n")
+        n_written, n_omitted = 0, 0
+        ph_re = re.compile(PLACEHOLDER_RE)
         for param, val in unique_fields:
+            # 无值 (None/空) 或占位符 → 省略该键, 不写占位文本 (S1-⑥)
+            if val is None or (isinstance(val, str)
+                               and (not val.strip() or ph_re.search(val))):
+                n_omitted += 1
+                continue
             f.write(f"{param}\t{val}\n")
-    log.info("  → %s (%d MIUVIG 字段)", miuvig_path, len(unique_fields))
+            n_written += 1
+    log.info("  → %s (%d MIUVIG 字段, 省略 %d 个无值/占位键)", miuvig_path,
+             n_written, n_omitted)
 
     asm_path = Path(out_dir) / "assembly.tsv"
     with open(asm_path, 'w') as f:
@@ -717,16 +750,32 @@ def export_miuvig_assembly(out_dir, log, assembler, sequencer, enrichment,
     log.info("  → %s", asm_path)
 
 
+# 占位符模式: 常规占位 + 坐标占位 (XX.XX N / XXX.XX E / XX.XX) + 日期占位
+PLACEHOLDER_RE = (
+    r'XXXX|YYYY-MM-DD|DD-Mmm-YYYY|Country:Region|PRJNAXXXX|SAMNXXXXXXXX'
+    r'|XX\.[Xx0-9]{1,3}\s*N|XXX\.[Xx0-9]{1,3}\s*E|XX\.[Xx]{1,3}'
+)
+
+
 def validate_csv(df, out_dir, log):
-    """检查必填字段, 输出验证报告"""
+    """检查必填字段, 输出验证报告
+
+    校验范围: REQUIRED_COLS (已含 src-Lat_Lon / src-geo_loc_name / collection_date 等),
+    占位模式覆盖坐标占位 (如 "XX.XX N XXX.XX E") 与日期占位。
+    """
     report_path = Path(out_dir) / "validation_report.txt"
     issues = []
-    for col in REQUIRED_COLS:
+    check_cols = list(REQUIRED_COLS)
+    # 坐标/地点列即使将来不再标 required, 也强制纳入占位检查
+    for c in ('src-Lat_Lon', 'src-geo_loc_name', 'bs-geo_loc_name'):
+        if c not in check_cols and c in df.columns:
+            check_cols.append(c)
+    for col in check_cols:
         if col not in df.columns:
             issues.append(f"  [MISSING] 缺少必填列: {col}")
             continue
         missing = df[col].isna() | (df[col].astype(str).str.strip() == '') | \
-                  df[col].astype(str).str.contains('XXXX|YYYY-MM-DD|Country:Region|PRJNAXXXX|SAMNXXXXXXXX')
+                  df[col].astype(str).str.contains(PLACEHOLDER_RE, regex=True)
         if missing.any():
             seqs = df.loc[missing, 'sequence_name'].tolist()
             issues.append(f"  [EMPTY] {col}: {len(seqs)} 条序列未填 ({seqs[:3]}...)")

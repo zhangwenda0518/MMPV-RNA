@@ -53,6 +53,8 @@ import logging
 from pathlib import Path
 from datetime import datetime
 
+import pandas as pd
+
 # ══════════════════════════════════════════════════════════════
 # 日志
 # ══════════════════════════════════════════════════════════════
@@ -591,7 +593,16 @@ def _print_output_tree(out_dir):
 # 步骤 R: report — 生成提交报告和导出文件包
 # ══════════════════════════════════════════════════════════════
 
-def generate_submission_report(work_dir, log, updated_tbl=None, updated_faa=None):
+def _sanitize_filename(name):
+    """文件名安全化 (模块级, 供 report 模式各分支使用)"""
+    import re
+    name = re.sub(r'[^\w\s-]', '', name)
+    name = re.sub(r'\s+', '_', name)
+    return name[:60]
+
+
+def generate_submission_report(work_dir, log, updated_tbl=None, updated_faa=None,
+                               metadata_file=None):
     """生成 GenBank 提交报告, 导出所有需要的文件
 
     读取已有的 suvtk 产出, 整合 hypothetical 注释结果, 生成:
@@ -602,9 +613,10 @@ def generate_submission_report(work_dir, log, updated_tbl=None, updated_faa=None
       - 打包复制所有文件到 export/ 目录
 
     参数:
-      work_dir   : 工作目录 (含 1_taxonomy/ 2_features/ 等)
-      updated_tbl: analyze_hypothetical 更新后的 featuretable (可选)
-      updated_faa: analyze_hypothetical 更新后的 proteins.faa (可选)
+      work_dir     : 工作目录 (含 1_taxonomy/ 2_features/ 等)
+      updated_tbl  : analyze_hypothetical 更新后的 featuretable (可选)
+      updated_faa  : analyze_hypothetical 更新后的 proteins.faa (可选)
+      metadata_file: gsa_sra.info.py 输出的全局元数据表 (可选, 用于自动填充 source.src)
     """
     work = Path(work_dir)
     report_dir = work / "report"
@@ -726,8 +738,7 @@ def generate_submission_report(work_dir, log, updated_tbl=None, updated_faa=None
     meta_lookup = {}  # SRA/CRR → {CollectionDate, Location, BioProject, ...}
     if metadata_file and os.path.exists(metadata_file):
         log.info("  加载元数据: %s", metadata_file)
-        import pandas as _pd
-        df_meta = _pd.read_csv(metadata_file, sep=None, engine='python')
+        df_meta = pd.read_csv(metadata_file, sep=None, engine='python')
         for _, row in df_meta.iterrows():
             run = str(row.get('Run', '')).strip()
             if not run or run.lower() in ['nan', 'not_provided', '']:
@@ -752,12 +763,6 @@ def generate_submission_report(work_dir, log, updated_tbl=None, updated_faa=None
         meta_loaded = False
 
     # ── 生成 source.src 模板 (按病毒分组, 每个病毒一个文件) ──
-    def _sanitize_filename(name):
-        import re
-        name = re.sub(r'[^\w\s-]', '', name)
-        name = re.sub(r'\s+', '_', name)
-        return name[:60]
-
     def _meta_val(sra, field, default):
         """从元数据取字段值, 无则用默认"""
         if meta_loaded and sra in meta_lookup:
@@ -987,8 +992,9 @@ def main():
         work = Path(args.work_dir)
         generate_submission_report(
             str(work), log,
-            getattr(args, 'updated_tbl', None),
-            getattr(args, 'updated_faa', None),
+            updated_tbl=getattr(args, 'updated_tbl', None),
+            updated_faa=getattr(args, 'updated_faa', None),
+            metadata_file=getattr(args, 'metadata', None),
         )
     elif args.mode == "step":
         work = Path(args.work_dir)
@@ -1013,9 +1019,9 @@ def main():
                          str(cmt_dir) if cmt_dir else None, str(work), log)
         elif args.step == "report":
             generate_submission_report(str(work), log,
-                getattr(args, 'updated_tbl', None),
-                getattr(args, 'updated_faa', None),
-                getattr(args, 'metadata', None))
+                updated_tbl=getattr(args, 'updated_tbl', None),
+                updated_faa=getattr(args, 'updated_faa', None),
+                metadata_file=getattr(args, 'metadata', None))
 
 
 if __name__ == "__main__":

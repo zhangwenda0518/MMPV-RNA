@@ -7,7 +7,7 @@ cawlign 比对 assembly → reference → refmap 格式 (查询插入相对参�
 优势: 零假ORF, 零blastp, curator注释直接继承
 """
 
-import argparse, os, re, sys, csv, logging, subprocess, shutil, tempfile
+import argparse, os, re, sys, csv, logging, subprocess, shutil
 from pathlib import Path
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -31,6 +31,17 @@ def _run(cmd, log, step, check=False):
         log.info("[%s] OK", step); return True
     except subprocess.CalledProcessError as e:
         log.error("[%s] FAIL (%d)", step, e.returncode); return False
+
+
+def _ncbi_email(log=None):
+    """NCBI 联系邮箱: 优先环境变量 NCBI_EMAIL; 取不到返回空串并告警
+
+    不在代码里硬编码任何邮箱 (含示例/真实邮箱)。
+    """
+    email = os.environ.get("NCBI_EMAIL", "").strip()
+    if not email and log is not None:
+        log.warning("  未设置 NCBI_EMAIL 环境变量: 联系邮箱留空, 提交前必须手动补全 .sbt")
+    return email
 
 # ═══════ Collect ═══════
 
@@ -75,7 +86,10 @@ def fetch_ncbi_cds(accessions, cache_dir, log):
         gb = cd / f"{acc}.gb"
         if not gb.exists():
             try:
-                from Bio import Entrez; Entrez.email = "zhangwenda@example.com"
+                from Bio import Entrez
+                email = _ncbi_email(log)
+                if email:
+                    Entrez.email = email
                 log.info("  fetch %s", acc)
                 h = Entrez.efetch(db="nucleotide", id=acc, rettype="gb", retmode="text")
                 with open(gb, "w") as f: f.write(h.read()); h.close()
@@ -151,10 +165,15 @@ def _translate(seq_str):
     return Seq(''.join(aa))
 
 def gen_features(viruses, ref_genomes, ncbi_products, ref_info, out_dir, log):
-    """cawlign refmap → extract CDS (并行 cawlign + 串行 CDS提取)"""
+    """cawlign refmap → extract CDS (并行 cawlign + 串行 CDS提取)
+
+    .tbl 按序列分组: 每条序列一个独立 `>Feature <id>` 块 (NCBI feature table 规范),
+    下游 analyze_hypothetical / sequin_builder / fix_sqn 均按单 ID 匹配块头。
+    负链 CDS: 序列取反向互补, 位置写 complement(start..end)。
+    """
     fd = Path(out_dir) / "2_features"; fd.mkdir(parents=True, exist_ok=True)
-    all_tbl, all_fna, all_faa = [], [], []
-    ng, ns = 0, 0
+    tbl_by_seq, all_fna, all_faa = {}, [], []
+    ng, ns, n_trunc = 0, 0, 0
 
     for acc, vi in tqdm(sorted(viruses.items()), desc="Features", unit="virus"):
         ref_rec = ref_genomes.get(acc)
@@ -168,7 +187,7 @@ def gen_features(viruses, ref_genomes, ncbi_products, ref_info, out_dir, log):
                     recs = list(SeqIO.parse(fa, "fasta-pearson"))
                     if recs:
                         rec = recs[0]
-                        all_tbl.extend([f">Feature {rec.id}",
+                        tbl_by_seq.setdefault(rec.id, []).extend([
                             f"1\t{len(rec.seq)}\tsource",
                             f"\t\t\tmol_type\tgenomic RNA",
                             f"\t\t\torganism\t{ref_info.get(acc,{}).get('Species_NCBI',acc)}"])
@@ -228,7 +247,7 @@ def gen_features(viruses, ref_genomes, ncbi_products, ref_info, out_dir, log):
             aln_len = len(aln_seq)
             if aln_len < ref_len * 0.5: ns += 1; continue
 
-            tbl_block = [f">Feature {rec.id}"]
+            tbl_block = tbl_by_seq.setdefault(rec.id, [])
             gi = 0
             for (cds_start, cds_end, strand, product, gene_name) in curator_cds:
                 col_s = cds_start - 1; col_e = cds_end - 1
@@ -240,70 +259,73 @@ def gen_features(viruses, ref_genomes, ncbi_products, ref_info, out_dir, log):
                 cds_str = ''.join(bases)
                 if len(cds_str) < 30: continue
                 rem = len(cds_str) % 3
-                if rem: cds_str = cds_str[:len(cds_str) - rem]
+                if rem:
+                    n_trunc += 1
+                    log.info("  %s: CDS %d..%d 长度 %d 非 3 倍数, 截去 %d bp, asm 坐标同步收窄",
+                             rec.id, cds_start, cds_end, len(cds_str), rem)
+                    cds_str = cds_str[:len(cds_str) - rem]
                 gi += 1; gn = f"gene_{gi:02d}"
-                cds_seq = Seq(cds_str)
-                pep = _translate(cds_str)
+                asm_start, asm_end = _est_asm_coords(aln_seq, cds_start, cds_end, len(cds_str))
+                if strand == '-':
+                    # 负链: 提取到的碱基是参考方向的互补链, 序列取反向互补;
+                    # 五列 feature table 规范用"反转区间"(列1>列2)表示互补链,
+                    # 不写 complement() (那是 flatfile 语法, 本仓解析器与 tbl2asn 均按数字列解析)
+                    cds_seq = Seq(cds_str).reverse_complement()
+                    loc = f"{asm_end}\t{asm_start}"
+                else:
+                    cds_seq = Seq(cds_str)
+                    loc = f"{asm_start}\t{asm_end}"
+                pep = _translate(str(cds_seq))
                 lt = f"{acc.replace('.','_')}_{gi:02d}"
-                asm_start, asm_end = _est_asm_coords(aln_seq, cds_start, cds_end)
                 tbl_block += [
-                    f"{asm_start}\t{asm_end}\tgene", f"\t\t\tgene\t{gn}",
-                    f"{asm_start}\t{asm_end}\tCDS", f"\t\t\tproduct\t{product}",
+                    f"{loc}\tgene", f"\t\t\tgene\t{gn}",
+                    f"{loc}\tCDS", f"\t\t\tproduct\t{product}",
                     f"\t\t\tlocus_tag\t{lt}"]
                 all_faa.append(SeqRecord(pep, id=f"{rec.id}_{gn}", description=f"[{product}] [{acc}]"))
                 all_fna.append(SeqRecord(cds_seq, id=f"{rec.id}_{gn}", description=f"[{product}] [{acc}]"))
                 ng += 1
-            all_tbl.extend(tbl_block)
 
-    # 写 .tbl
+    # 写 .tbl — 每条序列一个独立 `>Feature <id>` 块 (多 ID 共享一行会被下游解析器漏掉)
     tbl_path = fd / "featuretable.tbl"
     with open(tbl_path, "w") as f:
-        all_ids = []
+        n_written = 0
         for v in viruses.values():
             for fa in v["fastas"]:
                 try:
                     recs = list(SeqIO.parse(fa, "fasta-pearson"))
-                    if recs: all_ids.append(recs[0].id)
-                except Exception: pass
-        f.write(">Feature " + " ".join(all_ids if all_ids else ["no_seqs"]))
-        f.write("\n" + "\n".join(all_tbl) + "\n")
+                except Exception:
+                    continue
+                if not recs: continue
+                sid = recs[0].id
+                lines = tbl_by_seq.get(sid)
+                if not lines: continue
+                f.write(f">Feature {sid}\n")
+                f.write("\n".join(lines) + "\n")
+                n_written += 1
+        if not n_written:
+            f.write(">Feature no_seqs\n")
     faa_path = fd / "proteins.faa"; SeqIO.write(all_faa, faa_path, "fasta")
     fna_path = fd / "reoriented_nucleotide_sequences.fna"; SeqIO.write(all_fna, fna_path, "fasta")
-    log.info("  .tbl: %d genes (%d skipped)", ng, ns)
+    log.info("  .tbl: %d genes in %d sequences (%d skipped, %d 长度截断)",
+             ng, n_written, ns, n_trunc)
     return tbl_path, faa_path, fna_path
 
-def _est_asm_coords(aln_seq_str, ref_start, ref_end):
+def _est_asm_coords(aln_seq_str, ref_start, ref_end, cds_len=None):
     """从 cawlign refmap 对齐估算 assembly 坐标 (不跑 blastn)
-    
+
     refmap: 列 = 参考位置, '-' = assembly 上的 gap。
     通过计数 gap 之前的总碱基数估算 assembly 坐标。
+
+    cds_len: 实际写入 .tbl 的 CDS 长度 (可能因非 3 倍数在 3' 端截去 1-2 bp)。
+             给定时终点按实际长度收窄 (pre_bases + cds_len), 保证特征长度与
+             提取序列一致; 未给定时用参考区间内的非 gap 碱基数。
     """
     # 计算 start: ref_start 列之前有多少非 gap 碱基
     pre_bases = sum(1 for c in aln_seq_str[:ref_start-1] if c != '-')
+    if cds_len is not None:
+        return pre_bases + 1, pre_bases + cds_len
     in_bases = sum(1 for c in aln_seq_str[ref_start-1:ref_end] if c != '-')
     return pre_bases + 1, pre_bases + in_bases
-    """blastn CDS → assembly 获取原始坐标，超时回退到线性估算"""
-    tq = tempfile.mktemp(suffix=".fna"); to = tempfile.mktemp(suffix=".txt")
-    seq_len = len(cds_seq_str)
-    with open(tq, "w") as f: f.write(f">cds\n{cds_seq_str}\n")
-    try:
-        subprocess.run(
-            f"blastn -task blastn -query {tq} -subject {asm_fasta} -out {to} "
-            f"-outfmt '6 sstart send' -word_size 11 -dust no -evalue 1e-20",
-            shell=True, capture_output=True, timeout=60)
-    except (subprocess.TimeoutExpired, Exception):
-        pass
-    s, e = 1, seq_len
-    if os.path.exists(to) and os.path.getsize(to) > 5:
-        with open(to) as f:
-            cols = f.readline().strip().split("\t")
-            if len(cols) >= 2:
-                s, e = int(cols[0]), int(cols[1])
-                if s > e: s, e = e, s
-    for f in [tq, to]:
-        try: os.unlink(f)
-        except: pass
-    return s, e
 
 # ═══════ .gb ═══════
 
@@ -326,7 +348,8 @@ def run_tbl2gb(tbl_path, tax_dir, feat_dir, log):
 def run_suvtk_sqn(tax_dir, feat_dir, meta_dir, output_dir, log):
     """suvtk comments + table2asn → .sqn"""
     out = Path(output_dir)
-    
+    email = _ncbi_email(log)   # 环境变量 NCBI_EMAIL; 取不到留空 (不硬编码邮箱)
+
     # 生成正确的 template.sbt
     sbt = out / "template.sbt"
     with open(sbt, "w") as f:
@@ -336,7 +359,7 @@ def run_suvtk_sqn(tax_dir, feat_dir, meta_dir, output_dir, log):
           '      name name { last "Zhang", first "Wenda", middle "", initials "", suffix "", title "" },\n'
           '      affil std { affil "Ningxia University", div "College of Life Sciences",\n'
           '        city "Yinchuan", sub "Ningxia", country "China",\n'
-          '        street "Ningxia University", email "zhangwenda@example.com", postal-code "750021" }\n'
+          '        street "Ningxia University", email "' + email + '", postal-code "750021" }\n'
           '    }\n'
           '  },\n'
           '  cit { authors { names std { { name name { last "Zhang", first "Wenda", middle "", initials "", suffix "", title "" } } },\n'
@@ -347,8 +370,9 @@ def run_suvtk_sqn(tax_dir, feat_dir, meta_dir, output_dir, log):
           'Seqdesc ::= pub { pub { gen { cit "unpublished",\n'
           '    authors { names std { { name name { last "Zhang", first "Wenda", middle "", initials "", suffix "", title "" } } } },\n'
           '    title "Plant virome of Lycium chinense in Ningxia, China" } } }\n'
-          'Seqdesc ::= user { type str "Submission",\n'
-          '  data { { label str "AdditionalComment", data str "ALT EMAIL:zhangwenda@example.com" } } }\n')
+          + (('Seqdesc ::= user { type str "Submission",\n'
+              '  data { { label str "AdditionalComment", data str "ALT EMAIL:'
+              + email + '" } } }\n') if email else ''))
     
     # miuvig + assembly
     meta_dir_p = Path(meta_dir)

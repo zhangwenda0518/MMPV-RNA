@@ -17,7 +17,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-EMAIL = 'zhangwenda05@163.com'
+EMAIL = os.environ.get('NCBI_EMAIL', '').strip()   # 不硬编码邮箱; 未设置时留空 + 告警
 CONTACT = ('Zhang', 'Wenda', '', 'Ningxia University',
            'College of Life Sciences', 'Yinchuan', 'Ningxia', 'China', '', '750021')
 # 解包顺序: last, first, middle, affil, div, city, sub, country, street, postal
@@ -135,12 +135,14 @@ def build_sbt(name, authors, title):
     cnm = ('      name name {\n' + _nm_fields(authors[0], '        ') + '\n      },')
     cit_entries = ',\n'.join(_entry(a, '        ') for a in authors)      # 缩进8 大括号
     pub_entries = ',\n'.join(_entry(a, '          ') for a in authors)    # 缩进10 大括号
+    if not EMAIL:
+        print('⚠️ 未设置 NCBI_EMAIL 环境变量: .sbt 联系邮箱留空, 提交前必须补全')
     return (
         'Submit-block ::= {\n'
         '  contact {\n'
         '    contact {\n'
         + cnm + '\n'
-        + _affil('      ', email=True) + '\n'
+        + _affil('      ', email=bool(EMAIL)) + '\n'
         '    }\n'
         '  },\n'
         '  cit {\n'
@@ -166,16 +168,16 @@ def build_sbt(name, authors, title):
         '    }\n'
         '  }\n'
         '}\n'
-        'Seqdesc ::= user {\n'
-        '  type str "Submission",\n'
-        '  data {\n'
-        '    {\n'
-        '      label str "AdditionalComment",\n'
-        f'      data str "ALT EMAIL:{EMAIL}"\n'
-        '    }\n'
-        '  }\n'
-        '}\n'
-        'Seqdesc ::= user {\n'
+        + (('Seqdesc ::= user {\n'
+            '  type str "Submission",\n'
+            '  data {\n'
+            '    {\n'
+            '      label str "AdditionalComment",\n'
+            f'      data str "ALT EMAIL:{EMAIL}"\n'
+            '    }\n'
+            '  }\n'
+            '}\n') if EMAIL else '')
+        + 'Seqdesc ::= user {\n'
         '  type str "Submission",\n'
         '  data {\n'
         '    {\n'
