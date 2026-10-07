@@ -839,18 +839,19 @@ class HybridPipeline:
             if do_rrna_step:
                 if rrna_tool == 'silva' and silva_index:
                     # ── SILVA 模式: Bowtie2 比对 SILVA 库, --un 直接输出未比对 reads ──
+                    # 输出未压缩, 统一交给 [Stage 8] gzip 压缩 (避免 gz(gz(fasta)) 双重压缩)
                     logger.info(f"{prefix} -> [Stage 7] SILVA Bowtie2 剔除 rRNA...")
 
-                    # --un-conc-gz 会在文件名后加 .1/.2 后缀, 需先写临时前缀再 rename
+                    # --un-conc 会在文件名后加 .1/.2 后缀, 需先写临时前缀再 rename
                     silva_tmp_prefix = os.path.join(temp_dir, f"{sample_name}_silva_unmapped")
                     silva_cmd = ["bowtie2", "--very-sensitive-local", "-p", str(threads),
                                  "-x", silva_index]
                     if seq2:
                         silva_cmd += ["-1", extract_tgt1, "-2", extract_tgt2,
-                                      "--un-conc-gz", silva_tmp_prefix]
+                                      "--un-conc", silva_tmp_prefix]
                     else:
                         silva_cmd += ["-U", extract_tgt1,
-                                      "--un-gz", actual_out1]
+                                      "--un", actual_out1]
                     ret, mem, cpu_time = execute([silva_cmd], pipe=True, log_prefix=prefix,
                                                   logs_dir=tool_logs_dir, sample_id=sample_name,
                                                   step_name="step5_silva_bowtie2")
@@ -858,17 +859,18 @@ class HybridPipeline:
                     total_cpu_time += cpu_time
                     if any(c != 0 for c in ret): return 1
 
-                    # bowtie2 --un-conc-gz 产出 silva_tmp_prefix.1 / silva_tmp_prefix.2
+                    # bowtie2 --un-conc 产出 silva_tmp_prefix.1 / silva_tmp_prefix.2
                     # rename 到 actual_out1 / actual_out2
                     if seq2:
                         os.rename(silva_tmp_prefix + ".1", actual_out1)
                         os.rename(silva_tmp_prefix + ".2", actual_out2)
 
-                    # keep_rrna: 重新比对并保留 rRNA reads
+                    # keep_rrna: 重新比对并保留 rRNA reads (gzip 内容 + .fq.gz 名, 见 doc/03-host_depletion.md)
                     if keep_rrna:
                         rrna_dir = os.path.join(outdir_base, "rrna")
                         os.makedirs(rrna_dir, exist_ok=True)
-                        rrna_out1 = os.path.join(rrna_dir, f"{sample_name}.silva_rrna.1{ext_tmp}") if seq2 else os.path.join(rrna_dir, f"{sample_name}.silva_rrna{ext_tmp}")
+                        rrna_out1 = os.path.join(rrna_dir, f"{sample_name}.silva_rrna.1.fq.gz") if seq2 else os.path.join(rrna_dir, f"{sample_name}.silva_rrna.fq.gz")
+                        rrna_out2 = os.path.join(rrna_dir, f"{sample_name}.silva_rrna.2.fq.gz") if seq2 else None
                         rrna_tmp_prefix = os.path.join(temp_dir, f"{sample_name}_silva_rrna_tmp")
                         rrna_cmd = ["bowtie2", "--very-sensitive-local", "-p", str(threads),
                                     "-x", silva_index]
@@ -886,6 +888,9 @@ class HybridPipeline:
                         if seq2:
                             os.rename(rrna_tmp_prefix + ".1", rrna_out1)
                             os.rename(rrna_tmp_prefix + ".2", rrna_out2)
+                        elif not os.path.exists(rrna_out1):
+                            logger.warning(f"{prefix} ⚠️ SILVA rRNA 输出未生成: {rrna_out1} "
+                                           f"(bowtie2 --al-gz 可能未比对到任何 rRNA reads)")
 
                 else:
                     # ── Ribodetector 模式 (原有逻辑) ──
@@ -897,8 +902,9 @@ class HybridPipeline:
                     if keep_rrna:
                         rrna_dir = os.path.join(outdir_base, "rrna")
                         os.makedirs(rrna_dir, exist_ok=True)
-                        rrna_out1 = os.path.join(rrna_dir, f"{sample_name}.rrna.1{ext_tmp}") if seq2 else os.path.join(rrna_dir, f"{sample_name}.rrna{ext_tmp}")
-                        rrna_out2 = os.path.join(rrna_dir, f"{sample_name}.rrna.2{ext_tmp}") if seq2 else None
+                        # 命名对齐 doc/03-host_depletion.md: {sample}.rrna.[1|2].fq.gz (Stage 6 压缩后 .fq → .fq.gz)
+                        rrna_out1 = os.path.join(rrna_dir, f"{sample_name}.rrna.1.fq") if seq2 else os.path.join(rrna_dir, f"{sample_name}.rrna.fq")
+                        rrna_out2 = os.path.join(rrna_dir, f"{sample_name}.rrna.2.fq") if seq2 else None
                     else:
                         rrna_out1 = os.path.join(temp_dir, f"{sample_name}.rrna.1{ext_tmp}") if seq2 else os.path.join(temp_dir, f"{sample_name}.rrna{ext_tmp}")
                         rrna_out2 = os.path.join(temp_dir, f"{sample_name}.rrna.2{ext_tmp}") if seq2 else None
@@ -999,14 +1005,18 @@ def main():
     # --- memory-mapping 模式: 默认开启, kraken2 mmap 共享只读索引, 支持多样本并行且内存仅占一份 ---
     memory_mapping = not args.no_memory_mapping
 
-    # --- 智能步骤调整: --keep-taxids 启用时自动跳过 align ---
-    # k2_pluspfp 等通用库已通过 Kraken2 + keep-taxids 完成宿主过滤和病毒保留
-    if args.keep_taxids:
+    # --- 智能步骤调整: --keep-taxids 启用且未提供比对索引时自动跳过 align ---
+    # 自建宿主库(提供 -x/--step2_index) → Kraken2 + align 双层去除;
+    # 通用库如 k2_pluspfp(无比对索引) → 仅 Kraken2 去除。
+    if args.keep_taxids and not args.step2_index:
         steps_list = args.steps.split(',')
         if 'align' in steps_list:
             steps_list = [s for s in steps_list if s != 'align']
             args.steps = ','.join(steps_list) if steps_list else ''
-            sys.stderr.write("💡 --keep-taxids 已启用，自动跳过 align 阶段 (通用库 Kraken2 已覆盖宿主过滤)\n")
+            sys.stderr.write("💡 --keep-taxids 已启用且未提供比对索引 (-x/--step2_index)，align 跳过; 提供索引则 Kraken2+align 双层执行\n")
+    elif not args.keep_taxids:
+        # 显式传空串: 不保留任何分类 reads, 也不跳过 align
+        sys.stderr.write("💡 --keep-taxids 为空字符串，已禁用分类 reads 保留 (align 不跳过)\n")
 
     os.environ['HOST_DEPLETION_STEPS'] = args.steps
     global logger
@@ -1016,6 +1026,8 @@ def main():
     try:
         import process_guard
         process_guard.install(logger)
+    except ImportError:
+        logger.warning("process_guard 未找到，进程守护未启用 (中断时子孙进程可能残留)")
     except Exception:
         pass
 

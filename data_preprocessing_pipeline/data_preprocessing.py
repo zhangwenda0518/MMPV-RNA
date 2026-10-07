@@ -307,8 +307,9 @@ def main():
     p.add_argument('--input_reads', help='输入 FASTQ/FASTA 目录 (clean 阶段必需)')
     p.add_argument('--output_dir', '-o', required=True, help='输出根目录')
     p.add_argument('--io-layout', choices=['legacy', 'standard'], default=None,
-                   help='I/O 目录布局: legacy=v3.0 现行名 (默认); standard=统一编号'
-                        '(doc/IO_LAYOUT_DESIGN.md); 亦可 MMPV_IO_LAYOUT 环境变量')
+                   help='I/O 目录布局: standard=统一编号 (默认); legacy=v3.0 现行名 '
+                        '(存量项目/checkpoint 兼容; doc/IO_LAYOUT_DESIGN.md); '
+                        '亦可 MMPV_IO_LAYOUT 环境变量')
 
     g = p.add_argument_group('数据库 (去宿主)')
     g.add_argument('--host_db', help='宿主数据库目录 (支持 hostdb/ 本身、host_reference 根、kraken2 库目录, 自动查找子索引)')
@@ -347,7 +348,7 @@ def main():
     stages = set(args.stage)
     _all = 'all' in stages
 
-    # 布局解析 (CLI > MMPV_IO_LAYOUT > legacy) 并写回环境供子进程继承
+    # 布局解析 (CLI > MMPV_IO_LAYOUT > standard) 并写回环境供子进程继承
     normalize_layout_env(getattr(args, 'io_layout', None))
 
     log = setup_logger(args.output_dir)

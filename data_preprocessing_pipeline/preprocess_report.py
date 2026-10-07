@@ -30,7 +30,7 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 from mmpv_common.io_layout import layout_dirs as _layout_dirs
-_D = _layout_dirs(os.environ.get("MMPV_IO_LAYOUT", "legacy"))
+_D = _layout_dirs(os.environ.get("MMPV_IO_LAYOUT"))
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 
@@ -178,6 +178,8 @@ def collect_final_files(deplete_dir, clean_dir):
     for root in roots:
         for f in sorted(root.rglob("*.gz")):
             if not f.is_file():
+                continue
+            if "rrna" in f.relative_to(root).parts[:-1]:  # --keep_rrna 的 rrna/ 子目录产物不是最终交付 reads
                 continue
             for pat, layout in FINAL_PATTERNS:
                 m = pat.match(f.name)

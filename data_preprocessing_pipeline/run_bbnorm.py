@@ -127,7 +127,9 @@ def main():
         stem = _stem(r1, ["_R1", "_1"])
         nr1 = out / f"{stem}_norm_R1.fq.gz"
         nr2 = out / f"{stem}_norm_R2.fq.gz"
-        if nr1.is_file() and nr1.stat().st_size > 0:
+        # resume 判定: PE 必须 out1+out2 同时有效 (仅 out1 存在可能是中断留下的半成品)
+        if (nr1.is_file() and nr1.stat().st_size > 0
+                and (r2 is None or (nr2.is_file() and nr2.stat().st_size > 0))):
             stats["done"] += 1; stats["total"] += 1; stats["ok"] += 1
             continue
         tasks.append(("PE", r1, r2, nr1, nr2, stem))
@@ -154,9 +156,19 @@ def main():
             cmd.insert(2, f"in2={r2}")
             cmd.insert(4, f"out2={nr2}")
         try:
-            subprocess.run(" ".join(cmd), shell=True, capture_output=True, check=False)
-            ok = nr1.is_file() and nr1.stat().st_size > 0
-        except: ok = False
+            proc = subprocess.run(" ".join(cmd), shell=True, capture_output=True, check=False)
+            # 成功判据: 退出码为 0, 且 out1 (及 PE 的 out2) 存在非空
+            ok = (proc.returncode == 0 and nr1.is_file() and nr1.stat().st_size > 0
+                  and (r2 is None or (nr2.is_file() and nr2.stat().st_size > 0)))
+            if not ok:
+                tail = (proc.stderr or b"").decode("utf-8", errors="replace").strip().splitlines()[-5:]
+                with lock:
+                    print(f"  [!] bbnorm 失败 ({stype} {stem}, exit={proc.returncode}): "
+                          + " | ".join(tail), flush=True)
+        except Exception as e:
+            ok = False
+            with lock:
+                print(f"  [!] bbnorm 异常 ({stype} {stem}): {e}", flush=True)
         with lock:
             stats["ok" if ok else "fail"] += 1
         return (stem, stype, ok)
@@ -179,6 +191,9 @@ def main():
 
     output_files = list(out.glob("*_norm_*.fq.gz"))
     print(f"\n完成: {stats['ok']}/{stats['total']} 成功, {len(output_files)} 个文件 → {out}")
+    # 有失败样本时非零退出, 供上层编排 (data_preprocessing.py) 判定阶段失败
+    if stats["fail"] > 0:
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()

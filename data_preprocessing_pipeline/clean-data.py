@@ -116,13 +116,22 @@ class FastqScanner:
         return basename
 
     @staticmethod
+    def _has_read_tag(fname, sample, digit):
+        # 只在样本名之后的部分找读段标签。样本名本身可能以 [._-]1/[._-]2 结尾
+        # (如 GS-2), 直接在整名上搜会把名字里的 -2 误判成 R2 标签 (241 实测 GS-2 被配成 R1+R1)
+        base = os.path.basename(fname)
+        m = re.search(re.escape(sample) + r'(.*)$', base)
+        rest = m.group(1) if m else base
+        return re.search(r'[._-][Rr]?%d(?=[._-]|$)' % digit, rest, re.I)
+
+    @staticmethod
     def scan_and_pair(input_dir):
         patterns = ["**/*fq*", "**/*fastq*"]
         files = set()
         for p in patterns:
             files.update(glob.glob(os.path.join(input_dir, p), recursive=True))
         files = sorted(list(files))
-        
+
         samples = defaultdict(list)
         for f in files:
             samples[FastqScanner.extract_sample_name(f)].append(f)
@@ -131,8 +140,8 @@ class FastqScanner:
         for sample, f_list in samples.items():
             f_list = sorted(f_list)
             # 自动寻找 R1 和 R2 标识
-            r1 = next((f for f in f_list if re.search(r'([._-][Rr]?1)(?=[._-]|$)', f, re.I)), None)
-            r2 = next((f for f in f_list if re.search(r'([._-][Rr]?2)(?=[._-]|$)', f, re.I)), None)
+            r1 = next((f for f in f_list if FastqScanner._has_read_tag(f, sample, 1)), None)
+            r2 = next((f for f in f_list if FastqScanner._has_read_tag(f, sample, 2)), None)
             
             if len(f_list) == 2 and not r1 and not r2:
                 r1, r2 = f_list[0], f_list[1]
@@ -420,6 +429,8 @@ def main():
     try:
         import process_guard
         process_guard.install(logger)
+    except ImportError:
+        logger.warning("process_guard 未找到，进程守护未启用 (中断时子孙进程可能残留)")
     except Exception:
         pass
 
