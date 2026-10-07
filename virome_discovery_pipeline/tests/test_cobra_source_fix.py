@@ -76,6 +76,47 @@ def test_cobra_source_both_missing_warns(tmp_path):
     assert warn
 
 
+# ── 2026-10-07 契约恢复: COBRA 主链吃 filter 结果 (镜像) ──
+
+def make_pipe_v2(tmp_path, *, ident=True, filt=True, mirror=False, graph=False):
+    """make_pipe 扩展: 支持 filter 主链镜像与 graph 派生候选目录"""
+    import logging
+    pipe = make_pipe(tmp_path, ident=ident, filt=filt)
+    pipe.log = logging.getLogger("test_cobra_source")
+    if mirror:
+        m = pipe.d["filter"] / "candidates" / "S1"
+        m.mkdir(parents=True, exist_ok=True)
+        (m / "S1_virus.all.candidate.fasta").write_text(">a")
+    if graph:
+        g = pipe.d.setdefault("graph", pipe.d["root"] / "02b_Filter" / "graph")
+        gc = g / "candidates" / "S1"
+        gc.mkdir(parents=True, exist_ok=True)
+        (gc / "S1_virus.all.candidate.fasta").write_text(">a")
+    return pipe
+
+
+def test_cobra_source_prefers_filter_mirror(tmp_path):
+    """主链契约恢复 (用户裁定 2026-10-07): filter 镜像存在时 COBRA 必须吃 filter 结果"""
+    pipe = make_pipe_v2(tmp_path, mirror=True, graph=True)
+    src, warn = pipe._cobra_candidate_source()
+    assert src == pipe.d["filter"] / "candidates"
+    assert warn is None
+
+
+def test_cobra_source_graph_fallback_when_no_filter(tmp_path):
+    """filter 未跑 (无镜像) 时兜底 graph 派生候选"""
+    pipe = make_pipe_v2(tmp_path, filt=False, graph=True)
+    src, warn = pipe._cobra_candidate_source()
+    assert src == pipe.d["graph"] / "candidates"
+    assert warn is None
+
+
+def test_cobra_source_ident_when_no_mirror_no_graph(tmp_path):
+    pipe = make_pipe_v2(tmp_path)
+    src, _ = pipe._cobra_candidate_source()
+    assert src == pipe.d["ident"]
+
+
 # ── 修复 2/3: .ok 旧标记不再骗过产物校验 ──
 
 def test_validated_cobra_rejects_empty_sample_dirs(tmp_path):
@@ -126,3 +167,21 @@ def test_validated_taxonomy_rejects_tiny_file(tmp_path):
     f.parent.mkdir(parents=True, exist_ok=True)
     f.write_text("x")  # <100 字节, 视为空跑
     assert pipe._stage_validated("taxonomy") is False
+
+
+def test_build_cobra_mirror_passthrough_of_final_chain(tmp_path):
+    """镜像 = filter 最终链原样搬运 (graph 对无证据结果的过滤已由
+    apply_graph_adjustments 的 demote 在最终链上完成; 镜像不做额外增删)"""
+    import os
+    import filter_virus as fv
+    outdir = tmp_path / "d_filter" / "S1"
+    (outdir / "uniprot").mkdir(parents=True)
+    base = "S1_virus.all.candidate"
+    (outdir / "uniprot" / f"{base}_uniprot.fasta").write_text(">a\nACGT\n>b\nACGT\n>c\nACGT\n")
+    os.symlink(outdir / "uniprot" / f"{base}_uniprot.fasta",
+               outdir / f"{base}_filtered.fasta")
+    fv.build_cobra_mirror(str(outdir), base, "filter", split_by_prefix=False)
+    m = outdir / "candidates" / "S1" / "S1_virus.all.candidate.fasta"
+    text = m.read_text()
+    assert ">a" in text and ">b" in text and ">c" in text
+    assert m.name == "S1_virus.all.candidate.fasta"

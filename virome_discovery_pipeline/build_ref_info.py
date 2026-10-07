@@ -25,7 +25,7 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 from mmpv_common.io_layout import layout_dirs as _layout_dirs
-_D = _layout_dirs(os.environ.get("MMPV_IO_LAYOUT", "legacy"))
+_D = _layout_dirs(os.environ.get("MMPV_IO_LAYOUT"))
 
 def _read_tsv(path):
     rows = []

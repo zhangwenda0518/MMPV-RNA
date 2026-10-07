@@ -445,6 +445,20 @@ def main():
         print(f"  [RESUME] Step 1 已有结果 → {virus_fa}")
         input_fa = str(virus_fa)
 
+    # ── 入口判空 (0 条输入会让后续聚类统计除零 / max(空) 崩溃) ──
+    try:
+        n_input_seqs = (sum(1 for _ in SeqIO.parse(input_fa, "fasta"))
+                        if os.path.isfile(input_fa) else 0)
+    except Exception as exc:
+        print(f"[ERROR] 输入 FASTA 无法解析: {input_fa} ({exc})", file=sys.stderr)
+        sys.exit(1)
+    if n_input_seqs == 0:
+        print(f"[ERROR] 输入无 ≥{args.min_length}bp 序列 (文件为空或不存在): {input_fa}\n"
+              f"        检查 --input-fasta 与 --min-length; 无可聚类序列, 终止。",
+              file=sys.stderr)
+        sys.exit(1)
+    print(f"  输入待聚类序列: {n_input_seqs:,}")
+
     # ── Step 2a: CD-HIT 参考引导预聚类 (可选) ──
     known_centroids_fa = None
     n_known_clusters = 0

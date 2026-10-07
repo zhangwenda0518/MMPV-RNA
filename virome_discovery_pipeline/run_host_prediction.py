@@ -410,9 +410,19 @@ RVH_MAP = {'viridiplantae': 'Plant', 'fungi': 'Fungi',
            'animal': 'Animal', 'bacteria': 'Bacteria'}
 
 def normalize_c9(h):
+    """C9 的 Predicted_Host → 统一宿主类别 (与 read_ictv_hits 同一套语义)。
+
+    2026-10-03 合并双定义: 文件里原有两处 def normalize_c9 (此处 +
+    "决策树与整合逻辑" 段重复定义, 运行时仅后定义者生效); 本处为唯一实现。
+    两版对真实 C9 输入 (14 类封闭取值, 见 scripts/audit/HOST_REGISTRY_AUDIT_20260915.md
+    §10.9) 判定一致; 此处取带 strip + NA 归一的版本, 避免未来 C9 出现
+    'NA'/空白/None 时把无效值当成有效宿主类别计入命中。
+    Mammalia 与 Insecta/Arachnida/Aves/Human/Animal_other 同口径折叠为 Animal
+    (拼写按 database/cross_analysis/species_host_probability.tsv 的 category 取值)。
+    """
     h = str(h).strip() if not pd.isna(h) else 'nan'
     if h in ('', 'Unknown', 'None', 'NA', 'nan'): return 'Unknown'
-    if h in ('Insecta', 'Arachnida', 'Aves', 'Human', 'Animal_other'): return 'Animal'
+    if h in ('Insecta', 'Arachnida', 'Aves', 'Human', 'Mammalia', 'Animal_other'): return 'Animal'
     if h == 'Oomycetes': return 'Protist'
     return h
 
@@ -567,12 +577,8 @@ def _cleanup_phabox(outdir):
 
 # ----------------- 决策树与整合逻辑 -----------------
 
-def normalize_c9(h):
-    if pd.isna(h) or h in ['Unknown', 'None']: return 'Unknown'
-    h = str(h)
-    if h in ['Insecta', 'Arachnida', 'Aves', 'Human', 'Animal_other']: return 'Animal'
-    if h in ['Oomycetes']: return 'Protist'
-    return h
+# normalize_c9 单一定义在文件前部 "ICTV / RVH 命中判定" 段 (2026-10-03 合并双定义,
+# 此处原为生效副本, 与上方定义重复; 实测两版对真实 C9 输入判定一致, 见审计文档 §10.9)
 
 # RVH evidence 中不得作为定案依据的标签 (2026-09-19):
 #   unclassified = 工具自认无判断; pred_low_confidence = k-mer 低置信

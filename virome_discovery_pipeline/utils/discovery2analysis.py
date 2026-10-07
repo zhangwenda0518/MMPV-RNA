@@ -165,13 +165,16 @@ def main():
             tmp_tax = Path(tempfile.gettempdir()) / (
                 f"merged_taxonomy_{hashlib.md5(str(cen).encode()).hexdigest()[:8]}.tsv")
             cols = list(next(iter(merged_map.values())).keys()) if merged_map else []
+            # 逐行 TSV (与 load_taxonomy 的 header+行的表契约一致)
             with open(tmp_tax, "w", encoding="utf-8", newline="") as fh:
-                fh.write("contig_id\n" + "\n".join(cols) + "\n")
+                fh.write("\t".join(["contig_id"] + cols) + "\n")
                 for cid, rec in merged_map.items():
-                    fh.write(cid + "\n" + "\n".join(str(rec.get(c, "")) for c in cols) + "\n")
+                    fh.write("\t".join([cid] + [str(rec.get(c, "")) for c in cols]) + "\n")
+            args.taxonomy = str(tmp_tax)
+            print(f"[INFO] 合并 {len(tax_list)} 份逐样本 taxonomy → {tmp_tax} ({len(merged_map)} 条)")
         print(f"[INFO] --from-discovery 自动定位 (布局感知):")
         print(f"       centroids: {cen}")
-        print(f"       taxonomy:  {tax}")
+        print(f"       taxonomy:  {args.taxonomy}")
         manifest = _iol.write_boundary(
             droot, "discovery->analysis",
             {"centroids": args.centroids, "taxonomy": args.taxonomy, "taxonomy_files": str(len(tax_list)),

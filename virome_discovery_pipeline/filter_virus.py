@@ -23,7 +23,7 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 from mmpv_common.io_layout import layout_dirs as _layout_dirs
-_D = _layout_dirs(os.environ.get("MMPV_IO_LAYOUT", "legacy"))
+_D = _layout_dirs(os.environ.get("MMPV_IO_LAYOUT"))
 
 DEFAULTS = {
     'CDD_DB':        os.path.expanduser('~/database/cdd/cdd-db/cdd_db'),
@@ -35,13 +35,19 @@ DEFAULTS = {
 }
 
 def run(cmd, desc=''):
+    # fail-fast: 工具非零退出 (OOM/DB 路径错等) 时下游"输出为空 → symlink 全放行"
+    # 会把崩溃与"零命中"混为一谈, 过滤层静默失效 → 直接报错退出
     print(f'  [{desc}] {cmd}', flush=True)
     t0 = time.time()
-    ret = subprocess.run(cmd, shell=True, executable='/bin/bash').returncode
+    proc = subprocess.run(cmd, shell=True, executable='/bin/bash',
+                          stderr=subprocess.PIPE, text=True)
     wall = time.time() - t0
     print(f'  [{desc}] done: wall={wall:.1f}s', flush=True)
-    if ret != 0:
-        print(f'  [{desc}] WARNING: exit {ret}', flush=True)
+    if proc.returncode != 0:
+        tail = '\n'.join((proc.stderr or '').strip().split('\n')[-5:]) or '(stderr 为空)'
+        print(f'  [{desc}] ERROR: exit {proc.returncode}; stderr tail:\n{tail}',
+              file=sys.stderr, flush=True)
+        sys.exit(1)
 
 def symlink_force(src, dst):
     if os.path.islink(dst) or os.path.exists(dst):
@@ -77,7 +83,8 @@ def run_uniprot(input_fa, outdir, uniprot_db, threads, virus_taxid_path=None, mo
         'uniprot-diamond')
 
     if not os.path.isfile(blast_out) or os.path.getsize(blast_out) == 0:
-        print('  UniProt: no hits, symlinking input', flush=True)
+        # 仅当 diamond 成功 (run() 非零已退出) 且输出确为空时才走"零命中"放行
+        print('  UniProt: 0 hits (diamond 成功且输出为空), symlinking input', flush=True)
         symlink_force(input_fa, out_fa)
         return out_fa
 
@@ -498,6 +505,77 @@ def split_output(split_outdir, cdd_fa, uniprot_fa, cdd_dir, uniprot_dir, calls_t
 
     print(f'Split complete: {len(all_samples)} samples')
 
+# ===================== Graph verdict pass (graph 阶段消费点) =====================
+
+def _fasta_ids(path):
+    ids = []
+    with open(path) as fh:
+        for line in fh:
+            if line.startswith('>'):
+                ids.append(line[1:].split()[0] if len(line) > 1 else '')
+    return ids
+
+
+def _copy_fasta_subset(src, dst, keep_ids):
+    """按 header 首 token 过滤复制 FASTA (记录逐行原样保留)。"""
+    with open(src) as fin, open(dst, 'w') as fout:
+        write_on = False
+        for line in fin:
+            if line.startswith('>'):
+                cid = line[1:].split()[0] if len(line) > 1 else ''
+                write_on = cid in keep_ids
+            if write_on:
+                fout.write(line)
+
+
+# ===================== COBRA 主链镜像 (恢复 filter→COBRA 主链契约) =====================
+
+def build_cobra_mirror(outdir, base, filter_mode, split_by_prefix=False,
+                       verdict_dir=None):
+    """把 filter 最终候选集以 02a 兼容结构镜像到
+    {d_filter}/candidates/{S}/{S}_virus.all.candidate.fasta, 供 COBRA 主链消费。
+
+    口径 (2026-10-07 用户裁定): graph 只对 filter 后无证据 (unclassified 且无
+    blastx hit) 的结果做过滤 — 该动作由 graph 阶段 (graph_propagation.py,
+    本阶段之后运行) 的裁决完成, 本镜像原样搬运, 不做额外增删。
+
+    背景: 原始设计 COBRA 吃 filter 结果 (编排器按 cdd>uniprot>raw 逐级选择);
+    feb352f (2026-09-30) 因 02b 结构与 cobra raw 模式不兼容导致 8/8 崩溃, 被迫
+    绕开 filter。本镜像以 cobra 认识的结构承载 filter 结果, 恢复主链契约且不
+    复发崩溃。"""
+    del verdict_dir  # 历史参数: 早期镜像曾在此做 graph_nonviral 剔除, 现口径收窄后不再需要
+    entries = []
+    if split_by_prefix:
+        for d in sorted(os.listdir(outdir)):
+            sdir = os.path.join(outdir, d)
+            if not os.path.isdir(sdir):
+                continue
+            chain = os.path.join(sdir, f'{d}.virus.candidate_filtered.fasta')
+            if os.path.isfile(chain):
+                entries.append((d, chain))
+    else:
+        chain = os.path.join(outdir, f'{base}_filtered.fasta')
+        alt = os.path.join(outdir, f'{base}_virus.all.candidate.fasta')
+        pick = chain if os.path.exists(chain) else (alt if os.path.exists(alt) else None)
+        if pick:
+            entries.append((os.path.basename(os.path.normpath(outdir)), pick))
+    if not entries:
+        return
+    mirror_root = os.path.join(outdir, 'candidates')
+    os.makedirs(mirror_root, exist_ok=True)
+    tot = kept_tot = 0
+    for s, chain in entries:
+        mdir = os.path.join(mirror_root, s)
+        os.makedirs(mdir, exist_ok=True)
+        dst = os.path.join(mdir, f'{s}_virus.all.candidate.fasta')
+        with open(chain, 'rb') as fi, open(dst, 'wb') as fo:
+            fo.write(fi.read())
+        kept_tot += len(_fasta_ids(dst))
+        tot += 1
+    print(f'CobraMirror: {tot} 样本镜像 -> {mirror_root} '
+          f'(共 {kept_tot} 条最终候选; COBRA 主链恢复消费 filter 结果)', flush=True)
+
+
 # ===================== Main =====================
 
 def main():
@@ -516,6 +594,12 @@ def main():
     parser.add_argument('-t', '--threads', default=DEFAULTS['THREADS'])
     parser.add_argument('--split-by-prefix', action='store_true',
                         help='Split output by contig prefix (first _ segment) into sample dirs')
+    parser.add_argument('--graph-verdict-dir', default=None,
+                        help='graph 阶段判定目录 (d_graph); 缺省走 io_layout, 目录不存在则本 pass 无操作')
+    parser.add_argument('--no-graph-rescue', action='store_true',
+                        help='禁用图传播救回 (graph_viral 被丢弃 contig → 加回)')
+    parser.add_argument('--no-graph-demote', action='store_true',
+                        help='禁用图传播降级 (graph_nonviral 零证据保留 contig → 移出)')
     args = parser.parse_args()
 
     os.makedirs(args.outdir, exist_ok=True)
@@ -625,6 +709,10 @@ def main():
         cobra_dst = os.path.join(args.outdir, f'{base}_virus.all.candidate.fasta')
         symlink_force(final_src, cobra_dst)
         print(f'Final: {final_dst} -> {final_src}')
+
+    # ---- COBRA 主链镜像 (恢复 filter→COBRA 主链契约; 02a 兼容结构) ----
+    build_cobra_mirror(args.outdir, base, args.filter_mode,
+                       split_by_prefix=bool(args.split_by_prefix))
 
 if __name__ == '__main__':
     main()

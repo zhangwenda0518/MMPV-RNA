@@ -199,7 +199,9 @@ def parse_arguments():
     db_group.add_argument("--virus_taxid", help="病毒taxid文件路径")
 
     method_group = parser.add_argument_group('>>> 鉴定方法配置 (Identification Methods)')
-    method_group.add_argument("--identify_tools", choices=["genomad", "blast", "rdrpcatch", "viralm", "virbot", "viroid", "virsorter2", "viralverify", "virhunter", "metabuli", "all"], default="all", help="选择鉴定工具")
+    method_group.add_argument("--identify_tools", choices=["genomad", "blast", "rdrpcatch", "viralm", "virbot", "viroid", "virsorter2", "viralverify", "virhunter", "metabuli", "all"], default="all",
+                       help="选择鉴定工具 (all=7 个快工具: genomad/blast/rdrpcatch/virbot/viroid/viralverify/metabuli; "
+                            "viralm/virsorter2/virhunter 较慢, 按名单独运行后结果自动并入 union)")
     method_group.add_argument("--blast_evalue", default="1e-5", help="E-value 阈值")
     method_group.add_argument("--blast_mode", choices=['strict', 'filter', 'both', 'no-filter'], default='filter', help="Blast过滤模式: filter(抢救,默认), strict(严格), both(同时运行两种)")
     method_group.add_argument("--blast_top_n", type=int, default=5, help="Blast对抗验证审查 Top N")
@@ -1222,8 +1224,30 @@ def process_sample(filepath, sample, args):
             tools_ran.append("metabuli"); log_step("Metabuli")
 
         if virus_results:
+            # all.result.id / all.candidate.fasta 是历次工具结果的并集 (union)。
+            # 单工具模式 (含慢工具补跑) 只产出本次工具结果, 直接 consolidate 会整体
+            # 覆写此前多工具 union → 先把 output_dir 下已有的其它 {sample}_virus.*.result.id
+            # 一并纳入 (排除 all.result.id 与本次已收集的), 即"合并而非覆写"。
+            _have = {os.path.basename(p) for p in virus_results if p}
+            _existing = []
+            for _rf in sorted(glob.glob(os.path.join(output_dir, f"{sample}_virus.*.result.id"))):
+                _bn = os.path.basename(_rf)
+                if _bn.endswith(".all.result.id") or _bn in _have:
+                    continue
+                _existing.append(_rf)
+            if _existing:
+                safe_print(f"  [{sample}] union 合并: 本次 {len(virus_results)} 个工具结果 "
+                           f"+ 既有 {len(_existing)} 个 "
+                           f"({', '.join(os.path.basename(x).rsplit('.', 3)[-3] for x in _existing)})")
+                # 下方分工具过滤统计 (per-tool *.<db>_filtered.id) 只对本次 tools_ran 重算,
+                # 并入的既有工具不重跑 → 其分工具过滤统计保持上一轮产物, 显式提示
+                safe_print(f"  [{sample}] ⚠️ 仅并入 union、未重跑分工具过滤的工具: "
+                           f"{', '.join(os.path.basename(x).rsplit('.', 3)[-3] for x in _existing)} "
+                           f"(其 *.<db>_filtered.id 为既有产物)")
+            else:
+                safe_print(f"  [{sample}] union 合并: {len(virus_results)} 个工具结果 (无既有结果)")
             t0 = time.time()
-            consolidate_virus_results(filepath, virus_results, sample, output_dir)
+            consolidate_virus_results(filepath, virus_results + _existing, sample, output_dir)
             log_step("合并提取")
 
             # 后置过滤 (合并后统一对 all.candidate.fasta 执行, 每个工具独立输出过滤ID)

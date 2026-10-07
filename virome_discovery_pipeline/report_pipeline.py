@@ -22,8 +22,8 @@ from Bio import SeqIO
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
-from mmpv_common.io_layout import layout_dirs as _layout_dirs
-_D = _layout_dirs(os.environ.get("MMPV_IO_LAYOUT", "legacy"))
+from mmpv_common.io_layout import layout_dirs as _layout_dirs, build_discovery_dirs as _build_discovery_dirs
+_D = _layout_dirs(os.environ.get("MMPV_IO_LAYOUT"))
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 VERSION = "v2.3"
@@ -45,13 +45,13 @@ _EN_MAP = {
 '已知':'Known','新种':'Novel species','分析验证':'Analysis & Validation','综合判定':'Final verdict','冲突':'Conflict',
 '序列':'Sequence','新病毒判定':'Novelty call','序列快照':'Sequence snapshot','点击复制':'Click to copy','可复制':'Copyable',
 '分类学':'Taxonomy','分类与':'Taxonomy &','鉴定':'Identification','新病毒':'Novel virus','高置信':'High confidence',
-'进化树':'Phylogeny','个科建树':'families built','新属':'Novel genus','新科':'Novel family',
+'进化树':'Phylogeny','个科建树':'families built','新属':'Novel genus',
 '已知却去除':'Known but removed','蛋白近似却去除':'Protein-approx removed','有检出却去除':'Detected but removed',
 '病毒':'virus','检测值轴':'value axis','横向图':'horizontal chart','值轴是':'value axis is',
 '纵向图值轴是':'vertical chart value axis','近缘':'Closely related','无任何证据':'No evidence','延伸':'extended','延伸(partial)':'extended(partial)','延伸(circular)':'extended(circular)',
-'宿主基因污染':'Host gene contamination','昆虫病毒/污染':'Insect virus/contamination','真菌病毒/污染':'Fungal virus/contamination',
+'昆虫病毒/污染':'Insect virus/contamination','真菌病毒/污染':'Fungal virus/contamination',
 '噬菌体污染':'Phage contamination','无病毒域+blast弱':'No viral domain + weak blast','已检出但证据弱':'Detected but weak evidence',
-'无任何证据':'No evidence','已运行但无最终结果':'Ran but no final result','未运行':'Not run','已运行':'Ran',
+'已运行但无最终结果':'Ran but no final result','未运行':'Not run','已运行':'Ran',
 '其他':'Other','新科':'New family','远缘(未定)':'Distantly related (undetermined)','近缘(未定)':'Closely related (undetermined)',
 }
 def _en(t):
@@ -71,14 +71,13 @@ def _resolve_acv_dir(base):
     return Path(base) / "09b_ACVirus_Analysis"
 
 def _resolve_analysis_dir(base):
-    """返回 09 分析目录: 优先 09a_Virome_Analysis, 回退旧名 09_Virome_Analysis。
-
-    阶段目录命名统一为 NN[ab]_Name（00a/00b、03a/03b、09b_...），09_ 是唯一的
-    例外；改成 09a_ 与 09b_ 配对后此处两个名字都认，新旧输出树都能读
+    """返回 09 分析目录: 按 io_layout 的 _analysis_dirs 顺序解析
+    (legacy: 09a_Virome_Analysis 优先 → 回退旧名 09_Virome_Analysis;
+     standard: 11_ViromeAnalysis)。新旧输出树都能读
     （同 _cobra_dirs / _centroids_v1 的双名容错做法）。
     """
-    for nm in (_D['d_analysis'], _D['d_analysis']):
-        d = Path(base) / nm
+    for d in _build_discovery_dirs(Path(base), Path(base),
+                                   os.environ.get("MMPV_IO_LAYOUT"))['_analysis_dirs']:
         if d.is_dir():
             return d
     return Path(base) / _D['d_analysis']

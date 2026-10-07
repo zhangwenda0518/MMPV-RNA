@@ -42,7 +42,8 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 from mmpv_common.io_layout import (build_discovery_dirs, normalize_layout_env,
-                                   dir_name as layout_dir_name)
+                                   dir_name as layout_dir_name,
+                                   locate_centroids as io_locate_centroids)
 
 import polars as pl
 from Bio import SeqIO
@@ -286,7 +287,7 @@ class ViromePipeline:
         raw = Path(args.input_reads).absolute() if args.input_reads else Path(args.output_dir).absolute()
         script_dir = Path(__file__).parent.resolve()
 
-        # 布局解析 (CLI > MMPV_IO_LAYOUT > legacy) 并写回环境, 子进程继承同一布局;
+        # 布局解析 (CLI > MMPV_IO_LAYOUT > standard) 并写回环境, 子进程继承同一布局;
         # self.d 由 mmpv_common.io_layout 构造, legacy 分支与 v3.0 字面量逐键一致
         self.layout = normalize_layout_env(getattr(args, 'io_layout', None))
         self.d = build_discovery_dirs(out, raw, self.layout)
@@ -299,6 +300,7 @@ class ViromePipeline:
             'deplete':  script_dir.parent / 'data_preprocessing_pipeline' / 'host_depletion.py',
             'assembly': script_dir / 'assembly_pipeline.py',
             'identify': script_dir / 'virus_identification.py',
+            'graph':    script_dir / 'graph_propagation.py',
             'filter':   script_dir / 'filter_virus.py',
             'cobra':    script_dir / 'cobra_pipeline.py',
             'cluster':  script_dir / 'cluster_pipeline.py',
@@ -432,6 +434,9 @@ class ViromePipeline:
                 (d['centroids'] / 'final_centroids.fasta').is_file()
                 or (d.get('_centroids_v1') and (d['_centroids_v1'] / 'final_centroids.fasta').is_file())
                 or (d.get('_centroids_v2') and (d['_centroids_v2'] / 'final_centroids.fasta').is_file())
+                # cluster_pipeline 实际写 <cluster>/4_centroids (legacy 内部命名),
+                # standard 契约路径 06_CLUSTER/centroids 未命中时按限深兜底再找一层
+                or bool(d['root'].glob('*/4_centroids/final_centroids.fasta'))
             ),
             'taxonomy': lambda: (
                 # 真实产物形态 = 逐样本 {sample}.integrated/final_integrated_classification.tsv;
@@ -587,8 +592,10 @@ class ViromePipeline:
             parts.append(f"--config {self.args.align_config}")
         if self.args.vmtouch:
             parts.append("--vmtouch")
-        if self.args.keep_taxids:
-            parts.append(f"--keep-taxids {self.args.keep_taxids}")
+        if self.args.keep_taxids is not None:
+            # is not None: 显式空串也要透传 (host_depletion 侧把空串解释为禁用
+            # 分类 reads 保留); 带引号保证空串作为独立参数到达子脚本而非被 shell 吞掉
+            parts.append(f"--keep-taxids '{self.args.keep_taxids}'")
         if self.args.deplete_debug:
             parts.append("--debug")
 
@@ -738,12 +745,78 @@ class ViromePipeline:
             parts.append("--skip_plots")
         if self.args.clean_failed:
             parts.append("--clean_failed")
-        run_cmd(' '.join(parts), self.log, "VirusIdentification", str(self.d['ident'] / "ident.log"))
+        ok, detail = run_cmd(' '.join(parts), self.log, "VirusIdentification",
+                             str(self.d['ident'] / "ident.log"))
+        # 失败必须抛出: 主循环 except 会记入 failed_stages 且【不写 .ok】(同 graph/cobra 口径)
+        if not ok:
+            raise RuntimeError(
+                f"VirusIdentification 失败 ({detail}) — 检查 {self.d['ident'] / 'ident.log'}")
 
         self.viral_map = scan_viral_files(self.d['ident'])
         self.log.info("  鉴定完成: %d 样本有病毒候选序列", len(self.viral_map))
 
     # ── Step 2b: UniProt + CDD 分层过滤 ──
+    # ── filter 子步骤: 组装图标签传播 (思想源自 GMW; 默认关闭, graph.enabled 开启) ──
+    def run_graph(self):
+        self.d['graph'].mkdir(parents=True, exist_ok=True)
+        if getattr(self.args, 'skip_graph', False) or \
+                not getattr(self.args, 'graph_enabled', True):
+            self.log.info("  [graph 子步骤] 默认关闭 (graph.enabled=false / --skip-graph), 跳过")
+            return
+        self.log.info("=" * 50)
+        self.log.info("  [graph 子步骤] 组装图标签传播 (配对读段链接图 + ensemble 种子 + Louvain)")
+
+        a = self.args
+        reads_src = self.coassembly_merged_dir or self.reads_dir
+        parts = [
+            f"python {self.sc['graph']}",
+            f"--asm-dir {self.d['asm']}",
+            f"--ident-dir {self.d['ident']}",
+            f"--reads-dir {reads_src}",
+            f"--filter-dir {self.d['filter']}",
+            f"--output-dir {self.d['graph']}",
+            f"-t {a.threads}",
+            f"-j {getattr(a, 'graph_jobs', None) or max(1, getattr(a, 'jobs', 1) // 2)}",
+        ]
+        for attr, flag in [('graph_min_link_pairs', '--min-link-pairs'),
+                           ('graph_gc_diff', '--gc-diff'),
+                           ('graph_depth_ratio', '--depth-ratio'),
+                           ('graph_resolution', '--resolution'),
+                           ('graph_seed_min_votes', '--seed-min-votes'),
+                           ('graph_nonviral_min_len', '--nonviral-min-len'),
+                           ('graph_majority_ratio', '--majority-ratio'),
+                           ('graph_max_reads', '--max-reads'),
+                           ('graph_map_min_len', '--map-min-len')]:
+            v = getattr(a, attr, None)
+            if v is not None:
+                parts.append(f"{flag} {v}")
+        if getattr(a, 'graph_require_proper', False):
+            parts.append("--require-proper")
+        if getattr(a, 'no_graph_demote', False) or not getattr(a, 'graph_apply_to_filter', True):
+            parts.append("--no-demote")
+        if getattr(a, 'no_graph_rescue', False) or not getattr(a, 'graph_apply_to_filter', True):
+            parts.append("--no-rescue")
+        if getattr(a, 'graph_keep_bam', False):
+            parts.append("--keep-bam")
+        if getattr(a, 'graph_no_candidates', False):
+            parts.append("--no-candidates")
+        if a.force:
+            parts.append("--force")
+
+        ok, _ = run_cmd(' '.join(parts), self.log, "Graph-Propagation",
+                        str(self.d['graph'] / "graph.log"))
+        produced = list(self.d['graph'].glob('*/*.graph_verdict.tsv'))
+        if not ok and not produced:
+            raise RuntimeError(
+                "Graph 阶段全部样本失败 (无任何 verdict TSV) — 检查 "
+                f"{self.d['graph'] / 'graph.log'}")
+        if not ok:
+            self.log.warning("Graph 阶段部分样本失败 (%d 个样本有产物), 检查 graph.log",
+                             len(produced))
+
+        # 陈旧性提示: graph 重跑不自动失效 filter/cobra 的 .ok
+        self.log.info("  Graph 阶段完成, 输出: %s", self.d['graph'])
+
     def run_filter(self):
         self.d['filter'].mkdir(parents=True, exist_ok=True)
         self.log.info("=" * 50)
@@ -781,6 +854,11 @@ class ViromePipeline:
 
         self.log.info("  过滤完成, 输出: %s", self.d['filter'])
 
+        # ── graph 子步骤 (默认关闭; graph.enabled: true 时对 filter 无证据结果二次裁决) ──
+        if getattr(self.args, 'graph_enabled', False) and \
+                not getattr(self.args, 'skip_graph', False):
+            self.run_graph()
+
     def _run_filter_merged(self, candidates):
         """合并模式: 所有样本 candidate 合并 → 一次过滤 → 拆分"""
         merged_fa = self.d['filter'] / 'all_candidates.fasta'
@@ -810,8 +888,12 @@ class ViromePipeline:
         if virus_taxid:
             parts.append(f"--virus-taxid {virus_taxid}")
 
-        run_cmd(' '.join(parts), self.log, "Filter-merged",
-                str(self.d['filter'] / "filter_merged.log"))
+        ok, detail = run_cmd(' '.join(parts), self.log, "Filter-merged",
+                             str(self.d['filter'] / "filter_merged.log"))
+        # 失败必须抛出: 主循环 except 会记入 failed_stages 且【不写 .ok】(同 graph/cobra 口径)
+        if not ok:
+            raise RuntimeError(
+                f"Filter-merged 失败 ({detail}) — 检查 {self.d['filter'] / 'filter_merged.log'}")
 
         # 清理合并文件
         merged_fa.unlink(missing_ok=True)
@@ -881,8 +963,6 @@ class ViromePipeline:
                 pbar.set_postfix_str(f"{sample[:30]} {status}")
                 self.log.info("  Filter-%s: %s", sample, status)
 
-        self.log.info("  过滤完成, 输出: %s", self.d['filter'])
-
     # ── Step 3a: COBRA 延伸 ──
     # ── 自动探测 COBRA 目录 (兼容 03a_COBRA / 03_COBRA) ──
     def _resolve_cobra_dir(self):
@@ -896,10 +976,28 @@ class ViromePipeline:
     def _cobra_candidate_source(self):
         """COBRA (raw 模式) 的病毒候选来源目录。
 
-        契约: 必须是 02a_Identification (原始候选); 仅当 02a 不存在时回退 02b_Filter
-        并告警 (过滤产物命名不同, raw 模式可能逐样本找不到候选 — 241/246 实测)。
+        主链契约 (2026-10-07 恢复并重排, 用户裁定): 流水线为
+        identification → filter → graph → COBRA。filter 纯化 (CDD/UniProt),
+        graph 随后对无证据保留结果二次裁决 (救回/降级), 并把最终候选集以
+        02a 兼容结构写到 d_filter/candidates/{S}/ — 解决 feb352f 之前 02b
+        结构不兼容导致的 8/8 崩溃, filter 重新成为主链闸门。优先级:
+          1. d_filter/candidates  (filter 主链镜像, filter 阶段已跑时)
+          2. d_graph/candidates   (graph 派生候选, filter 未跑时的兜底)
+          3. 02a_Identification   (两者都未跑时的原始候选)
+          4. 02b_Filter           (历史回退, 告警 — 结构不兼容, 不应走到)
         返回 (src_dir, warning_or_None)。
         """
+        filt_mirror = self.d['filter'] / 'candidates'
+        if (self.d['filter'].is_dir() and filt_mirror.is_dir()
+                and any(filt_mirror.glob('*/*_virus.all.candidate.fasta'))):
+            self.log.info("  候选源 = filter 主链镜像 (CDD/UniProt 过滤 + graph 调整后的最终候选)")
+            return filt_mirror, None
+        graph_cand = self.d.get('graph')
+        if (getattr(self.args, 'graph_apply_to_cobra', True) and graph_cand
+                and (graph_cand / 'candidates').is_dir()
+                and any((graph_cand / 'candidates').glob('*/*_virus.all.candidate.fasta'))):
+            self.log.info("  候选源 = graph 派生候选 (filter 未跑, 已剔除 graph_nonviral)")
+            return graph_cand / 'candidates', None
         if self.d['ident'].is_dir():
             return self.d['ident'], None
         if self.d['filter'].is_dir():
@@ -939,9 +1037,10 @@ class ViromePipeline:
             asm_tools = [self.args.assembler] if self.args.assembler != 'all' else all_tools
         self.log.info("  Auto-detect 组装工具: %s", ','.join(asm_tools))
 
-        # 病毒候选来源: COBRA 内部只用 raw 模式 → 输入契约是 02a_Identification 的
-        # 原始候选 ({sample}_virus.all.candidate.fasta)。02b_Filter 是过滤产物
-        # (命名/结构不同), 传给 raw 模式会逐样本找不到候选 — 241/246 双机实测 8/8 失败。
+        # 病毒候选来源 (2026-10-07 恢复 filter→COBRA 主链契约): 优先 filter 阶段
+        # 产出的 02a 兼容镜像 (d_filter/candidates, CDD/UniProt 过滤 + graph 调整);
+        # graph 派生候选 / 02a 原始候选为兜底。直接传 02b 原始结构仍会踩 241/246
+        # 实测的 8/8 崩溃 (结构不兼容), 镜像即为此而解。
         # 注意 args.virus_mode 是【鉴定阶段】的模式, 与 COBRA 输入无关, 不参与选择。
         virsorter_src, src_warn = self._cobra_candidate_source()
         if src_warn:
@@ -1163,6 +1262,25 @@ class ViromePipeline:
         self.log.info("  merge 阶段完成 (含 Flye 共组装)")
 
     # ── Step 4: CLUSTER 三支路去冗余 ──
+    def _locate_centroids_dir(self):
+        """定位 centroids 目录并重绑 self.d['centroids'], 返回目录或 None。
+
+        cluster_pipeline 实际写 <cluster>/4_centroids (沿袭 legacy 内部命名),
+        standard 契约是 06_CLUSTER/centroids — 241 真实数据实测两者错位时
+        taxonomy/host/rescue 会被"未找到 centroids"连坐跳过。
+        以 io_layout.locate_centroids (含 */* 限深兜底) 的结果为准。
+        """
+        if (self.d['centroids'] / "final_centroids.fasta").is_file():
+            return self.d['centroids']
+        located = io_locate_centroids(Path(self.d['root']))
+        if located is None:
+            return None
+        if located.parent != self.d['centroids']:
+            self.log.info("  centroids 实际位置: %s (契约路径 %s 未命中, 已重绑)",
+                          located.parent, self.d['centroids'])
+        self.d['centroids'] = located.parent
+        return self.d['centroids']
+
     def run_cluster(self):
         self._resolve_cobra_dir()
         self.d['cluster'].mkdir(parents=True, exist_ok=True)
@@ -1277,12 +1395,9 @@ class ViromePipeline:
             self.log.error("CLUSTER vclust 阶段失败, 终止。")
             sys.exit(1)
 
-        centroids = self.d['centroids'] / "final_centroids.fasta"
-        if not centroids.is_file():
-            for alt_key in ['_centroids_v1', '_centroids_v2']:
-                centroids = self.d[alt_key] / "final_centroids.fasta"
-                if centroids.is_file(): break
-        if centroids.is_file():
+        centroids_dir = self._locate_centroids_dir()
+        centroids = centroids_dir / "final_centroids.fasta" if centroids_dir else None
+        if centroids and centroids.is_file():
             n = sum(1 for _ in open(centroids) if _.startswith('>'))
             self.log.info("  CLUSTER 输出: %d 条 centroids → %s", n, centroids)
         else:
@@ -1304,10 +1419,8 @@ class ViromePipeline:
 
         centroids_fa = self.d['centroids'] / "final_centroids.fasta"
         if not centroids_fa.is_file():
-            for alt_key in ['_centroids_v1', '_centroids_v2']:
-                centroids_fa = self.d[alt_key] / "final_centroids.fasta"
-                if centroids_fa.is_file():
-                    break
+            if self._locate_centroids_dir():
+                centroids_fa = self.d['centroids'] / "final_centroids.fasta"
         if not centroids_fa.is_file():
             self.log.error("centroids 不存在 (试了 4_centroids, 04_centroids, 4.centroids), 请先运行 --stage cluster")
             sys.exit(1)
@@ -1804,10 +1917,10 @@ class ViromePipeline:
         self.log.info("=" * 50)
         self.log.info("[5] 病毒分类注释 (virus_classifier.py + R 共识整合)")
 
-        centroids = self.d['centroids'] / "final_centroids.fasta"
-        if not centroids.exists():
+        if not self._locate_centroids_dir():
             self.log.warning("未找到 centroids, 跳过分类")
             return
+        centroids = self.d['centroids'] / "final_centroids.fasta"
 
         tax_dir = self.d['taxonomy']
         sample = getattr(self.args, 'tax_sample_name', None) or "Votus"
@@ -1906,12 +2019,12 @@ class ViromePipeline:
         self.log.info("=" * 50)
         self.log.info("[6] 宿主预测 (RNAVirHost + PhaBOX2 + ICTV, ICTV > RVH > PB2)")
 
+        if not self._locate_centroids_dir():
+            self.log.warning("未找到 centroids, 跳过宿主预测")
+            return
         centroids = self.d['centroids'] / "final_centroids.fasta"
         sample = getattr(self.args, 'tax_sample_name', None) or "Votus"
         tax_tsv = self.d['taxonomy'] / f"{sample}.integrated" / "final_integrated_classification.tsv"
-        if not centroids.exists():
-            self.log.warning("未找到 centroids, 跳过宿主预测")
-            return
         if not tax_tsv.exists():
             self.log.error("分类结果 %s 不存在, 请先运行 --stage taxonomy", tax_tsv)
             return
@@ -2467,7 +2580,10 @@ class ViromePipeline:
                         icmd += " --no-hmm-rescue"
                     if getattr(self.args, 'no_hmm_in_score', False):
                         icmd += " --no-hmm-in-score"
-                    # 升 KEEP 默认开 (integrate_rescue_evidence.py 侧 default True)
+                    # 升 KEEP 默认关 (integrate_rescue_evidence.py 侧 default False):
+                    # 旧激进口径经 --hmm-promote-keep 显式开启; --no-hmm-promote-keep 保留兼容
+                    if getattr(self.args, 'hmm_promote_keep', False):
+                        icmd += " --hmm-promote-keep"
                     if getattr(self.args, 'no_hmm_promote_keep', False):
                         icmd += " --no-hmm-promote-keep"
                     if getattr(self.args, 'hmm_promote_min', 1) != 1:
@@ -2859,7 +2975,8 @@ STAGE_HELP = {
     'deplete':       '00b: Kraken2 + Bowtie2/HISAT2/Minimap2 + rRNA去除',
     'assembly':      '01:  MEGAHIT / rnaviralSPAdes / Penguin 三工具组装',
     'identification':'02a: 10工具并行病毒鉴定 (Genomad/Diamond/VirSorter2/...)',
-    'filter':        '02b: UniProt + CDD 分层过滤 (保留viral/viral_plant/viral_bacteria)',
+    'filter':        '02b: UniProt + CDD 分层过滤 (保留viral/viral_plant/viral_bacteria;'
+                     ' 含可选 graph 子步骤: 无证据结果二次裁决)',
     'cobra':         '03a: BWA-MEM2 + COBRA-Meta 重叠群延伸',
     'merge':         '03b: 合并多样本COBRA结果 + 可选Flye共组装',
     'cluster':       '04:  CD-HIT参考预聚类 + vclust Leiden聚类',
@@ -2877,7 +2994,6 @@ STAGE_ARGS = {
     "deplete":       ["host_depletion"],
     "assembly":      ["assembly_pipeline"],
     "identification":["virus_identification"],
-    "filter":        ["filter_virus"],
     "cobra":         ["cobra_pipeline"],
     "merge":         [],
     "cluster":       ["cluster_pipeline"],
@@ -2895,12 +3011,13 @@ OVERVIEW = """
 ║   MMPV-RNA — 宏病毒组端到端全自动分析流水线          ║
 ╚══════════════════════════════════════════════════════════════╝
 
-Stage 流程 (顺序执行, 共15个, 与 STAGE_ORDER 一致):
+Stage 流程 (顺序执行, 共15个, 与 STAGE_ORDER 一致; graph 为 filter 的可选子步骤):
   clean           → 原始数据质控 (fastp)
   deplete         → 宿主去除 (bowtie2)
   assembly        → 组装 (rnaviralSPAdes)
   identification  → 病毒鉴定 (10工具并行)
   filter          → 高置信过滤 (UniProt-strict)
+                      └ graph 子步骤 (默认关闭): 无证据保留结果二次裁决 → COBRA 输入
   cobra           → 单样本延伸 (COBRA-Meta)
   merge           → 多样本共组装 (Flye, co-assembly 模式)
   cluster         → vOTU 聚类 (CD-HIT + vclust)
@@ -2932,8 +3049,9 @@ def _build_parser(add_help=True):
     g.add_argument('--input_reads', help='原始 FASTQ 目录 (--cluster_input 模式可省略)')
     g.add_argument('--output_dir', required=True, help='项目输出根目录')
     g.add_argument('--io-layout', choices=['legacy', 'standard'], default=None,
-                   help='I/O 目录布局: legacy=v3.0 现行目录名 (默认); '
-                        'standard=统一编号布局 (doc/IO_LAYOUT_DESIGN.md)。'
+                   help='I/O 目录布局: standard=统一编号布局 (默认); '
+                        'legacy=v3.0 现行目录名 (存量项目/checkpoint 兼容, '
+                        'doc/IO_LAYOUT_DESIGN.md)。'
                         '亦可经环境变量 MMPV_IO_LAYOUT 设置, 子进程自动继承')
     g.add_argument('--cluster_input', help='直接输入已合并的病毒 FASTA (跳过 COBRA 收集)')
     g.add_argument('--input_assembly', help='组装结果目录 (identification 阶段, 默认 01_Assembly/)')
@@ -2945,6 +3063,42 @@ def _build_parser(add_help=True):
     g.add_argument('--stage', default=['all'], nargs='+',
                    choices=['all', 'clean', 'deplete', 'assembly', 'identification', 'filter', 'cobra', 'merge', 'cluster', 'taxonomy', 'host', 'checkv', 'rescue', 'analysis', 'analysis_verify', 'report'],
                    help='运行阶段 (可多个, 如: --stage clean deplete)')
+    g.add_argument('--skip-graph', action='store_true',
+                   help='强制跳过 filter 的 graph 子步骤 (该子步骤默认关闭; '
+                        'graph.enabled: true 时可用此参数临时关闭)')
+
+    g = p.add_argument_group('组装图标签传播 (filter 阶段的可选子步骤; 缺省值见 pipeline_config.yaml graph: 块)')
+    g.add_argument('--graph-min-link-pairs', type=int, default=None,
+                   help='建边所需最少跨 contig 配对读段数 (默认 3)')
+    g.add_argument('--graph-gc-diff', type=float, default=None,
+                   help='断边 GC 差阈值 (默认 0.20, GMW 口径)')
+    g.add_argument('--graph-depth-ratio', type=float, default=None,
+                   help='断边深度比阈值 (默认 20.0, GMW 口径)')
+    g.add_argument('--graph-require-proper', action='store_true',
+                   help='仅收 proper pair (勿开: bwa 跨 contig pair 永远 non-proper, 开启=零链接)')
+    g.add_argument('--graph-resolution', type=float, default=None,
+                   help='Louvain 分辨率参数 (默认 1.0)')
+    g.add_argument('--graph-seed-min-votes', type=int, default=None,
+                   help='病毒种子最少工具票数 (默认 2; 弱阳性票数<阈值归 unknown 交图裁决)')
+    g.add_argument('--graph-nonviral-min-len', type=int, default=None,
+                   help='非病毒种子最短长度 (默认 1000, = 鉴定阶段 LEN_VIRUS_MIN)')
+    g.add_argument('--graph-majority-ratio', type=float, default=None,
+                   help='社区传播多数比 (默认 10.0, GMW >=10 倍规则)')
+    g.add_argument('--graph-max-reads', type=int, default=None,
+                   help='每端取前 N 条 reads (确定性前缀截取, 0=全量; 规模兜底)')
+    g.add_argument('--graph-map-min-len', type=int, default=None,
+                   help='映射参考只保留 >= 该长度的 contigs (默认 1000, 0=全量; 短 contig '
+                        '无可执行判定, 剔除省 30-60%% 映射时间)')
+    g.add_argument('--graph-jobs', type=int, default=None,
+                   help='graph 阶段并行样本数 (默认 = jobs/2)')
+    g.add_argument('--graph-keep-bam', action='store_true', help='保留映射 BAM 供调试')
+    g.add_argument('--graph-no-candidates', action='store_true',
+                   help='不写派生候选目录 (COBRA raw 候选源将回退 02a_Identification)')
+    g.add_argument('--no-graph-demote', action='store_true',
+                   help='filter 消费点: 禁用降级 (graph_nonviral 零证据保留 contig 不移出)')
+    g.add_argument('--no-graph-rescue', action='store_true',
+                   help='filter 消费点: 禁用救回 (graph_viral 被丢弃 contig 不加回)')
+
     g.add_argument('--host-filter', default='Plant',
                    help='目标宿主 (逗号分隔, rescue 阶段使用, 默认: Plant. Unknown 默认跳过并输出到 unknown_votus.fasta)')
     g.add_argument('--skip-sdt', action='store_true', help='跳过 09b 的 SDT 属级序列一致性矩阵绘制')
@@ -2965,8 +3119,11 @@ def _build_parser(add_help=True):
                         '关闭则域证据层只看 CDD, 回退旧 30/30/40 纯 CDD 口径)')
     g.add_argument('--hmm-min-specific', type=int, default=1,
                    help='触发 HMM rescue 所需的最少病毒命中数 (默认 1)')
+    g.add_argument('--hmm-promote-keep', action='store_true',
+                   help='开启 CT3-HMM 升 KEEP (默认关: 有非噬菌体病毒命中时只做 DROP→REVIEW rescue; '
+                        'CT3 非纯病毒库, 命中即 KEEP 可能引入假阳, 仅需激进口径时开启)')
     g.add_argument('--no-hmm-promote-keep', action='store_true',
-                   help='关闭 CT3-HMM 升 KEEP (默认开: 有非噬菌体病毒命中时 DROP/REVIEW 直接升 KEEP)')
+                   help='显式关闭 CT3-HMM 升 KEEP (现为默认行为, 保留供旧脚本兼容)')
     g.add_argument('--hmm-promote-min', type=int, default=1,
                    help='触发升 KEEP 所需的最少病毒命中数 (默认 1; 配合 --hmm-require-family 时按科级计数)')
     g.add_argument('--hmm-require-family', action='store_true',
@@ -3075,7 +3232,9 @@ def _build_parser(add_help=True):
     g.add_argument('--assembler', default=None, choices=['megahit', 'rnaviralspades', 'penguin', 'all'],
                     help='组装工具 (默认: 从 pipeline_config.yaml 读取, 未配置则用 rnaviralspades)')
     g.add_argument('--contig-length', '-l', type=int, default=200, help='contig 最小长度 bp (默认 200)')
-    g.add_argument('--identify_tools', default='all', help='病毒鉴定工具')
+    g.add_argument('--identify_tools', default='all',
+                   help='病毒鉴定工具 (all=7 个快工具: genomad/blast/rdrpcatch/virbot/viroid/viralverify/metabuli; '
+                        'viralm/virsorter2/virhunter 较慢, 按名单独运行后结果自动并入 union)')
     g.add_argument('--virus_mode', default='filter', choices=['raw', 'filter', 'strict'],
                    help='COBRA 病毒序列来源: raw=原始鉴定, filter=UniProt过滤, strict=严格过滤 (默认: strict)')
     g = p.add_argument_group('鉴定数据库 (virus_identification.py)')
@@ -3294,13 +3453,13 @@ def _load_config(args):
         if getattr(args, key, None) is None and key in id_cfg:
             setattr(args, key, id_cfg[key])
 
-    # cluster
+    # cluster (CLI 显式传参优先: argparse 默认非 None, "current is None" 恒不成立,
+    #          故按 runtime/graph 段同款写法探测 sys.argv 中的显式 flag)
     cl_cfg = profile.get('cluster', {})
-    for key in ['min_length','ani','qcov']:
-        if key in cl_cfg:
-            current = getattr(args, key, None)
-            if current is None:
-                setattr(args, key, cl_cfg[key])
+    _cluster_flags = {'min_length': '--min-length', 'ani': '--ani', 'qcov': '--qcov'}
+    for key, flag in _cluster_flags.items():
+        if key in cl_cfg and flag not in sys.argv:
+            setattr(args, key, cl_cfg[key])
     if 'ref_genomes' in cl_cfg and not getattr(args, 'ref_genomes', None):
         setattr(args, 'ref_genomes', cl_cfg['ref_genomes'])
 
@@ -3329,6 +3488,28 @@ def _load_config(args):
             default_map = {'checkv_threshold': 90.0, 'max_vsi_samples': 10, 'min_vsi_len': 2000}
             if current is None or current == default_map.get(key):
                 setattr(args, key, res_cfg[key])
+
+    # graph (组装图标签传播; CLI 显式传参优先, 探测 sys.argv 中的对应 flag)
+    graph_cfg = profile.get('graph', {})
+    _graph_map = {
+        'min_link_pairs': '--graph-min-link-pairs',
+        'gc_diff': '--graph-gc-diff',
+        'depth_ratio': '--graph-depth-ratio',
+        'resolution': '--graph-resolution',
+        'seed_min_votes': '--graph-seed-min-votes',
+        'nonviral_min_len': '--graph-nonviral-min-len',
+        'majority_ratio': '--graph-majority-ratio',
+        'max_reads': '--graph-max-reads',
+        'map_min_len': '--graph-map-min-len',
+    }
+    for key, flag in _graph_map.items():
+        if key in graph_cfg and flag not in sys.argv:
+            setattr(args, f'graph_{key}', graph_cfg[key])
+    if 'graph_jobs' in graph_cfg and '--graph-jobs' not in sys.argv:
+        setattr(args, 'graph_jobs', int(graph_cfg['graph_jobs']))
+    for key in ('enabled', 'apply_to_filter', 'apply_to_cobra', 'require_proper'):
+        if key in graph_cfg and f'--graph-{key}' not in sys.argv:
+            setattr(args, f'graph_{key}', bool(graph_cfg[key]))
 
     return args
 

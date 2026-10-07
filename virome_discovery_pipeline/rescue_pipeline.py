@@ -31,7 +31,7 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 from mmpv_common.io_layout import layout_dirs as _layout_dirs
-_D = _layout_dirs(os.environ.get("MMPV_IO_LAYOUT", "legacy"))
+_D = _layout_dirs(os.environ.get("MMPV_IO_LAYOUT"))
 
 
 def _safe_tqdm(iterable, total=None, desc="", unit=""):
@@ -821,6 +821,48 @@ def _load_clusters(clusters_tsv):
             if len(parts) >= 2:
                 cmap[parts[0].strip()] = parts[1].strip()
     return cmap
+
+
+def _collect_pass_ids(*fa_paths):
+    """收集多个 pass FASTA 的 ID 集 (文件缺失/0 字节自动跳过)。"""
+    ids = set()
+    for fa in fa_paths:
+        if fa and os.path.isfile(fa) and os.path.getsize(fa) > 0:
+            for rec in SeqIO.parse(str(fa), "fasta"):
+                ids.add(rec.id)
+    return ids
+
+
+def _select_c_input(fa_b_fail, fa_a_fail, pass_ids, out_fa):
+    """分支 C 输入选择 + 防重复过滤 (与分支 D 保护同口径)。
+
+    B 有失败 → 直接用 B 的失败集 (与 B-pass 天然不相交, 过滤为 no-op);
+    B 无失败 (branchB_fail.fasta 为 0 字节, SeqIO.write 空列表也建文件) → 回退
+    A 的失败集, 但该集合含已被 B 拯救的 ID, 而 C 的 BLAST 库又加载 branchB_pass
+    (见 branch_c 内 895-901), 这些 ID 会被 C 再判 completo → 同一 ID 同时进
+    branchB_pass/branchC_pass → all_HQ 拼接重复、cnt 虚高。故先剔除已在 pass 集
+    (A/B pass) 的 ID。
+
+    返回 (可用 FASTA 路径 | None, 排除条数); 无排除时原样返回 fail 路径,
+    全部被排除时返回 None (调用方跳过分支 C)。
+    """
+    fail_for_c = fa_b_fail if (fa_b_fail and os.path.isfile(fa_b_fail)
+                               and os.path.getsize(fa_b_fail) > 0) else fa_a_fail
+    if not fail_for_c or not pass_ids or not os.path.isfile(fail_for_c):
+        return fail_for_c, 0
+    kept, n_excl = [], 0
+    for rec in SeqIO.parse(str(fail_for_c), "fasta"):
+        if rec.id in pass_ids:
+            n_excl += 1
+        else:
+            kept.append(rec)
+    if not n_excl:
+        return fail_for_c, 0
+    if not kept:
+        return None, n_excl
+    Path(out_fa).parent.mkdir(parents=True, exist_ok=True)
+    SeqIO.write(kept, out_fa, "fasta")
+    return str(out_fa), n_excl
 
 
 def branch_c(fail_fa, fastq_dir, work_dir,
@@ -1849,18 +1891,30 @@ def main():
         cnt_c_fail = sum(1 for _ in SeqIO.parse(fa_c_fail, "fasta")) if fa_c_fail.is_file() else 0
         fa_c_pass, fa_c_fail = str(fa_c_pass), str(fa_c_fail) if fa_c_fail.is_file() else None
     else:
-        fail_for_c = fa_b_fail if (fa_b_fail and Path(fa_b_fail).is_file() and Path(fa_b_fail).stat().st_size > 0) else fa_a_fail
-        fa_c_pass, fa_c_fail, cnt_c, cnt_c_fail = branch_c(fail_for_c, args.fastq_dir, out, args.checkv_db,
-            getattr(args, 'blast_db', None),
-            args.threads, args.jobs,
-            clusters=clusters,
-            clustermap_tsv=args.clusters_tsv,
-            centroids_fa=args.centroids,
-            split_dir=args.split_dir,
-            fasta_info=fasta_info,
-            taxonomy_tsv=getattr(args, 'taxonomy_tsv', None),
-            cdhit_fa=getattr(args, 'cdhit_fa', None),
-            flye_sample_map=flye_sample_map)
+        # 防重复 (2026-10-03, 同分支 D 1874-1876 口径): B 全 pass 时 branchB_fail.fasta
+        # 为 0 字节 → 回退 fa_a_fail, 但该文件含已被 B 拯救的 ID; C 的 BLAST 库又加载
+        # branchB_pass, 这些 ID 会被 C 再判 completo → 同一 ID 进两个 pass 集 →
+        # all_HQ 重复 + cnt 虚高。故 C 输入先剔除已在 A/B pass 集的 ID (排除数打日志)。
+        fail_for_c, n_excl_c = _select_c_input(
+            fa_b_fail, fa_a_fail, _collect_pass_ids(fa_a_pass, fa_b_pass),
+            out / "branch_c" / "branchC_input.fasta")
+        if n_excl_c:
+            print(f"  分支 C: 输入排除 {n_excl_c} 条已在 A/B pass 的 ID (防合并重复)")
+        if fail_for_c:
+            fa_c_pass, fa_c_fail, cnt_c, cnt_c_fail = branch_c(fail_for_c, args.fastq_dir, out, args.checkv_db,
+                getattr(args, 'blast_db', None),
+                args.threads, args.jobs,
+                clusters=clusters,
+                clustermap_tsv=args.clusters_tsv,
+                centroids_fa=args.centroids,
+                split_dir=args.split_dir,
+                fasta_info=fasta_info,
+                taxonomy_tsv=getattr(args, 'taxonomy_tsv', None),
+                cdhit_fa=getattr(args, 'cdhit_fa', None),
+                flye_sample_map=flye_sample_map)
+        else:
+            print("  分支 C: 无待处理序列 (全部已在 A/B pass), 跳过")
+            fa_c_pass = fa_c_fail = None   # cnt_c/cnt_c_fail 保持上方初始化的 0
 
     # 5. 分支 D: genus_len 属水平长度拯救 (ABC 全失败后的最终兜底)
     print("\n── Step 4: 分支 D (genus_len) ──")

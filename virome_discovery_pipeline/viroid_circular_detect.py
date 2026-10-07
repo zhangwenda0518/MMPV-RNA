@@ -138,7 +138,7 @@ def main():
 
     elapsed = (datetime.now() - start).total_seconds()
     print(f"\n{'=' * 60}")
-    print(f"  总输入:       {circ_recs + non_recs:,} 条")
+    print(f"  总输入:       {len(circ_recs) + len(non_recs):,} 条")
     print(f"  环状 (HQ):    {len(circ_recs):,} → {circular_fa}")
     print(f"  非环状:       {len(non_recs):,} → {non_circular_fa}")
     print(f"  日志:         {log_dir}/")

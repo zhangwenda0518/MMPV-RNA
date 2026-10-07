@@ -10,7 +10,9 @@ virome_analysis.py — 病毒基因组下游分析 + GenBank 提交准备 v2.1
   2. suvtk features     — CDS/tRNA/结构蛋白注释 (生成 .tbl)
   3. hypothetical       — DIAMOND/HMM 假想蛋白深度注释
   4. viral_topology     — 环形/线性基因组判断
-  5. submission (Sequin) — .fsa + .tbl + .cmt → .sqn (tbl2asn)
+  5. submission (Sequin) — 组装 .fsa + .tbl + .cmt; tbl2asn 可执行时才尝试生成
+     .sqn (NCBI 已弃用 tbl2asn, 正式提交走 submission_pipeline 的 suvtk),
+     缺 tbl2asn 则显式告警并跳过
 
 用法:
   python virome_analysis.py -i out/08_Rescue/HQ_plant_viruses.fasta -o out/09_Virome_Analysis/ -t 40
@@ -25,7 +27,7 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 from mmpv_common.io_layout import layout_dirs as _layout_dirs, dir_name as _ldir
-_D = _layout_dirs(os.environ.get("MMPV_IO_LAYOUT", "legacy"))
+_D = _layout_dirs(os.environ.get("MMPV_IO_LAYOUT"))
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 
@@ -192,9 +194,15 @@ def run_submission(fasta, out_dir, feat_dir, tax_dir, hypo_dir, log):
             f.write(f"Sequencing Technology: Illumina\n")
             f.write(f"Date: {datetime.now().strftime('%Y-%m-%d')}\n")
 
-    # tbl2asn: generate .sqn
-    cmd = f"tbl2asn -p {sub_out} -t template.sbt -i {fsa} -o {sub_out}"
-    log.info("[5/6] tbl2asn: %s", cmd)
+    # tbl2asn: generate .sqn (NCBI 已弃用; 仅当可执行时真跑并校验产物)
+    if which('tbl2asn'):
+        cmd = f"tbl2asn -p {sub_out} -t template.sbt -i {fsa} -o {sub_out}"
+        if run(cmd, log, "tbl2asn") and sqn.is_file() and sqn.stat().st_size > 0:
+            log.info("[5/6] tbl2asn ✓ → %s", sqn)
+        else:
+            log.warning("[5/6] tbl2asn 失败或未生成 %s (.fsa/.tbl/.cmt 已就绪于 %s)", sqn, sub_out)
+    else:
+        log.warning("[5/6] tbl2asn 未安装 (NCBI 已弃用, 正式提交请用 submission_pipeline), 本步跳过")
 
     return sub_out
 
@@ -216,6 +224,10 @@ def main():
     inp = Path(args.input)
     if not inp.is_file():
         sys.exit(f"输入文件不存在: {inp}")
+    if not args.output:
+        # 布局感知默认目录名 (legacy=09_Virome_Analysis 族, standard=11_ViromeAnalysis);
+        # 必须在 Path(args.output) 之前回填, 否则 None → TypeError
+        args.output = _D['d_analysis']
     out = Path(args.output)
     out.mkdir(parents=True, exist_ok=True)
 
@@ -251,8 +263,6 @@ def main():
 
     # 6. 生成 ref_info.tsv (供 virome_analysis_pipeline/auto_known_virus.py 使用)
     ref_info = out / "ref_info.tsv"
-    if not args.output:
-        args.output = _D['d_analysis']
     if not ref_info.is_file():
         ref_builder = SCRIPT_DIR / "build_ref_info.py"
         if ref_builder.is_file():
@@ -266,7 +276,7 @@ def main():
     log.info("  suvtk_features/       基因注释 (CDS/tRNA)")
     log.info("  hypothetical/          假想蛋白深度注释")
     log.info("  topology.tsv           环形/线性判断")
-    log.info("  submission/            GenBank 提交文件 (.sqn)")
+    log.info("  submission/            GenBank 提交中间文件 (.fsa/.tbl/.cmt; .sqn 需本机有 tbl2asn)")
     log.info("  ref_info.tsv           已知病毒分析 info 文件")
     log.info("=" * 60)
 

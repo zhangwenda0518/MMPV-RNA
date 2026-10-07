@@ -14,7 +14,13 @@ Raw FASTQ
   │
 [02_Identification] ← virus_identification.py (10 工具并行)
   │
-[03_COBRA]  ← cobra_pipeline.py     (bwa-mem2 → coverm → cobra-meta)
+[02b_Filter/03_Filter] ← filter_virus.py (UniProt + CDD 两层过滤; 直通 COBRA 镜像)
+  │
+[03_Filter/graph] ← graph_propagation.py (配对读段链接图 + ensemble 种子 + Louvain 标签传播;
+  │              对 filter 无证据保留结果二次裁决 (救回/降级); 产出 COBRA 输入镜像)
+  │
+[03_COBRA]  ← cobra_pipeline.py     (bwa-mem2 → coverm → cobra-meta;
+  │            候选源 = d_filter/candidates 镜像, 恢复 filter→COBRA 主链契约)
   │
 [04_CLUSTER] ← cluster_pipeline.py  (seqkit → cd-hit → vclust)
   │              ├── centroids/final_centroids.fasta
@@ -240,6 +246,139 @@ FASTA/FASTQ 文件或目录
 ```
 
 **工具依赖:** seqkit, genomad, diamond, blastn, virsorter, viralverify, metabuli, taxonkit, conda (rdrpcatch/viralm envs)
+
+---
+
+## 6b. graph_propagation.py — 组装图标签传播（graph 阶段；**默认不运行**）
+
+**默认状态:** `graph.enabled: false`（2026-10-07 裁定）——`--stage all` 自动跳过本阶段，COBRA 吃 filter 直通镜像；需要时 `--stage graph` 显式运行或配置改 true。
+
+**用途:** 在组装图拓扑层面重估每条 contig 的 viral/non-viral 归属（graph 阶段，插在 identification 与 filter 之间）。思想源自 GMW (Chen et al. 2026, Sci China Life Sci 69:1910-1917)，本实现为其配对读段改编（不使用 GMW 代码）：组装图 GFA → 配对读段链接图（assembler 无关）；Kraken2 单源种子 → 本管线 10 工具 ensemble 阳性清单；Louvain 社区传播 + GMW ≥10 倍多数比规则；断边沿用 GMW 口径（GC 差 >20% / 深度比 >20:1）；
+链接=双端都比对上的主比对（跨 contig pair 在 bwa 语义下永远 non-proper，默认不要求 proper flag）。
+
+### 判定语义
+
+| verdict | 含义 |
+|---------|------|
+| `viral_seed` | 被 ≥`seed_min_votes`(默认2) 个工具判为病毒（种子，不可变） |
+| `nonviral_seed` | len ≥`nonviral_min_len`（被工具检查过）且 0 票且非 viroid 阳性（种子，不可变） |
+| `graph_viral` / `graph_nonviral` | unknown 落在 ≥10 倍多数比的社区 |
+| `conflicting` | 社区两种种子都有但均未达多数比（保持 unknown） |
+| `unknown` | 其余（无链接/无种子/短 contig 未被工具检查过） |
+
+### 参数（编排器透传；默认值见 pipeline_config.yaml `graph:` 块）
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `--asm-dir` / `--ident-dir` / `--reads-dir` | io_layout | 输入三件套（d_asm / d_ident / d_hostdep） |
+| `-o` / `--output-dir` | `d_graph` | 输出目录 |
+| `-t` / `-j` | 8 / 1 | 单样本映射线程 / 并行样本数 |
+| `--min-link-pairs` | 3 | 建边最少跨 contig 配对读段数 |
+| `--gc-diff` / `--depth-ratio` | 0.20 / 20.0 | 断边阈值（GMW 口径） |
+| `--require-proper` | off（勿开） | 仅收 proper pair — bwa 的 0x2 只在同 contig 时置位，跨 contig pair 永远 non-proper，开启即零链接（246 实测 0/196079） |
+| `--resolution` | 1.0 | Louvain 分辨率（GMW 论文用 2） |
+| `--seed-min-votes` / `--nonviral-min-len` | 2 / 1000 | 种子阈值（票数<阈值的弱阳性归 unknown 交图裁决） |
+| `--majority-ratio` | 10.0 | 社区多数比 |
+| `--max-reads` | 0 | 每端取前 N 条（确定性前缀截取，规模兜底） |
+| `--map-min-len` | 1000 | 映射参考只保留 ≥该长度的 contigs（0=全量；短 contig 无可执行判定，剔除省 30-60% 映射时间，unknown 裁决不受损） |
+| `--keep-bam` | off | 保留映射 BAM 供调试 |
+| `--no-candidates` | off | 不写派生候选目录 |
+
+### 输出
+
+```
+d_graph/{S}/
+  {S}.graph_verdict.tsv     ← 逐 contig 判定+审计列 (contig/source_tool/length/gc/depth/
+  │                            votes/seed_label/community_*/verdict/reason)
+  {S}.graph_summary.tsv     ← 社区级汇总
+  {S}.graph.done            ← 样本级断点标记
+d_graph/candidates/{N}/
+  {N}_virus.all.candidate.fasta  ← 派生候选 = ident 候选 − graph_nonviral
+                                   (子目录命名逐镜像 d_ident, 供 COBRA raw 模式发现)
+```
+
+**消费点:** ① filter_virus.py 末端 pass（rescue/demote，见 6c 节）；② filter 镜像：COBRA raw 候选源优先吃 `d_filter/candidates`（filter 最终候选集的 02a 兼容镜像，2026-10-07 恢复 filter→COBRA 主链契约）；graph 派生候选降为 filter 未跑时的兜底。cobra_pipeline.py 内部零改动）。
+
+**假阳性削减量化（蒙特卡洛，`tests/montecarlo_fp_reduction.py`，参数按植物宏转录组校准）：**
+候选池假阳性按票数三层分解——≥2 票成为 viral_seed（不可变，结构性不由本模块削减，
+由下游 CDD/rescue 兜底）；=1 票弱阳性为可削区；0-evidence 保留者归 filter 层图裁决。
+模拟结果（600 contigs × 15 重复 × 6 参数组合，tool FP 率 0.5%–2%）：**全 FP 池削减 68–79%，
+可削区（1 票）收割率 76–82%，真病毒候选误伤 0**（含病毒-宿主嵌合边扰动）。
+真实数字服务器实跑后直接可数：verdict TSV 的 `graph_nonviral` 行数（COBRA 池削减）+
+filter `graph_calls.tsv` 的 `demoted` 行数（实削数）。
+
+**246 真实数据实跑（2026-10-02，N20220441-06-01 项目 7 样本，173,882 contigs；计票 bug 修正后数字）：**
+① 候选池真实票数结构 = **≥2 票 565 (8%) + 1 票弱阳性 6,440 (92%)**；修复计票 bug 后
+**候选层削减 105 条 (1.50%)、救回 78 条，TP 误伤 0**。初版报告的"候选池全强票、FP 削减 0%"
+是 all.result.id 计票 bug 的伪象（并集文件被当独立工具，每条候选虚增 1 票）。
+② RVDB 核酸 blastn 对本项目候选层**不具判别力**：viral_seed 抽样 70/70 零命中
+（工具经蛋白/HMM 级鉴定的病毒，核酸层 e<=1e-5 比对不上属预期）；被降级 0/105 与被救回
+0/78 对称 → 无危害信号但也无法用该代理度量收益。真值裁决以 mock benchmark 为准。
+③ **mock benchmark（真值三臂，tests/score_mock_benchmark.py）**：wgsim 模拟 4 植物 RNA
+病毒（TMV 100×/LYMov 50×/SPFMV 20×/AMV 10×）spike-in 进 NX-4 真实去宿主背景（447,867 对）
+→ megahit → 6 工具 ensemble → graph。候选池 36 条（精确率 13.9%，1 票弱阳性 25 条）：
+graph 臂削减 3 条背景 FP（精确率 15.2%）、**0 TP 误伤、四病毒召回完全不变**
+（TMV 100.3% / SPFMV 99.8% / AMV 98.4% / LYMov 67.2%）；0 票 graph_viral 若注入会拉低
+精确率（12.8%）→ "不注入"边界设计获真值支持。真实削减幅度（候选层 1.5%/9.7%FP）远低于
+蒙特卡洛的 68-79%，原因是真实组装中孤立 contig 占比高（无链接上下文的 FP 图不可达，
+保守放行）——蒙特卡洛高估了社区连通比例，此为重要校准。
+④ **map_min_len 加速实测（246 mock A/B）**：参考裁剪 8,710→4,339 条后映射 92s→75s
+（真实组装短 contig 占比更高时收益更大）；候选层 36 条裁决中 34 条完全一致、
+4 条 unknown→graph_nonviral 且经真值确认全部为背景 FP（裁剪更优）；真病毒召回不变。
+代价：丢失短 contig 桥接证据（连接性差的样本可设 0 回退全量）。
+
+**已知边界:** SE 样本/无 reads → 全 unknown 优雅退化；graph 重跑不自动失效 filter/cobra 的 `.ok`（编排器会打显式 warning，需 `--force` 重消费）；短 contig 的 graph_viral 仅记录在 TSV，不注入候选池。
+
+**工具依赖:** bwa-mem2, samtools, coverm, networkx（均在 pixi 环境）
+
+**独立运行与验证:** 本模块可脱离编排器单独运行（所有目录均为 CLI 参数，io_layout 仅作兜底）；
+`tests/validate_graph_propagation_standalone.py` 提供无外部映射工具的两场景验证
+（A: 合成混合感染社区 16/16 contig 判定全对齐、五基因组社区零混合；B: GMW 论文示例真实 SPAdes
+组装图 377 段 + 本机 blastn 亚型真值：断边阈值对真实图温和（边存活 100%）、拓扑救回 4 段全部
+经 blastn 确认为流感、Louvain 社区 54/57 单亚型），用法
+`python virome_discovery_pipeline/tests/validate_graph_propagation_standalone.py --gmw-repo <gmw仓库>`。
+**与 GMW 真工具头对头（2026-10-02, Windows 本机）:** 本机安装 python-louvain + 重建 blast 库后
+GMW 全流程可跑（`--disable_taxon_unfold` 绕开 Kraken2）。同图对比：GMW 参考展开剪掉 67% 连接
+(482→158, 用参考信息)、本模块三规则剪边 0%（保连通性交给 Louvain+种子）——两种互补哲学。
+注意：GMW 示例图 377 段经 blastn 全部为流感（H3N2 362/H5N6 15），**无污染可去**，它是
+混合感染分型基准而非去污染基准；单目标模式（H5N6=目标, 6 个长段做种子）下本模块传播精度
+77.8%/召回 63.6%，2 个假阳性恰为论文所述保守段重组嵌合体（GMW 靠参考展开解决，新病毒无参考
+场景下该差异是两工具定位分歧点）。出版级去污染对比需按 GMW Methods 用 ART 重建其
+Paramecium/Klebsiella 模拟数据集（仓库未附带，服务器任务）。
+
+---
+
+## 6c. filter_virus.py — UniProt + CDD 两层过滤（含图判定末端 pass）
+
+**用途:** 对 identification 候选做两层过滤：CDD tiering（tier1=tier 病毒域 → viral；tier2/3 → ambiguous；仅宿主/非毒 → non_viral；零命中 → unclassified）→ UniProt/DIAMOND blastx（病毒 taxid / 关键词 / 弱比对抢救 / 全局 no-hit 保留）。**末端 graph pass**（仅 `-m filter`）消费 graph 阶段判定 TSV：demote = 零正面证据保留（cdd unclassified 且无 blastx hit）且判定 `graph_nonviral` → 移出；rescue = 被整链丢弃且判定 `graph_viral` → 加回。分层符号链接（uniprot/cdd/02a 原始）不动，审计链保留。
+
+### 参数
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `-i` / `--input` | 必需 | 候选 FASTA（或 `--input-dir` 合并模式） |
+| `-o` / `--outdir` | 必需 | 输出目录（d_filter） |
+| `-m` / `--filter-mode` | `filter` | filter / strict / raw |
+| `-t` / `--threads` | env THREADS | DIAMOND 线程 |
+| `--uniprot-db` / `--virus-taxid` / `--cdd-*` | DEFAULTS | 数据库路径 |
+| `--graph-verdict-dir` | io_layout d_graph | graph 判定目录（缺失则 pass 无操作） |
+| `--no-graph-demote` / `--no-graph-rescue` | off | 关闭图判定降级/救回 |
+
+### 输出（split 模式逐样本）
+
+```
+d_filter/{S}/
+  {S}_virus.all.candidate.fasta        ← 02a 原始链 (不动)
+  {S}.virus.candidate_cdd_filtered.fasta / ..._uniprot_filtered.fasta  ← 分层链 (不动)
+  {S}.virus.candidate_filtered.fasta   ← 最终链 (graph 调整后重指向 graph/ 产物)
+  graph/{base}_graph_adjusted.fasta    ← 图判定调整后保留集 (仅有调整时写)
+  graph/{base}_graph_calls.tsv         ← 全量审计表 (contig/cdd_call/blastx_hit/verdict/action)
+  candidates/{S}/{S}_virus.all.candidate.fasta ← COBRA 主链镜像 (02a 兼容结构;
+                                   filter 最终集原样, 恢复主链契约)
+  cdd/ uniprot/                        ← CDD 调用表 + blastx 明细 + unclassified.id 清单
+```
+
+**工具依赖:** mmseqs2 (CDD), diamond (UniProt)
 
 ---
 

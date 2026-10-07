@@ -12,6 +12,8 @@ integrate_rescue_evidence.py — rescue 病毒五层证据链整合 + 30/30/40 �
   ⑥ 全长 profile 补充证据 = CT3 病毒 HMM 库 (pyhmmer, hmm_ct3_evidence.py)
                 ← 补票 2。默认参与裁决: 无 CDD 病毒域但 CT3 有非噬菌体病毒命中时
                   把 DROP 抬到 REVIEW。用 --no-hmm-rescue 可退回「只注释不裁决」。
+                  CT3 不是纯病毒库, 默认不「命中即 KEEP」; 如需该激进口径
+                  (DROP/REVIEW→KEEP, 可能引入假阳) 显式加 --hmm-promote-keep。
 
   一句话: 一道门 (CDD 结构域) 加两次补票 (blast 身份 / HMM 全长 profile)。
 
@@ -41,6 +43,7 @@ CDD_SCORE = {
     'AMBIGUOUS': 40.0,
     'REVIEW': 20.0,
     'NON_VIRAL': 0.0,
+    'UNKNOWN': 0.0,   # CDD 行缺失/未扫描: 无证据, 不等于"已证非病毒"
 }
 
 # CT3-HMM 最佳病毒命中等级 → base 分 (与 CDD_SCORE 同尺度; 进域证据层取 max)
@@ -214,10 +217,11 @@ def main():
                     help='第三路探针 rescue (默认开): 无 CDD 病毒域但 CT3-HMM 有病毒命中时 DROP→REVIEW')
     ap.add_argument('--no-hmm-rescue', dest='hmm_rescue', action='store_false',
                     help='关闭第三路探针 rescue (退回只注释不裁决)')
-    ap.add_argument('--hmm-promote-keep', dest='hmm_promote_keep', action='store_true', default=True,
-                    help='第三路探针提升 (默认开): CT3-HMM 有非噬菌体病毒命中时 DROP/REVIEW 直接提升为 KEEP')
+    ap.add_argument('--hmm-promote-keep', dest='hmm_promote_keep', action='store_true', default=False,
+                    help='第三路探针提升 (默认关): CT3-HMM 有非噬菌体病毒命中时 DROP/REVIEW 直接提升为 KEEP。'
+                         'CT3 不是纯病毒库, 命中即 KEEP 可能引入假阳, 仅需该激进口径时显式开启')
     ap.add_argument('--no-hmm-promote-keep', dest='hmm_promote_keep', action='store_false',
-                    help='关闭 CT3-HMM 升 KEEP (退回 DROP→REVIEW 的保守口径)')
+                    help='关闭 CT3-HMM 升 KEEP (现为默认行为, 保留仅供旧调用显式声明)')
     ap.add_argument('--hmm-promote-min', type=int, default=1,
                     help='触发升 KEEP 所需的最少非噬菌体病毒命中数 (默认 1)')
     ap.add_argument('--hmm-min-specific', type=int, default=1,
@@ -268,6 +272,12 @@ def main():
     hmm = load_hmm_report(args.hmm_report)
     print(f'CDD 判定 {len(cdd_evidence)} | 分类 {len(jt_rows)} | checkv {len(checkv)} | taxonomy {len(tax)} | fasta {len(seqs)} | ct3-hmm {len(hmm)}')
 
+    # CDD 覆盖率: 有 scored 行中多少缺 CDD 记录 (缺 → UNKNOWN, 不按已证非病毒处理)
+    n_missing_cdd = sum(1 for cid in jt_rows if cid not in cdd_evidence)
+    if jt_rows and n_missing_cdd:
+        print(f'  [WARN] CDD 覆盖率 {len(jt_rows) - n_missing_cdd}/{len(jt_rows)}: '
+              f'{n_missing_cdd} 条缺 CDD 记录 → evidence=UNKNOWN (不进"已证非病毒"判定)')
+
     # 第三路探针的裁决口径 (计数器在扫描阶段已按等级拆好, 这里只决定怎么算)
     gate_field = 'ct3_n_family' if args.hmm_require_family else 'ct3_n_viral'
     gate_field_old = 'rvdb_n_specific'
@@ -279,7 +289,9 @@ def main():
     rows = []
     for cid, jr in jt_rows.items():
         cdd = cdd_evidence.get(cid, {})
-        cdd_evid = cdd.get('evidence', 'NON_VIRAL')
+        # CDD 行缺失 (未扫描/扫描失败/未覆盖) ≠ 已证非病毒: 记 UNKNOWN,
+        # 不参与"已证非病毒"判定, 也不写 FALSE_POSITIVE 理由 (得分仍为 0)。
+        cdd_evid = (cdd.get('evidence') or '').strip() or 'UNKNOWN'
         cdd_score = CDD_SCORE.get(cdd_evid, 0.0)
 
         nt_pident = safe_float(jr.get('nt_pident', ''))
@@ -391,6 +403,13 @@ def main():
                     verdict = 'REVIEW'  # no viral domain但有blast, 可疑
                     novelty = 'Novel candidate (blast only, no viral domain)'
                     fp_reason = 'no_viral_domain_but_blast: CDDno viral domain but blast hit, pending'
+                elif cdd_evid == 'UNKNOWN':
+                    # CDD 无该 contig 记录 (未扫描/未覆盖): 无"已证非病毒"依据,
+                    # 不判 DROP、不写 FALSE_POSITIVE, 留 REVIEW 待人工/其它证据
+                    verdict = 'REVIEW'
+                    novelty = 'CDD-uncovered - pending'
+                    fp_reason = ('cdd_unknown: CDD 无该 contig 记录 (未扫描/未覆盖), '
+                                 '无病毒域证据可得且 blast 无有效证据, pending')
                 else:
                     verdict = 'DROP'  # 假阳性(宿主Contamination/无证据)
                     _tax = f"{tax_family or '?'}/{tax_genus or '?'}/{tax_species or '?'}" if has_tax_class else '无分类/NA'
@@ -402,9 +421,10 @@ def main():
                 novelty = 'Short fragment - pending'
                 fp_reason = 'short_fragment: length below 20% of genus mean, may lack core domain, pending'
 
-        # ── 第三路探针提升 (默认开, --no-hmm-promote-keep 关闭) ──
+        # ── 第三路探针提升 (默认关, 仅 --hmm-promote-keep 显式开启) ──
         # 口径: "比对上就 KEEP"。CDD 无病毒域但 CT3-HMM 有非噬菌体病毒命中时,
-        # 把 DROP/REVIEW 直接提升为 KEEP。
+        # 把 DROP/REVIEW 直接提升为 KEEP。CT3 不是纯病毒库 (见 doc.md 09b 节),
+        # 默认不做该激进提升, 只走下方 DROP→REVIEW 保守 rescue。
         hmm_rescue = ''
         hmm_promoted = False
         if args.hmm_promote_keep and hm_n_specific >= args.hmm_promote_min:
@@ -492,7 +512,11 @@ def main():
     n_rescued = sum(1 for r in rows if r['hmm_rescue'] == 'DROP->REVIEW')
     print(f'  其中 CT3-HMM rescue 抬升 DROP->REVIEW: {n_rescued}')
     n_promoted = sum(1 for r in rows if r['hmm_rescue'].endswith('->KEEP'))
-    print(f'  其中 CT3-HMM 比对命中提升 KEEP: {n_promoted}')
+    if args.hmm_promote_keep:
+        print(f'  其中 CT3-HMM 比对命中提升 KEEP (--hmm-promote-keep): {n_promoted}')
+    else:
+        print(f'  其中 CT3-HMM 比对命中提升 KEEP: 0 '
+              f'(默认关: 仅做 DROP->REVIEW rescue; 显式 --hmm-promote-keep 才升 KEEP)')
     print('\n=== 新病毒标注 ===')
     for k, v in novelty_cnt.most_common():
         print(f'  {k}: {v}')
