@@ -4,7 +4,7 @@ from __future__ import annotations
 import os
 from typing import Optional, List, Set
 import numpy as np
-# pandas imported lazily via _get_pd() to avoid import deadlock
+import pandas as pd  # 模块级导入: search/filter/append/import_file 等 13 处方法在运行时引用 pd
 
 CORE14_COLS = [
     "Run", "ReleaseDate", "CollectionDate", "Location", "Source",

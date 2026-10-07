@@ -680,7 +680,7 @@ class MainWindow(QMainWindow):
         if not store.is_loaded:
             QMessageBox.warning(self, "Empty", "The active table is empty")
             return
-        df = store.df
+        df = store.dataframe
         name_col = "sequence_name"
         if name_col not in df.columns:
             QMessageBox.warning(self, "Missing Column",
