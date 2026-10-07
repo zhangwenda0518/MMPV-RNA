@@ -592,6 +592,7 @@ def build_multipanel_figure(
                           hspace=0.35, wspace=0.3)
 
     # ── Panel A: MCC Tree (spans top row, both columns) ──
+    valid = {"A": False, "B": False, "C": False, "D": False, "E": False}
     ax_a = fig.add_subplot(gs[0, :])
     try:
         from Bio import Phylo
@@ -601,6 +602,7 @@ def build_multipanel_figure(
                    branch_labels=lambda c: "")
         ax_a.set_title('A. Maximum Clade Credibility Tree', fontsize=14,
                       fontweight='bold', loc='left')
+        valid["A"] = True
     except Exception as e:
         ax_a.text(0.5, 0.5, f'Tree not available\n{e}', ha='center', va='center',
                  transform=ax_a.transAxes, fontsize=12, color='gray')
@@ -612,7 +614,7 @@ def build_multipanel_figure(
     # 「地点排成圆环 + 有向箭头」的网络图 (无经纬度、无底图, 见 _draw_simple_migration_map)。
     # 标题与脚注都写明是圆周布局; 阈值不写死 5 (实际阈值由 --phylogeo_bf 决定)。
     ax_b = fig.add_subplot(gs[1, 0])
-    _draw_simple_migration_map(ax_b, migration_csv, locations)
+    valid["B"] = bool(_draw_simple_migration_map(ax_b, migration_csv, locations))
     ax_b.set_title('B. Migration Network (circular layout)', fontsize=14,
                   fontweight='bold', loc='left')
     ax_b.text(0.5, -0.04, 'nodes = locations on a circle (no geographic projection) · '
@@ -622,24 +624,42 @@ def build_multipanel_figure(
 
     # ── Panel C: Skyline Plot ──
     ax_c = fig.add_subplot(gs[1, 1])
-    _draw_skyline_on_ax(ax_c, log_file, burnin_pct)
+    valid["C"] = bool(_draw_skyline_on_ax(ax_c, log_file, burnin_pct))
     ax_c.set_title('C. Bayesian Skyline Plot', fontsize=14,
                   fontweight='bold', loc='left')
 
     # ── Panel D: Clock Rate ──
     ax_d = fig.add_subplot(gs[2, 0])
-    _draw_clock_on_ax(ax_d, log_file, burnin_pct)
+    valid["D"] = bool(_draw_clock_on_ax(ax_d, log_file, burnin_pct))
     ax_d.set_title('D. Clock Rate Distribution', fontsize=14,
                   fontweight='bold', loc='left')
 
     # ── Panel E: Migration Heatmap ──
     ax_e = fig.add_subplot(gs[2, 1])
-    _draw_heatmap_on_ax(ax_e, migration_csv, locations)
+    valid["E"] = bool(_draw_heatmap_on_ax(ax_e, migration_csv, locations))
     ax_e.set_title('E. Migration BF Heatmap', fontsize=14,
                    fontweight='bold', loc='left')
 
     # Suptitle
     fig.suptitle(title, fontsize=18, fontweight='bold', y=0.98)
+
+    # ── 有效性闸门 (2026-10-03, P1-3) ──
+    # 历史事故: 三份跑 (GCVA 全量/GCVA32/PSTVd) 的五面板全为灰色 "not available"
+    # 占位, 但文件照写 → 被当成正常成图收录 (还被视觉模型误读为"内容完整")。
+    # 现: <2 面板有数据 → 拒出并不写文件; 2–4 → 写, 但顶部打 INCOMPLETE 红字横幅。
+    n_valid = sum(valid.values())
+    log.emit(f"Multi-panel: {n_valid}/5 面板有数据 ({valid})")
+    if n_valid < 2:
+        log.error("Multi-panel figure: 仅 "
+                  f"{n_valid}/5 面板有数据 (缺 {[k for k, v in valid.items() if not v]}) "
+                  "→ 拒绝出图; 检查 --log/--trees/--migration 是否存在且非空")
+        plt.close(fig)
+        return None
+    if n_valid < 5:
+        fig.text(0.5, 0.995, f"INCOMPLETE: only {n_valid}/5 panels have data "
+                             f"(missing: {','.join(k for k, v in valid.items() if not v)})",
+                 ha='center', va='top', fontsize=15, color='#c0392b',
+                 fontweight='bold')
 
     fig.savefig(output_path, bbox_inches='tight', dpi=300, format='pdf',
                 facecolor='white', edgecolor='none')
@@ -650,11 +670,14 @@ def build_multipanel_figure(
 
 
 def _draw_simple_migration_map(ax, migration_csv, locations):
-    """Draw simplified migration map with arrows."""
+    """Draw simplified migration map with arrows.
+
+    返回 True=有数据画出 / False=占位文本 (2026-10-03: 供多面板有效性计数)
+    """
     if not os.path.exists(migration_csv):
         ax.text(0.5, 0.5, 'Migration data not available', ha='center',
                va='center', transform=ax.transAxes)
-        return
+        return False
 
     # Simple layout: arrange locations in a circle
     n = len(locations)
@@ -704,6 +727,7 @@ def _draw_simple_migration_map(ax, migration_csv, locations):
     ax.set_xlim(-1.5, 1.5)
     ax.set_ylim(-1.5, 1.5)
     ax.axis('off')
+    return True
 
 
 def _draw_skyline_on_ax(ax, log_file, burnin_pct):
@@ -730,7 +754,11 @@ def _draw_skyline_on_ax(ax, log_file, burnin_pct):
                                    alpha=0.2, color='#4DBBD5')
                     ax.set_ylabel('Nₑτ (constant)', fontsize=11)
                     ax.set_xlabel('Time (arbitrary)', fontsize=11)
-                    return
+                    return True
+            # 既无 skyline 组也无 constant popSize (退化日志/空日志)
+            ax.text(0.5, 0.5, 'Skyline data unavailable (no popSize columns)',
+                    ha='center', va='center', transform=ax.transAxes)
+            return False
 
         if ser["edges"] is not None:
             xs = list(ser["edges"])
@@ -752,13 +780,15 @@ def _draw_skyline_on_ax(ax, log_file, burnin_pct):
             ax.text(0.02, 0.02, "⚠ " + "; ".join(ser["warnings"])[:160],
                     transform=ax.transAxes, fontsize=7, color='#b9770e', va='bottom')
         ax.set_ylabel('Effective population size', fontsize=11)
+        return True
     except Exception:
         ax.text(0.5, 0.5, 'Skyline data unavailable', ha='center', va='center',
                transform=ax.transAxes)
+        return False
 
 
 def _draw_clock_on_ax(ax, log_file, burnin_pct):
-    """Draw clock rate on existing axis."""
+    """Draw clock rate on existing axis. 返回 True=有数据 / False=占位 (2026-10-03)"""
     try:
         df = pd.read_csv(log_file, sep="\t", comment="#")
         burnin_idx = int(len(df) * burnin_pct / 100.0)
@@ -772,15 +802,16 @@ def _draw_clock_on_ax(ax, log_file, burnin_pct):
                 ax.axvline(np.mean(vals), color='#3C5488', linewidth=2, linestyle='--')
                 ax.set_xlabel('Substitution rate (subs/site/yr)', fontsize=11)
                 ax.set_ylabel('Density', fontsize=11)
-                return
+                return True
     except Exception:
         pass
     ax.text(0.5, 0.5, 'Clock rate unavailable', ha='center', va='center',
            transform=ax.transAxes)
+    return False
 
 
 def _draw_heatmap_on_ax(ax, migration_csv, locations):
-    """Draw migration heatmap on existing axis."""
+    """Draw migration heatmap on existing axis. 返回 True=有数据 / False=占位 (2026-10-03)"""
     try:
         df = pd.read_csv(migration_csv)
         n = len(locations)
@@ -793,15 +824,22 @@ def _draw_heatmap_on_ax(ax, migration_csv, locations):
             if fr in locations and to in locations:
                 matrix[locations.index(fr), locations.index(to)] = np.log10(max(bf, 1))
 
+        if len(df) == 0 or not matrix.any():
+            # 文件在但零有效路线 → 全零热图会误导, 按"无数据"处理
+            ax.text(0.5, 0.5, 'Migration data unavailable (0 routes)',
+                    ha='center', va='center', transform=ax.transAxes)
+            return False
         im = ax.imshow(matrix, cmap='YlOrRd', aspect='auto')
         ax.set_xticks(range(n))
         ax.set_yticks(range(n))
         ax.set_xticklabels(locations, rotation=45, ha='right', fontsize=9)
         ax.set_yticklabels(locations, fontsize=9)
         plt.colorbar(im, ax=ax, shrink=0.8, label='log₁₀ BF')
+        return True
     except Exception:
         ax.text(0.5, 0.5, 'Migration data unavailable', ha='center', va='center',
                transform=ax.transAxes)
+        return False
 
 
 def main():
@@ -817,12 +855,17 @@ def main():
     ap.add_argument("--title", default="Bayesian Phylogeography", help="图标题")
     args = ap.parse_args()
     locs = [l.strip() for l in args.locations.split(",") if l.strip()]
-    build_multipanel_figure(
+    out = build_multipanel_figure(
         log_file=args.log, trees_file=args.trees,
         migration_csv=args.migration or os.path.join(os.path.dirname(args.output), "migration_bf.csv"),
         locations=locs, output_path=args.output,
         mcc_tree_file=args.mcc_tree, title=args.title)
-    print("PHYLOGEO_FIGURES_DONE")
+    if out:
+        print("PHYLOGEO_FIGURES_DONE")
+    else:
+        # 2026-10-03 (P1-3): <2/5 面板有数据 → 拒出, 退出码 2 让 run_postprocess 记失败
+        print("PHYLOGEO_FIGURES_REFUSED: <2/5 panels have data (inputs missing/empty)")
+        raise SystemExit(2)
 
 
 if __name__ == "__main__":

@@ -587,6 +587,15 @@ def analyze_beast_ess(
         n_used = len(df_burnin)
         log.emit(f"ESS analysis: {n_total} samples, {burnin_pct}% burn-in → {n_used} retained")
 
+        # 退化日志闸门 (2026-10-03): n<10 时 utils.ess.calculate_ess 会走
+        # len(samples)<4 的兜底分支直接返回样本数 → 写出"全员 ESS=1"的假收敛表
+        # (历史事故: 空/近空 merge 日志被当 ✅, 空白 BSP 图混入组合图)
+        from utils.sample_floor import require_min_samples
+        if not require_min_samples(n_used, "[ess] BEAST 日志", log=log):
+            result["error"] = (f"Degenerate log: only {n_used} usable sample(s) after "
+                               f"{burnin_pct}% burn-in ({n_total} raw) — 链未跑完或合并失败? 拒绝输出 ESS 表")
+            return result
+
         # ── 3. Calculate ESS for all numeric columns ──
         skip_cols = {"sample", "Sample", "state", "State"}
         ess_rows = []

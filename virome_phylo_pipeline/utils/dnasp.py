@@ -97,7 +97,13 @@ except ImportError:
 VALID_ANALYSES = {"polymorphism", "ld", "recombination", "popsize", "indel", "divergence",
                   "fuliout", "hka", "mk", "kaks", "fufs", "sfs", "tstv", "codon",
                   "faywu", "fst"}
-_GAP_CHARS = frozenset("-?N")
+# Missing-data characters: alignment gaps, unknown bases (N, X, O, ?) and the
+# 11 IUPAC ambiguity codes (R Y S W K M B D H V).  DnaSP treats ambiguity codes
+# as unknown data, not as alleles: any column containing one of these
+# characters is removed by complete deletion and is never counted as a
+# segregating site (so S, Eta, pi, Tajima's D, R2, LD, ... stay consistent).
+MISSING_CHARS = frozenset("-?NRYKMSWBDHVXO")
+_GAP_CHARS = MISSING_CHARS  # backwards-compatible alias (deprecated name)
 _NUCLEOTIDES = ('A', 'T', 'C', 'G')
 _PURINES     = frozenset('AG')
 _PYRIMIDINES = frozenset('CT')
@@ -594,11 +600,16 @@ def load_pop_file(pop_file: Path) -> dict[str, str]:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def complete_deletion(seqs: list[str]) -> tuple[list[str], int]:
-    """Exclude any column that has a gap/missing in ANY sequence."""
+    """Exclude any column that has a gap/missing in ANY sequence.
+
+    Missing = any character in MISSING_CHARS: gaps (-), unknown bases
+    (? N X O) and the IUPAC ambiguity codes (R Y S W K M B D H V), which
+    DnaSP treats as unknown data rather than as alleles.
+    """
     if not seqs:
         return [], 0
     L = len(seqs[0])
-    keep = [pos for pos in range(L) if not any(s[pos] in _GAP_CHARS for s in seqs)]
+    keep = [pos for pos in range(L) if not any(s[pos] in MISSING_CHARS for s in seqs)]
     cleaned = ["".join(s[i] for i in keep) for s in seqs]
     return cleaned, len(keep)
 
@@ -655,7 +666,12 @@ def compute_k(seqs: list[str]) -> float:
 
 
 def _site_states(col: list[str]) -> frozenset[str]:
-    return frozenset(c for c in col if c not in _GAP_CHARS)
+    """Distinct alleles at a site; missing/ambiguous characters are ignored.
+
+    IUPAC ambiguity codes are unknown data in DnaSP, never alleles, so a
+    column such as ['A', 'R'] has a single state ('A') and is not polymorphic.
+    """
+    return frozenset(c for c in col if c not in MISSING_CHARS)
 
 
 def compute_segregating(seqs: list[str]) -> tuple[int, int]:
@@ -764,7 +780,13 @@ def fu_li_d_star_f_star(
 
 
 def ramos_onsins_r2(seqs: list[str], k: float, Sw: int) -> Optional[float]:
-    """R2 (Ramos-Onsins & Rozas 2002)."""
+    """R2 (Ramos-Onsins & Rozas 2002, Mol. Biol. Evol. 19:2092-2100).
+
+    R2 = sqrt( sum_i (eta_i - k/2)^2 / n ) / S, where eta_i is the number of
+    singletons carried by sequence i, k the mean pairwise difference count and
+    S the number of segregating sites.  ``Sw`` is that S (the denominator);
+    DnaSP 6 normalises by segregating sites, not by Eta (total mutations).
+    """
     if Sw == 0:
         return None
     n = len(seqs)
@@ -904,7 +926,7 @@ def _get_biallelic_positions(seqs: list[str]) -> list[tuple[int, str, str]]:
     result = []
     for pos in range(L):
         col = [s[pos] for s in seqs]
-        if any(c in _GAP_CHARS for c in col):
+        if any(c in MISSING_CHARS for c in col):
             continue
         counts: Counter = Counter(col)
         if len(counts) != 2:
@@ -927,7 +949,7 @@ def _ld_for_pair(
     valid = 0
     for s in seqs:
         ci, cj = s[pos_i], s[pos_j]
-        if ci in _GAP_CHARS or cj in _GAP_CHARS:
+        if ci in MISSING_CHARS or cj in MISSING_CHARS:
             continue
         valid += 1
         a = (ci == minor_i)
@@ -1070,7 +1092,7 @@ def compute_recombination(seqs: list[str], net_positions: Optional[list[int]] = 
         gametes: set[tuple[bool, bool]] = set()
         for s in seqs:
             ci, cj = s[pi], s[pj]
-            if ci not in _GAP_CHARS and cj not in _GAP_CHARS:
+            if ci not in MISSING_CHARS and cj not in MISSING_CHARS:
                 gametes.add((ci == mi, cj == mj))
         if len(gametes) == 4:  # all four gamete types present → incompatible
             p1 = pos_map.get(pi, pi + 1)
@@ -1170,7 +1192,7 @@ def _identify_indel_events(seqs: list[str]) -> list[InDelEvent]:
 
     for pos in range(L):
         gap_set = frozenset(i for i, s in enumerate(seqs) if s[pos] == '-')
-        non_gap = [s[pos] for i, s in enumerate(seqs) if s[pos] != '-' and s[pos] not in _GAP_CHARS]
+        non_gap = [s[pos] for i, s in enumerate(seqs) if s[pos] != '-' and s[pos] not in MISSING_CHARS]
 
         if gap_set and non_gap:  # some sequences gapped, some not → InDel column
             if gap_set == current_gap_set:
@@ -1321,7 +1343,7 @@ def compute_divergence(
     L = len(seqs1[0])
     gap_cols = set()
     for pos in range(L):
-        if any(s[pos] in _GAP_CHARS for s in combined):
+        if any(s[pos] in MISSING_CHARS for s in combined):
             gap_cols.add(pos)
     keep = [pos for pos in range(L) if pos not in gap_cols]
 
@@ -1355,8 +1377,8 @@ def compute_divergence(
     alleles1_per_site: list[frozenset] = []
     alleles2_per_site: list[frozenset] = []
     for pos in range(stats.L_net):
-        a1 = frozenset(s[pos] for s in c1 if s[pos] not in _GAP_CHARS)
-        a2 = frozenset(s[pos] for s in c2 if s[pos] not in _GAP_CHARS)
+        a1 = frozenset(s[pos] for s in c1 if s[pos] not in MISSING_CHARS)
+        a2 = frozenset(s[pos] for s in c2 if s[pos] not in MISSING_CHARS)
         alleles1_per_site.append(a1)
         alleles2_per_site.append(a2)
 
@@ -1440,10 +1462,10 @@ def _count_derived(seqs: list[str], outgroup: str) -> tuple[int, int]:
     eta_e = 0
     for pos in range(L):
         anc = outgroup[pos]
-        if anc in _GAP_CHARS:
+        if anc in MISSING_CHARS:
             continue
         col = [s[pos] for s in seqs]
-        if any(c in _GAP_CHARS for c in col):
+        if any(c in MISSING_CHARS for c in col):
             continue
         states = frozenset(col)
         if anc not in states or len(states) < 2:
@@ -2624,7 +2646,10 @@ def analyse_region(
     stats.FuLiD_star, stats.FuLiF_star = fu_li_d_star_f_star(
         stats.k, stats.S, eta_s, n
     )
-    stats.R2 = ramos_onsins_r2(clean, stats.k, stats.Eta)
+    # R2 denominator is S (segregating sites), not Eta (Ramos-Onsins & Rozas
+    # 2002; DnaSP 6 convention).  Using Eta > S under-counts R2 whenever
+    # multi-allelic sites are present.
+    stats.R2 = ramos_onsins_r2(clean, stats.k, stats.S)
 
     return stats
 

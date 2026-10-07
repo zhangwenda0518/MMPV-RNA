@@ -187,3 +187,14 @@ capheine 产物目录
 现已把物理块序对齐到 `STAGE_ORDER`，并加 `validate_stage_graph()` 在启动时拒绝
 「依赖排在使用者之后」的改动。**改 `STAGE_ORDER` 时必须同步移动 `process_virus` 里对应的
 代码块**，否则顺序不会变。
+
+**③ `_skip` 已按原因分桶（2026-10-03），「结果缺失」不再伪装成成功。**
+`_skip(stage, reason)` 现记录 5 种原因：`checkpoint`（已完成，正常）/ `na`（数据不适用，
+如 viroid 无 CDS、无宿主通道）/ `pending`（后台链运行中，下次跑续）/ `degraded`
+（本 stage 失败后降级继续）/ `blocked`（前置缺失或本 stage 未产出）。后两类进
+`Stages_blocked`，`success` 不再掩盖它们：汇总 CSV 增 `Incomplete` 与
+`Stages_blocked` 列，HTML 总表在受阻时降为 `PARTIAL`，且 `process_virus` 收尾会对
+受阻 stage 打醒目告警；`main` 退出码改为 有 failed→1 / 有 blocked|pending→2 / 干净→0
+（旧版无论如何都退 0）。另：任何在 `stages` 清单里但**未被任何代码块记账**的 stage
+（如 `align` 未产出时 `if 'splitstree' in stages and aln_file:` 整块不执行）
+现由收尾兜底记 `blocked`，不再从三个清单里一起消失。

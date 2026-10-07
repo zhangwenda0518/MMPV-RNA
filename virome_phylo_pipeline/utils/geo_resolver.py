@@ -117,7 +117,7 @@ PROVINCE_LOOKUP = {
     'panama': (8.54, -80.78), 'costa rica': (9.75, -83.75),
     'guatemala': (15.78, -90.23), 'honduras': (15.20, -86.24),
     'brunei': (4.54, 114.73), 'fiji': (-17.71, 178.07),
-    'papua new guinea': (-6.31, 143.96), 'hong kong': (22.32, 114.17),
+    'papua new guinea': (-6.31, 143.96),
 }
 
 # ── 市县级坐标 (GCVA 等数据集实际出现过的 + 枸杞产区常见地) ──────────
@@ -143,6 +143,12 @@ CITY_LOOKUP = {
 _PLACEHOLDER = {'', 'unknown', 'na', 'n/a', 'not applicable', 'none', 'null',
                 'missing', '其他', '未知'}
 
+# 占位符词表 (与 utils/metadata_governance._is_placeholder_text 对齐;
+# 本地实现而非 import: 本模块在 virphy_bridge 里有 spec_from_file_location
+# 裸加载的兜底路径, 依赖 utils 包会破坏该路径)。
+_PLACEHOLDER_WORDS = {'country', 'region', 'unknown', 'na', 'nan', 'not_provided',
+                      'none', 'unknown:unknown', 'country:region'}
+
 
 def _norm(s: str) -> str:
     """规范化 key: 小写 + 压缩空白 + 去常见装饰词"""
@@ -153,13 +159,36 @@ def _norm(s: str) -> str:
     return s
 
 
+def _is_placeholder_key(key: str) -> bool:
+    """归一化后的 key 是否为占位符 (不可解析: 不查缓存/不联网/不写缓存)。
+
+    2026-10-03 修复 (坐标污染): 旧判据只认 _PLACEHOLDER 字面量, 而
+    'Country:Region' 经 _norm 削掉 'region' 词后残留 'country:' — 命中
+    缓存里历史在线解析的条目 (实测 cache/geo_cache.json 有
+    'country:' → [41.14, -73.35] 美国点) → 给占位符伪造了坐标。
+    """
+    k = str(key or '').strip().lower()
+    if not k or k in _PLACEHOLDER:
+        return True
+    core = k.strip(':').strip()
+    if not core:
+        return True
+    if core in _PLACEHOLDER or core in _PLACEHOLDER_WORDS or k in _PLACEHOLDER_WORDS:
+        return True
+    return bool(re.fullmatch(r"[x\s.]+", core) or re.fullmatch(r"[<\-\s]+", k))
+
+
 class GeoResolver:
     """分层地名解析。线程不安全 (缓存写盘用 json, 单进程场景够用)。"""
 
     def __init__(self, cache_path=None, online=None):
         self.cache_path = Path(cache_path or Path(__file__).parent.parent / 'cache' / 'geo_cache.json')
+        # 2026-10-03 修复 (S3-④): 旧默认是联网 ('1' != '0' → True), 与模块 docstring
+        # (L5 "默认关闭") / transmission_map 文档 / geo_analysis --coords help 的
+        # "默认离线" 声明相反。现默认离线: 只有显式 GEO_RESOLVER_ONLINE=1 才启用在线
+        # 兜底, 保证管线离线可跑、结果可复现 (在线结果会随公共 API 变化)。
         self.online = online if online is not None else (
-            os.environ.get('GEO_RESOLVER_ONLINE', '1') != '0')  # 默认开: 公共 API + 持久缓存
+            os.environ.get('GEO_RESOLVER_ONLINE', '0') == '1')
         self.cache = {}
         self._cache_dirty = False
         try:
@@ -167,6 +196,17 @@ class GeoResolver:
                 self.cache = json.loads(self.cache_path.read_text(encoding='utf-8'))
         except (json.JSONDecodeError, OSError):
             self.cache = {}
+        # 占位符键自愈 (2026-10-03): 历史缓存里混入过占位符键的解析结果
+        # (实测 'country:' → [41.14, -73.35] 美国点, 由 'Country:Region' 经
+        # _norm 削词而来)。加载时直接剔除并告警, 标记 dirty 让下次 flush 落盘;
+        # 其余条目不动。
+        _bad_keys = [k for k in self.cache if _is_placeholder_key(k)]
+        for _k in _bad_keys:
+            del self.cache[_k]
+        if _bad_keys:
+            self._cache_dirty = True
+            print(f"[geo_resolver] WARN: 缓存含占位符键 {_bad_keys} → 已删除 "
+                  f"(不参与解析; 下次 flush 落盘): {self.cache_path}")
         # 启动时把旧 COORD_LOOKUP 的全格式条目预热进缓存反查集
         self._full_index = {}
         for k, v in {**PROVINCE_LOOKUP, **CITY_LOOKUP}.items():
@@ -175,7 +215,7 @@ class GeoResolver:
     # ── L1+L2+L3: 离线解析 ──
     def _resolve_offline(self, loc_str: str):
         key = _norm(loc_str)
-        if key in _PLACEHOLDER:
+        if _is_placeholder_key(key):
             return None, 'placeholder'
         # L1 精确
         if key in self._full_index:
@@ -215,7 +255,9 @@ class GeoResolver:
                     return v, 'fuzzy'
         return None, 'miss'
 
-    # ── L5: 在线兜底 (Photon 公共 API, 免费无 key; 默认开, 结果持久缓存后等效离线) ──
+    # ── L5: 在线兜底 (Photon 公共 API, 免费无 key; 默认关, 需 GEO_RESOLVER_ONLINE=1) ──
+    # 2026-10-03 修复 (S3-④): 旧注释写"默认开"与实现/模块 docstring 自相矛盾;
+    # 现行为与 docstring 一致 —— 默认离线, 结果持久缓存后下次等效离线命中。
     def _resolve_online(self, loc_str: str):
         if not self.online:
             return None

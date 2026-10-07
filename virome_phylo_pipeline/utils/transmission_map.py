@@ -34,7 +34,7 @@ utils/transmission_map.py — 发表级静态传播图 + 事件级时间动画
 Natural Earth / CartoDB / OSM —— 无审图号，不合中国发表要求）。
 
 自包含性：numpy/pandas/matplotlib/Pillow + 标准库；坐标解析优先用户 CSV，
-否则走 utils.geo_resolver 离线词典（11960 条，默认离线）。
+否则走 utils.coord_lookup（唯一坐标源, 含 geo_resolver 离线省/市表; 默认离线）。
 """
 
 from __future__ import annotations
@@ -75,7 +75,11 @@ def resolve_coordinates(
     coord_csv: Optional[str] = None,
     log: Optional[LogCollector] = None,
 ) -> Dict[str, Optional[Tuple[float, float]]]:
-    """地点 → (lat, lon)。优先 coord_csv（列: location,lat,lon），否则离线 geo_resolver。"""
+    """地点 → (lat, lon)。优先 coord_csv（列: location,lat,lon），否则唯一坐标源 coord_lookup。
+
+    2026-10-03 (S3-⑤): 本模块一直无自有坐标表 (原走 geo_resolver), 现收敛到
+    utils/coord_lookup (它已合并 geo_resolver 省/市表 + 其他消费方旧表, 默认离线)。
+    """
     log = log or LogCollector()
     out: Dict[str, Optional[Tuple[float, float]]] = {}
     csv_map: Dict[str, Tuple[float, float]] = {}
@@ -87,20 +91,20 @@ def resolve_coordinates(
                 csv_map[k] = (float(row["lat"]), float(row["lon"]))
             except (TypeError, ValueError, KeyError):
                 continue
-    use_resolver = False
+    _coord_lookup = None
     for loc in locations:
         if loc in csv_map:
             out[loc] = csv_map[loc]
             continue
-        if not use_resolver:
+        if _coord_lookup is None:
             try:
-                from utils.geo_resolver import resolve_location  # 离线词典，默认不走网络
-                use_resolver = True
+                from utils.coord_lookup import lookup as _coord_lookup  # 唯一坐标源, 默认离线
             except Exception as e:  # noqa: BLE001
-                log.warning(f"geo_resolver 不可用 ({e})，无 CSV 的地点将无坐标")
+                log.warning(f"coord_lookup 不可用 ({e})，无 CSV 的地点将无坐标")
+                _coord_lookup = False
         try:
-            from utils.geo_resolver import resolve_location
-            coord = resolve_location(loc)
+            hit = _coord_lookup(loc) if _coord_lookup else None
+            coord = (float(hit[0]), float(hit[1])) if hit else None
         except Exception:  # noqa: BLE001
             coord = None
         out[loc] = coord
@@ -939,7 +943,7 @@ def main():
     ap.add_argument("--branch-table", default=None, help="transmission_paths 的 branch_table.csv")
     ap.add_argument("--mcc-tree", default=None, help="或直接给 MCC 树（现场解析）")
     ap.add_argument("--metadata", default=None, help="name,location CSV（--mcc-tree 时用）")
-    ap.add_argument("--coords", default=None, help="location,lat,lon CSV（缺省走离线 geo_resolver）")
+    ap.add_argument("--coords", default=None, help="location,lat,lon CSV（缺省走离线唯一坐标源 coord_lookup）")
     ap.add_argument("--boundaries", default=None,
                     help="国界/省界 GeoJSON（须自备审图号来源；缺省不画边界）")
     ap.add_argument("-o", "--out", default="transmission_map.png", help="静态图输出(PNG)")

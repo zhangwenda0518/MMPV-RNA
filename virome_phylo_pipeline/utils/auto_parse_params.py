@@ -36,7 +36,10 @@ def read_col(log_file, col):
 
 def stats(vals):
     n = len(vals)
-    if n < 100:
+    # 样本下限 = utils/sample_floor.py 统一登记 (参数汇总口径 100; 与 ess.py<4 /
+    # beast_parser<10 不同——那两处是"每参数统计"下限, 这里是"汇总"下限)
+    from utils.sample_floor import MIN_PARAM_SUMMARY_SAMPLES
+    if n < MIN_PARAM_SUMMARY_SAMPLES:
         return None
     mean = sum(vals) / n
     var = sum((v - mean) ** 2 for v in vals) / (n - 1)
@@ -96,6 +99,11 @@ def main():
     out = f'{merged}/parameter_summary.json'
     with open(out, 'w', encoding='utf-8') as _jf:
         json.dump(result, _jf, indent=2)
+    if not result:
+        # 空汇总闸门 (2026-10-03): 旧版照样写 `{}` 并打印"参数摘要: path", 无人察觉
+        from utils.sample_floor import MIN_PARAM_SUMMARY_SAMPLES
+        print(f"  ⚠️ 参数汇总为空: 可用样本 <{MIN_PARAM_SUMMARY_SAMPLES} (阈值)"
+              f" — 链未跑完 / 合并 burnin 超界? 该汇总不可用")
     print(f"参数摘要: {out}")
     return 0
 

@@ -40,20 +40,30 @@ from utils.virphy_bridge import (DEFAULT_BF_THRESHOLD, BF_INFINITE_CAP,
 
 # 常用地点坐标 (lat, lon)。**只收真坐标**, 缺失一律 fail-loud (见 generate_spread3_json
 # 的 E5 说明): 历史版本对未收录地点用字符和编坐标, 地图上凭空多一个点。
-_DEFAULT_LAT_LON = {
-    "Beijing": (39.9, 116.4),
-    "Ningxia": (37.3, 106.0),
-    "Neimenggu": (44.0, 113.0),
-    "China": (35.0, 105.0),
-    "Japan": (36.0, 138.0),
-    "Korea": (37.0, 127.5),
-    "India": (20.0, 78.0),
-    "Europe": (50.0, 10.0),
-    "USA": (40.0, -100.0),
-    "South America": (-15.0, -60.0),
-    "Africa": (0.0, 25.0),
-    "Other": (30.0, 80.0),
-}
+#
+# 2026-10-03 (S3-⑤): 取值改从**唯一坐标源** utils/coord_lookup 读 (geo_resolver 省/市
+# 表为权威基底)。旧字面量里有真冲突 (Ningxia (37.3,106.0) vs 省质心 (37.27,106.17);
+# China (35,105) vs (35,103) 等), 合并后统一取权威值; 差异由 coord_lookup.diff_lines
+# 在首次调用时 WARN 打印 (键/旧值/新值/来源)。
+_DEFAULT_LAT_LON_LEGACY_KEYS = ("Beijing", "Ningxia", "Neimenggu", "China", "Japan",
+                                "Korea", "India", "Europe", "USA", "South America",
+                                "Africa", "Other")
+from utils.coord_lookup import (lookup as _coord_lookup,
+                                diff_lines as _coord_diff_lines)  # noqa: E402
+
+
+def _build_default_lat_lon() -> Dict[str, Tuple[float, float]]:
+    out: Dict[str, Tuple[float, float]] = {}
+    for _k in _DEFAULT_LAT_LON_LEGACY_KEYS:
+        _hit = _coord_lookup(_k)
+        if _hit:
+            out[_k] = (float(_hit[0]), float(_hit[1]))
+    return out
+
+
+_DEFAULT_LAT_LON = _build_default_lat_lon()
+_SPREAD3_DIFF_REPORTED = False
+
 
 def generate_spread3_json(
     log_file: str,
@@ -88,6 +98,14 @@ def generate_spread3_json(
     result = {"success": False, "json_path": None, "n_routes": 0,
               "n_significant": 0, "coord_missing": [], "error": None}
 
+    # 坐标统一源差异清单 (2026-10-03, S3-⑤): 本模块旧内置表与合并表取值不同处
+    # 只 WARN 一次 (键/旧值/新值/来源), 不阻塞。
+    global _SPREAD3_DIFF_REPORTED
+    if not _SPREAD3_DIFF_REPORTED:
+        for _line in _coord_diff_lines('spread3_viz'):
+            log.warning(f"[spread3] {_line}")
+        _SPREAD3_DIFF_REPORTED = True
+
     try:
         n_loc = len(locations)
 
@@ -104,27 +122,26 @@ def generate_spread3_json(
             log.error(result["error"])
             return result
 
-        # ── 地点坐标 (E5, 2026-09-16: fail-loud, 绝不编坐标) ────────────
+        # ── 地点坐标 (E5, 2026-09-16: fail-loud, 绝不编坐标; 2026-10-03 S3-⑤ 收敛) ──
         # 历史坑: 未收录地点用 `(30 + sum(ord(ch))%20, 100 + sum(ord(ch))%35)`
         # **编**一组坐标 —— 落点在中国中部附近, 与真实位置毫无关系, 且地图上
-        # 看不出来是编的 (静默造假)。现在按 ①调用方表 → ②常用内置表 →
-        # ③geo_resolver (中国省/市离线表 + 缓存) 三级解析; 仍失败 → 该地点
-        # latitude/longitude = None, 并进 coord_missing 由调用方/地图显式列出。
+        # 看不出来是编的 (静默造假)。现在按 ①调用方表 → ②内置常用表 →
+        # ③唯一坐标源 coord_lookup (geo_resolver 省/市表 + 缓存 + 段拆分/模糊)
+        # 三级解析; 仍失败 → 该地点 latitude/longitude = None, 并进 coord_missing
+        # 由调用方/地图显式列出。
         explicit = lat_lon_map is not None
         lookup = dict(_DEFAULT_LAT_LON)
         if explicit:
             lookup.update(lat_lon_map)
-        try:
-            from utils.geo_resolver import resolve_location
-        except ImportError:
-            resolve_location = None
         coords, missing = {}, []
         for loc in locations:
             c = lookup.get(loc)
             src = "caller" if explicit and loc in (lat_lon_map or {}) else "builtin"
-            if c is None and resolve_location is not None:
-                c = resolve_location(loc)
-                src = "geo_resolver" if c else src
+            if c is None:
+                _hit = _coord_lookup(loc)
+                if _hit:
+                    c = (_hit[0], _hit[1])
+                    src = _hit[2]
             if c is None:
                 missing.append(loc)
             else:

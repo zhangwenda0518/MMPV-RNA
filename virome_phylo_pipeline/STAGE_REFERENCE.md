@@ -460,6 +460,8 @@ barbarum 推不出的 1 行：`Unknown:Unknown`（确无地理信息）。
 | **脏日期防御** (2026-09-02) | 构建样本列表时预解析日期，解析失败（如 `not applicable`）的样本剔除并警告（`⚠️ 剔除样本 SRRxxx: 脏日期`），不再让整个 stage 崩溃。beast_bridge（BEAST2 路径）与 beast1_bridge 同款逻辑 |
 | **多链闭环** (2026-08-31) | 多链模式前台等待：60s 轮询链 state，all_done 自动 merge；链停滞+无进程或 30 分钟无进展退回 pending。config.yaml `chains: 5` 为以后默认 |
 | **ESS 算法对齐 Tracer** (2026-08-27) | utils/ess.py 改为 Geyer initial POSITIVE sequence（beast-mcmc TraceCorrelation 逐行一致：有偏自协方差 + 成对和>0 截断，maxLag 2000，无单调性检查；`monotone=True` 可复现旧敏感性口径）。trace.jar 官方库逐参数对账通过（残余偏差<15% 来自 burnin 取整）。历史：v1 逐 lag 截断严重低估（GCVA 50M run posterior 实际 49.1 被报 6.9）；v2 单调版对 acf 零点抖动序列虚高（PSTVd posterior 85 vs Tracer 14.6）。GCVA/PSTVd 两份 ess_results.csv 已按 v3 重算（旧版备份 .bak_v2_20260827） |
+| **BSP 重写 + 退化闸门** (2026-10-03) | ① skyline 图 x 轴不再用每样本根高/树高冒充时间（BEAST1 skyline 日志无 TreeHeight 列，旧回退会选中 treeModel.rootHeight；二者都是每样本标量）→ 改按区间汇总：x = skyline 区间号（1 = 最近），y = 每区间跨 MCMC 样本的 median + 95% HPD；时间分辨重建需 .trees（Tracer，.log 不含区间边界）。② 种群列精确匹配 `skyline.popSizeN`（旧 `grep("pop 或 skyline")` 会误吞独立 skyline 先验列 ≈-700 → log10 NaN → 95% 色带整层被 ggplot 删除）。③ 退化闸门：ESS 与 BSP 在 burn-in 后 <10 可用样本时拒出（不再产"全员 ESS=1"假表 / 空白 BSP.pdf；历史事故：空/近空 merge 日志）；`beast_parser` 同闸门且不再写 1 字节空 parameter_summary.csv；`auto_parse_params` 空汇总显式告警；merge 端 merged.log <10 行不再报 ✅；beast stage 记录 `metrics.beast_log_rows` 并在 <10 行时告警。④ ggplot2 版本守卫（≥3.4 用 linewidth） |
+| **checkpoint 语义 + TMRCA 复用路径** (2026-10-03) | checkpoint 标志物由 `beast/beast1.xml` 改为 **`beast/merged/merged.log`**（XML 在 `--skip_beast_run` 只出 XML 时就会写出 → 旧版会把"没跑过 BEAST"当已完成）；`.done` 命中时另加 `_beast_ran()` 二次判定（链日志/合并产物任一非空才算跑过，否则告警并按未跑重执行）。复用分支的 TMRCA 日志探测改为 **merged/merged.log → beast1.log → beast11.log** 优先（旧版写死 beast1.log，现场实际是 beast11.log/merged → 静默拿不到 TMRCA），且 <10 行拒绝复用 |
 
 ---
 
@@ -515,13 +517,13 @@ barbarum 推不出的 1 行：`Unknown:Unknown`（确无地理信息）。
 | 项 | 内容 |
 |---|---|
 | **输入** | phylogeo 的 `merged/mcc.tree`（吃 `location.states.set/.set.prob` 后验）+ meta（name,location）+ mafft.aln.fasta（推 seq_len） |
-| **处理** | ① `utils/transmission_paths.py::run_pathways`：逐分支时空表（seraphim `treeExtractions` 同构）→ 只留地点变化分支 = 事件级 pathway → 同地点连续节点折叠为 episode（**自根 DFS 拓扑序**，免疫 phymapr 按日期排序的同日期 NA bug）→ 三级置信分类 Direct/Indirect/Distant-Import（SNP 维度=期望替换数 `rate×Δheight×L`，**非实测**；阈值 2/5 沿用 phymapr，**论文前须按本数据 E[S] 分布标定**）→ LTL 持久性摘要（删失窗 0.5 年，polio-wpv1 同款）② `utils/diffusion_stats.py`：分支扩散速度/扩散系数/wavefront 时间序列 + **坐标重标注置换零模型**（种子 42；初版端点洗牌在单源网络下无检验力已废弃）③ 可选 `--geo_map`：`utils/transmission_map.py` 贝塞尔弧线+末段箭头+时间色带静态图（**默认纯矢量无第三方瓦片，合规**）+ 可选 `--geo_gif` 动画 |
+| **处理** | ① `utils/transmission_paths.py::run_pathways`：逐分支时空表（seraphim `treeExtractions` 同构）→ 只留地点变化分支 = 事件级 pathway → 同地点连续节点折叠为 episode（**自根 DFS 拓扑序**，免疫 phymapr 按日期排序的同日期 NA bug）→ 三级置信分类 Direct/Indirect/Distant-Import（SNP 维度=期望替换数 `rate×Δheight×L`，**非实测**；阈值 2/5 沿用 phymapr，**论文前须按本数据 E[S] 分布标定**）→ LTL 持久性摘要（删失窗 0.5 年，polio-wpv1 同款）② `utils/diffusion_stats.py`：分支扩散速度/扩散系数/wavefront 时间序列 + **坐标重标注置换零模型**（种子 42；初版端点洗牌在单源网络下无检验力已废弃）③ 可选 `--geo_map`（现默认开）：`utils/transmission_map.py` 贝塞尔弧线+末段箭头+时间色带静态图（**默认纯矢量无第三方瓦片，合规**）+ `--geo_gif` 时间揭示动画（2026-10-03 起默认开，`--no-geo_gif` 关） |
 | **输出** | `geography/geo_analysis/pathways/{branch_table,pathways,episodes,ltl_summary}.csv + pathway_qc.json`；`geography/geo_analysis/dispersion/{velocity_table,wavefront_series}.csv + dispersion_summary.json`、`geo_analysis/timescale_consistency.json`（双流一致性闸门：时间流 RTT/DRT vs 地理流根高/速率并排 + WARN 旗标，2026-09-17）；可选 `geography/visualization/transmission_map.png(+.pdf/.svg/.gif)` |
-| **参数** | `--no_pathways`(关)、`--direct_snp`(2.0)、`--indirect_snp`(5.0)、`--censor_years`(0.5)、`--n_perm`(200)、`--geo_map`、`--geo_gif`、`--geo_gif_frames`(36)、`--geo_tree_map`(树-图联动双面板)、`--calibrate`(auto=E[S] 分位数 q25/q75 自标定, 默认经 config) |
+| **参数** | `--no_pathways`(关)、`--direct_snp`(2.0)、`--indirect_snp`(5.0)、`--censor_years`(0.5)、`--n_perm`(200)、`--geo_map`、`--geo_gif` / `--no-geo_gif`、`--geo_gif_frames`(36)、`--geo_tree_map`(树-图联动双面板)、`--calibrate`(auto=E[S] 分位数 q25/q75 自标定, 默认经 config) |
 | **依赖** | phylogeo（checkpoint 即其 MCC） |
 | **Checkpoint** | `geography/geo_analysis/pathways/pathway_qc.json` |
 | **单独运行** | `--stage geo_paths`（geography 组自动包含） |
-| **出图默认** (2026-09-17) | config `geo_paths.map/tree_map: true` → 每次 run 自动产出 `visualization/transmission_map.*` 与 `transmission_tree_map.*`；GIF 仍按需 (`--geo_gif`) |
+| **出图默认** (2026-09-17; GIF 2026-10-03 起) | config `geo_paths.map/tree_map/gif: true` → 每次 run 自动产出 `visualization/transmission_map.{png,pdf,svg}`、`transmission_map.gif`（36 帧时间揭示动画）与 `transmission_tree_map.*`；单次关闭任一项用对应否定旗标（当前仅 GIF 有 `--no-geo_gif`）。GIF 实测渲染 ~6s；缺地点坐标时跳过并告警（不致命） |
 | **方法定位** | MCC **描述层**（与 RRT/TEMPMIG 并列），不改动 BSSVS BF 推断结论；置换零模型与 seraphim RRW 参数化零模型**不同**，不可互换引用。方法出处逐条见各模块 docstring 与 `INTEGRATION_20260916.md` |
 
 ---

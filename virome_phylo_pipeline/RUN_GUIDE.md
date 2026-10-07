@@ -283,6 +283,12 @@ python phylo_pipeline.py --stage all --disable beast,rdp5
 **状态追踪**：每次运行日志输出 `stages: done=[...] skipped=[...] failed=[...]`；
 `report/phylo_summary.csv` 含 `Stages_done` / `Stages_skipped` / `Stages_failed` 三列。
 
+**受阻 vs 跳过（2026-10-03）**：`skipped` 内部按原因分桶 —— `checkpoint`（已完成）/ `na`
+（数据不适用）/ `pending`（后台链运行中）/ `degraded`（失败后降级）/ `blocked`（前置缺失或
+未产出）。后两类汇总进 **`Stages_blocked`** 列并置 **`Incomplete=True`**，HTML 总表相应降为
+`PARTIAL`；`main` 退出码：有 failed→**1**，有 blocked/pending→**2**，干净→**0**（旧版恒 0）。
+即：`Success=True` 只代表"无硬失败"，**不再代表结果完整** —— 判完整性看 `Incomplete`。
+
 ```bash
 # 中断后继续（已完成的 stage 自动跳过）
 python phylo_pipeline.py --extract_dir 06_extraction/ --metadata metadata.tsv --stage all

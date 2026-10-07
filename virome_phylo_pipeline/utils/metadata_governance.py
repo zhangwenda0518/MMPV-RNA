@@ -519,8 +519,11 @@ COORD_HINTS = ("lat_lon", "latlon", "lat-lon", "coordinates", "coords", "latitud
 # 由「30 个中国城市硬编码字典」升级为**多级全球查找**。
 #
 # 查找优先级 (高 → 低):
-#   1. `_CITY_COORDS`  —— 30 个中国城市手校字典。**保留且最高优先**,
-#      保证与 submission pipeline 的 `geo_to_latlon` 对拍结果一字不变。
+#   1. `_CITY_COORDS`  —— 30 个中国城市键, 最高优先; **取值自 2026-10-03 (S3-⑤)
+#      起统一读 utils/coord_lookup (唯一坐标源, geo_resolver 省/市表为权威基底)**,
+#      与旧字面量不同的键首次调用时 WARN (键/旧值/新值/来源)。
+#      注: 与 submission pipeline `geo_to_latlon` 的逐字对拍在冲突键上不再成立
+#      (submission 侧表未动, 跨模块保留)。
 #   2. admin1 省/州级 —— 全球 4410 条 (Natural Earth 1:10m)
 #   3. admin0 国家级 —— 全球 255 条 (Natural Earth 1:10m)
 #   4. 推不出 → 返回 '' , 由调用方决定清空
@@ -536,38 +539,69 @@ COORD_HINTS = ("lat_lon", "latlon", "lat-lon", "coordinates", "coords", "latitud
 #   生成时规范化: 台湾/香港/澳门 一律归入 `countryIso2='CN'`,
 #   规范名 `Taiwan, China` / `Hong Kong, China` / `Macao, China`,
 #   中文名 `中国台湾` / `中国香港` / `中国澳门`。
-_CITY_COORDS = {
-    'yinchuan':     '38.47 N 106.27 E',
-    'ningxia':      '37.48 N 105.68 E',
-    'zhongning':    '37.48 N 105.68 E',
-    'beijing':      '39.90 N 116.40 E',
-    'shanghai':     '31.23 N 121.47 E',
-    'guangzhou':    '23.13 N 113.26 E',
-    'wuhan':        '30.59 N 114.31 E',
-    'nanjing':      '32.06 N 118.79 E',
-    'hangzhou':     '30.27 N 120.15 E',
-    'chengdu':      '30.57 N 104.07 E',
-    'xian':         '34.26 N 108.94 E',
-    'kunming':      '25.04 N 102.68 E',
-    'harbin':       '45.80 N 126.53 E',
-    'zhengzhou':    '34.75 N 113.62 E',
-    'jinan':        '36.65 N 116.98 E',
-    'taiyuan':      '37.87 N 112.55 E',
-    'changsha':     '28.23 N 112.94 E',
-    'fuzhou':       '26.07 N 119.30 E',
-    'guiyang':      '26.65 N 106.63 E',
-    'lanzhou':      '36.06 N 103.79 E',
-    'xining':       '36.62 N 101.77 E',
-    'urumqi':       '43.79 N 87.58 E',
-    'lhasa':        '29.65 N 91.10 E',
-    'shenyang':     '41.80 N 123.43 E',
-    'dalian':       '38.91 N 121.61 E',
-    'qingdao':      '36.07 N 120.38 E',
-    'suzhou':       '31.30 N 120.62 E',
-    'shenzhen':     '22.54 N 114.06 E',
-    'chongqing':    '29.56 N 106.55 E',
-    'tianjin':      '39.13 N 117.18 E',
-}
+_CITY_COORDS_KEYS = (
+    'yinchuan', 'ningxia', 'zhongning', 'beijing', 'shanghai', 'guangzhou',
+    'wuhan', 'nanjing', 'hangzhou', 'chengdu', 'xian', 'kunming', 'harbin',
+    'zhengzhou', 'jinan', 'taiyuan', 'changsha', 'fuzhou', 'guiyang', 'lanzhou',
+    'xining', 'urumqi', 'lhasa', 'shenyang', 'dalian', 'qingdao', 'suzhou',
+    'shenzhen', 'chongqing', 'tianjin',
+)
+
+
+def _load_coord_lookup():
+    """加载唯一坐标源 coord_lookup (包导入 → 相对导入 → 同目录脚本导入)。
+
+    三级都失败 → (None, None) 并告警, **不阻断本模块** (城市级坐标退回
+    gazetteer 查找; 这是极端的部署异常场景, 正常管线不会走到)。
+    """
+    try:
+        from utils.coord_lookup import lookup, diff_lines
+        return lookup, diff_lines
+    except ImportError:
+        pass
+    try:
+        from .coord_lookup import lookup, diff_lines
+        return lookup, diff_lines
+    except ImportError:
+        pass
+    try:
+        import coord_lookup as _mod
+        return _mod.lookup, _mod.diff_lines
+    except ImportError as _e:
+        print(f"[metadata_governance] WARN: coord_lookup 不可用 ({_e}); "
+              f"城市级坐标将回落到 gazetteer 查找")
+        return None, None
+
+
+_coord_lookup, _coord_diff_lines = _load_coord_lookup()
+_MG_COORD_DIFF_REPORTED = False
+
+
+def _fmt_ncbi_coord(lat: float, lon: float) -> str:
+    return (f"{abs(lat):.2f} {'N' if lat >= 0 else 'S'} "
+            f"{abs(lon):.2f} {'E' if lon >= 0 else 'W'}")
+
+
+def _build_city_coords():
+    """坐标取值从唯一坐标源读 (键集保持不变, 子串匹配语义不变)。
+
+    2026-10-03 (S3-⑤): 旧字面量 (原 _CITY_COORDS) 与 geo_resolver 省/市表存在
+    冲突 (如 'ningxia' 旧值=中宁 (37.48,105.68), 权威值=宁夏省质心 (37.27,106.17);
+    'xining' 101.77 vs 101.78) —— 现统一取 coord_lookup 值; 差异清单由
+    coord_from_location 首次调用时 WARN 打印 (键/旧值/新值/来源)。
+    ⚠ submission 侧 unified_metadata.py 的 30 城表不动 (跨模块保留)。
+    """
+    out = {}
+    if _coord_lookup is None:
+        return out
+    for _k in _CITY_COORDS_KEYS:
+        _hit = _coord_lookup(_k)
+        if _hit:
+            out[_k] = _fmt_ncbi_coord(_hit[0], _hit[1])
+    return out
+
+
+_CITY_COORDS = _build_city_coords()
 _COUNTRY_CENTROID_CN = '35.86 N 104.19 E'
 
 # ── 全球 gazetteer 数据路径 ──
@@ -877,20 +911,29 @@ def coord_from_location(loc) -> Tuple[str, str]:
                   `''`                  推不出
 
     查找优先级:
-      1. `_CITY_COORDS` (30 个中国城市, 手校) —— **最高优先**,
-         保证与 submission pipeline `geo_to_latlon` 的对拍结果不变
+      1. `_CITY_COORDS` (30 个中国城市键, **取值来自唯一坐标源 coord_lookup**)
+         —— 最高优先; 键集与旧版一致 (子串匹配语义不变)
       2. 全球 admin1 (省/州) —— 由细到粗先试, 兼顾 `China:Ningxia` 与
          `Macao, China` 两种写法
       3. 全球 admin0 (国家)
       4. `''`
 
     行为要点:
+      · 2026-10-03 (S3-⑤): 第 1 级取值统一到 coord_lookup (geo_resolver 省/市表
+        为权威基底), 与**旧 30 城表**取值不同的键在首次调用时 WARN 打印
+        (键/旧值/新值/来源)。与 submission `geo_to_latlon` 的逐字对拍在冲突键上
+        **不再成立** (这是收敛坐标源的既定代价; submission 侧表未动)。
       · `'China'` 单独出现时仍返回原中国中心点 `country_centroid`,
         与原 `geo_to_latlon` **完全一致** (避免对拍出现差异)
-      · 全球查找是对中国字典的**纯增量**: 命中中国城市时行为一字不变
+      · 全球查找是对中国字典的**纯增量**
       · 中国台湾/香港/澳门 由构建层规范化为中国的一部分, 不会输出
         与国家主权立场不符的表述 (`Taiwan` → `admin1:CN-TW`)
     """
+    global _MG_COORD_DIFF_REPORTED
+    if not _MG_COORD_DIFF_REPORTED and _coord_diff_lines is not None:
+        for _l in _coord_diff_lines('metadata_governance'):
+            print(f"[metadata_governance] WARN {_l}")
+        _MG_COORD_DIFF_REPORTED = True
     if loc is None:
         return "", ""
     s = str(loc).strip()
@@ -898,7 +941,7 @@ def coord_from_location(loc) -> Tuple[str, str]:
         return "", ""
 
     low = s.lower()
-    # ── 第 1 级: 中国城市手校字典 (最高优先, 与 geo_to_latlon 逐字一致) ──
+    # ── 第 1 级: 中国城市表 (最高优先; 取值已从唯一坐标源 coord_lookup 读) ──
     for city, latlon in _CITY_COORDS.items():
         if city in low:
             return latlon, "city"

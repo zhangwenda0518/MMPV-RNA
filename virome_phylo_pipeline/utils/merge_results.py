@@ -205,7 +205,22 @@ def merge(work_dir, st, background=False):
         r = None
         log(f"  ⚠️ logcombiner 执行异常: {_le}")
     if r is not None and r.returncode == 0 and os.path.exists(f'{merged}/merged.log'):
-        log(f"  ✅ merged.log ({os.path.getsize(f'{merged}/merged.log')/1e6:.1f}MB)")
+        # 行数闸门 (2026-10-03): 空/近空合并曾以"文件存在"冒充 ✅, 下游 postprocess
+        # 再产出"全员 ESS=1" + 空白 BSP 图 (GCVA time/beast 历史事故)
+        merged_log = f'{merged}/merged.log'
+        n_rows = 0
+        try:
+            with open(merged_log, encoding='utf-8', errors='replace') as _f:
+                n_rows = sum(1 for L in _f
+                             if L.strip() and not L.startswith('#')
+                             and not L.startswith('state'))
+        except OSError:
+            pass
+        if n_rows < 10:
+            log(f"  ❌ merged.log 仅 {n_rows} 行数据 "
+                f"(burnin={burnin} 超界或链未跑完) — 该合并产物不可用于 ESS/BSP/TMRCA")
+        else:
+            log(f"  ✅ merged.log ({os.path.getsize(merged_log)/1e6:.1f}MB, {n_rows} rows)")
     elif r is not None:
         log(f"  ❌ log 合并失败: {r.stderr[-200:]}")
 
@@ -265,7 +280,14 @@ def merge(work_dir, st, background=False):
         subprocess.run([sys.executable, '-m', 'utils.auto_parse_params', work_dir, merged],
                        cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         if os.path.exists(f'{merged}/parameter_summary.json'):
-            log(f"  ✅ parameter_summary.json")
+            # 空汇总闸门 (2026-10-03): auto_parse_params 的样本下限是 100, 不足时
+            # 写出 `{}` 却照样报 ✅ (服务器 1 字节 parameter_summary.csv 的来源路径)
+            _sz = os.path.getsize(f'{merged}/parameter_summary.json')
+            if _sz <= 5:
+                log(f"  ❌ parameter_summary.json 为空 ({_sz}B) — 可用样本 <100 "
+                    f"(阈值见 utils/sample_floor.py); 参数汇总不可用")
+            else:
+                log(f"  ✅ parameter_summary.json")
     # 4. MCMC 收敛诊断图 (ESS 柱状 + trace/density/ACF + 双链散点)
     try:
         from utils.mcmc_diag_plot import plot_diagnostics, plot_chain_scatter
@@ -283,7 +305,7 @@ def merge(work_dir, st, background=False):
             log("  ✅ chain_scatter.pdf (r: " +
                 ", ".join(f"{p}={r:.3f}" for p, r in rs[:3]) + "…)")
     except Exception as e:
-        log(f"  ⚠️ mcmc diagnostics plot skipped: {e}")
+        log(f"  ❌ mcmc diagnostics 未产出: {e} — merged.log 仍可用, 但收敛诊断图缺失")
     st['completed_at'] = time.strftime('%Y-%m-%d %H:%M:%S')
     json.dump(st, open(f'{work_dir}/run_status.json', 'w'), indent=2)
 

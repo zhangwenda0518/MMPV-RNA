@@ -355,14 +355,21 @@ def stage_badge(stage: str, r: Dict) -> str:
     done = stage in r.get("stages_done", [])
     skipped = stage in r.get("stages_skipped", [])
     failed = stage in r.get("stages_failed", [])
+    # 2026-10-03: 受阻 stage (前置缺失/未产出/降级) 用 fail 色但文案区分;
+    # 跳过原因 (checkpoint/na/pending) 显示在 badge 里, 不再一律 "skip"。
+    blocked = stage in r.get("stages_blocked", []) or any(
+        b.startswith(f"{stage}(") for b in r.get("stages_blocked", []))
+    reason = (r.get("stages_skip_reasons") or {}).get(stage, "")
     # 本轮未涉及该 stage 时回退看 checkpoint (report 单独重跑场景)
     if not (done or skipped or failed) and vdir:
         if os.path.exists(os.path.join(vdir, ".checkpoints", f"{stage}.done")):
             done = True
     if done:
         return f'<span class="badge ok">{stage}</span>'
+    if blocked:
+        return f'<span class="badge fail">{stage} · blocked</span>'
     if skipped:
-        return f'<span class="badge skip">{stage} · skip</span>'
+        return f'<span class="badge skip">{stage} · {reason or "skip"}</span>'
     if failed:
         return f'<span class="badge fail">{stage} · fail</span>'
     return f'<span class="badge off">{stage}</span>'
@@ -401,17 +408,26 @@ def build_html_report(
         n_done = len(r.get("stages_done", []))
         n_skip = len(r.get("stages_skipped", []))
         n_fail = len(r.get("stages_failed", []))
+        n_blocked = len(r.get("stages_blocked", []))
         # report 单独重跑: 本轮 stages 空时以 checkpoint 为准
         if not (n_done or n_skip or n_fail) and vdir:
             cp_dir = os.path.join(vdir, ".checkpoints")
             if os.path.isdir(cp_dir):
                 n_done = len([f for f in os.listdir(cp_dir) if f.endswith(".done")])
-        overall = "PASS" if (n_fail == 0 and (n_done > 0 or success)) else ("FAIL" if n_fail else "PARTIAL")
+        # 2026-10-03 (P1-1): 受阻/未定 (blocked|pending) 一律降为 PARTIAL, 不再报 PASS
+        if n_fail:
+            overall = "FAIL"
+        elif n_blocked or r.get("incomplete"):
+            overall = "PARTIAL"
+        elif n_done > 0 or success:
+            overall = "PASS"
+        else:
+            overall = "PARTIAL"
         summary_rows.append(f"""
         <tr>
             <td>{vname}</td>
             <td><span class="badge {'ok' if overall == 'PASS' else ('fail' if overall == 'FAIL' else 'skip')}">{overall}</span></td>
-            <td>{n_done} / {n_skip} / {n_fail}</td>
+            <td>{n_done} / {n_skip} / {n_fail} / {n_blocked}</td>
             <td>{fmt_metric(hm['rate'], hm['rate_source'])}</td>
             <td>{fmt_metric(hm['r2'], hm['r2_source'])}</td>
             <td>{tmrca_cell}</td>
@@ -570,7 +586,7 @@ def build_html_report(
 <h2 style="max-width:1100px;margin:0 auto 10px;font-size:16px;">Summary</h2>
 <table class="summary-table">
     <thead>
-        <tr><th>Virus</th><th>Status</th><th>done/skip/fail</th><th>β (rate)</th><th>R²</th><th>TMRCA</th><th>Mantel r</th><th>Geo paths</th><th>Geo velocity</th></tr>
+        <tr><th>Virus</th><th>Status</th><th>done/skip/fail/blocked</th><th>β (rate)</th><th>R²</th><th>TMRCA</th><th>Mantel r</th><th>Geo paths</th><th>Geo velocity</th></tr>
     </thead>
     <tbody>
         {''.join(summary_rows)}

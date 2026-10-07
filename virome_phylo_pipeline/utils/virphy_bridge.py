@@ -42,6 +42,10 @@ try:
 except ImportError:
     HAS_TREETIME = False
 
+# ── 坐标唯一源差异清单只打印一次 (2026-10-03, S3-⑤: 每个病毒跑一次 Mantel,
+#    静态差异表不必每次都刷屏) ──
+_COORD_DIFF_REPORTED = False
+
 
 # ═══════════════════════════════════════════════════════════════════
 # 日志回调：替代 PyQt5 pyqtSignal
@@ -1061,7 +1065,21 @@ def run_geo_subsampler(
 # ═══════════════════════════════════════════════════════════════════
 
 BSP_R_SCRIPT_TEMPLATE = '''
-# Simplified BSP: use R for reading, Python fallback via subprocess
+# BSP-Viz —— .log 层面可支撑的 skyline 汇总 (2026-10-03 重写)
+# 修复三处 (前两处为真 bug, 第三处为口径修正):
+#   1) 时间轴不再用 treeModel.rootHeight/TreeHeight 冒充: 二者都是**每样本标量**
+#      (整棵树一个根高), 不是 skyline 的时间轴; BEAST1 skyline 日志又没有 TreeHeight
+#      列, 原 "time|age|height" 回退会让 x 轴=每样本根高, 语义错误。
+#      → 改为按区间汇总, x = skyline 区间号 (1 = 最近, N = 最老)
+#   2) 种群列精确匹配: 原 grep("pop|skyline") 会把独立 skyline 先验列
+#      (log prior, ≈ -700) 当种群大小 → 负值进 log10 → 2.5% 分位为负 → NaN →
+#      geom_ribbon **整层被 ggplot 删除** (实测 "Removed N rows")。
+#   3) 聚合口径: 原实现"每行跨区间取中位数"(把 5 个区间当重复测量)语义不通 →
+#      改为"每区间跨 MCMC 样本取中位数 + 95% HPD"(标准边际汇总)。
+# 退化闸门 (2026-10-03): 样本不足直接报错退出, 不再产出"只有坐标轴"的假图
+#      (历史事故: 空/近空 merge 日志 → 空白 BSP.pdf 混入组合图)。
+# 注: 时间分辨的真 BSP 重建需要 .trees (Tracer "Bayesian Skyline Reconstruction"),
+#     .log 不含区间边界, 本脚本不假装能做。
 library(ggplot2)
 library(scales)
 
@@ -1070,58 +1088,68 @@ log_file <- args[1]
 output_file <- args[2]
 burnin_pct <- as.numeric(args[3])
 
-data <- read.table(log_file, header=TRUE, sep="\\t", comment.char="#")
+data <- read.table(log_file, header=TRUE, sep="\\t", comment.char="#", check.names=FALSE)
 if (burnin_pct > 0) {
     start_row <- floor(nrow(data) * burnin_pct / 100) + 1
-    data <- data[start_row:nrow(data),]
+    data <- data[start_row:nrow(data), , drop=FALSE]
 }
+n_used <- nrow(data)
+cat("BSP-Viz: usable samples after burn-in:", n_used, "\\n")
 
-# Find ALL population size columns (flexible matching)
-pop_cols <- grep("pop|skyline|PopSize|Skyline", names(data), value=TRUE, ignore.case=TRUE)
+# 种群列: 精确匹配 skyline.popSizeN / popSizeN; 显式排除独立先验/似然列
+pop_cols <- grep("(^|\\\\.)popSize[0-9]+$", names(data), value=TRUE)
+if (length(pop_cols) == 0) {   # 命名不寻常时退宽匹配 (先验列在下面显式剔除)
+    pop_cols <- grep("pop", names(data), value=TRUE, ignore.case=TRUE)
+}
+pop_cols <- setdiff(pop_cols, c("skyline", "prior", "likelihood", "posterior"))
 cat("Pop columns found:", paste(pop_cols, collapse=", "), "\\n")
 
 if (length(pop_cols) == 0) {
-    cat("Error: Cannot find skyline/popSize columns\\n")
+    cat("Error: Cannot find skyline.popSizeN columns\\n")
     cat("Available columns:", paste(names(data), collapse=", "), "\\n")
     quit(status=1)
 }
 
-# Time column
-if ("TreeHeight" %in% names(data)) {
-    time_col <- "TreeHeight"
+if (n_used < 10) {
+    cat(sprintf("Error: only %d usable sample(s) after burn-in -> refusing to draw a BSP.\\n", n_used))
+    cat("       链条未跑完 / 合并 burnin 超界? 先查 BEAST .log 行数再跑 postprocess.\\n")
+    quit(status=2)
+}
+
+# 每区间跨 MCMC 样本汇总: median + 95% HPD
+pop <- data[, pop_cols, drop=FALSE]
+bsp_df <- data.frame(
+    Interval = seq_along(pop_cols),
+    Median = apply(pop, 2, median, na.rm=TRUE),
+    Lower  = apply(pop, 2, quantile, probs=0.025, na.rm=TRUE),
+    Upper  = apply(pop, 2, quantile, probs=0.975, na.rm=TRUE)
+)
+
+# log10 只在全部为正时启用 (先验列等负值会让 log10 出 NaN 并删掉整个色带)
+all_positive <- all(bsp_df$Lower > 0, na.rm=TRUE) &&
+                all(bsp_df$Median > 0, na.rm=TRUE) &&
+                all(bsp_df$Upper > 0, na.rm=TRUE)
+
+# ggplot2 版本守卫 (2026-10-03): >=3.4 用 linewidth, 更老用 size (size 已弃用会刷警告)
+line_layer <- if (utils::packageVersion("ggplot2") >= "3.4.0") {
+    geom_line(color="#00A0E9", linewidth=1.2)
 } else {
-    time_col <- grep("time|Time|age|height", names(data), value=TRUE, ignore.case=TRUE)[1]
+    geom_line(color="#00A0E9", size=1.2)
 }
 
-n_pop <- length(pop_cols)
-
-# Calculate median + 95% HPD for each time point
-df_all <- data.frame()
-for (i in 1:n_pop) {
-    tmp <- data.frame(Time = data[[time_col]], PopSize = data[[pop_cols[i]]], Group = pop_cols[i])
-    df_all <- rbind(df_all, tmp)
-}
-
-time_unique <- sort(unique(df_all$Time))
-medians <- c()
-lowers <- c()
-uppers <- c()
-for (t in time_unique) {
-    vals <- df_all$PopSize[df_all$Time == t]
-    medians <- c(medians, median(vals, na.rm=TRUE))
-    lowers <- c(lowers, quantile(vals, 0.025, na.rm=TRUE))
-    uppers <- c(uppers, quantile(vals, 0.975, na.rm=TRUE))
-}
-
-bsp_df <- data.frame(Time = time_unique, Median = medians, Lower = lowers, Upper = uppers)
-
-p <- ggplot(bsp_df, aes(x=Time, y=Median)) +
+p <- ggplot(bsp_df, aes(x=Interval, y=Median)) +
     geom_ribbon(aes(ymin=Lower, ymax=Upper), fill="#00A0E9", alpha=0.25) +
-    geom_line(color="#00A0E9", size=1.2) +
-    scale_y_log10(labels=comma) +
+    line_layer +
+    geom_point(color="#00A0E9", size=2.4) +
+    scale_x_continuous(breaks=bsp_df$Interval) +
     theme_bw(base_size=14) +
-    labs(x="Time", y="Effective population size", title="Bayesian Skyline Plot") +
+    labs(x="Skyline interval (1 = most recent)", y="Effective population size",
+         title="Bayesian Skyline Plot (per-interval median, 95% HPD)",
+         subtitle=sprintf("BEAST .log summary | %d usable samples | time-resolved BSP requires .trees (Tracer)", n_used)) +
     theme(panel.grid.minor=element_blank())
+if (all_positive) {
+    p <- p + scale_y_log10(labels=comma)
+}
 
 ggsave(output_file, plot=p, width=10, height=6, dpi=150)
 cat("BSP plot saved to", output_file, "\\n")
@@ -1136,7 +1164,15 @@ def run_bsp_viz(
     log: Optional[LogCollector] = None,
 ) -> Dict:
     """
-    从 BEAST .log 文件生成 Bayesian Skyline Plot。
+    从 BEAST .log 文件生成 skyline 汇总图 (BSP.pdf)。
+
+    2026-10-03 重写 (三处修复, 详见 BSP_R_SCRIPT_TEMPLATE 注释):
+      ① 不再把每样本根高/树高当时间轴 (x = skyline 区间号, 1 = 最近);
+      ② 种群列精确匹配, 不再把独立 skyline 先验列 (≈-700) 当种群大小
+         (旧版会让 log10 出 NaN 并删掉整层 95% 色带);
+      ③ 按区间跨 MCMC 样本汇总 median + 95% HPD (旧版"每行跨区间取中位数")。
+    退化输入 (burn-in 后 < 10 个样本) → 退出码 2, **不产出 PDF**, 报错信息写明行数。
+    时间分辨的真 BSP 重建需要 .trees (Tracer), .log 不含区间边界。
 
     Parameters
     ----------
@@ -1254,7 +1290,8 @@ def run_mantel_test(
 
     Returns
     -------
-    dict: {success, mantel_r, p_value, geo_dist_matrix, gen_dist_matrix, plot}
+    dict: {success, mantel_r, p_value, mantel_permutation ('label'), n_samples,
+           geo_dist_matrix, gen_dist_matrix, plot}
     """
     log = log or LogCollector()
     os.makedirs(output_dir, exist_ok=True)
@@ -1315,52 +1352,29 @@ def run_mantel_test(
     gen_dist_condensed = squareform(gen_dist)
 
     # ── 4. Compute geographic distance matrix ──
-    # Real coordinate lookup for Chinese locations (lat, lon)
-    COORD_LOOKUP = {
-        'China, Ningxia, Yinchuan': (38.47, 106.27),
-        'China, Ningxia, Zhongning': (37.49, 105.68),
-        'China, Neimenggu': (40.82, 111.75),
-        'China, Beijing, Beijing': (39.90, 116.40),
-        'China, Beijing': (39.90, 116.40),
-        'China, Beijing, Unknown': (39.90, 116.40),
-        'China, Guangdong, Guangzhou': (23.13, 113.26),
-        'China, Qinghai, Xining': (36.62, 101.78),
-        'China, Gansu, Wuwei': (37.93, 102.64),
-        'China, Liaoning, Shenyang': (41.80, 123.43),
-        'China, ningxia, Yinchuan': (38.47, 106.27),
-        # ── 裸省份名 (PSTVd metadata 格式, 2026-09-02 补) ──
-        'Ningxia': (38.47, 106.27),          # 宁夏 (银川)
-        'Gansu': (36.06, 103.83),            # 甘肃 (兰州)
-        'Qinghai': (36.62, 101.78),          # 青海 (西宁)
-        'Neimenggu': (40.82, 111.75),        # 内蒙古 (呼和浩特)
-        'Inner Mongolia': (40.82, 111.75),
-        'Beijing': (39.90, 116.40),
-        'Guangdong': (23.13, 113.26),
-        'Jiangsu': (32.06, 118.78),          # 江苏 (南京)
-        'Shandong': (36.67, 117.02),
-        'Hebei': (38.04, 114.51),
-        'Xinjiang': (43.79, 87.63),
-        'Yunnan': (25.04, 102.71),
-        'Sichuan': (30.66, 104.07),
-        'Hunan': (28.23, 112.94),
-        'Hubei': (30.59, 114.31),
-        'Henan': (34.75, 113.63),
-        'Shaanxi': (34.27, 108.95),
-        'Shanxi': (37.87, 112.55),
-        'Liaoning': (41.80, 123.43),
-        'Fujian': (26.08, 119.30),
-        'Zhejiang': (30.27, 120.16),
-        'Anhui': (31.86, 117.28),
-        'Heilongjiang': (45.80, 126.53),
-        'Jilin': (43.88, 125.32),
-        'Guangxi': (22.82, 108.32),
-        'Guizhou': (26.65, 106.63),
-        'Hainan': (20.04, 110.32),
-        'Chongqing': (29.56, 106.55),
-        'Tianjin': (39.08, 117.20),
-        'Shanghai': (31.23, 121.47),
-        'Tibet': (29.65, 91.13),
-    }
+    # 坐标统一源 (2026-10-03, S3-⑤): 原字面量 COORD_LOOKUP 已并入 utils/coord_lookup
+    # (geo_resolver 省/市表为权威基底; 省份键取省质心)。本函数只调 coord_lookup.lookup。
+    # 裸加载兜底: coord_lookup 有 spec_from_file_location 路径 (与 geo_resolver 同款)。
+    try:
+        from utils.coord_lookup import (lookup as _coord_lookup,
+                                        diff_lines as _coord_diff_lines,
+                                        flush as _coord_flush)
+    except ImportError:
+        import importlib.util as _ilu
+        _spec = _ilu.spec_from_file_location(
+            'coord_lookup', os.path.join(os.path.dirname(__file__), 'coord_lookup.py'))
+        _cmod = _ilu.module_from_spec(_spec)
+        _spec.loader.exec_module(_cmod)
+        _coord_lookup = _cmod.lookup
+        _coord_diff_lines = _cmod.diff_lines
+        _coord_flush = _cmod.flush
+
+    global _COORD_DIFF_REPORTED
+    if not _COORD_DIFF_REPORTED and log is not None:
+        for _line in _coord_diff_lines('virphy_bridge'):
+            log.warning(f"[Mantel] {_line}")
+        _COORD_DIFF_REPORTED = True
+
     import math
     def haversine_km(lat1, lon1, lat2, lon2):
         R = 6371
@@ -1372,35 +1386,19 @@ def run_mantel_test(
     geo_dist = np.zeros((n, n))
     coords = {}
     skipped_locs = set()
-    # 分层地名解析 (2026-09-02, geo_resolver): 旧 COORD_LOOKUP 作 L0 遗留精确层,
-    # 其后走 省/市中英文名+拼音变体 → 段拆分 → 模糊匹配 → 缓存 → (可选)在线
-    try:
-        from utils.geo_resolver import get_resolver
-        _gres = get_resolver()
-    except ImportError:
-        import importlib.util as _ilu
-        _spec = _ilu.spec_from_file_location(
-            'geo_resolver', os.path.join(os.path.dirname(__file__), 'geo_resolver.py'))
-        _mod = _ilu.module_from_spec(_spec)
-        _spec.loader.exec_module(_mod)
-        _gres = _mod.get_resolver()
+    # 分层地名解析: 唯一坐标源 coord_lookup (静态合并表 → 段拆分 → 模糊 → 缓存 →
+    # 可选在线)。来源统计写进日志便于核对 (geo_resolver:* / legacy:* / resolver:*)。
     _src_stats = {}
     for name in common:
         loc_str = sample_locs[name]
-        coord = None
-        if loc_str in COORD_LOOKUP:
-            coord = COORD_LOOKUP[loc_str]
-            _src_stats['legacy'] = _src_stats.get('legacy', 0) + 1
-        else:
-            coord, src = _gres.resolve(loc_str)
-            if coord:
-                _src_stats[src] = _src_stats.get(src, 0) + 1
-        if coord:
-            coords[name] = coord
+        hit = _coord_lookup(loc_str)
+        if hit:
+            coords[name] = (float(hit[0]), float(hit[1]))
+            _src_stats[hit[2]] = _src_stats.get(hit[2], 0) + 1
         else:
             # 解析失败: 不伪造坐标 (假坐标会制造虚假地理距离), 排除并列明
             skipped_locs.add(loc_str)
-    _gres.flush()
+    _coord_flush()
     if _src_stats:
         log.emit(f"[Mantel] 坐标解析来源: {_src_stats}")
     if skipped_locs:
@@ -1439,11 +1437,15 @@ def run_mantel_test(
     # ── 5. Mantel test ──
     r_obs = np.corrcoef(gen_dist_condensed, geo_dist_condensed)[0, 1]
 
-    # Permutation
+    # Permutation —— Mantel 标准做法: 对**样本标签**做置换 (矩阵行/列同步),
+    # 即 permuted = squareform(gen_dist[np.ix_(idx, idx)]); 地理矩阵保持固定。
+    # 2026-10-03 修复: 旧实现对压缩距离向量的元素直接 rng.permutation(...),
+    # 生成的"零分布"不是置换零分布 (破坏矩阵对称/三角结构), p 值无意义。
     perm_vals = []
     rng = np.random.RandomState(42)
     for _ in range(n_permutations):
-        permuted = rng.permutation(gen_dist_condensed)
+        idx = rng.permutation(n)
+        permuted = squareform(gen_dist[np.ix_(idx, idx)])
         perm_vals.append(np.corrcoef(permuted, geo_dist_condensed)[0, 1])
     perm_vals = np.array(perm_vals)
 
@@ -1452,7 +1454,12 @@ def run_mantel_test(
     result["mantel_r"] = float(r_obs)
     result["p_value"] = float(p_value)
     result["n_samples"] = n
-    log.emit(f"Mantel r = {r_obs:.4f}, p = {p_value:.4f} (n={n}, {n_permutations} perms)")
+    # 方法标注 (2026-10-03, S3-⑥): 置换口径 = **标签置换** (对样本标签重排, 即矩阵
+    # 行/列同步; 地理矩阵固定)。2026-10-03 前的口径是"对压缩距离向量元素直接打乱",
+    # p 值语义不同且不可比 —— 落 dict / 打印 / 图题显式标注, 重算时可区分。
+    result["mantel_permutation"] = "label"
+    log.emit(f"Mantel r = {r_obs:.4f}, p = {p_value:.4f} (n={n}, {n_permutations} perms, "
+             f"permutation=label)")
 
     # ── 6. Plot ──
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
@@ -1464,7 +1471,8 @@ def run_mantel_test(
     ax1.plot(x_line, z[0]*x_line + z[1], '--', color='#E9522E', linewidth=2)
     ax1.set_xlabel("Geographic distance (km)", fontsize=13)
     ax1.set_ylabel("Genetic distance (p-distance)", fontsize=13)
-    ax1.set_title(f"Mantel test: r={r_obs:.3f}, p={p_value:.4f}", fontsize=14, fontweight='bold')
+    ax1.set_title(f"Mantel test: r={r_obs:.3f}, p={p_value:.4f} (label permutation)",
+                  fontsize=14, fontweight='bold')
 
     # Both heatmaps
     labels_short = [c.split('.')[0][:8] if '.' in c else c[:8] for c in common]

@@ -31,7 +31,7 @@ CLI (2026-09-16):
   - 16 papers: 多数用 Mantel + BSSVS，RRT和TempMig是补充
 """
 
-import csv, os, sys, re, random
+import csv, json, os, sys, re, random
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 from collections import defaultdict
@@ -44,6 +44,8 @@ from Bio import SeqIO, AlignIO, Phylo
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from utils.virphy_bridge import LogCollector
+# 日期 → 小数年 全管线唯一定义 (2026-10-03 S3-③: smart_subsample 旧实现自造年份)
+from utils.decimal_year import to_decimal_year as _to_decimal_year
 
 import matplotlib
 matplotlib.use('Agg')
@@ -71,6 +73,10 @@ def smart_subsample(
       - stratified: 每个地点等量抽样（VirPhyKit GeoSubsampler 模式）
       - none: 仅去完全重复序列（同ID）
 
+    日期口径 (2026-10-03, S3-③): 统一走 utils.decimal_year (支持 YYYY[-MM[-DD]]
+      与 DD-Mon-YYYY 等英文月格式); **解析失败 → unknown-date 组, 全保留不去冗余**,
+      不再静默按 0 年处理 (旧行为把同地点所有缺日期序列坍缩成 1 条)。
+
     与 CD-HIT 的区别:
       CD-HIT: 只看序列相似性 → 可能删掉不同地点的相同序列（丢失迁移信号）
       smart: 看(时间, 地点) → 保留时空多样性
@@ -96,19 +102,58 @@ def smart_subsample(
                 meta[name] = {"date": date, "location": loc}
 
     # Parse decimal years
-    def _to_year(d):
-        try:
-            return float(str(d).split('-')[0])
-        except (ValueError, IndexError):
-            return 0
+    # 2026-10-03 修复 (S3-③):
+    #   ① 旧实现 `float(str(d).split('-')[0])`, 解析失败静默返回 0:
+    #      · 'DD-Mon-YYYY' (10-May-2019) → 读成"第 10 年" (月/日丢弃);
+    #      · 不可解析 → 0 → 与 bin 逻辑 (yr>0? bin : -1) 交互后 == 无日期,
+    #        同地点全部不可解析序列坍缩进 (loc,-1) 一组 → 每组只留最长 1 条
+    #        (实测 10 条全删剩 1)。
+    #   ② 现统一复用 utils.decimal_year.to_decimal_year(strict=False) (失败返回
+    #      None, 绝不静默造年份), 并就地补其不支持的 DD-Mon-YYYY / Mon-YYYY
+    #      等英文月格式。解析失败 → None。
+    #   ③ None → 'unknown-date' 组, **不做去冗余、全部保留** (见下方分组与 kept)。
+    _MONTH_ABBR = {'jan': 1, 'feb': 2, 'mar': 3, 'apr': 4, 'may': 5, 'jun': 6,
+                   'jul': 7, 'aug': 8, 'sep': 9, 'oct': 10, 'nov': 11, 'dec': 12}
 
-    # Group by (time_window, location)
+    def _to_year(d):
+        """采样日期 → 小数年; 无法解析返回 None (不静默用 0 顶替)。"""
+        s = str(d or '').strip()
+        if not s:
+            return None
+        # DD-Mon-YYYY / DD Mon YYYY (如 10-May-2019) → YYYY-MM-DD
+        m = re.match(r'^(\d{1,2})[-/\s.]+([A-Za-z]{3,9})[-/\s.,]+(\d{4})$', s)
+        if m and _MONTH_ABBR.get(m.group(2)[:3].lower()):
+            s = f"{m.group(3)}-{_MONTH_ABBR[m.group(2)[:3].lower()]:02d}-{int(m.group(1)):02d}"
+        else:
+            # Mon-DD-YYYY (如 May-10-2019 / May 10, 2019) → YYYY-MM-DD
+            m = re.match(r'^([A-Za-z]{3,9})[-/\s.]+(\d{1,2})[-/\s.,]+(\d{4})$', s)
+            if m and _MONTH_ABBR.get(m.group(1)[:3].lower()):
+                s = f"{m.group(3)}-{_MONTH_ABBR[m.group(1)[:3].lower()]:02d}-{int(m.group(2)):02d}"
+            else:
+                # Mon-YYYY (如 May-2019) → YYYY-MM
+                m = re.match(r'^([A-Za-z]{3,9})[-/\s.,]+(\d{4})$', s)
+                if m and _MONTH_ABBR.get(m.group(1)[:3].lower()):
+                    s = f"{m.group(2)}-{_MONTH_ABBR[m.group(1)[:3].lower()]:02d}"
+        yr = _to_decimal_year(s, strict=False)
+        if yr is not None:
+            return yr
+        # 兜底: 串里出现 4 位年份 (如 'collected in 2019') → 用该年 (统一口径)
+        m = re.search(r'(?<!\d)((?:19|20|21)\d{2})(?!\d)', s)
+        if m:
+            return _to_decimal_year(m.group(1), strict=False)
+        return None
+
+    # Group by (time_window, location); 无日期序列单独收, 不参与去冗余
     groups = defaultdict(list)
+    unknown_date = []
     for s in seqs:
         m = meta.get(s.id, {})
         loc = m.get("location", "Unknown")
-        yr = _to_year(m.get("date", "0"))
-        time_bin = int(yr / time_window_years) if yr > 0 else -1
+        yr = _to_year(m.get("date", ""))
+        if yr is None:
+            unknown_date.append(s)
+            continue
+        time_bin = int(yr / time_window_years)
         key = (loc, time_bin)
         seq_len = len(str(s.seq))
         groups[key].append((s, seq_len, yr))
@@ -141,6 +186,12 @@ def smart_subsample(
                     "reason": f"duplicate (same location={loc}, time≈{time_label})",
                 })
 
+    # unknown-date: **全保留**, 不去冗余 (2026-10-03 S3-③; 日期缺失 ≠ 时空冗余)
+    for s in unknown_date:
+        loc = (meta.get(s.id) or {}).get("location", "Unknown")
+        kept.append(s)
+        per_location[loc]["kept"] += 1
+
     # Write output FASTA
     SeqIO.write(kept, output_fasta, "fasta")
 
@@ -166,6 +217,7 @@ def smart_subsample(
         "n_original": len(seqs),
         "n_kept": len(kept),
         "n_removed": removed_count,
+        "n_unknown_date_kept": len(unknown_date),
         "per_location": dict(per_location),
         "output_fasta": output_fasta,
         "redundancy_csv": summary_csv,
@@ -174,6 +226,9 @@ def smart_subsample(
 
     log.emit(f"Smart subsample: {len(seqs)} → {len(kept)} ({removed_count} removed)")
     log.emit(f"  Groups (location × time): {len(groups)}")
+    if unknown_date:
+        log.emit(f"  unknown-date (日期不可解析): {len(unknown_date)} 条 "
+                 f"全部保留, 不做去冗余 (每地点 Kept 含在内)")
     log.emit(f"  Redundancy report: {summary_csv}")
     log.emit(f"  Per-location: {loc_csv}")
 
@@ -349,6 +404,11 @@ def run_tempmig(
       2. 将时间分桶，统计每个窗口的迁移事件数
       3. 绘制时序迁移柱状图
 
+    时间轴 (2026-10-03 修复, S3-②): 事件时间 = 父节点年龄 (height, years before
+      present; tip=0=present, root=树高), 与坐标轴标签同向同义; 旧实现用
+      `root_height − node_height` ("距根年数") 且 tip 高度硬编码 0.0 → 图与真值
+      镜像倒置。无 height 注释时按 "root_height − 累积枝长" 换算 (同 tempmig_full)。
+
     与 BSSVS 的互补:
       BSSVS: 回答 "哪条路线有迁移" (空间)
       TempMig: 回答 "什么时候迁移多" (时间)
@@ -381,44 +441,55 @@ def run_tempmig(
                 if name and loc:
                     tip_locations[name] = loc
 
-        # Also extract from tree annotations
+        # 统一节点高度/地点提取 (2026-10-03 修复, S3-②):
+        #   · 旧实现: tip 高度硬编码 0.0, 内部节点无 height 注释时拿**单根枝长**
+        #     顶替; 事件时间 = root_height − node_height ("距根年数") —— 与坐标轴
+        #     "years before present" 方向与语义双反 (root 旧=0, tip 旧=树高)。
+        #   · 现对齐 utils/tempmig_full.parse (height=节点年龄: root=树高, tip=0):
+        #     有 BEAST height 注释用注释 (tip 即真实采样年龄), 缺失用
+        #     "root_height − 累积枝长" 换算, 事件时间直接用节点年龄 (ybp)。
         node_locations = {}  # id(clade) → location
-        node_heights = {}    # id(clade) → height
+        node_heights = {}    # id(clade) → 节点年龄 (years before present)
+        cum_heights = {}     # id(clade) → 从根累积枝长
 
-        for clade in tree.find_clades():
+        def _walk_extract(clade, cum):
             cid = id(clade)
+            cum_heights[cid] = cum
+            info = parse_beast_annotation(clade)
             if clade.is_terminal():
                 node_locations[cid] = tip_locations.get(clade.name, "Unknown")
-                node_heights[cid] = 0.0
             else:
-                info = parse_beast_annotation(clade)
                 loc = info.get('location')
                 if loc:
                     node_locations[cid] = max(loc, key=loc.get)
-                h = info.get('height')
-                if h is not None:
-                    node_heights[cid] = h
-                # Default from branch length (仅当无 height 注释)
-                if cid not in node_heights:
-                    node_heights[cid] = clade.branch_length or 0
+            node_heights[cid] = info.get('height')   # None → 下面按累积枝长换算
+            for c in clade.clades:
+                _walk_extract(c, cum + (c.branch_length or 0.0))
+
+        _walk_extract(tree.root, 0.0)
+        # 树高 = 最大累积枝长; 无 height 注释的节点: age = root_height − 累积枝长
+        root_height = max(cum_heights.values()) if cum_heights else 100
+        for cid, h in node_heights.items():
+            if h is None:
+                node_heights[cid] = root_height - cum_heights[cid]
 
         # Extract migration events: parent → child location change
-        root_height = max(node_heights.values()) if node_heights else 100
         events = []
 
         for clade in tree.find_clades():
             if clade.is_terminal():
                 continue
             parent_loc = node_locations.get(id(clade), "Unknown")
+            ybp = node_heights.get(id(clade), 0.0)
             for child in clade.clades:
                 child_loc = node_locations.get(id(child), "Unknown")
                 if parent_loc != child_loc and parent_loc != "Unknown" and child_loc != "Unknown":
-                    # Time = root_height - node_height (root=oldest, tips=present)
-                    time_ago = root_height - node_heights.get(id(clade), 0)
+                    # 事件时间 = 父节点年龄 (ybp; tip=0=present, root=树高) —— 与
+                    # 坐标轴 "years before present" 同向同义 (2026-10-03 修复 S3-②)
                     events.append({
                         "from": parent_loc,
                         "to": child_loc,
-                        "time": round(time_ago, 2),
+                        "time": round(ybp, 2),
                     })
 
         result["migration_events"] = events
@@ -437,7 +508,11 @@ def run_tempmig(
         counts = np.zeros(time_bins, dtype=int)
         for e in events:
             for i in range(time_bins):
-                if bins[i+1] <= e["time"] < bins[i]:
+                # 2026-10-03 附修 (S3-② 连带): bins[0] == max_t, 旧条件 `< bins[0]`
+                # 把最古老一档边界上的事件静默丢掉 —— ybp 口径下这正是 root 年龄
+                # (树根锚定事件) 或"全部事件同值"时的**全部**事件 (实测: 单事件
+                # 数据集整张图 0)。现把第 0 档上边界改为闭合。
+                if bins[i+1] <= e["time"] < bins[i] or (i == 0 and e["time"] == max_t):
                     counts[i] += 1
                     break
 
@@ -1016,7 +1091,7 @@ def main():
                     help="附带给 全量 vs 子采样 的多样性对照 CSV (S/π/成对 SNP 分位数)")
     # ── 发表级传播图/动画 (2026-09-16 接入; 需 --pathways 先行或同批) ──
     ap.add_argument("--map", action="store_true",
-                    help="静态传播图 PNG+PDF+SVG (默认纯矢量合规底图; --coords/geo_resolver 提供坐标)")
+                    help="静态传播图 PNG+PDF+SVG (默认纯矢量合规底图; --coords/coord_lookup 提供坐标)")
     ap.add_argument("--gif", action="store_true", help="附带事件级时间揭示动画 GIF")
     ap.add_argument("--gif-trail", type=int, default=-1,
                     help="-1=累积模式(默认,路线永久保留); 正整数=残影模式(只高亮最近 N 条)")

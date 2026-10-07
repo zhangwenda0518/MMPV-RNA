@@ -231,7 +231,9 @@ STAGE_CHECKPOINT_FILES = {
     'clock':       'time/treedater_ltt/Phylogeny_dated.pdf',
     'popgen':      'popgen/popgen_report.txt',
     'capheine':    'select/capheine/drhip',
-    'beast':       'time/beast/beast1.xml',
+    'beast':       'time/beast/merged/merged.log',  # 2026-10-03: 由 beast1.xml 改 —
+        # XML 在 --skip_beast_run(只出 XML)时就会写出, 会把"没跑过 BEAST"当已完成;
+        # 现要求有后验日志才算完成 (旧 .done 另有 _beast_ran() 二次判定)。
     'gene_dating': 'time/gene_dating/gcva_watch_parse.sh',
     'phylogeo':    'geography/phylogeography/merged/mcc.tree',
     'geo':         'geography/geo_analysis/mantel_test.pdf',
@@ -302,6 +304,40 @@ def stage_done(virus_dir, stage, force=False, inputs=None) -> bool:
         if os.path.exists(p) and os.path.getsize(p) > 0:
             return True
     return False
+
+
+def count_beast_log_rows(path: str) -> int:
+    """BEAST .log 的**数据行数** (跳过 '#' 注释与 'state' 表头行)。
+
+    2026-10-03 引入: 退化日志闸门共用 (链未跑完 / logcombiner burnin 超界 →
+    近空 merged.log; 该日志会让 ESS 走"样本数"兜底、BSP 画空白图)。
+    返回 0 = 空/仅表头/不可读。
+    """
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            return sum(1 for L in f
+                       if L.strip() and not L.startswith("#")
+                       and not L.startswith("state"))
+    except OSError:
+        return 0
+
+
+def pipeline_exit_code(all_results) -> tuple:
+    """退出码约定 (2026-10-03, P1-1): failed→1; blocked/pending→2; 干净→0。
+
+    旧版 main 无论如何退出 0 → 自动化/`&&` 链/per-virus driver 一律"成功"。
+    返回 (code, 说明)。工作目录模式与批量模式共用 (两处出口都要调)。
+    """
+    n_fail = sum(len(r.get("stages_failed", [])) for r in all_results)
+    n_blocked = sum(len(r.get("stages_blocked", [])) for r in all_results)
+    n_pending = sum(1 for r in all_results
+                    if r.get("incomplete") and not r.get("stages_blocked"))
+    if n_fail:
+        return 1, f"{n_fail} 个 stage 失败 — 见 Stages_failed"
+    if n_blocked or n_pending:
+        extra = f", 另有 {n_pending} 个病毒有 pending 链" if n_pending else ""
+        return 2, f"结果不完整 (受阻 stage {n_blocked} 个{extra}) — 修好前置后重跑"
+    return 0, "全部 stage 干净"
 
 
 def mark_stage_done(virus_dir, stage, meta=None) -> None:
@@ -1963,6 +1999,9 @@ def run_stage_geo(prep, results, aln_file, tree_file, args, logger) -> None:
         if mantel["success"]:
             results["outputs"]["mantel_plot"] = mantel["plot"]
             results["metrics"]["mantel_r"] = mantel["mantel_r"]
+            # 方法标注 (2026-10-03, S3-⑥): 置换口径 = 标签置换 (2026-10-03 前的
+            # "向量元素打乱" p 值不可比)。新增键, 既有读取 (HTML/CSV) 不受影响。
+            results["metrics"]["mantel_permutation"] = mantel.get("mantel_permutation", "")
     if tree and os.path.exists(tree) and geo_aln and os.path.exists(geo_aln):
         geo_tree = run_tree_geography(tree, meta_csv, geo_aln, geo_dir, log=LogCollector(logger))
         if geo_tree["success"]:
@@ -2781,6 +2820,22 @@ def run_phase_beast(prep, phase_results, args, tools, logger) -> Dict:
     pp_dir = os.path.join(beast_dir, "postprocess")
     log_file = results["outputs"].get("beast_log")
     trees_file = results["outputs"].get("beast_trees")
+    # 日志行数闸门 (2026-10-03): 退化日志(链未跑完/合并 burnin 超界)会让 ESS 走
+    # "样本数" 兜底 → 假 ESS=1 + 空白 BSP 图; 在此显式记录并告警 (下游 postprocess
+    # 的 ESS/BSP 自身也已设 <10 行拒出闸门)
+    if log_file and os.path.exists(log_file):
+        try:
+            with open(log_file, encoding="utf-8", errors="replace") as _f:
+                _rows = sum(1 for _L in _f
+                            if _L.strip() and not _L.startswith("#")
+                            and not _L.startswith("state"))
+            results["metrics"]["beast_log_rows"] = _rows
+            if _rows < 10:
+                log.warning(f"  ⚠ [beast] 日志仅 {_rows} 行数据 ({log_file}) — "
+                            f"链条未跑完或合并失败? 本跑 BSP/ESS/TMRCA 一律不可用; "
+                            f"请查 {beast_dir}/merged 与 beast1*.log 行数")
+        except Exception as _e:  # noqa: BLE001
+            log.warning(f"  [beast] 日志行数检查失败: {_e}")
     if log_file or trees_file:
         log.info(f"  Post-processing BEAST output...")
         rscript = tools.get("Rscript") or "Rscript"
@@ -2988,7 +3043,9 @@ def process_virus(prep, stages: List[str], args, tools, logger) -> Dict:
     vname = prep["virus_name"]
     out_dir = prep["output_dir"]
     log = logger
-    st = {"done": [], "skipped": [], "failed": []}
+    # blocked = 真受阻 (前置缺失/本 stage 未产出/降级继续); skip_reasons 记录每个跳过原因
+    # (2026-10-03: 区分「正常跳过」与「受阻」, 见 _skip docstring)
+    st = {"done": [], "skipped": [], "failed": [], "blocked": [], "skip_reasons": {}}
     results = {"virus": vname, "success": False, "outputs": {}, "metrics": {},
                "stages_done": [], "stages_skipped": [], "stages_failed": [],
                "virus_dir": out_dir}  # virus_dir: report_builder 按模块扫产物用 (2026-09-02)
@@ -3031,8 +3088,24 @@ def process_virus(prep, stages: List[str], args, tools, logger) -> Dict:
         mark_stage_done(out_dir, stage, meta)
         st["done"].append(stage)
 
-    def _skip(stage):
+    def _skip(stage, reason="checkpoint", detail=""):
+        """stage 未执行/未产出。reason 取值 (2026-10-03 引入, 区分「正常跳过」与「真受阻」):
+
+        · checkpoint — 已完成, 本轮跳过 (正常)
+        · na         — 数据/配置不适用 (如 viroid 无 CDS、无宿主通道; 正常)
+        · pending    — 后台链条运行中, 下次跑继续 (正常但结果未定)
+        · degraded   — 本 stage 失败后降级继续 (有问题, 进 blocked)
+        · blocked    — 前置产物缺失 / 本 stage 未产出 (有问题, 进 blocked)
+
+        历史事故: 旧版 `_skip` 不计入 failed → `success` 仍为 True,
+        geo/geo_paths/gene_dating 等整块缺席也报成功 (要跑到第二/三遍才出结果)。
+        """
         st["skipped"].append(stage)
+        st["skip_reasons"][stage] = reason
+        if detail:
+            log.info(f"  [{stage}] skip({reason}): {detail}")
+        if reason in ("degraded", "blocked"):
+            st["blocked"].append(f"{stage}({reason})")
 
     def _fail(stage, msg=""):
         st["failed"].append(stage)
@@ -3063,9 +3136,8 @@ def process_virus(prep, stages: List[str], args, tools, logger) -> Dict:
                 args.metadata = mr["std_csv"]
                 _mark('metadata')
             else:
-                # 治理失败不阻断流程, 显式告警 (降级为直接用原 metadata)
-                log.warning(f"  [metadata] 失败, 降级使用原 metadata: {mr.get('error')}")
-                _skip('metadata')
+                    # 治理失败不阻断流程, 显式告警 (降级为直接用原 metadata)
+                    _skip('metadata', 'degraded', f"治理失败, 降级使用原 metadata: {mr.get('error')}")
 
     # ── metadata 三通道拆分 (2026-09-16): 治理产物 → 时间表 / 地理表 / 宿主表 ──
     # 位置很关键: 必须在 clean 之前 (clean 的 --clean_drop_no_date/-location 要吃它),
@@ -3092,8 +3164,8 @@ def process_virus(prep, stages: List[str], args, tools, logger) -> Dict:
                 results["outputs"]["ncbi_fasta"] = r["ncbi_fasta"]
                 _mark('online')
             else:
-                # 在线参考补充是可选项 (work_dir 模式无 accession 时必然无产物)
-                _skip('online')
+                    # 在线参考补充是可选项 (work_dir 模式无 accession 时必然无产物)
+                    _skip('online', 'na', '可选项无产物 (work_dir 模式/无 accession)')
 
     # ── clean: 第一道过滤 (比对前, 序列本体清洗) ──
     # 2026-09-16 新增。必须在 align 之前: 空格/星号/小写会让 MAFFT 出错或错位比对,
@@ -3116,9 +3188,8 @@ def process_virus(prep, stages: List[str], args, tools, logger) -> Dict:
                 prep["combined_fasta"] = cr["clean_fasta"]
                 _mark('clean')
             else:
-                # 清洗失败不阻断流程, 但要显式告警 (降级为直接用原序列)
-                log.warning(f"  [clean] 失败, 降级使用原始序列: {cr.get('error')}")
-                _skip('clean')
+                    # 清洗失败不阻断流程, 但要显式告警 (降级为直接用原序列)
+                    _skip('clean', 'degraded', f"清洗失败, 降级使用原始序列: {cr.get('error')}")
 
     # ── align: MAFFT 比对 + 内联 saturation (纯Python秒级, 合并运行) ──
     if 'align' in stages:
@@ -3317,7 +3388,11 @@ def process_virus(prep, stages: List[str], args, tools, logger) -> Dict:
             if results.get("outputs", {}).get("host_tree") or results.get("outputs", {}).get("host_diff_plot"):
                 _mark('host')
             else:
-                _skip('host')
+                _hc = prep.get("host_csv") or ""
+                if not (_hc and os.path.exists(_hc)):
+                    _skip('host', 'na', '无宿主通道 (host.csv), 数据不适用')
+                else:
+                    _skip('host', 'blocked', '有宿主通道但未产出 (见上方 host 日志)')
 
     # ── capheine: 正选择分析 (Phase S) ──
     if 'capheine' in stages:
@@ -3360,9 +3435,8 @@ def process_virus(prep, stages: List[str], args, tools, logger) -> Dict:
                 # codeml 子命令也已移除。如后续需复活, 先取回归档实现再重新接线。
             else:
                 if cr.get("skip_reason"):
-                    # 内层已定性不适用 (viroid 无 CDS 等), 记 skip 不记 fail (2026-09-02)
-                    log.info(f"  [capheine] skip: {cr['skip_reason']}")
-                    _skip('capheine')
+                    # 内层已定性不适用 (viroid 无 CDS 等), 记 na 不记 fail (2026-09-02)
+                    _skip('capheine', 'na', cr['skip_reason'])
                 else:
                     _fail('capheine', 'capheine 未产出 (缺 GBK/参考 CDS 或计算失败)')
 
@@ -3384,15 +3458,43 @@ def process_virus(prep, stages: List[str], args, tools, logger) -> Dict:
     # rtt/temporal/genes 已并入 clock (此处不再单独跑; 保留函数供 --stage 兼容)
 
     # ── beast: 全长 BEAST 定年 ──
+    def _beast_log_candidates():
+        """后验日志候选 (合并优先; 与 main 末尾 publication_figures 的探测顺序一致)。"""
+        bd = os.path.join(out_dir, ph_dir('time'), "beast")
+        return [os.path.join(bd, "merged", "merged.log"),
+                os.path.join(bd, "beast1.log"),
+                os.path.join(bd, "beast11.log")]
+
+    def _beast_ran() -> bool:
+        """是否真跑过后验 (链日志/合并产物非空)。--skip_beast_run 只出 XML → False。"""
+        _cands = _beast_log_candidates() + [os.path.join(
+            out_dir, ph_dir('time'), "beast", "merged", "mcc.tree")]
+        return any(os.path.exists(c) and os.path.getsize(c) > 0 for c in _cands)
+
     if 'beast' in stages:
-        if _done('beast'):
-            log.info("  [beast] checkpoint OK, skip"); _skip('beast')
+        _beast_done = _done('beast')
+        if _beast_done and not _beast_ran():
+            # 2026-10-03 (P1-2): 旧 checkpoint 标志物 = beast1.xml, 而 --skip_beast_run
+            # (只出 XML 的用法) 也会写出该文件 → 正式跑被整段跳过、形成"已跑过"假象。
+            log.warning("  [beast] checkpoint 命中但无任何后验日志/合并产物 "
+                        "(只出过 XML 或产物被清理?) → 视为未跑, 重新执行")
+            _beast_done = False
+        if _beast_done:
+            log.info("  [beast] checkpoint OK, skip"); _skip('beast', 'checkpoint')
             beast_xml = os.path.join(out_dir, ph_dir('time'), "beast", "beast1.xml")
             if os.path.exists(beast_xml):
                 results["outputs"]["beast_xml"] = beast_xml
             # skip 时也恢复 TMRCA → metrics (供 gene_dating --full-tmrca)
-            beast_log = os.path.join(out_dir, ph_dir('time'), "beast", "beast1.log")
-            if os.path.exists(beast_log):
+            # 2026-10-03 (P2-8): 日志路径按 merged→beast1→beast11 优先探测,
+            # 旧的写死 beast1.log 在现场(beast11.log)会静默拿不到 TMRCA。
+            for beast_log in _beast_log_candidates():
+                if not os.path.exists(beast_log):
+                    continue
+                _n_rows = count_beast_log_rows(beast_log)
+                if _n_rows < 10:
+                    log.warning(f"  [beast] 复用分支: {os.path.basename(beast_log)} 仅 "
+                                f"{_n_rows} 行数据 → 跳过 TMRCA 复用 (不可用)")
+                    break
                 try:
                     parsed = parse_beast_log(beast_log, burnin_pct=getattr(args, 'beast_burnin', 10),
                                               log=LogCollector(log))
@@ -3401,10 +3503,12 @@ def process_virus(prep, stages: List[str], args, tools, logger) -> Dict:
                         results["metrics"]["beast_tmrca"] = rh["median"]
                         results["metrics"]["beast_tmrca_hpd"] = f"{rh['hpd_95_lower']:.1f}–{rh['hpd_95_upper']:.1f}"
                         results["metrics"]["beast_tmrca_ess"] = rh["ess"]
-                        log.info(f"  [beast] 全长 TMRCA (复用): {rh['median']:.1f} yr "
+                        log.info(f"  [beast] 全长 TMRCA (复用 {os.path.basename(beast_log)}): "
+                                 f"{rh['median']:.1f} yr "
                                  f"[{rh['hpd_95_lower']:.1f}–{rh['hpd_95_upper']:.1f}] ESS={rh['ess']:.0f}")
                 except Exception as e:
                     log.warning(f"  [beast] skip 分支 TMRCA 解析失败: {e}")
+                break
         else:
             beast_results = run_phase_beast(prep, results, args, tools, log)
             # 2026-09-15 修复: run_phase_beast 返回的 dict 含同名 "outputs"/"metrics" 键,
@@ -3422,7 +3526,7 @@ def process_virus(prep, stages: List[str], args, tools, logger) -> Dict:
                 _mark('beast')
             elif beast_results.get("beast_pending"):
                 # 多链后台运行中: 不写 checkpoint, 下次跑检查合并
-                _skip('beast')
+                _skip('beast', 'pending', '多链后台运行中, 下次跑检查合并')
             else:
                 _fail('beast', beast_results.get("error", "failed"))
 
@@ -3435,8 +3539,8 @@ def process_virus(prep, stages: List[str], args, tools, logger) -> Dict:
             if results.get("outputs", {}).get("gene_dating_dir"):
                 _mark('gene_dating')
             else:
-                # 无 capheine 前置产物 = 数据依赖缺失, 非计算失败
-                _skip('gene_dating')
+                _skip('gene_dating', 'blocked',
+                      '无 capheine 前置产物 (先跑 select/capheine 或传 --genes_dir)')
 
     # ── phylogeo: 系统地理 ──
     if 'phylogeo' in stages:
@@ -3447,7 +3551,7 @@ def process_virus(prep, stages: List[str], args, tools, logger) -> Dict:
             if results.get("outputs", {}).get("phylogeo_xml"):
                 if geo_pending:
                     # 链后台运行中: 不写 checkpoint, 下次跑检查合并 (同 beast pending 逻辑)
-                    _skip('phylogeo')
+                    _skip('phylogeo', 'pending', '链后台运行中, 下次跑检查合并')
                 else:
                     _mark('phylogeo')
             else:
@@ -3462,7 +3566,7 @@ def process_virus(prep, stages: List[str], args, tools, logger) -> Dict:
             if results.get("outputs", {}).get("mantel_plot") or results.get("outputs", {}).get("geo_tree"):
                 _mark('geo')
             else:
-                _skip('geo')
+                _skip('geo', 'blocked', 'Mantel/树地理均未产出')
 
     # ── geo_paths: 事件级传播路径 (2026-09-16 新增; 吃 phylogeo 的 mcc.tree) ──
     #    位置关键：**必须排在 phylogeo 之后**，否则首跑 mcc.tree 尚未生成 → 整段跳过。
@@ -3475,12 +3579,28 @@ def process_virus(prep, stages: List[str], args, tools, logger) -> Dict:
             if results.get("outputs", {}).get("pathway_qc"):
                 _mark('geo_paths')
             else:
-                _skip('geo_paths')
+                _skip('geo_paths', 'blocked',
+                      'pathway_qc 未产出 (常见: 缺 phylogeo merged/mcc.tree)')
 
+
+    # 2026-10-03 (P1-1): 未被任何块记账的 stage 兜底记 blocked。
+    # 触发场景: `if 'splitstree' in stages and aln_file:` —— align 未产出时整块不执行,
+    # 旧版既不 done 也不 skipped/failed, 在三个清单里全部消失 (静默)。
+    # 注: 'report' 由 main 末尾统一执行 (不按病毒), 不参与单病毒记账。
+    _accounted = set(st["done"]) | set(st["skipped"]) | set(st["failed"])
+    for _s in stages:
+        if _s in ('prep', 'report') or _s in _accounted:
+            continue
+        _skip(_s, 'blocked', '未执行: 前置产物缺失')
 
     results["stages_done"] = st["done"]
     results["stages_skipped"] = st["skipped"]
     results["stages_failed"] = st["failed"]
+    results["stages_blocked"] = st["blocked"]
+    results["stages_skip_reasons"] = st["skip_reasons"]
+    # incomplete = 有受阻 stage 或仍有链在后台 (结果不完整/未定)
+    results["incomplete"] = bool(st["blocked"]) or any(
+        r == 'pending' for r in st["skip_reasons"].values())
     # 2026-09-15 修复 (P1-B): 旧版 `success = bool(tree_file) or bool(outputs)`,
     # 只要任一 stage 往 results["outputs"] 写过东西就算成功 —— 于是 align/tree
     # 双双失败、仅 online 阶段写出 ncbi_fasta 时也会被判 success=True, 汇总表
@@ -3488,6 +3608,12 @@ def process_virus(prep, stages: List[str], args, tools, logger) -> Dict:
     results["success"] = (not st["failed"]) and bool(
         tree_file or aln_file or results.get("outputs"))
     log.info(f"  [{vname}] stages: done={st['done']} skipped={st['skipped']} failed={st['failed']}")
+    if st["blocked"]:
+        log.warning(f"  ⚠ [{vname}] 受阻 stage (结果不完整, 勿直接引用): {st['blocked']} — "
+                    f"原因: { {k: v for k, v in st['skip_reasons'].items() if k in st['blocked'] or v in ('blocked', 'degraded')} }; "
+                    f"修好前置后重跑")
+    if any(r == 'pending' for r in st["skip_reasons"].values()):
+        log.warning(f"  ⏳ [{vname}] 有后台链条运行中 (pending) — 结果未定, 下次重跑自动合并")
     return results
 
 
@@ -3518,12 +3644,17 @@ def generate_summary(all_results, output_dir, logger) -> None:
             "Virus": r.get("virus", ""),
             "Phase": r.get("phase", ""),
             "Success": r.get("success", False),
+            # 2026-10-03 (P1-1): 结果完整性 —— Incomplete=True 表示有受阻 stage 或链仍在
+            # 后台 (Success 只代表"无硬失败", 不再等价于"结果完整")
+            "Incomplete": r.get("incomplete", False),
             "Stages_done": ";".join(r.get("stages_done", [])),
             "Stages_skipped": ";".join(r.get("stages_skipped", [])),
             "Stages_failed": ";".join(r.get("stages_failed", [])),
+            "Stages_blocked": ";".join(r.get("stages_blocked", [])),
         }
         row.update(headline_columns(metrics))
         row.update({
+            "BEAST_log_rows": metrics.get("beast_log_rows", ""),
             "Geo_n_pathways": metrics.get("n_pathways", ""),
             "Geo_n_episodes": metrics.get("n_episodes", ""),
             "Geo_conf_direct": metrics.get("pathway_conf_direct", ""),
@@ -3596,8 +3727,9 @@ Stages: """ + ", ".join(f"{k}({v})" for k, v in STAGE_DESC.items()),
     g_input = parser.add_argument_group("Input")
     g_input.add_argument("--extract_dir", default=None, help="06_extraction 目录 (批量模式; standard 布局为 04_Analysis/06_Extraction)")
     g_input.add_argument("--io-layout", choices=["legacy", "standard"], default=None,
-                         help="I/O 目录布局: legacy=v3.0 现行名 (默认); standard=管线独立根"
-                              "(05_Phylo 内模块编号 01_data..08_report, 见 doc/IO_LAYOUT_DESIGN.md); "
+                         help="I/O 目录布局: standard=管线独立根 (默认; "
+                              "05_Phylo 内模块编号 01_data..08_report, 见 doc/IO_LAYOUT_DESIGN.md); "
+                              "legacy=v3.0 现行名 (存量项目/checkpoint 兼容); "
                               "亦可 MMPV_IO_LAYOUT 环境变量")
     g_input.add_argument("--metadata", default=None, help="Global_Unified_Metadata_Core14.tsv 路径")
     g_input.add_argument("--info_dir", default=None, help="public_metadata_pipeline 的 info/ 输出目录")
@@ -3839,7 +3971,12 @@ Stages: """ + ", ".join(f"{k}({v})" for k, v in STAGE_DESC.items()),
                        help="geo_paths 附带发表级静态传播图 (PNG+PDF+SVG, 默认纯矢量合规底图)")
     g_geo.add_argument("--geo_gif", action="store_true",
                        default=defaults.get("geo_gif", False),
-                       help="geo_paths 附带事件级时间揭示动画 GIF (需 --geo_map)")
+                       help="geo_paths 附带事件级时间揭示动画 GIF (需 --geo_map); "
+                            "2026-10-03 起 config 默认开启, 用 --no-geo_gif 关闭")
+    # 否定旗标 (2026-10-03): GIF 改默认开后必须给单次关闭手段 (仿 --no-report 先例)。
+    # 实测 36 帧渲染 ~6s, 默认成本可忽略。
+    g_geo.add_argument("--no-geo_gif", dest="geo_gif", action="store_false",
+                       help="本次 run 关闭传播动画 GIF (config geo_paths.gif 仍为 true)")
     g_geo.add_argument("--geo_gif_frames", type=int,
                        default=defaults.get("geo_gif_frames", 36),
                        help="动画 GIF 帧数 (默认 36)")
@@ -3869,7 +4006,7 @@ Stages: """ + ", ".join(f"{k}({v})" for k, v in STAGE_DESC.items()),
 
     args = parser.parse_args()
 
-    # 布局解析 (CLI > MMPV_IO_LAYOUT > legacy) 并写回环境供子进程继承
+    # 布局解析 (CLI > MMPV_IO_LAYOUT > standard) 并写回环境供子进程继承
     normalize_layout_env(getattr(args, "io_layout", None))
     if not getattr(args, "output_dir", None):
         args.output_dir = dir_name("p_root")   # legacy=phylo_results / standard=05_Phylo
@@ -4175,7 +4312,11 @@ Stages: """ + ", ".join(f"{k}({v})" for k, v in STAGE_DESC.items()),
                         "--metadata", _pp_w["meta"],
                         "--outdir", os.path.join(report_dir, "sample_plot"))
         logger.info(f"\nDone. Results: {work_dir}")
-        return
+        # 退出码 (2026-10-03): work-dir 分支有独立出口, 同样要按记账结果定退出码
+        _wcode, _wwhy = pipeline_exit_code([results])
+        if _wcode:
+            logger.warning(f"EXIT {_wcode}: {_wwhy}")
+        raise SystemExit(_wcode)
 
     # ── Batch mode ──
     if not args.extract_dir:
@@ -4292,6 +4433,23 @@ Stages: """ + ", ".join(f"{k}({v})" for k, v in STAGE_DESC.items()),
     logger.info(f"PhyloPipeline complete!")
     logger.info(f"Output: {output_dir}")
     logger.info(f"{'='*60}")
+
+    # 退出码 (2026-10-03, P1-1): 旧版无论有无失败都退出 0 → 自动化/&&链/per-virus
+    # driver 一律"成功"。现: 有 failed → 1; 无失败但有 blocked/pending (结果不完整/
+    # 未定) → 2; 全部干净 → 0。
+    _n_fail = sum(len(r.get("stages_failed", [])) for r in all_results)
+    _n_blocked = sum(len(r.get("stages_blocked", [])) for r in all_results)
+    _n_pending = sum(1 for r in all_results if r.get("incomplete") and
+                     not r.get("stages_blocked"))
+    if _n_fail:
+        logger.warning(f"EXIT 1: {_n_fail} 个 stage 失败 — 见上表 Stages_failed")
+        raise SystemExit(1)
+    if _n_blocked or _n_pending:
+        logger.warning(f"EXIT 2: 结果不完整 (受阻 stage {_n_blocked} 个"
+                       f"{f', 另有 {_n_pending} 个病毒有 pending 链' if _n_pending else ''})"
+                       f" — 修好前置后重跑")
+        raise SystemExit(2)
+    raise SystemExit(0)
 
 
 if __name__ == "__main__":

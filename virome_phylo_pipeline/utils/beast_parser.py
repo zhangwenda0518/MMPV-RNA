@@ -71,6 +71,14 @@ def parse_beast_log(
         df_burnin = df.iloc[burnin_idx:].reset_index(drop=True)
         n_used = len(df_burnin)
 
+        # 退化日志闸门 (2026-10-03): 样本不足时旧版"每参数 <10 就 continue"
+        # → 空参数表 + 1 字节裸 CSV, 而 success 仍为 True (静默)。现显式报错。
+        from utils.sample_floor import require_min_samples
+        if not require_min_samples(n_used, "[beast_parser] BEAST 日志", log=log):
+            result["error"] = (f"degenerate log: only {n_used} usable sample(s) after "
+                               f"{burnin_pct}% burn-in ({n_total} raw)")
+            return result
+
         result["n_samples"] = n_total
         result["n_burnin"] = n_used
         result["burnin_pct"] = burnin_pct
@@ -129,6 +137,13 @@ def parse_beast_log(
                     result["key_params"].setdefault(kn, p)
 
         # Save
+        # 空参数表闸门 (2026-10-03): 旧版无条件 to_csv → 无参时写出 1 字节裸文件,
+        # "文件存在" 让下游 (merge_results 的 ✅ 判定 / 报告) 误以为汇总正常。
+        if not params:
+            result["error"] = ("no parameter had ≥10 valid samples — 空汇总, "
+                               "不写 parameter_summary.csv")
+            log.warning(f"  [beast_parser] {result['error']}")
+            return result
         csv_path = os.path.join(os.path.dirname(log_file),
                                 "parameter_summary.csv")
         pd.DataFrame(params).to_csv(csv_path, index=False)

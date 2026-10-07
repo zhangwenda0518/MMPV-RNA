@@ -98,7 +98,9 @@ geo_paths:
   n_perm: 200
   # 出厂默认开启 (2026-09-17): 每次 --stage geo_paths 自动出传播图+树图联动
   map: true
-  gif: false          # 动画较慢, 需要时 --geo_gif 或改 true
+  # 2026-10-03 起默认开启动画 GIF (实测 36 帧渲染 ~6s, 成本可忽略);
+  # 单次关闭: --no-geo_gif; 持久关闭: 改回 false。帧数与论文版动图保持一致 (36)。
+  gif: true
   gif_frames: 36
   tree_map: true
 temporal:

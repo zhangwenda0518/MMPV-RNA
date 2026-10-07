@@ -584,7 +584,9 @@ def collect_path_sampling_results(
                ≈ Σ_k (β_{k+1} - β_k) · (f_k + f_{k+1}) / 2,  f_k = E_{β_k}[log p(D|θ)]
 
       Stepping Stone (SS, Xie et al. 2011):
-        log ML ≈ Σ_k (β_{k+1} - β_k) · log( (1/n) Σ_i p(D|θ_{k,i})^{β_{k+1}} )
+        r_k = (1/n) Σ_i [p(D|θ_{k,i})]^{β_{k+1} − β_k},  θ_{k,i} ~ q(·|β_k)
+        log ML ≈ Σ_k log r_k
+        (样本取 β_k 步、幂次为步间差 Δβ; 多 replicate 各自估一遍再取算术平均)
 
     `likelihood.log` 里的 `likelihood` 列是**未加幂**的 log p(D|θ)（BEAST2
     model-selection 的 PathSampleAnalyser 同样这样解读），β 幂次由本函数施加。
@@ -630,29 +632,48 @@ def collect_path_sampling_results(
             result["error"] = "No likelihood.log files found"
             return result
 
-        # Group by step, average across replicates
-        step_data = defaultdict(list)
+        # Group by step: step → {replicate 标签: 逐样本 logL 数组}
+        # 2026-10-03 修复 (S3-①): 旧结构只存"每 replicate 的均值标量", 而标准
+        # stepping-stone 需要在**样本层面**取平均 (Xie et al. 2011), 改为存逐样本
+        # 数组。TI 口径不变 (见下, 仍先对 replicate 取均值)。
+        step_data = defaultdict(dict)
 
         for lf in likelihood_files:
             try:
                 df = pd.read_csv(lf["path"], sep="\t", comment="#")
-                if len(df) == 0:
-                    continue
-                burnin_idx = int(len(df) * burnin_pct / 100.0)
-                df_burnin = df.iloc[burnin_idx:]
+            except (OSError, ValueError, pd.errors.ParserError) as _e:
+                log.warning(f"  WARN: 读取 {lf['path']} 失败 ({_e}), 跳过该文件")
+                continue
+            if len(df) == 0:
+                log.warning(f"  WARN: {lf['path']} 为空, 跳过该文件")
+                continue
+            burnin_idx = int(len(df) * burnin_pct / 100.0)
+            df_burnin = df.iloc[burnin_idx:]
 
-                if 'likelihood' in df_burnin.columns:
-                    mean_ll = df_burnin['likelihood'].mean()
-                elif 'Likelihood' in df_burnin.columns:
-                    mean_ll = df_burnin['Likelihood'].mean()
-                else:
-                    # Try first numeric column
-                    numeric_cols = df_burnin.select_dtypes(include=[np.number]).columns
-                    mean_ll = df_burnin[numeric_cols[0]].mean() if len(numeric_cols) > 0 else 0.0
+            # 2026-10-03 修复 (S3-①b): 旧代码在 likelihood 列缺失时**静默**取第一个
+            # 数值列 —— BEAST 日志首列常是 Sample 序号, 于是 "1,2,3,…" 被当成 log
+            # 似然参与积分。现只接受 likelihood/Likelihood 列; 缺失 → WARN + 跳过。
+            if 'likelihood' in df_burnin.columns:
+                ll_col = 'likelihood'
+            elif 'Likelihood' in df_burnin.columns:
+                ll_col = 'Likelihood'
+            else:
+                log.warning(f"  WARN: {lf['path']} 无 likelihood/Likelihood 列 "
+                            f"(实际列: {list(df_burnin.columns)[:6]}), 跳过该文件")
+                continue
 
-                step_data[lf["step"]].append(mean_ll)
-            except Exception:
-                pass
+            samples = pd.to_numeric(df_burnin[ll_col], errors='coerce').dropna()
+            if samples.empty:
+                log.warning(f"  WARN: {lf['path']} likelihood 列在 burn-in 后 "
+                            f"无有效数值, 跳过该文件")
+                continue
+            samples = samples.to_numpy(dtype=float)
+
+            run_label = lf["run"]
+            if run_label in step_data[lf["step"]]:
+                # 极端情况: 同一 run 标号在同一 step 下出现多份文件 → 用序号区分
+                run_label = f"{run_label}#{len(step_data[lf['step']]) + 1}"
+            step_data[lf["step"]][run_label] = samples
 
         if not step_data:
             result["error"] = "Could not parse any likelihood files"
@@ -707,40 +728,69 @@ def collect_path_sampling_results(
         # 现显式按 β 升序排序后再积分, 与 β 轴的书写方向解耦。
         grid = []
         for s in sorted(step_data.keys()):
-            grid.append((betas.get(s, 0.0), s,
-                         float(np.mean(step_data[s])), len(step_data[s])))
+            reps = step_data[s]
+            if not reps:
+                continue
+            # TI 口径与旧实现保持一致: 先对每个 replicate 取均值, 再对 replicate 取均值
+            mean_ll = float(np.mean([float(np.mean(v)) for v in reps.values()]))
+            grid.append((betas.get(s, 0.0), s, mean_ll, len(reps), reps))
         grid.sort(key=lambda t: t[0])
 
         log_ml = 0.0
         log_ml_ss = 0.0
         steps_out = []
 
-        for i, (beta_val, s, mean_ll, n_rep) in enumerate(grid):
-            ti_contrib = 0.0
-            ss_contrib = 0.0
-            if i > 0:
-                prev_beta, _prev_s, prev_ll, _prev_n = grid[i - 1]
+        # ── Stepping stone (Xie et al. 2011 标准式) ──
+        #   log ML = Σ_k log( (1/n) Σ_i exp[(β_k − β_{k−1})·logL_i^{(k−1)}] )
+        #   · 样本取 **β_{k−1} 步** (不是当前步);
+        #   · 幂次为步间差 **Δβ = β_k − β_{k−1}** (不是 β_k 绝对值);
+        #   · 样本间**算术**平均 (对数域 logsumexp 稳定化);
+        #   · 多 replicate: 每个 replicate 各自估一遍, 再对各自 log ML 取算术平均。
+        # 2026-10-03 修复 (S3-①): 旧实现用当前步样本 × 当前步 β 绝对值、外乘 Δβ,
+        # 且对 replicate 先取 logL 均值再取幂 (等于几何均值) —— 三处都与标准式不符。
+        # 历史上 (2026-09-15 P1-10) 还修过 exp 对 log 似然直接取指数导致下溢的崩溃;
+        # 现统一为 logsumexp 形式 (Δβ·logL 在 log 域累加)。
+        rep_entries = defaultdict(list)   # replicate → [(β, step, samples)]
+        for s, reps in step_data.items():
+            for run_label, samples in reps.items():
+                rep_entries[run_label].append((betas.get(s, 0.0), s, samples))
+        for run_label in rep_entries:
+            rep_entries[run_label].sort(key=lambda t: t[0])
+
+        ss_contrib_by_step = defaultdict(float)
+        rep_ss_totals = []
+        for _run_label, entries in rep_entries.items():
+            if len(entries) < 2:
+                continue
+            total = 0.0
+            for j in range(1, len(entries)):
+                prev_beta, _prev_s, prev_samples = entries[j - 1]
+                beta_val, s, _cur_samples = entries[j]
                 d_beta = beta_val - prev_beta
-                # Thermodynamic integration (trapezoidal rule)
-                ti_contrib = d_beta * (mean_ll + prev_ll) / 2.0
-                log_ml += ti_contrib
-                # Stepping stone (Xie et al. 2011):
-                #   Σ_k (β_{k+1} - β_k) · log( (1/n) Σ_i p(D|θ_{k,i})^{β_{k+1}} )
-                # 2026-09-15 修复 (P1-10):
-                #   · 旧代码 `np.exp(step_data[s])` 对**对数似然**直接取指数 ——
-                #     真实数据 log L ≈ -1e3 ~ -1e5, exp 必然下溢为 0.0,
-                #     紧接着 math.log(0.0) 抛 "math domain error" 让整个函数失败;
-                #   · 且漏掉 β 幂次 (应为 p^{β_{k+1}}, 不是 p^1);
-                #   · step_data[s] 是各 replicate 的均值列表, 对它再取 exp 语义也不对。
-                #   现用 logsumexp 稳定形式, 并把 β 幂次放回去。
-                _lls = np.asarray(step_data[s], dtype=float) * beta_val
+                _lls = np.asarray(prev_samples, dtype=float) * d_beta
                 if _lls.size:
                     _m = float(_lls.max())
                     log_ratio = _m + math.log(float(np.mean(np.exp(_lls - _m))))
                 else:
                     log_ratio = 0.0
-                ss_contrib = d_beta * log_ratio
-                log_ml_ss += ss_contrib
+                ss_contrib_by_step[s] += d_beta * log_ratio
+                total += d_beta * log_ratio
+            rep_ss_totals.append(total)
+        n_ss_runs = len(rep_ss_totals)
+        if rep_ss_totals:
+            log_ml_ss = float(np.mean(rep_ss_totals))
+
+        for i, (beta_val, s, mean_ll, n_rep, _reps) in enumerate(grid):
+            ti_contrib = 0.0
+            if i > 0:
+                prev_beta, _prev_s, prev_ll, _prev_n, _prev_reps = grid[i - 1]
+                d_beta = beta_val - prev_beta
+                # Thermodynamic integration (trapezoidal rule)
+                ti_contrib = d_beta * (mean_ll + prev_ll) / 2.0
+                log_ml += ti_contrib
+            # 该步的 SS 贡献来自 (β_{k−1} → β_k) 区间, 按 replicate 数平均
+            ss_contrib = (ss_contrib_by_step.get(s, 0.0) / n_ss_runs
+                          if n_ss_runs else 0.0)
 
             steps_out.append({
                 "step": s, "beta": round(beta_val, 6),
