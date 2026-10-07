@@ -59,21 +59,36 @@ virome_submission_pipeline/   → 数据提交
        └── suvtk tbl2asn / Sequin tbl2asn 双模式 → .sqn 提交文件
 ```
 
+**可选补充模块（不在主链，不跑无影响）**：
+
+```
+host_expression_pipeline/     → ⑧ 宿主表达分析（宿主侧：病毒阳性/阴性分组）
+       ├── 宿主 CDS 提取 (genome+GFF3 → gffread) → Salmon 定量 → 定量 QC
+       ├── 病毒标签推导 (④ 检出表 → 阳性/阴性 + 连续载量; 合并 Core14 组织)
+       ├── TEA-GCN 差异共表达 (主分析: 阳/阴双网络 → ΔzScore → 网络 z-QC 闸门 → DEG 限定 Louvain 模块; 内置样本量/失衡闸门)
+       ├── DESeq2 差异表达 (交叉参考, 可选组织分层) → 载量×全基因组扫描 (剂量验证)
+       └── HTML 汇总报告     ← 抽取自 goji-virome 差异表达分析核心链路
+```
+
+> 详见 `host_expression_pipeline/README.md`。输入全部取自主链现有产物
+> （② clean reads、① 宿主参考/Core14、④ 检出表），输出落 `08_HostExpression/`。
+
 ---
 
 ## 统一 I/O 目录布局 / Unified I/O Layout (v3.1)
 
-五条管线默认沿用 v3.0 目录名（`legacy` 布局，checkpoint 兼容）。新项目可切
-`standard` 布局——**每条管线一个独立输出根，根内各自独立编号**：
+五条管线默认采用 `standard` 布局——**每条管线一个独立输出根，根内各自独立编号**。
+存量项目（已有 checkpoint / 正在跑的任务）显式切回 `legacy` 布局（v3.0 目录名）：
 
 ```
-<项目>/ 01_PublicData/ 02_Preprocessing/ 03_Discovery/ 04_Analysis/ 05_Phylo/ 90_Handoff/
+<项目>/ 01_PublicData/ 02_Preprocessing/ 03_Discovery/ 04_Analysis/ 05_Phylo/ 06_EVE/ 90_Handoff/
+        (08_HostExpression/ 为 ⑧ 宿主表达可选模块的输出根)
 ```
 
 管线边界交接可自动定位（③→④ 桥一条命令；①→⑤ Core14 原生直读）：
 
 ```bash
-export MMPV_IO_LAYOUT=standard          # 或各编排器 --io-layout standard
+export MMPV_IO_LAYOUT=legacy            # 仅存量项目需要; 新项目默认 standard
 python virome_discovery_pipeline/utils/discovery2analysis.py \
     --from-discovery <项目>/03_Discovery --output_prefix <项目>/90_Handoff/analysis
 ```
@@ -239,8 +254,8 @@ python submission_gui/submission_gui.py
 | 4 | `convert` | sra2fastx.py | fasterq-dump 批量 SRA → FASTQ.GZ（失败回退 fastq-dump） |
 | 5 | `plot` | gsa_sra.plot.py | 时间/组织/地区/机构 SCI级6面板可视化 |
 | 6 | `hostref` | download_host_genome.py | 宿主基因组下载 (datasets/ngd/FTP/gget 四通道; `--host-fasta` 用户基因组跳过下载) → `host_reference/genome/` |
-| 7 | `hostdb` | build_hostbase.py | Kraken2/Bowtie2/HISAT2/Minimap2 四索引构建 → `host_reference/hostdb/`（默认复用 --species/--taxid） |
-| 8 | `report` | generate_report.py | 交互式 HTML 报告 + `sample_handoff.csv` 交接清单 (Run→FASTQ 路径+元数据, 交棒数据清洗管道) |
+| 6 | `hostdb` | build_hostbase.py | Kraken2/Bowtie2/HISAT2/Minimap2 四索引构建 → `host_reference/hostdb/`（默认复用 --species/--taxid） |
+| 7 | `report` | generate_report.py | 交互式 HTML 报告 + `sample_handoff.csv` 交接清单 (Run→FASTQ 路径+元数据, 交棒数据清洗管道) |
 
 ### 宿主参考数据库构建
 
@@ -272,8 +287,8 @@ python submission_gui/submission_gui.py
 | 2 | `deplete` | data_preprocessing_pipeline/host_depletion.py | Kraken2 → Bowtie2/HISAT2/Minimap2 → rRNA去除 |
 | 3 | `assembly` | assembly_pipeline.py | MEGAHIT / rnaviralSPAdes / Penguin 组装 |
 | 4 | `identification` | virus_identification.py | 10工具并行鉴定 (Genomad+Diamond BLASTX+RdrpCatch+ViraLM+VirBot+VirSorter2+ViralVerify+VirHunter+Metabuli+Viroid BLASTN) |
-| 5 | `filter` | filter_virus.py | UniProt-strict 高置信过滤 |
-| 6 | `cobra` | cobra_pipeline.py | BWA-MEM2 → CoverM → COBRA-Meta 单样本延伸 |
+| 5 | `filter` | filter_virus.py + graph_propagation.py | UniProt-strict 高置信过滤 (CDD+UniProt 两层) + 可选 graph 子步骤: 对无证据保留结果二次裁决 (rescue/demote) → COBRA 输入; 思想源自 GMW, 2026 (默认关闭, graph.enabled 开启) |
+| 6 | `cobra` | cobra_pipeline.py | BWA-MEM2 → CoverM → COBRA-Meta 单样本延伸 (候选源 = filter 主链镜像, 恢复 filter→COBRA 契约) |
 | 7 | `merge` | (内置, Flye) | 多样本 Flye 共组装 (co-assembly 模式) |
 | 8 | `cluster` | cluster_pipeline.py | CD-HIT参考引导预聚类 + vclust Leiden聚类 |
 | 9 | `taxonomy` | virus_classifier.py + R | 8工具分类 (Genomad+Metabuli+CAT+Diamond LCA+VITAP+MMseqs2+ACVirus+vConTACT3) 加权投票 → 8级 taxonomy |
@@ -306,9 +321,9 @@ python submission_gui/submission_gui.py
 | 4 | `post` | virus_vcf_pipeline.py | VCF可视化 + SnpEff宏 + MAF 瀑布 + SnpGenie dN/dS |
 | 5 | `full` | batch_virus_full.py → virus-full.py | **全长基因组构建 (OmniVirusAssembler V9.0)**: 12步精炼 — SHIVER-like Divine Fusion 实心骨架 → Reads级迭代抛光 (单碱基精度) → gmcloser + abyss-sealer 双引擎补洞 → 环化检测 (Circular=True) |
 | 6 | `extract` | utils/extract_full_fasta.py | 最长contig提取 + 参考N-fill (RNA: N<5% 才填) |
-| 7 | `similarity` | virus_auto_pipeline.py | 全长相似性热图 + 层次聚类 (MAFFT --auto) |
-| 8 | `dvg` | batch_virema_dvg.py | ViReMa DVG/重组检测 + Circos图 |
-| 9 | `report` | generate_pipeline_report.py | 交互式HTML综合报告 + AI 解读提示词 |
+| 6 | `similarity` | virus_auto_pipeline.py | 全长相似性热图 + 层次聚类 (MAFFT --auto) |
+| 7 | `dvg` | batch_virema_dvg.py | ViReMa DVG/重组检测 + Circos图 |
+| 8 | `report` | generate_pipeline_report.py | 交互式HTML综合报告 + AI 解读提示词 |
 
 > 注: 正选择分析 (`capheine` / HyPhy FEL·MEME·BUSTED·PRIME) 已于 v3.0 迁移至
 > `virome_phylo_pipeline/` (STAGE_ORDER 中的 `capheine` 阶段)，本管线 9 阶段定义见
@@ -326,7 +341,7 @@ python submission_gui/submission_gui.py
 | 4 | `sequin` | sequin_builder.py | Sequin .tbl 格式构建 (Cenote-Taker3 风格) |
 | 5 | `submit` | submission_pipeline.py | 端到端编排: suvtk tbl2asn / Sequin tbl2asn 双模式 → .sqn |
 | 6 | `gui` | submission_gui/submission_gui.py | PySide6 桌面 GUI: 交互式编辑/验证/导出提交文件 |
-| 7 | `report` | report_html.py | 交互式HTML全表编辑报告 |
+| 6 | `report` | report_html.py | 交互式HTML全表编辑报告 |
 
 ---
 

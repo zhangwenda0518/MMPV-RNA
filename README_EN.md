@@ -59,21 +59,37 @@ virome_submission_pipeline/   → Data submission
        └── suvtk tbl2asn / Sequin tbl2asn dual mode → .sqn submission file
 ```
 
+**Optional supplementary module (off the main chain; skipping it changes nothing):**
+
+```
+host_expression_pipeline/     → ⑧ Host expression analysis (host side: virus-positive/negative grouping)
+       ├── host CDS extraction (genome+GFF3 → gffread) → Salmon quantification → quantification QC
+       ├── virus label derivation (④ detection table → +/- status + continuous load; Core14 tissue merge)
+       ├── TEA-GCN differential co-expression (main analysis: dual networks → ΔzScore → network z-QC gate → DEG-restricted Louvain modules; sample-size/imbalance gates)
+       ├── DESeq2 differential expression (cross-reference, optional tissue strata) → load × genome-wide scan (dose validation)
+       └── HTML summary report    ← core chain extracted from the goji-virome differential-expression project
+```
+
+> See `host_expression_pipeline/README.md`. All inputs come from existing main-chain
+> artifacts (② clean reads, ① host reference/Core14, ④ detection table); outputs land
+> in `08_HostExpression/`.
+
 ---
 
 ## Unified I/O Layout (v3.1)
 
-Five pipelines keep the v3.0 directory names by default (`legacy` layout, checkpoint-compatible). New projects can switch to the
-`standard` layout — **one independent output root per pipeline, numbered independently within each root**:
+The five pipelines now use the `standard` layout by default — **one independent output root per pipeline, numbered independently within each root**.
+Existing projects (with checkpoints or running jobs) can fall back to the `legacy` layout (v3.0 directory names):
 
 ```
-<project>/ 01_PublicData/ 02_Preprocessing/ 03_Discovery/ 04_Analysis/ 05_Phylo/ 90_Handoff/
+<project>/ 01_PublicData/ 02_Preprocessing/ 03_Discovery/ 04_Analysis/ 05_Phylo/ 06_EVE/ 90_Handoff/
+           (08_HostExpression/ is the output root of the ⑧ host-expression optional module)
 ```
 
 Pipeline-boundary handoffs are auto-locatable (one command for the ③→④ bridge; ①→⑤ Core14 read natively):
 
 ```bash
-export MMPV_IO_LAYOUT=standard          # or --io-layout standard on each orchestrator
+export MMPV_IO_LAYOUT=legacy            # existing projects only; new projects default to standard
 python virome_discovery_pipeline/utils/discovery2analysis.py \
     --from-discovery <project>/03_Discovery --output_prefix <project>/90_Handoff/analysis
 ```
@@ -241,8 +257,8 @@ python submission_gui/submission_gui.py
 | 4 | `convert` | sra2fastx.py | Bulk SRA → FASTQ.GZ via fasterq-dump (falls back to fastq-dump) |
 | 5 | `plot` | gsa_sra.plot.py | Publication-grade 6-panel visualization (time/tissue/region/institute) |
 | 6 | `hostref` | download_host_genome.py | Host genome download (datasets/ngd/FTP/gget; `--host-fasta` to skip) → `host_reference/genome/` |
-| 7 | `hostdb` | build_hostbase.py | Kraken2/Bowtie2/HISAT2/Minimap2 four-index build → `host_reference/hostdb/` (reuses --species/--taxid) |
-| 8 | `report` | generate_report.py | Interactive HTML report + `sample_handoff.csv` handoff list (Run→FASTQ path + metadata; hands off to the cleaning pipeline) |
+| 6 | `hostdb` | build_hostbase.py | Kraken2/Bowtie2/HISAT2/Minimap2 four-index build → `host_reference/hostdb/` (reuses --species/--taxid) |
+| 7 | `report` | generate_report.py | Interactive HTML report + `sample_handoff.csv` handoff list (Run→FASTQ path + metadata; hands off to the cleaning pipeline) |
 
 ### Host reference database build
 
@@ -274,8 +290,8 @@ Entry: `python public_metadata_pipeline/preprocess_unified.py --sra-dir ... --ou
 | 2 | `deplete` | data_preprocessing_pipeline/host_depletion.py | Kraken2 → Bowtie2/HISAT2/Minimap2 → rRNA removal |
 | 3 | `assembly` | assembly_pipeline.py | MEGAHIT / rnaviralSPAdes / Penguin assembly |
 | 4 | `identification` | virus_identification.py | 10-tool parallel identification (Genomad + Diamond BLASTX + RdrpCatch + ViraLM + VirBot + VirSorter2 + ViralVerify + VirHunter + Metabuli + viroid BLASTN) |
-| 5 | `filter` | filter_virus.py | UniProt-strict high-confidence filtering |
-| 6 | `cobra` | cobra_pipeline.py | BWA-MEM2 → CoverM → COBRA-Meta per-sample extension |
+| 5 | `filter` | filter_virus.py + graph_propagation.py | UniProt-strict high-confidence filtering (CDD + UniProt two layers) + optional graph sub-step: second-opinion adjudication of no-evidence keepers (rescue/demote) → COBRA input; idea after GMW, 2026 (off by default, enable via graph.enabled) |
+| 6 | `cobra` | cobra_pipeline.py | BWA-MEM2 → CoverM → COBRA-Meta per-sample extension (candidate source = filter main-chain mirror, restoring the filter→COBRA contract) |
 | 7 | `merge` | (built-in, Flye) | Multi-sample Flye co-assembly (co-assembly mode) |
 | 8 | `cluster` | cluster_pipeline.py | CD-HIT reference-guided pre-clustering + vclust Leiden clustering |
 | 9 | `taxonomy` | virus_classifier.py + R | 8-tool taxonomy (Genomad + Metabuli + CAT + Diamond LCA + VITAP + MMseqs2 + ACVirus + vConTACT3) weighted voting → 8-rank taxonomy |
@@ -308,9 +324,9 @@ Entry: `python public_metadata_pipeline/preprocess_unified.py --sra-dir ... --ou
 | 4 | `post` | virus_vcf_pipeline.py | VCF visualization + SnpEff macro + MAF waterfall + SnpGenie dN/dS |
 | 5 | `full` | batch_virus_full.py → virus-full.py | **Full-length genome build (OmniVirusAssembler V9.0)**: 12 refinement steps — SHIVER-like Divine Fusion solid backbone → read-level iterative polishing (single-base accuracy) → gmcloser + abyss-sealer dual-engine gap closing → circularization detection (Circular=True) |
 | 6 | `extract` | utils/extract_full_fasta.py | Longest-contig extraction + reference N-fill (RNA: fill only if N<5%) |
-| 7 | `similarity` | virus_auto_pipeline.py | Full-length similarity heatmap + hierarchical clustering (MAFFT --auto) |
-| 8 | `dvg` | batch_virema_dvg.py | ViReMa DVG/recombination detection + Circos plots |
-| 9 | `report` | generate_pipeline_report.py | Interactive HTML comprehensive report + AI interpretation prompts |
+| 6 | `similarity` | virus_auto_pipeline.py | Full-length similarity heatmap + hierarchical clustering (MAFFT --auto) |
+| 7 | `dvg` | batch_virema_dvg.py | ViReMa DVG/recombination detection + Circos plots |
+| 8 | `report` | generate_pipeline_report.py | Interactive HTML comprehensive report + AI interpretation prompts |
 
 > Note: positive-selection analysis (`capheine` / HyPhy FEL·MEME·BUSTED·PRIME) moved to
 > `virome_phylo_pipeline/` in v3.0 (the `capheine` stage in STAGE_ORDER). The 9-stage definition
@@ -328,7 +344,7 @@ Entry: `python public_metadata_pipeline/preprocess_unified.py --sra-dir ... --ou
 | 4 | `sequin` | sequin_builder.py | Sequin .tbl construction (Cenote-Taker3 style) |
 | 5 | `submit` | submission_pipeline.py | End-to-end orchestration: suvtk tbl2asn / Sequin tbl2asn dual mode → .sqn |
 | 6 | `gui` | submission_gui/submission_gui.py | PySide6 desktop GUI: interactive editing/validation/export |
-| 7 | `report` | report_html.py | Interactive HTML full-table editing report |
+| 6 | `report` | report_html.py | Interactive HTML full-table editing report |
 
 ---
 

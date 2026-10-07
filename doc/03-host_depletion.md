@@ -76,6 +76,13 @@ bowtie2-build SILVA_138.1_LSUParc_SSUParc_tax_silva.fasta silva_index
 └── summary.tsv                      各步骤统计
 ```
 
+> 路径归属：`{outdir}` 就是去宿主阶段自己的输出目录 —— standard 布局下为
+> `<项目>/02_Preprocessing/02_HostDepleted/`（默认），legacy 为
+> `<共享根>/00b_HostDepletion/`。`rrna/` 恒为 `{outdir}` 的直接子目录
+> （`--keep_rrna` 才产生，默认丢弃）；文件名按工具区分：
+> ribodetector → `{sample}.rrna.[1|2].fq.gz`，silva → `{sample}.silva_rrna.[1|2].fq.gz`。
+> rRNA 统计报告由 `--rrna_report` 指定（默认 `ribodetector.report.txt`），落在 `--logs_dir`。
+
 ## 断点续传
 
 - 自动维护 `.checkpoints` 隐藏文件

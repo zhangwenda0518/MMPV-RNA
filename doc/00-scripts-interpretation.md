@@ -116,7 +116,7 @@ HostDepletion → auto_known_virus
 
 **关键设计**:
 - **消融实验支持**: `--steps kraken2,align,rrna` 可任意组合
-- **SILVA 模式**: Bowtie2 `--very-sensitive-local` 比对 SILVA 库，`--un-conc-gz` 直接输出
+- **SILVA 模式**: Bowtie2 `--very-sensitive-local` 比对 SILVA 库，`--un-conc` 输出未压缩中间产物、Stage 8 统一压缩（避免双重 gzip）
 - **资源监控**: 每样本记录耗时/内存/CPU 到 TSV
 - **Seqkit 阶段统计**: 每步跟踪 reads 数量变化 (Raw → Kraken2 → Host Filtered → rRNA Filtered)
 - **自动配对**: `auto_pair_files()` 支持 PE/SE 自动识别

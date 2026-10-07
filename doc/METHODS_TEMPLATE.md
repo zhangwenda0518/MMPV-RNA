@@ -52,7 +52,7 @@ MMPV-RNA 为端到端宏转录组病毒组发现管线（`virome_pipeline.py`，
 
 ### 分类学分配与宿主预测
 
-病毒分类学由八工具集成分配：geNomad、Metabuli、CAT/BAT（von Meijenfeldt et al., 2019）、DIAMOND LCA、VITAP、MMseqs2、ACVirus 与 vConTACT3，各自对标策展数据库（RVDB v31、VMR MSL40、ACVirus 库）。各工具八阶元谱系经加权投票共识引擎（R）整合，输出带一致性与置信度的最终分配。宿主预测遵循优先级决策树：ICTV 认可的宿主注释 > RNAVirHost > PhaBOX2/CHERRY。
+病毒分类学由八工具集成分配：geNomad、Metabuli、CAT/BAT（von Meijenfeldt et al., 2019）、DIAMOND LCA、VITAP、MMseqs2、ACVirus 与 vConTACT3，各自对标策展数据库（RVDB v31；VITAP 的 vitap-db 基于 VMR-MSL40；ACVirus 库与 ICTV 分类表基于 VMR-MSL41）。各工具八阶元谱系经加权投票共识引擎（R）整合，输出带一致性与置信度的最终分配。宿主预测遵循优先级决策树：ICTV 认可的宿主注释 > RNAVirHost > PhaBOX2/CHERRY。
 
 ### 基因组完整性评估与高质量目录构建
 

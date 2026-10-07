@@ -24,8 +24,8 @@ options:
 
 输入/输出:
   -o OUTDIR, --outdir OUTDIR
-                        eve_screen.py 的输出根目录 (也是本层输出根目录) (default:
-                        eve_results)
+                        eve_screen.py 的输出根目录 (也是本层输出根目录; 默认 06_EVE)
+                        (default: 06_EVE)
   -B BATCH, --batch BATCH
                         批量 TSV: 每行 NAME<TAB>基因组路径 (rm 阶段必需; 与 eve_screen.py -B
                         同一张表) (default: None)
@@ -226,7 +226,8 @@ options:
 
 运行:
   -o OUTDIR, --outdir OUTDIR
-                        输出根目录 (default: eve_results)
+                        输出根目录 (默认 06_EVE, 与 standard 布局的 ⑥ 输出根约定一致)
+                        (default: 06_EVE)
   -t THREADS, --threads THREADS
   -J JOBS, --jobs JOBS  并行基因组数 (总核数 = jobs x threads) (default: 1)
   --stage STAGE         阶段: discover/verdict/annotate 逗号组合 或 all (default:

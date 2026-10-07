@@ -91,7 +91,7 @@ samtools   = "1.21"
 diamond    = "2.2.0"
 iqtree     = "3.1.2"      # IQ-TREE 3.1.2 (2026-05 build)
 mafft      = "7.525"      # v7.525 (2024/03)
-salmon     = "2.5.1"
+salmon     = "2.5.1"    # [待服务器核实：pixi 环境锁定版本]
 megahit    = "1.2.9"
 mmseqs     = "bd01c22"    # commit-hash
 

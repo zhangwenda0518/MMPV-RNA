@@ -1,14 +1,19 @@
 # MMPV 统一 I/O 目录布局设计（standard 布局规范 · 管线独立根版）
 
+> **配套文档**：`doc/IO_EXAMPLE_TREE.md`（2026-10-07 全脚本代码字面量重扫后的
+> 完整输入/输出目录示例结构——每管线逐层文件名、断点标记、边界契约与
+> 契约/实现偏差清单 §13）。本文是布局规范，查实际产物形态以配套文档为准。
+>
 > 2026-09-27 定稿（同日第二版：由"项目单树全链编号"改为**管线独立根**方案）。
 > 解决三个问题：①五管线目录命名体系各自为政（③ 的 `00a/02a/09a` 字母后缀、
 > ① 的散落小写目录）；②②的产物寄居在③的输出根里，管线不独立；③改名会砸
 > checkpoint。
 >
-> **结论：双布局并存，legacy（现行名）为默认，standard 经开关启用。
-> standard 下每条管线一个独立输出根（`01_PublicData … 06_EVE`），
-> 根内部各自独立编号（⑤ per-virus 模块按输出顺序 01-08 编号），互不占号段。
-> 不开开关 = 一切照旧。**
+> **结论：双布局并存，standard（管线独立根）为默认（2026-10-01 起），
+> legacy（现行名）保留给存量项目显式回退（`--io-layout legacy` /
+> `MMPV_IO_LAYOUT=legacy`）。standard 下每条管线一个独立输出根
+> （`01_PublicData … 06_EVE`），根内部各自独立编号（⑤ per-virus 模块按
+> 输出顺序 01-08 编号），互不占号段。**
 
 ---
 
@@ -21,19 +26,26 @@
    ③ `01_Assembly…13_Report`，④ `01_Detection…09_Report`，① 按 stage 顺序
    `01_Search…05_HostRef`），两管线之间号段互不相干。
 3. **零破坏**：`legacy` 布局与 v3.0 目录名逐字节一致（`mmpv_common/tests/`
-   冻结测试保护）。所有正在跑的任务、已有 checkpoint、GUI、文档默认不受影响。
+   冻结测试保护）。存量项目（正在跑的任务、已有 checkpoint）以
+   `--io-layout legacy`（或 `MMPV_IO_LAYOUT=legacy`）回退，产物目录零改动。
 4. **单一解析点**：目录名只活在 `mmpv_common/io_layout.py` 一张注册表里。
 5. **布局传播靠环境**：编排器入口 `normalize_layout_env()` 把解析结果写回
    `MMPV_IO_LAYOUT`，子进程自动继承。
 6. **边界留痕**：跨界产物登记 `90_Handoff/handoff_manifest.tsv`（项目根）。
 
-## 2. standard 布局：六个独立输出根
+## 2. standard 布局：独立输出根（六条主链 + ⑧ 可选补充根）
+
+> 08_HostExpression 为**可选补充模块**（⑧ 宿主表达，host_expression_pipeline）
+> 的输出根：不在 ①→⑤ 主链上、不跑无影响；根内独立编号 01→07，与 ⑥ EVE
+> 同属"独立分析"型支线。**根号 = 管线号**（01→06 ↔ ①→⑥）；07 号空缺 ——
+> ⑦ 提交管线消费 ④ 产物、无独立输出根；⑧ 为本模块，编号顺延至 08。
 
 ```
 <project_root>/
 ├── 01_PublicData/                 ← ① 公共数据管线的输出根 (--work-dir 指向这里)
 │   ├── 01_Search/                   SRA_GSA_Merged_Final.csv + sra_raw/ gsa_raw/
 │   ├── 02_Unified/                  Global_Unified_Metadata_Core14.csv (★全平台元数据权威)
+│   ├── 02b_Prescreen/               预筛: sample_decision.tsv + 决策清单 + virus_profile/ (不下载数据)
 │   ├── 03_RawData/                  ERR…_1.fastq.gz … (down/convert 产物)
 │   ├── 04_Plots/                    检索可视化 6 面板
 │   └── 05_HostRef/
@@ -43,6 +55,7 @@
 ├── 02_Preprocessing/              ← ② 数据清洗管线的输出根 (--output_dir 指向这里)
 │   ├── 01_CleanData/                1.fastp/ 2.fasta/ 3.clumpify/ logs/
 │   ├── 02_HostDepleted/             ★ 去宿主去rRNA reads (全下游 reads 唯一来源)
+│   │   └── rrna/                    分离出的 rRNA 序列 (--keep_rrna; 默认丢弃)
 │   ├── 03_BBnorm/                   (可选)
 │   ├── preprocessing_summary.tsv  assembly_ready.list
 │   └── preprocessing_report.html  preprocessing.log
@@ -51,6 +64,7 @@
 │   ├── 01_Assembly/                 {sample}/{sample}_{tool}.contig.fasta
 │   ├── 02_Identification/           10 工具并行鉴定
 │   ├── 03_Filter/                   UniProt-strict 过滤
+│   │   └── graph/                     组装图标签传播 (graph 阶段; 判定 TSV + COBRA 镜像 candidates/)
 │   ├── 04_COBRA/                    单样本延伸
 │   ├── 05_CoAssembly/               Flye 共组装
 │   ├── 06_CLUSTER/                  centroids/final_centroids.fasta (★③→④交接物)
@@ -88,7 +102,20 @@
 │   ├── 03_RVDB/<NAME>/              Stage3 RVDB 深度归属 (cand3.bed/s3_rvdb)
 │   ├── 04_Summary/                  <NAME>_eve_summary.tsv + kingdom_summary.tsv +
 │   │                                family_by_genome.tsv + eve_report.html (HTML 报告)
-│   └── (eve_distinguish 的判别产物建议放 03_Discovery/14_EVE_Distinguish/, 见 §3 B7)
+│   └── eve_distinguish/             后运行判别产物 dna_vs_eve_filter.tsv (③↔⑥ 边界 B7;
+│                                    run_all.sh -D 指向 03_Discovery 时默认归口这里)
+│
+├── 08_HostExpression/             ← ⑧ 宿主表达可选模块的输出根 (host_expression.py -o 指向这里;
+│   │                                不在主链, 不跑无影响; 内部编号 01→08, 05_Coexp=主分析)
+│   ├── 01_HostRef/                  host_cds.fasta (genome+GFF3 → gffread -x)
+│   ├── 02_Quant/                    salmon: quant/<样本>/ + matrix/{TPM,NumReads,…}_matrix.tsv
+│   ├── 03_QC/                       qc_summary.tsv + qc_passed_samples.txt
+│   ├── 04_Labels/                   virus_labels.tsv + sample_labels.tsv + virus_columns.tsv
+│   ├── 05_Coexp/                    TEA-GCN Δz 主分析: matrices/ + teagcn_{pos,neg}/
+│   │                                + diff_coexp_{significant,summary,…}.tsv
+│   ├── 06_DE/                       deseq2_all_results.tsv + deseq2_degs.tsv (+ deseq2_strata/)
+│   ├── 08_LoadScan/                 <病毒>_genome_scan.tsv (+ __<组织>) + load_scan_summary.tsv
+│   └── 09_Report/                   host_expression_report.html
 │
 └── 90_Handoff/                    ← 跨管线交接层 (项目根, 两布局统一位置)
     ├── analysis.reference.fasta     桥脚本 ③→④ 产物
@@ -109,7 +136,8 @@
 | B4 | ④→⑤ | `04_Analysis/06_Extraction/` | `phylo_pipeline.py --extract_dir` |
 | B5 | ①→⑤ | `01_PublicData/02_Unified/Global_Unified_Metadata_Core14.tsv` | `phylo_pipeline.py --metadata`（`data_collector.load_sample_metadata` 原生直读，无需转换器） |
 | B6 | ①→⑥ | `01_PublicData/05_HostRef/genome/all.genome.uniq.fasta` | `eve_screen.py -g <genome.fa>` 或批量 `-B batch.tsv`（EVE 与 reads 主链相互独立） |
-| B7 | ③↔⑥ | ⑥ 的判别器吃 ③ 的发现输出，产出 `dna_vs_eve_filter.tsv`（建议落 `03_Discovery/14_EVE_Distinguish/`） | `eve_distinguish/run_all.sh -D <项目>/03_Discovery -A <1kp_assemblies>` |
+| B7 | ③↔⑥ | ⑥ 的判别器吃 ③ 的发现输出，产出 `dna_vs_eve_filter.tsv` 归口 `06_EVE/eve_distinguish/`（2026-10-07 起；`-D` 目录名非 `03_Discovery` 时维持旧默认 `<DISCOVERY>/08b_EVE_Distinguish/`） | `eve_distinguish/run_all.sh -D <项目>/03_Discovery -A <1kp_assemblies>` |
+| B8 | ②①④→⑧ | ⑧ 宿主表达（可选）四条输入：`02_Preprocessing/01_CleanData/{3.clumpify,2.fasta}`、`01_PublicData/05_HostRef/genome/`（含 GFF3）、`01_PublicData/02_Unified/Global_Unified_Metadata_Core14.{csv,tsv}`、`04_Analysis/01_Detection/summary/all_viruses.best.summary.tsv` | `host_expression.py --project-root <项目根>`（四条自动定位，standard 优先 legacy 兜底；亦可逐个 `--reads_dir/--genome/--gff/--metadata/--detect` 显式给） |
 
 ③→④ 桥（两布局通吃，无需开关）：
 
@@ -136,6 +164,7 @@ standard 相对路径均相对**本管线自己的根**。
 | d_bbnorm | `00c_BBnorm/` | `03_BBnorm/` | 02_Preprocessing |
 | d_asm | `01_Assembly/` | `01_Assembly/` | 03_Discovery |
 | d_ident | `02a_Identification/` | `02_Identification/` | 03_Discovery |
+| d_graph ♢ | `02b_Filter/graph/`（同） | `03_Filter/graph/` | 03_Discovery（filter 子目录） |
 | d_filter | `02b_Filter/` | `03_Filter/` | 03_Discovery |
 | d_cobra | `03a_COBRA/` | `04_COBRA/` | 03_Discovery |
 | d_merge | `03b_MergeSamples/` | `05_CoAssembly/` | 03_Discovery |
@@ -170,7 +199,23 @@ standard 相对路径均相对**本管线自己的根**。
 | e_verdict | `02_Verdict/` | `02_Verdict/`（同） | 06_EVE |
 | e_rvdb | `03_RVDB/` | `03_RVDB/`（同） | 06_EVE |
 | e_summary | `04_Summary/` | `04_Summary/`（同） | 06_EVE |
+| he_root ♪ | `08_HostExpression/`（同） | `08_HostExpression/`（同） | 项目根（⑧ 可选补充模块） |
+| he_hostref | `01_HostRef/`（同） | `01_HostRef/`（同） | 08_HostExpression |
+| he_quant | `02_Quant/`（同） | `02_Quant/`（同） | 08_HostExpression |
+| he_qc | `03_QC/`（同） | `03_QC/`（同） | 08_HostExpression |
+| he_labels | `04_Labels/`（同） | `04_Labels/`（同） | 08_HostExpression |
+| he_de | `05_DE/`（同） | `05_DE/`（同） | 08_HostExpression |
+| he_loadscan | `06_LoadScan/`（同） | `06_LoadScan/`（同） | 08_HostExpression |
+| he_report | `07_Report/`（同） | `07_Report/`（同） | 08_HostExpression |
 | x_handoff | `90_Handoff/` | `90_Handoff/`（同） | 项目根 |
+
+> ♪ ⑧ 宿主表达为**可选补充模块**（2026-10-02 并入，见
+> `host_expression_pipeline/README.md`）：新模块无 legacy 历史名，两布局同名、
+> 根内独立编号；键集与 ⑥ 一样受 `mmpv_common/tests/test_io_layout.py` 冻结。
+>
+> ♢ d_graph 为 ③ graph 阶段新增键（2026-10-02）：无 legacy 历史名，两布局同名
+> filter 目录之下（standard `03_Filter/graph/`，legacy `02b_Filter/graph/`）；
+> 归属 03_Discovery 内部，不新增管线输出根。键集同样受 test_io_layout.py 冻结。
 
 > ⑤ 模块编号顺序 = 主线分析顺序（与 `STAGE_REFERENCE.md` 8 大模块表一致）：
 > data(prep→clean) → phylogeny(align,splitstree,tree) → popgen(popgen,host) →
@@ -181,8 +226,10 @@ standard 相对路径均相对**本管线自己的根**。
 
 ## 5. 启用方式与传播机制
 
+standard 是默认，无需任何开关；存量项目按需回退 legacy：
+
 ```bash
-export MMPV_IO_LAYOUT=standard        # 或各编排器 --io-layout standard (CLI 优先)
+export MMPV_IO_LAYOUT=legacy          # 或各编排器 --io-layout legacy (CLI 优先)
 
 # ① --work-dir 直接指 ① 自己的根
 python public_metadata_pipeline/public_data_pipeline.py \
@@ -222,19 +269,21 @@ python endogenous_virus_pipeline/eve_screen.py \
 # ⑥ 的 HTML 报告 (在 --merge 之后; 补齐与 ①-⑤ 一致的末阶段 HTML 闭环)
 python endogenous_virus_pipeline/eve_report.py -o <项目>/06_EVE
 
-# ⑥ 的后运行判别 (吃 ③ 发现输出, 建议产物落 03_Discovery/14_EVE_Distinguish/)
+# ⑥ 的后运行判别 (吃 ③ 发现输出; -D 指向 03_Discovery 时产物归口 <项目>/06_EVE/eve_distinguish/)
 bash endogenous_virus_pipeline/eve_distinguish/run_all.sh \
     -D <项目>/03_Discovery -A <1kp_assemblies> -t 32
 ```
 
-优先级：CLI `--io-layout` > 环境变量 `MMPV_IO_LAYOUT` > `legacy`。
+优先级：CLI `--io-layout` > 环境变量 `MMPV_IO_LAYOUT` > `standard`（默认）。
 
 ## 6. 迁移与回滚
 
-- **不迁移**：legacy 是默认，老项目继续 legacy 跑完；新旧项目共存。
-- **切换时机**：只允许在**新项目开跑前**切。跑到一半切布局 = checkpoint
+- **不迁移**：老项目在跑完前显式 `--io-layout legacy`（或 env）继续 legacy 跑完；
+  新旧项目共存。
+- **切换时机**：布局只允许在**项目开跑前**定。跑到一半切布局 = checkpoint
   判定失效（产物目录名变了），必须 `--force` 重跑或手工搬目录。
-- **回滚**：不开开关即回滚；代码层回滚 = revert `mmpv_common/io_layout.py`。
+- **回滚**：加 `--io-layout legacy` 即回滚到 v3.0 目录名；代码层回滚 =
+  revert `mmpv_common/io_layout.py`（`DEFAULT_LAYOUT` 改回 `legacy`）。
 - **手工搬旧项目**：按 §4 映射表先按管线归组（`00a/00b…→02_Preprocessing/`，
   `01_Assembly…10_Reports→03_Discovery/`，`01_detection…→04_Analysis/`），
   再改各自根内目录名；文件内容零依赖目录名。
@@ -254,8 +303,19 @@ bash endogenous_virus_pipeline/eve_distinguish/run_all.sh \
 | `virome_phylo_pipeline/phylo_pipeline.py` | 69 处 `os.path.join(out_dir,"模块",…)` → `ph_dir()`（布局感知模块名）；`--io-layout`；`STAGE_MODULE_DIR`/`STAGE_GROUPS` 保留逻辑名不动 |
 | `endogenous_virus_pipeline/eve_scan_core.py` | `STAGE_DIRS` → `io_layout` e_* 键（带脱离仓库兜底回退）；standard 输出根约定 06_EVE |
 | `endogenous_virus_pipeline/eve_report.py` | **新增**：⑥ 的 HTML 报告生成器（merge 产物 → 自包含 HTML），补齐六管线"末阶段出 HTML"闭环 |
-| 衔接审计（2026-09-27 第二轮） | **13 个 worker 脚本补接线**：③ report_pipeline/build_ref_info/filter_virus/rescue_pipeline/virome_analysis/virome_pipeline(cobra 回退+日志目录)、④ generate_pipeline_report(含 33 处相对子路径+陈旧 09_dvg 修复)/generate_pipeline_report_full/panvirome_×2/virus_detection_summary、② preprocess_report、① generate_report/preprocess_unified(hostref 根)、⑤ phylo(--output_dir 默认)。审计器：`scripts/audit/check_io_handoffs.py`（0 fail / 23 warn，warn 均为帮助文本措辞） |
+| 衔接审计（2026-09-27 第二轮） | **13 个 worker 脚本补接线**：③ report_pipeline/build_ref_info/filter_virus/rescue_pipeline/virome_analysis/virome_pipeline(cobra 回退+日志目录)、④ generate_pipeline_report(含 33 处相对子路径+陈旧 09_dvg 修复)/generate_pipeline_report_full（已于 2026-10-03 删除）/panvirome_×2/virus_detection_summary、② preprocess_report、① generate_report/preprocess_unified(hostref 根)、⑤ phylo(--output_dir 默认)。审计器：`scripts/audit/check_io_handoffs.py`（0 fail / 23 warn，warn 均为帮助文本措辞） |
 | 衔接审计（2026-09-28 第三轮，含 report/HTML 链路实测） | **⑦ 提交管线纳入审计范围并接线**：submission_pipeline(suvtk 输出探测/KEEP FASTA 探测/ref_info 定位)、fix_sqn(08_Rescue×3)。**⑤ utils 接线**：clock_analysis(6 处 time/phylogeny 路径)、data_collector(prep 的 data 目录)、report_builder(MODULES 注册表 7 个 dir 字段 + 注册表重排为编号序)、beast1_bridge(IQ-TREE 报告探测)。**实测**：③ report_pipeline 空 standard 树实跑产出 `13_Report/pipeline_report.html`（目录引用全为 standard 名）；④ generate_pipeline_report 合成 summary 实跑，standard 路径读取入 HTML；② preprocess_report 合成 fastp/seqkit 数据实跑出 HTML。审计器 SCOPES 补 ⑦ |
 
 验证：`python mmpv_common/tests/test_io_layout.py`（15/15 OK）+ 全部改动文件
 `py_compile` 通过 + `discovery2analysis --from-discovery` 端到端冒烟通过。
+
+| 文件 | 改动 |
+|---|---|
+| **默认布局翻转（2026-10-01）** | `io_layout.py`：`DEFAULT_LAYOUT="standard"`，`LAYOUTS` standard 优先。14 个 worker 脚本硬编码的 `"legacy"` 回退 → 单一解析点（`os.environ.get(MMPV_IO_LAYOUT)` 由 `resolve_layout` 兜底）。6 个编排器 `--io-layout` 帮助文本/注释同步（standard=默认，legacy=存量兼容）。测试：`test_default_standard` + `test_legacy_still_selectable`（20/20 OK）。文档：README / README_EN / wiki 00,01 / pipeline_config.yaml / 本文档同步。**存量项目回退**：`--io-layout legacy` 或 `MMPV_IO_LAYOUT=legacy` |
+| **graph 阶段新增 d_graph 键（2026-10-02）** | `io_layout.py`：`_DIR_TABLE` 两布局加 `d_graph = 03_Filter/graph`（新键无历史名两布局同名，插在 Identification 与 Filter 之间；③ 内部键不新增管线根）+ `build_discovery_dirs()` 两分支加 `graph`。`virome_pipeline.py`：新 `graph` 阶段（`stage_order` 在 identification 与 filter 之间）+ `run_graph()` + `checks`/`sc`/CLI/apply_config + `_cobra_candidate_source` 三级优先（graph/candidates > ident > filter）。`filter_virus.py`：末端 `apply_graph_adjustments()`（救回/降级 + 审计表）。新脚本 `graph_propagation.py`（配对读段链接图 + ensemble 种子 + Louvain）。测试：`test_io_layout.py` 23/23 + `test_graph_propagation.py` 34/34；审计 0 FAIL |
+| **graph 阶段重排（2026-10-07，用户裁定）** | 恢复 filter→COBRA 主链契约（解除 feb352f
+绕行）：`stage_order` 调整为 identification→filter→graph→cobra；d_graph 迁入 filter
+子目录（legacy `02b_Filter/graph`，standard `03_Filter/graph`）；裁决逻辑
+（apply_graph_adjustments）自 filter_virus 移入 graph_propagation（filter 输出裁决 +
+COBRA 镜像产出）；COBRA 输入 = d_filter/candidates 镜像（filter 结果经 graph 裁决后的
+02a 兼容结构）。测试：io_layout 24/24 + graph 38/38 + cobra 契约 13/13；审计 0 FAIL |
