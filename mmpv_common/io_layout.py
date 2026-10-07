@@ -4,20 +4,21 @@
 io_layout.py — MMPV 五管线统一 I/O 目录布局 (legacy / standard 双布局)
 =======================================================================
 
-MMPV 的 ①公共数据 ②数据清洗 ③病毒发现 ④已知病毒分析 ⑤系统发育 五条管线
-各自维护一套输出目录名, 边界交接靠人记路径。本模块把「逻辑目录键 → 相对
-目录名」收敛到一处, 提供两套布局:
+MMPV 的 ①公共数据 ②数据清洗 ③病毒发现 ④已知病毒分析 ⑤系统发育 ⑥内源病毒
+/ ⑧宿主表达(可选补充) 各条管线各自维护一套输出目录名, 边界交接靠人记路径。
+本模块把「逻辑目录键 → 相对目录名」收敛到一处, 提供两套布局:
 
-  legacy   现行目录名 (00a_CleanData / 02a_Identification / 09a_Virome_Analysis
-           / 01_detection ...), 与 v3.0 及之前逐字节一致 —— 默认值,
-           已有 checkpoint / 正在跑的任务零影响。
-  standard 管线独立根布局 (设计见 doc/IO_LAYOUT_DESIGN.md):
+  standard **默认** 管线独立根布局 (设计见 doc/IO_LAYOUT_DESIGN.md):
            每条管线一个独立输出根 (01_PublicData / 02_Preprocessing /
-           03_Discovery / 04_Analysis / 05_Phylo), 根内部各自从 01 独立编号;
+           03_Discovery / 04_Analysis / 05_Phylo / 06_EVE / 08_HostExpression),
+           根内部各自从 01 独立编号;
            编排器的 --output_dir/--work-dir 即指向本管线自己的根。
            跨管线交接物统一登记在项目根的 90_Handoff/。
+  legacy   现行目录名 (00a_CleanData / 02a_Identification / 09a_Virome_Analysis
+           / 01_detection ...), 与 v3.0 及之前逐字节一致 —— 存量项目
+           (已有 checkpoint / 正在跑的任务) 显式回退用, 不再是默认。
 
-布局解析优先级:  CLI --io-layout  >  环境变量 MMPV_IO_LAYOUT  >  legacy。
+布局解析优先级:  CLI --io-layout  >  环境变量 MMPV_IO_LAYOUT  >  standard。
 环境变量同时是向子进程 (② 被 ③ 调用等) 传播布局的机制 —— 编排器入口
 统一调用 normalize_layout_env() 把解析结果写回环境。
 
@@ -32,15 +33,16 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 LAYOUT_ENV = "MMPV_IO_LAYOUT"
-LAYOUTS = ("legacy", "standard")
-DEFAULT_LAYOUT = "legacy"
+LAYOUTS = ("standard", "legacy")
+DEFAULT_LAYOUT = "standard"
 
 # ═══════════════════════════════════════════════════════════════════
 # 目录名注册表: 逻辑键 → 相对路径 (相对各管线的输出根目录)
 #
 # 键名约定 (跨管线不重号):
 #   <pipeline prefix>  d_  = ②③ 共用发现链;  a_  = ④ 分析;  m_  = ① 元数据;
-#                      h_  = ① 宿主参考;   p_  = ⑤ 进化根;   x_  = 交接层
+#                      h_  = ① 宿主参考;   p_  = ⑤ 进化根;   e_  = ⑥ EVE;
+#                      he_ = ⑧ 宿主表达 (可选补充模块);        x_  = 交接层
 # ═══════════════════════════════════════════════════════════════════
 
 _DIR_TABLE: Dict[str, Dict[str, str]] = {
@@ -53,6 +55,9 @@ _DIR_TABLE: Dict[str, Dict[str, str]] = {
         # ③ 病毒发现
         "d_asm":          "01_Assembly",
         "d_ident":        "02a_Identification",
+        # 组装图标签传播 (graph 阶段): 对 filter 无证据保留结果二次裁决;
+        # 产物为 d_filter 的子目录 graph/, 两布局均挂在 filter 目录之下。
+        "d_graph":        "02b_Filter/graph",
         "d_filter":       "02b_Filter",
         "d_cobra":        "03a_COBRA",
         "d_merge":        "03b_MergeSamples",
@@ -78,6 +83,7 @@ _DIR_TABLE: Dict[str, Dict[str, str]] = {
         # ① 公共数据
         "m_search":       "search",
         "m_info":         "info",
+        "m_prescreen":    "prescreen",
         "m_plot":         "plot",
         "m_down":         "down",
         "h_genome":       "host_reference/genome",
@@ -97,6 +103,18 @@ _DIR_TABLE: Dict[str, Dict[str, str]] = {
         "e_verdict":      "02_Verdict",
         "e_rvdb":         "03_RVDB",
         "e_summary":      "04_Summary",
+        # ⑧ 宿主表达 (可选补充模块 host_expression_pipeline; 新模块无历史名,
+        #    两布局同名, 根内独立编号 01→08; 05_Coexp=TEA-GCN 主分析)
+        "he_root":        "08_HostExpression",
+        "he_hostref":     "01_HostRef",
+        "he_quant":       "02_Quant",
+        "he_qc":          "03_QC",
+        "he_labels":      "04_Labels",
+        "he_coexp":       "05_Coexp",
+        "he_de":          "06_DE",
+        "he_loadscan":    "08_LoadScan",
+        "he_enrich":      "07_Enrich",
+        "he_report":      "09_Report",
         # 交接层
         "x_handoff":      "90_Handoff",
     },
@@ -110,8 +128,11 @@ _DIR_TABLE: Dict[str, Dict[str, str]] = {
     #   ⑤ --output_dir  = <项目>/05_Phylo
     "standard": {
         # ① 公共数据 (根: 01_PublicData, 按 stage 顺序编号)
+        #    prescreen 插在 info 与 down 之间, 用 NN[ab]_Name 子编号而非重排
+        #    后续编号 —— 03_RawData / 04_Plots / 05_HostRef 是既有契约, 不动。
         "m_search":       "01_Search",
         "m_info":         "02_Unified",
+        "m_prescreen":    "02b_Prescreen",
         "m_down":         "03_RawData",
         "m_plot":         "04_Plots",
         "h_genome":       "05_HostRef/genome",
@@ -123,6 +144,7 @@ _DIR_TABLE: Dict[str, Dict[str, str]] = {
         # ③ 病毒发现 (根: 03_Discovery, 15 阶段独立编号)
         "d_asm":          "01_Assembly",
         "d_ident":        "02_Identification",
+        "d_graph":        "03_Filter/graph",
         "d_filter":        "03_Filter",
         "d_cobra":        "04_COBRA",
         "d_merge":        "05_CoAssembly",
@@ -160,6 +182,17 @@ _DIR_TABLE: Dict[str, Dict[str, str]] = {
         "e_verdict":      "02_Verdict",
         "e_rvdb":         "03_RVDB",
         "e_summary":      "04_Summary",
+        # ⑧ 宿主表达 (可选补充模块; 输出根 08_HostExpression, 根内独立编号 01→08)
+        "he_root":        "08_HostExpression",
+        "he_hostref":     "01_HostRef",
+        "he_quant":       "02_Quant",
+        "he_qc":          "03_QC",
+        "he_labels":      "04_Labels",
+        "he_coexp":       "05_Coexp",
+        "he_de":          "06_DE",
+        "he_loadscan":    "08_LoadScan",
+        "he_enrich":      "07_Enrich",
+        "he_report":      "09_Report",
         # 交接层 (相对项目根, 跨管线共有)
         "x_handoff":      "90_Handoff",
     },
@@ -168,6 +201,26 @@ _DIR_TABLE: Dict[str, Dict[str, str]] = {
 # ③→④ 边界产物: 相对各布局键目录的固定文件名
 CENTROIDS_BASENAME = "final_centroids.fasta"
 TAXONOMY_RELPATH = "integrated/final_integrated_classification.tsv"
+
+# ④→⑧ 边界产物 (宿主表达可选模块): 已知病毒检出汇总表 (相对 a_detect 目录)
+DETECTION_SUMMARY_RELPATH = "summary/all_viruses.best.summary.tsv"
+# ②→⑧ 边界产物 (宿主表达可选模块): clean reads 的最终子目录 (相对 d_clean 目录;
+# ② clean-data 的排布为 3.clumpify / 2.fasta —— clumpify 跑过时 2.fasta 已被
+# 清理, 故优先 clumpify; 两布局下这对子目录名相同)
+CLEAN_READS_SUBDIRS = ("3.clumpify", "2.fasta")
+
+# 标准布局下各管线输出根名 (项目根第一层目录; 编排器 auto-locate 与文档共用)
+# 根号 = 管线号: 01→06 ↔ ①→⑥; 07 号空缺 (⑦ 提交管线消费 ④ 产物, 无独立
+# 输出根); 08 ↔ ⑧ 宿主表达可选模块 (host_expression_pipeline)。
+PIPELINE_ROOT_NAMES = {
+    "publicdata":    "01_PublicData",
+    "preprocessing": "02_Preprocessing",
+    "discovery":     "03_Discovery",
+    "analysis":      "04_Analysis",
+    "phylo":         "05_Phylo",
+    "eve":           "06_EVE",
+    "hostexpr":      "08_HostExpression",
+}
 
 # ③ centroids 目录的历史名 (legacy 内部三代命名, 定位时全部尝试)
 _LEGACY_CENTROID_DIRS = ("04_CLUSTER/4_centroids",
@@ -228,6 +281,7 @@ def build_discovery_dirs(out: Path, raw: Path, layout: Optional[str] = None) -> 
             'hostdep':   out / '00b_HostDepletion',
             'asm':       out / '01_Assembly',
             'ident':     out / '02a_Identification',
+            'graph':     out / '02b_Filter/graph',
             'filter':    out / '02b_Filter',
             'cobra':         out / '03_COBRA',
             '_cobra_dirs':   [out / '03a_COBRA', out / '03_COBRA'],
@@ -257,6 +311,7 @@ def build_discovery_dirs(out: Path, raw: Path, layout: Optional[str] = None) -> 
         'hostdep':   out / d['d_hostdep'],
         'asm':       out / d['d_asm'],
         'ident':     out / d['d_ident'],
+        'graph':     out / d['d_graph'],
         'filter':    out / d['d_filter'],
         'cobra':         out / d['d_cobra'],
         '_cobra_dirs':   [out / d['d_cobra']],
@@ -293,13 +348,14 @@ def build_analysis_dirs(out: Path, layout: Optional[str] = None) -> Dict[str, Pa
 
 
 def build_meta_dirs(work_dir: Path, layout: Optional[str] = None) -> Dict[str, str]:
-    """① public_data_pipeline.py 的 search/info/down/plot 目录 (str 路径)。"""
+    """① public_data_pipeline.py 的 search/info/prescreen/plot/down 目录 (str 路径)。"""
     d = _DIR_TABLE[resolve_layout(layout)]
     return {
-        'search': str(work_dir / d['m_search']),
-        'info':   str(work_dir / d['m_info']),
-        'plot':   str(work_dir / d['m_plot']),
-        'down':   str(work_dir / d['m_down']),
+        'search':    str(work_dir / d['m_search']),
+        'info':      str(work_dir / d['m_info']),
+        'prescreen': str(work_dir / d['m_prescreen']),
+        'plot':      str(work_dir / d['m_plot']),
+        'down':      str(work_dir / d['m_down']),
     }
 
 
@@ -332,6 +388,36 @@ def build_eve_dirs(out_dir: Path, layout: Optional[str] = None) -> Dict[str, Pat
     d = _DIR_TABLE[resolve_layout(layout)]
     return {k: Path(out_dir) / d['e_' + k]
             for k in ("loci", "verdict", "rvdb", "summary")}
+
+
+# ⑧ 宿主表达 (可选补充模块) 的阶段目录键 (编号顺序 = 管线内运行顺序;
+# 05_Coexp = TEA-GCN 差异共表达, 主分析; DE/LoadScan 为交叉参考与剂量验证)
+HOSTEXPR_STAGES = ("hostref", "quant", "qc", "labels",
+                   "coexp", "de", "enrich", "loadscan", "report")
+
+
+def build_hostexpr_dirs(out_dir: Path, layout: Optional[str] = None) -> Dict[str, Path]:
+    """⑧ host_expression_pipeline 的 7 个阶段输出目录 {阶段: Path}。"""
+    d = _DIR_TABLE[resolve_layout(layout)]
+    return {k: Path(out_dir) / d['he_' + k] for k in HOSTEXPR_STAGES}
+
+
+def locate_detection_summary(analysis_root: Path) -> Optional[Path]:
+    """在 ④ 分析管线输出根下定位 all_viruses.best.summary.tsv (两布局)。
+
+    产物真实形态: <④根>/<a_detect>/summary/all_viruses.best.summary.tsv;
+    兜底限深递归 (单样本时代曾把 summary/ 直接放在检测目录下)。
+    """
+    root = Path(analysis_root)
+    for layout in LAYOUTS:
+        p = root / _DIR_TABLE[layout]['a_detect'] / DETECTION_SUMMARY_RELPATH
+        if p.is_file():
+            return p
+    if root.is_dir():
+        hits = sorted(root.glob(f"*/*/{DETECTION_SUMMARY_RELPATH}"))
+        if hits:
+            return hits[0]
+    return None
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -391,8 +477,7 @@ def write_boundary(root: Path, boundary: str, entries: Dict[str, str],
     行为不变。幂等: 同 (boundary, key) 重写其行, 其余行保留。
     """
     root = Path(root)
-    _PIPELINE_ROOTS = {"01_PublicData", "02_Preprocessing", "03_Discovery",
-                       "04_Analysis", "05_Phylo"}
+    _PIPELINE_ROOTS = set(PIPELINE_ROOT_NAMES.values())
     if root.name in _PIPELINE_ROOTS:
         root = root.parent
     handoff_dir = root / _DIR_TABLE["standard"]["x_handoff"]

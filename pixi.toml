@@ -50,6 +50,7 @@ venn = ">=0.1"                                # 韦恩图 (virus_identification)
 networkx = ">=3.0"                            # 单倍型网络 (haplotype/build_haplo)
 openpyxl = ">=3.1"                            # 读 xlsx (元数据/VMR 表)
 pyhmmer = ">=0.10"                            # HMMER 蛋白域搜索
+pydeseq2 = ">=0.4"                            # ⑧ 宿主表达可选模块 (host_expression_pipeline/run_deseq2.py) — 不跑该模块无影响
 
 # --- GUI (metadata_gui / submission_gui / virome_submission_pipeline/submission_gui.py) ---
 pyside6 = ">=6.5"
@@ -307,6 +308,7 @@ eve-screen = { cmd = "python endogenous_virus_pipeline/eve_screen.py", descripti
 
 # EVE 核心逻辑单元测试 (本地无 diamond/seqkit 也可跑)
 eve-test = { cmd = "python -m unittest discover -s endogenous_virus_pipeline/tests -v", description = "Run EVE core unit tests" }
+graph-test = { cmd = "python -m pytest virome_discovery_pipeline/tests/test_graph_propagation.py -q", description = "Run graph propagation unit tests" }
 
 # R 交互环境
 R-shell = { cmd = "R --no-save", description = "Start R interactive session" }
@@ -374,3 +376,9 @@ R-shell = { cmd = "R --no-save", description = "Start R interactive session" }
 [environments]
 default = { features = ["discovery", "analysis", "publicdata"], solve-group = "default" }
 gpu = { features = ["gpu"], solve-group = "default" }
+
+# ==============================================================================
+# PyPI 依赖 (conda 渠道无包)
+# ==============================================================================
+[pypi-dependencies]
+einsumt = ">=0.9"                              # ⑧ coexp: TEA-GCN 线程池 einsum (bicor 预计算); conda 无此包

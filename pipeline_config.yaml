@@ -1,12 +1,13 @@
 # ==============================================================================
 # MMPV = Massive Meta-mining of Plant Viruses — 管道配置文件
 # ==============================================================================
-# 【I/O 目录布局】(v3.1 新增, 不写 = legacy 现行名, 老项目零影响)
+# 【I/O 目录布局】(v3.1 新增; 不写 = standard 默认)
 #   io_layout: legacy | standard
-#   也可用环境变量 MMPV_IO_LAYOUT 或各编排器 --io-layout (优先级 CLI > 环境变量 > legacy)
-#   legacy   = 现行目录名 (00a_CleanData/02a_Identification/09a_Virome_Analysis/...)
-#   standard = 管线独立根布局 (01_PublicData/02_Preprocessing/03_Discovery/
+#   也可用环境变量 MMPV_IO_LAYOUT 或各编排器 --io-layout (优先级 CLI > 环境变量 > standard)
+#   standard = 管线独立根布局 (默认; 01_PublicData/02_Preprocessing/03_Discovery/
 #              04_Analysis/05_Phylo/06_EVE, 根内各自独立编号)
+#   legacy   = 现行目录名 (00a_CleanData/02a_Identification/09a_Virome_Analysis/...;
+#              存量项目/checkpoint 兼容用, 需显式指定)
 #   完整规范与 legacy↔standard 映射表见 doc/IO_LAYOUT_DESIGN.md
 #
 # 用法:
@@ -107,6 +108,30 @@ profiles:
       checkv_threshold: 90
       max_vsi_samples: 10
       min_vsi_len:     2000
+
+    # 组装图标签传播 (③ graph 阶段, virome_discovery_pipeline/graph_propagation.py;
+    # CLI 可覆盖, --skip-graph 等同 enabled: false)
+    # 思想源自 GMW (Chen et al. 2026, Sci China Life Sci 69:1910): 配对读段链接图 +
+    # ensemble 种子 + Louvain 社区传播, 重估 contig 的 viral/non-viral 归属。
+    graph:
+      enabled:          false   # 默认不运行 (2026-10-07 用户裁定); 需要时改 true 或
+                                # --stage graph 显式运行, filter/COBRA 自动回退纯过滤结果
+      min_link_pairs:   3       # 建边所需最少跨 contig 配对读段数
+      gc_diff:          0.20    # 断边 GC 差阈值 (GMW 口径)
+      depth_ratio:      20.0    # 断边深度比阈值 (GMW 口径)
+      require_proper:   false   # 仅收 proper pair; 必须保持 false — bwa 的 0x2 只在
+                                # 同 contig 时置位, 开启=零跨 contig 链接 (246 实测)
+      resolution:       1.0     # Louvain 分辨率 (GMW 论文用 2; 默认更保守)
+      seed_min_votes:   2       # 病毒种子最少工具票数 (默认 2; 弱阳性票数<阈值归 unknown
+                                #  交图传播裁决 — 设 1 会使降级/救回两个消费点失效)
+      nonviral_min_len: 1000    # 非病毒种子最短长度 (= 鉴定阶段 LEN_VIRUS_MIN)
+      majority_ratio:   10.0    # 社区传播多数比 (GMW >=10 倍规则)
+      apply_to_filter:  true    # filter 末端消费判定 (救回/降级; 审计表逐样本可查)
+      apply_to_cobra:   true    # COBRA raw 候选源切到派生目录 (剔除降级 contig)
+      graph_jobs:       0       # 并行样本数; 0 = 自动 (jobs/2)
+      max_reads:        0       # >0 每端取前 N 条 (确定性前缀截取, 规模兜底)
+      map_min_len:      1000    # 映射参考只保留 >= 该长度的 contigs (0=全量);
+                                # 短 contig 无可执行判定, 1000 可省 30-60% 映射时间
 
     # 内源性病毒 (EVE) 筛查参数 (endogenous_virus_pipeline/eve_screen.py; CLI 可覆盖)
     eve:

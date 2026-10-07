@@ -9,7 +9,7 @@ test_io_layout.py — mmpv_common.io_layout 单元测试
 核心不变量:
   1. legacy 布局与 v3.0 硬编码目录名逐键一致 (改名即测试失败, 防回归)
   2. standard 布局键集与 legacy 完全一致 (只许改名, 不许丢键)
-  3. 布局解析优先级 CLI > 环境变量 > legacy; 非法值报错
+  3. 布局解析优先级 CLI > 环境变量 > standard (默认); 非法值报错
   4. 三个构造器 (discovery/analysis/meta) 两布局键集一致
   5. 边界定位 locate_centroids / locate_taxonomy 命中两布局与三代旧名
   6. handoff 台账幂等重写
@@ -36,6 +36,7 @@ class TestLegacyFrozen(unittest.TestCase):
         "d_bbnorm": "00c_BBnorm",
         "d_asm": "01_Assembly",
         "d_ident": "02a_Identification",
+        "d_graph": "02b_Filter/graph",
         "d_filter": "02b_Filter",
         "d_cobra": "03a_COBRA",
         "d_merge": "03b_MergeSamples",
@@ -59,6 +60,7 @@ class TestLegacyFrozen(unittest.TestCase):
         "a_report": "09_report",
         "m_search": "search",
         "m_info": "info",
+        "m_prescreen": "prescreen",
         "m_plot": "plot",
         "m_down": "down",
         "h_genome": "host_reference/genome",
@@ -98,7 +100,12 @@ class TestResolution(unittest.TestCase):
     def tearDown(self):
         os.environ.pop(iol.LAYOUT_ENV, None)
 
-    def test_default_legacy(self):
+    def test_default_standard(self):
+        self.assertEqual(iol.resolve_layout(), "standard")
+
+    def test_legacy_still_selectable(self):
+        self.assertEqual(iol.resolve_layout("legacy"), "legacy")
+        os.environ[iol.LAYOUT_ENV] = "legacy"
         self.assertEqual(iol.resolve_layout(), "legacy")
 
     def test_env_override(self):
@@ -126,6 +133,7 @@ class TestBuilders(unittest.TestCase):
         d = iol.build_discovery_dirs(out, raw, "legacy")
         self.assertEqual(d['clean'], out / '00a_CleanData')
         self.assertEqual(d['hostdep'], out / '00b_HostDepletion')
+        self.assertEqual(d['graph'], out / '02b_Filter/graph')  # legacy: filter 子目录
         self.assertEqual(d['centroids'], out / '04_CLUSTER' / '4_centroids')
         self.assertEqual(d['_centroids_v1'], out / '04_CLUSTER' / '04_centroids')
         self.assertEqual(d['_analysis_dirs'], [out / '09a_Virome_Analysis',
@@ -139,6 +147,7 @@ class TestBuilders(unittest.TestCase):
         self.assertEqual(d['clean'], out / '01_CleanData')
         self.assertEqual(d['hostdep'], out / '02_HostDepleted')
         self.assertEqual(d['asm'], out / '01_Assembly')
+        self.assertEqual(d['graph'], out / '03_Filter/graph')  # standard: filter 子目录
         self.assertEqual(d['centroids'], out / '06_CLUSTER' / 'centroids')
         self.assertEqual(d['taxonomy'], out / '07_Taxonomy')
         self.assertEqual(d['rescue_dir'], out / '10_Rescue')
@@ -193,6 +202,26 @@ class TestBuilders(unittest.TestCase):
         self.assertEqual(std['summary'], out / '04_Summary')
         self.assertEqual(set(legacy), set(std))
 
+    def test_hostexpr_dirs(self):
+        """⑧ 宿主表达 (可选补充模块): 两布局同名, 根内独立编号 01→08 + 09;
+        05_Coexp = TEA-GCN 主分析, DE/LoadScan 顺延, 07_Enrich 功能富集。"""
+        out = Path("/proj/08_HostExpression")
+        legacy = iol.build_hostexpr_dirs(out, "legacy")
+        std = iol.build_hostexpr_dirs(out, "standard")
+        self.assertEqual(set(legacy), set(std))
+        self.assertEqual(iol.dir_name('he_root', 'standard'), '08_HostExpression')
+        self.assertEqual(iol.dir_name('he_root', 'legacy'), '08_HostExpression')
+        self.assertEqual([p.name for p in (std[k] for k in iol.HOSTEXPR_STAGES)],
+                         ['01_HostRef', '02_Quant', '03_QC', '04_Labels',
+                          '05_Coexp', '06_DE', '07_Enrich', '08_LoadScan',
+                          '09_Report'])
+        self.assertEqual(std['quant'], out / '02_Quant')
+        self.assertEqual(std['coexp'], out / '05_Coexp')
+        self.assertEqual(std['de'], out / '06_DE')
+        self.assertEqual(std['loadscan'], out / '08_LoadScan')
+        self.assertEqual(std['enrich'], out / '07_Enrich')
+        self.assertEqual(legacy['report'], out / '09_Report')
+
 
 class TestLocateAndManifest(unittest.TestCase):
     def _mk(self, root: Path, centroids: Path, taxonomy: Path):
@@ -234,6 +263,19 @@ class TestLocateAndManifest(unittest.TestCase):
             self.assertIsInstance(tax, list) and self.assertTrue(tax)
             self.assertEqual(tax[0], root / "07_Taxonomy/integrated/final_integrated_classification.tsv")
 
+    def test_locate_standard_cluster_writes_4_centroids(self):
+        """standard 布局下 cluster_pipeline 实际写 06_CLUSTER/4_centroids (legacy
+        内部命名)。241 真实数据实测: 契约路径 06_CLUSTER/centroids 未命中, 
+        locate_centroids 必须靠 */* 限深兜底命中真实产物, 否则 taxonomy/host/
+        rescue 被连锁跳过。"""
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            self._mk(root,
+                     root / "06_CLUSTER/4_centroids/final_centroids.fasta",
+                     root / "07_Taxonomy/integrated/final_integrated_classification.tsv")
+            self.assertEqual(iol.locate_centroids(root),
+                             root / "06_CLUSTER/4_centroids/final_centroids.fasta")
+
     def test_locate_taxonomy_per_sample_files(self):
         """taxonomy 真实形态 = 逐样本 {sample}.integrated/; locate_taxonomy 返回全部"""
         with tempfile.TemporaryDirectory() as td:
@@ -271,6 +313,32 @@ class TestLocateAndManifest(unittest.TestCase):
                                    {"centroids": "/a.fasta"}, "t")
             self.assertEqual(m, proj / "90_Handoff" / "handoff_manifest.tsv")
             self.assertTrue(m.is_file())
+
+    def test_manifest_lands_at_project_root_hostexpr(self):
+        """⑧ 宿主表达根同样属于管线独立根, 台账上提到项目根。"""
+        with tempfile.TemporaryDirectory() as td:
+            proj = Path(td)
+            hroot = proj / "08_HostExpression"
+            hroot.mkdir()
+            m = iol.write_boundary(hroot, "hostexpr",
+                                   {"tpm": "/t.tsv"}, "host_expression.py")
+            self.assertEqual(m, proj / "90_Handoff" / "handoff_manifest.tsv")
+            self.assertTrue(m.is_file())
+
+    def test_locate_detection_summary(self):
+        """④→⑧ 边界: all_viruses.best.summary.tsv 两布局可定位。"""
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            p = root / "01_Detection/summary/all_viruses.best.summary.tsv"
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text("Sample\tAdjusted_Species\n", encoding="utf-8")
+            self.assertEqual(iol.locate_detection_summary(root), p)
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)          # legacy 目录名
+            p = root / "01_detection/summary/all_viruses.best.summary.tsv"
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text("Sample\n", encoding="utf-8")
+            self.assertEqual(iol.locate_detection_summary(root), p)
 
 
 if __name__ == "__main__":
