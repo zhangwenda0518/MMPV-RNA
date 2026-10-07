@@ -615,10 +615,19 @@ class TestCheckTools(unittest.TestCase):
                           check_tools(self.cfg))
 
     def test_missing_db_reported(self):
+        """默认模式 (不跳过 Stage3) 缺 RVDB 库必须报出来."""
         self.cfg.rvdb_dmnd = str(self.db / "gone.dmnd")
         with mock.patch("eve_scan_core.shutil.which", return_value="/x"):
             self.assertIn(f"rvdb_dmnd={self.cfg.rvdb_dmnd}",
                           check_tools(self.cfg))
+
+    def test_skip_s3_does_not_require_rvdb_db(self):
+        """--skip-s3 不跑 Stage3, 缺 RVDB 库不该拦在开跑前 (doc.md 承诺该模式可用)。"""
+        self.cfg.rvdb_dmnd = str(self.db / "gone.dmnd")
+        with mock.patch("eve_scan_core.shutil.which", return_value="/x"):
+            self.assertIn(f"rvdb_dmnd={self.cfg.rvdb_dmnd}",
+                          check_tools(self.cfg))          # 默认仍查
+            self.assertEqual(check_tools(self.cfg, skip_s3=True), [])
 
 
 class TestSamtoolsVersionProbe(unittest.TestCase):

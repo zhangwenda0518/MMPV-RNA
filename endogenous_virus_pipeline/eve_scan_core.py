@@ -52,6 +52,11 @@ OUTFMT1 = ("6 qseqid qlen sseqid slen stitle evalue bitscore "
            "qcovhsp pident length qstart qend")
 OUTFMT2 = ("6 qseqid sseqid pident length qstart qend sstart send "
            "evalue bitscore stitle")
+# OUTFMT1 的字段名 -> 0 基列下标 (qseqid=0, qlen=1, sseqid=2, slen=3, stitle=4,
+# evalue=5, bitscore=6, ...). 由 OUTFMT1 本体派生, 与表定义不可能漂移 ——
+# 早期 contamination_scan 手写列号 (p[1]/p[9]/p[11], 那是 OUTFMT2 的位置),
+# 喂真 OUTFMT1 表时两道闸全读错列, 污染扫描恒 0 命中.
+OUTFMT1_COLS = {f: i for i, f in enumerate(OUTFMT1.split()[1:])}
 
 # stitle 关键词 -> 科级归属 (轻量 ICTV 映射, 仅用于 ref_family 粗分类列)
 # 已知局限 (有意保留): 只匹配属/科级词根, 种名级同义词不展开 ——
@@ -189,7 +194,7 @@ def samtools_too_old(exe):
         return None
 
 
-def check_tools(cfg, need_viroid=False):
+def check_tools(cfg, need_viroid=False, skip_s3=False):
     """运行前体检: 返回缺失/不可用的工具与数据库列表 (空 = 全部就绪).
 
     抽序列只用 samtools faidx (Stage1/3 都要), 所以 samtools 必查且版本要够
@@ -197,10 +202,15 @@ def check_tools(cfg, need_viroid=False):
     跑到每个基因组的 Stage1 才炸, 几百个基因组白等几小时.
     need_viroid 时 blastn 必查, 否则类病毒层要跑到每基因组末尾才报错,
     批量长跑会白跑几小时.
+    skip_s3 时不检查 rvdb_dmnd —— `--skip-s3` 模式本来就不跑 Stage3, 缺 RVDB
+    库不该把任务拦在开跑前 (doc.md 承诺该模式可用).
     """
     missing = []
-    for label, path in [("ref_dmnd", cfg.ref_dmnd), ("pv_dmnd", cfg.pv_dmnd),
-                        ("id2div", cfg.id2div), ("rvdb_dmnd", cfg.rvdb_dmnd)]:
+    need_dbs = [("ref_dmnd", cfg.ref_dmnd), ("pv_dmnd", cfg.pv_dmnd),
+                ("id2div", cfg.id2div)]
+    if not skip_s3:
+        need_dbs.append(("rvdb_dmnd", cfg.rvdb_dmnd))
+    for label, path in need_dbs:
         if not path or not Path(os.path.expanduser(path)).exists():
             missing.append(f"{label}={path or '(未配置)'}")
     for label, exe in [("diamond", cfg.diamond or "diamond"),
@@ -990,10 +1000,17 @@ def is_contaminant_hit(sseqid, stitle=""):
 def contamination_scan(raw_tsv, out_tsv):
     """逐 query 统计污染命中占比 -> CONTAM_HDR 表; 返回 (n_query, n_contaminated).
 
+    `raw_tsv` 是 Stage1 的 diamond 原始输出 (OUTFMT1):
+        qseqid qlen sseqid slen stitle evalue bitscore qcovhsp pident length qstart qend
+    列一律按 OUTFMT1_COLS 定位 —— 不要手写下标 (历史 bug: 按 OUTFMT2 的位置读
+    sseqid/bitscore/stitle, 对真 OUTFMT1 表永不命中, 整个污染扫描恒 0).
+
     `contam_frac` 是**该 query 的全部命中里**污染命中占的比例 —— 单看命中数会把
     "打中一次 phiX 的长 contig" 和 "整条都是 phiX" 混为一谈, 占比才分得开。
     下游按 frac 阈值 (配合 n_contam_hits) 过滤; 本函数不下结论, 只报事实。
     """
+    i_sid, i_title = OUTFMT1_COLS["sseqid"], OUTFMT1_COLS["stitle"]
+    i_bits = OUTFMT1_COLS["bitscore"]
     tot = {}
     contam = {}
     top = {}
@@ -1004,16 +1021,17 @@ def contamination_scan(raw_tsv, out_tsv):
                 continue
             q = p[0]
             tot[q] = tot.get(q, 0) + 1
-            stitle = p[11] if len(p) > 11 else ""
-            if is_contaminant_hit(p[1], stitle):
+            sid = p[i_sid] if len(p) > i_sid else ""
+            stitle = p[i_title] if len(p) > i_title else ""
+            if is_contaminant_hit(sid, stitle):
                 contam[q] = contam.get(q, 0) + 1
                 # 记录该 query 的污染命中最强的那个参考 (按 bitscore)
                 try:
-                    bs = float(p[9])
+                    bs = float(p[i_bits])
                 except (ValueError, IndexError):
                     bs = 0.0
                 if q not in top or bs > top[q][0]:
-                    top[q] = (bs, p[1], stitle)
+                    top[q] = (bs, sid, stitle)
     n_contam = 0
     with open(out_tsv, "w", encoding="utf-8") as fo:
         fo.write(CONTAM_HDR)

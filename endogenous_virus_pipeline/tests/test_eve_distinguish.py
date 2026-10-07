@@ -346,7 +346,8 @@ class TestRunAllPlumbing(unittest.TestCase):
         self.assertTrue((d / 'out' / 'dna_vs_eve_filter.tsv').is_file())
 
     def test_discovery_dir_resolves_inputs_and_default_out(self):
-        # -D 指向一次发现管道输出: query/evidence 按阶段目录约定定位, OUT 默认 08b_EVE_Distinguish
+        # -D 指向一次发现管道输出: query/evidence 按阶段目录约定自动定位;
+        # 非 standard 根名 (目录不叫 03_Discovery) 维持旧默认 08b_EVE_Distinguish
         disc = self.tmp / 'onekp-virus'
         write(disc / '10_Reports' / 'eve_candidates.fasta', QUERY_FA)
         write(disc / '10_Reports' / 'rescue_evidence_scored.tsv', EVIDENCE_TSV)
@@ -358,7 +359,20 @@ class TestRunAllPlumbing(unittest.TestCase):
         self.assertIn(_posix(disc / '10_Reports' / 'eve_candidates.fasta'), _posix(printed[0]))
         out = disc / '08b_EVE_Distinguish'
         self.assertTrue((out / 'dna_vs_eve_filter.tsv').is_file(),
-                        '-D 时 OUT 应默认 <DISCOVERY>/08b_EVE_Distinguish')
+                        '非 03_Discovery 根名时 OUT 应默认 <DISCOVERY>/08b_EVE_Distinguish')
+
+    def test_standard_discovery_root_routes_to_eve_root(self):
+        # standard 布局 (-D 指向 03_Discovery): 产物归口 ⑥ 输出根 <项目>/06_EVE/eve_distinguish
+        disc = self.tmp / '03_Discovery'
+        write(disc / '10_Reports' / 'eve_candidates.fasta', QUERY_FA)
+        write(disc / '10_Reports' / 'rescue_evidence_scored.tsv', EVIDENCE_TSV)
+        r = run(['-D', str(disc), '--no-host'], env=self.env)
+        self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
+        out = self.tmp / '06_EVE' / 'eve_distinguish'
+        self.assertTrue((out / 'dna_vs_eve_filter.tsv').is_file(),
+                        '-D 指向 03_Discovery 时 OUT 应默认 <项目>/06_EVE/eve_distinguish')
+        self.assertFalse((disc / '08b_EVE_Distinguish').exists(),
+                         'standard 布局不应再往发现根里写 08b_EVE_Distinguish')
 
     def test_explicit_out_beats_discovery_default(self):
         disc = self.tmp / 'onekp-virus'

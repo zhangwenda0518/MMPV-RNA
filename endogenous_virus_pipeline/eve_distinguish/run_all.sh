@@ -52,7 +52,8 @@
 #   -q, --query FILE       待判别候选 fasta (必填, 除非用 -D 自动定位)
 #   -e, --evidence FILE    rescue_evidence_scored.tsv, s3 靠它取 tax_family/CheckV (必填)
 #   -D, --discovery DIR    发现管道一次输出目录; 按阶段目录约定自动找 query/evidence/out
-#   -o, --outdir DIR       产物目录 (默认: -D 时为 <DISCOVERY>/08b_EVE_Distinguish, 否则 ./eve_distinguish_out)
+#   -o, --outdir DIR       产物目录 (默认: -D 指向 03_Discovery 时归口 <项目>/06_EVE/eve_distinguish,
+#                          其余形态 <DISCOVERY>/08b_EVE_Distinguish, 都可被 -o 显式覆盖)
 #   -A, --asm-root DIR     OneKP 转录组汇编根目录 (映射表第三列相对它); 寄主否决必需
 #   -m, --host-map FILE    三列 TSV: 样本号 <TAB> 4位代码 <TAB> 物种目录名 (默认: 模块自带)
 #       --baits FILE       Caulifinder banks (TRUE/FALSE 编码头; 默认: 模块自带 baits.fa)
@@ -162,7 +163,15 @@ if [ -n "$DISCOVERY" ]; then
             if [ -s "$e" ]; then EVIDENCE="$e"; break; fi
         done
     fi
-    [ -n "$OUT" ] || OUT="$DISCOVERY/08b_EVE_Distinguish"
+    if [ -z "$OUT" ]; then
+        # 产物归口 ⑥ 的输出根 (2026-10-07 用户裁定): standard 布局下 -D 指向
+        # 03_Discovery, 其父目录即项目根, 判别产物随 ⑥ 落 <项目>/06_EVE/eve_distinguish/;
+        # 其余形态 (legacy 共享根 / 自定义目录名) 维持旧默认 08b_EVE_Distinguish 不动。
+        case "$(basename "$DISCOVERY")" in
+            03_Discovery) OUT="$DISCOVERY/../06_EVE/eve_distinguish" ;;
+            *)            OUT="$DISCOVERY/08b_EVE_Distinguish" ;;
+        esac
+    fi
 fi
 [ -n "$OUT" ] || OUT="$PWD/eve_distinguish_out"
 

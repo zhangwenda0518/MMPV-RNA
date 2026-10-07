@@ -245,7 +245,8 @@ def main(argv=None):
                     merge_d=args.merge_distance, evalue=args.evalue,
                     host_bs=args.host_bs, viral_bs=args.viral_bs,
                     cmd_timeout=args.cmd_timeout)
-    missing = check_tools(cfg, need_viroid=args.blastn_viroid)
+    missing = check_tools(cfg, need_viroid=args.blastn_viroid,
+                          skip_s3=args.skip_s3)
     if missing:
         log.error("缺少工具/数据库: %s", "; ".join(missing))
         return 1

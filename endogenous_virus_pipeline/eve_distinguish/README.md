@@ -62,8 +62,8 @@ bash run_all.sh -q candidates.fasta -e evidence.tsv -A /asm -t 32 \
 |---|---|---|
 | `-q/--query FILE` | 无 | 待判别候选 fasta（必填，除非用 `-D` 自动定位） |
 | `-e/--evidence FILE` | 无 | `rescue_evidence_scored.tsv`，s3 靠它取 tax_family/CheckV（必填） |
-| `-D/--discovery DIR` | 无 | 发现管道一次输出目录；自动找 query/evidence，OUT 默认 `<DISCOVERY>/08b_EVE_Distinguish` |
-| `-o/--outdir DIR` | `-D` 时如上，否则 `./eve_distinguish_out` | 产物目录 |
+| `-D/--discovery DIR` | 无 | 发现管道一次输出目录；自动找 query/evidence，OUT 默认：目录名为 `03_Discovery`（standard）时归口 `<项目>/06_EVE/eve_distinguish`，其余 `<DISCOVERY>/08b_EVE_Distinguish` |
+| `-o/--outdir DIR` | `-D` 时如上，否则 `./eve_distinguish_out` | 产物目录（显式给出则优先于上述默认） |
 | `-A/--asm-root DIR` | 无 | OneKP 转录组汇编根目录（映射表第三列相对它）；**寄主否决必需** |
 | `-m/--host-map FILE` | 模块自带 `host_sample_map.tsv` | 三列 TSV：样本号 `<TAB>` 4位代码 `<TAB>` 物种目录名 |
 | `--baits FILE` | 模块自带 `baits.fa` | Caulifinder banks（TRUE/FALSE 编码头） |
@@ -231,7 +231,7 @@ HSP70 假阳性的来源：`cd24029` = ASKHA_NBD_HSP70_DnaK_HscA_HscC（伴侣�
 |---|---|---|
 | 1 | 挂在 `virome_pipeline.py --stage eve` 上，`QUERY`/`EVIDENCE`/`OUT_DIR`/`ASM_ROOT` 全由主管道注入；忘开这一阶段就静默漏掉整类假阳性 | 独立后运行脚本 + 自有 CLI；缺 `-A` 直接报错，`--no-host` 才允许不带 |
 | 2 | verdict→action 映射写在 `virome_pipeline.py` 的 `run_eve_distinguish` 里，与 s3 的 verdict 定义分居两处 | 搬到 `s4_filter.py`，与 verdict 生产者在同一模块；表外新 verdict 返回非零（已按 REVIEW 兜底写全），调用方不会不知道 |
-| 3 | `OUT_DIR` 不给就落调用方 cwd，产物散落 | `-D` 时默认 `<DISCOVERY>/08b_EVE_Distinguish`，`-o` 显式覆盖 |
+| 3 | `OUT_DIR` 不给就落调用方 cwd，产物散落 | `-D` 时默认落点：standard（目录名 `03_Discovery`）归口 `<项目>/06_EVE/eve_distinguish`，其余 `<DISCOVERY>/08b_EVE_Distinguish`；`-o` 显式覆盖 |
 | 4 | Windows/Git Bash 上 `ln -sf` 失败（无符号链接权限），`set -e` 让整个运行当场终止 | `link_or_copy()`：软链不成就复制（面板/dmnd 都是只读复用，复制同样可复现） |
 | 5 | 寄主 blastn 跑完不知道有没有真的比上（全 `#NOGZ` 也看不出来） | 循环后打印命中行数 / 成功 scaffold 数 / 跳过行数，零命中时明确警告"寄主同源否决整条失效" |
 | 6 | `$DIAMOND blastx ... 2>/dev/null` 且不接 rc：diamond 被 OOM killer 干掉或段错误时 `set -e` 只让它静默退出，上游看不到任何原因 | `run_or_die`：失败即打印 `FAILED(rc)` + 完整命令行并中断，不留半成品表 |
@@ -532,7 +532,8 @@ EVE_suspect`，不冒充铁证），或把矛盾转 `host_conflict_review` 人�
 ## 交接
 
 - **调用方**：跑完 `virome_discovery_pipeline` 之后单独执行本脚本（见上文"运行"），
-  产物默认落在 `<DISCOVERY>/08b_EVE_Distinguish/`。
+  产物默认归口 ⑥ 输出根：`-D` 指向 `03_Discovery`（standard 布局）时落
+  `<项目>/06_EVE/eve_distinguish/`；其余目录名维持 `<DISCOVERY>/08b_EVE_Distinguish/`。
 - **下游清除顺序**（数字为 v6.1，1,027 条实测）：先看 `host_contamination_likely`
   （**2**，不再是 48 —— v6 起这一列要求自身物种命中 + 上游三条同源通道全无记录，
   逐个查证后大部分转去了 `host_conflict_review` 33 条，需人工定案而不是直接删）；

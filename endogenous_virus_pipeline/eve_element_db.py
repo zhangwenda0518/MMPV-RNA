@@ -38,9 +38,9 @@ locus 与 loci.fa 头两侧都过 locus_key() 再 join: 头是抽序列工具按
 
 用法:
   # 只跑不需要额外参考库的四个阶段 (默认)
-  python eve_element_db.py -o eve_results --stages collect,cluster,regions,consensus
+  python eve_element_db.py -o 06_EVE --stages collect,cluster,regions,consensus
   # 全量
-  python eve_element_db.py -o eve_results --stages all -t 40 -J 8 -B batch.tsv \
+  python eve_element_db.py -o 06_EVE --stages all -t 40 -J 8 -B batch.tsv \
       --cdd-db ~/database/cdd/cdd-db/cdd_db --rt-ref RT_refs.fa --run-phylo
   # 断点续跑: 重发同命令 (已完成阶段按产物跳过), 要重跑就加 --force
 
@@ -128,7 +128,7 @@ class ElementConfig:
     mmseqs/mafft/RepeatMasker), 合到一起会逼着每一层去填自己根本用不到的字段,
     也说不清哪个阶段的哪个参数才是准的.
     """
-    outdir: str = "eve_results"
+    outdir: str = "06_EVE"                 # ⑥ 输出根约定, 与 eve_screen.py 默认一致
     elem_dir: str = ""                     # 空 = <outdir>/05_Elements
     threads: int = 40
     jobs: int = 4                          # rm 阶段并行基因组数
@@ -983,8 +983,8 @@ def build_parser():
         description="元件级 (element-level) EVE 后处理层: 跨基因组聚类 → 元件区 → "
                     "consensus → 拷贝数/结构域/系统发育")
     g = p.add_argument_group("输入/输出")
-    g.add_argument("-o", "--outdir", default="eve_results",
-                   help="eve_screen.py 的输出根目录 (也是本层输出根目录)")
+    g.add_argument("-o", "--outdir", default="06_EVE",
+                   help="eve_screen.py 的输出根目录 (也是本层输出根目录; 默认 06_EVE)")
     g.add_argument("-B", "--batch", default=None,
                    help="批量 TSV: 每行 NAME<TAB>基因组路径 (rm 阶段必需; 与 "
                         "eve_screen.py -B 同一张表)")

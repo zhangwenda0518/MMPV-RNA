@@ -181,7 +181,8 @@ def build_parser():
                    help="仅列出任务 (name\\tpath) 不执行")
 
     g = p.add_argument_group("运行")
-    g.add_argument("-o", "--outdir", default="eve_results", help="输出根目录")
+    g.add_argument("-o", "--outdir", default="06_EVE",
+                   help="输出根目录 (默认 06_EVE, 与 standard 布局的 ⑥ 输出根约定一致)")
     g.add_argument("-t", "--threads", type=int, default=40)
     g.add_argument("-J", "--jobs", type=int, default=1,
                    help="并行基因组数 (总核数 = jobs x threads)")
@@ -308,7 +309,8 @@ def main(argv=None):
         return 1
 
     cfg = jobs[0]["cfg"]
-    missing = check_tools(cfg, need_viroid=args.blastn_viroid)
+    missing = check_tools(cfg, need_viroid=args.blastn_viroid,
+                          skip_s3=args.skip_s3)
     if missing:
         log.error("缺少工具/数据库: %s", "; ".join(missing))
         return 1

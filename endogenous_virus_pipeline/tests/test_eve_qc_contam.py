@@ -28,9 +28,15 @@ CAMV_TITLE = "Capsid protein [Cauliflower mosaic virus]"
 
 
 def raw_row(q, sid, title, bits):
-    """造一行 OUTFMT1 (12 列). 列序见 eve_scan_core.OUTFMT1。"""
-    return "\t".join([q, sid, "90", "100", "1", "300", "1", "300",
-                      "1e-50", str(bits), "1", title])
+    """造一行真 OUTFMT1 (12 列). 列序见 eve_scan_core.OUTFMT1:
+    qseqid qlen sseqid slen stitle evalue bitscore qcovhsp pident length qstart qend
+
+    注意 (审核 F29a): 旧 fixture 把 sid/title/bits 摆在实现恰好读错的位置上
+    (p[1]/p[9]/p[11]), 等于把"读错列"锁成期望行为; 必须按真列序造行, 回归测试
+    才有约束力 —— 一旦实现再退回错列, 这些用例立刻失败。
+    """
+    return "\t".join([q, "90", sid, "100", title, "1e-50", str(bits),
+                      "0.9", "55", "80", "1", "120"])
 
 
 class TestContaminantPredicate(unittest.TestCase):
@@ -68,6 +74,26 @@ class TestContaminationScan(unittest.TestCase):
         f = self.d / "raw.tsv"
         f.write_text("\n".join(rows) + "\n", encoding="utf-8", newline="\n")
         return f
+
+    def test_real_outfmt1_phix_hit_is_detected(self):
+        """真 diamond OUTFMT1 行里的 phiX174 命中必须被检出 (防回归)。
+
+        这是 F29a 的核心断言: 生产调用方喂的就是这种 12 列真表, 旧实现按
+        p[1]/p[9]/p[11] 取 sseqid/bitscore/stitle (那是 OUTFMT2 的位置), 对真表
+        永远读成 qlen/length/qend, 两道闸全不命中 -> 污染扫描恒 0。
+        """
+        real = ("contig1_sliding:1-50000\t50000\tNP_040704.1\t5386\t"
+                "DNA replication initiation [Escherichia phage phiX174]\t"
+                "1e-150\t500\t0.95\t98.5\t500\t1\t500")
+        self.assertEqual(len(real.split("\t")), 12)
+        raw = self._write([real])
+        out = self.d / "c.tsv"
+        n_q, n_hit = contamination_scan(raw, out)
+        self.assertEqual((n_q, n_hit), (1, 1))
+        row = out.read_text(encoding="utf-8").splitlines()[1].split("\t")
+        self.assertEqual(row[0], "contig1_sliding:1-50000")
+        self.assertEqual(row[4], "NP_040704.1")     # accession 通道命中
+        self.assertIn("phiX174", row[5])
 
     def test_frac_is_share_of_all_hits_not_count(self):
         """C1 三条命中里 1 条 phiX -> frac=0.333; C2 两条里 2 条 -> 1.0。

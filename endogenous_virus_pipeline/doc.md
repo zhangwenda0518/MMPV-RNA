@@ -54,7 +54,9 @@ v5 起它搬进本管线，作为**跑完发现管道再单独调用**的后运�
 （缺 `-A` 直接报错而不是静默降级）；`virome_pipeline.py` 里的 eve 阶段接入已整体移除。
 
 ```bash
-# 指向一次发现管道的输出目录: 候选/证据表按阶段目录约定自动定位, 产物落 <DISCOVERY>/08b_EVE_Distinguish
+# 指向一次发现管道的输出目录: 候选/证据表按阶段目录约定自动定位;
+# standard 布局(-D 指向 03_Discovery)产物归口 <项目>/06_EVE/eve_distinguish,
+# 其余目录名维持旧默认 <DISCOVERY>/08b_EVE_Distinguish (均可 -o 覆盖)
 bash endogenous_virus_pipeline/eve_distinguish/run_all.sh \
     -D /path/to/onekp-virus -A /path/to/1kp/assemblies -t 32
 ```
@@ -144,7 +146,7 @@ error 而不中断整批）。
 | `-n/--name` | 文件名 | 基因组名（自动清洗非法字符） |
 | `-B/--batch` | — | 批量 TSV：每行 `NAME<TAB>/path/to/genome.fa`（路径可为 `.tar.gz`/`.gz` 包；**NAME 必须唯一**，重名开跑前报错中止） |
 | `--list` | 关 | 干跑：只列任务不执行 |
-| `-o/--outdir` | `eve_results` | 输出根目录 |
+| `-o/--outdir` | `06_EVE` | 输出根目录（standard 布局的 ⑥ 输出根约定） |
 | `-t/--threads` | 40 | 每基因组线程数 |
 | `-J/--jobs` | 1 | 并行基因组数（总核数 = jobs × threads；256 核机推荐 `-J5 -t40`） |
 | `--stage` | `all` | `discover/verdict/annotate` 逗号组合或 `all`（别名 `1,2,3`） |
@@ -310,10 +312,10 @@ sequence`），故 `check_extracted()` 做产物核对——这条不查就是�
 
 ```bash
 # 只跑不需要额外参考库的四个阶段（默认）
-python eve_element_db.py -o eve_results --stages collect,cluster,regions,consensus
+python eve_element_db.py -o 06_EVE --stages collect,cluster,regions,consensus
 
 # 全量（rm 要 -B 与 RepeatMasker；cdd 要 mmseqs profile 库；phylo 出命令脚本）
-python eve_element_db.py -o eve_results --stages all -t 40 -J 8 -B batch.tsv \
+python eve_element_db.py -o 06_EVE --stages all -t 40 -J 8 -B batch.tsv \
     --cdd-db ~/database/cdd/cdd-db/cdd_db --rt-ref RT_refs.fa --run-phylo
 ```
 
