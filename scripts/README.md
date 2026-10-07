@@ -14,7 +14,7 @@
 | `blacklist/` | 宿主非植物黑名单的构建、同步与验证流水（layer1~4） | `bl_layer1_delete.py`、`bl_layer4_sdt.py`、`bl_backup.sh` |
 | `db_query/` | 针对结果数据库/TSV 的临时查询脚本 | `q_host.py`、`q_mimi*.py`、`q_blacklist_candidates.py` |
 | `patch/` | 已合入管线代码的一次性补丁留档 | `patch_host_blacklist*.py`、`patch_resume.py`、`rerun_sdt.py` |
-| `audit/` | 结果审计、交叉核对与黑名单影响评估 | `audit_plant_fam_genera*.py`、`verify_blacklist*.py`、`scan_record_level_499.py` |
+| `audit/` | **仅存常态审计器** `check_io_handoffs.py`（legacy 目录名字面量残留扫描）；其余 339 项一次性审计脚本/报表已于 2026-10-07 归档至 `../archive/20261007_audit_cleanup/`（本地保留，不入库） | `check_io_handoffs.py` |
 | `pilot_rvdb/` | RVDB 数据库试点分析（HMM 信号、shuffle 零假设等） | `pilot_rvdb_v3.py`、`analyze_rvdb_pilot.py`、`rvdb_hmm_per_contig.tsv` |
 | `mapper_bench/` | 比对器基准测试（bowtie2/minibwa/ViReMa 对比） | `bt2_ab_test.sh`、`three_way_bench.sh`、`repro_virema.sh` |
 | `utils/` | 通用小工具与服务器端启动器 | `md2docx.py`（Markdown→Word）、`run_onekp_resume.sh` |

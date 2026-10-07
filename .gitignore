@@ -55,6 +55,13 @@ submission_gui/samples/_test_roundtrip_out.*
 .wisp/
 .impeccable/
 .publication_metadata_plots/
+.tmp_demo_funnel/
+.zcode/
+.pytest_cache/
+.ruff_cache/
+
+# ① 管线本地产物
+public_metadata_pipeline/stat_prescreen_output/
 
 # 管线运行结果 / 备份 / 草稿 (本地保留, 不入库)
 virome_phylo_pipeline/phylo_results/

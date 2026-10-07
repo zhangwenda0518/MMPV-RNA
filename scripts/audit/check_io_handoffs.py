@@ -50,6 +50,7 @@ SCOPES = [
     "data_preprocessing_pipeline", "virome_discovery_pipeline",
     "virome_analysis_pipeline", "public_metadata_pipeline",
     "virome_phylo_pipeline", "endogenous_virus_pipeline",
+    "host_expression_pipeline",
     "metadata_gui", "submission_gui", "mmpv_common",
 ]
 WHITELIST = (
@@ -57,6 +58,7 @@ WHITELIST = (
     "phylo_results/", "_debug_stage1",
     "integrated_summary.py",
     "endogenous_virus_pipeline/tests/", "virome_discovery_pipeline/tests/",
+    "host_expression_pipeline/tests/",
 )
 
 
