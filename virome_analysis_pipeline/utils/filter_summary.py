@@ -298,10 +298,10 @@ def main():
         pass_counts = passed.group_by(sample_col).len().to_pandas() if len(passed) > 0 else None
         fail_counts = failed.group_by(sample_col).len().to_pandas() if len(failed) > 0 else None
 
-        samples = sorted(set(
-            list(pass_counts[sample_col]) if pass_counts is not None else [] +
-            list(fail_counts[sample_col]) if fail_counts is not None else []
-        ))
+        # 两侧样本取并集 (原写法受运算符优先级影响: pass 非空时 fail-only 样本会从 x 轴消失)
+        pass_samples = list(pass_counts[sample_col]) if pass_counts is not None else []
+        fail_samples = list(fail_counts[sample_col]) if fail_counts is not None else []
+        samples = sorted(set(pass_samples + fail_samples))
 
         pass_dict = dict(zip(pass_counts[sample_col], pass_counts['len'])) if pass_counts is not None else {}
         fail_dict = dict(zip(fail_counts[sample_col], fail_counts['len'])) if fail_counts is not None else {}

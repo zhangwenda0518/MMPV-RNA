@@ -142,9 +142,9 @@ def main():
     g.add_argument("--reads_dir", default=None, help="Clean reads directory")
     g.add_argument("--output_dir", "-o", default=None, help="Output root directory")
     g.add_argument("--io-layout", choices=["legacy", "standard"], default=None,
-                   help="I/O directory layout: legacy=v3.0 names (default); "
-                        "standard=unified numbering (doc/IO_LAYOUT_DESIGN.md); "
-                        "or set env MMPV_IO_LAYOUT")
+                   help="I/O directory layout: standard=unified numbering (default); "
+                        "legacy=v3.0 names (for existing projects/checkpoints; "
+                        "doc/IO_LAYOUT_DESIGN.md); or set env MMPV_IO_LAYOUT")
     g.add_argument("--ref_info", default=None, help="Reference info TSV")
     g.add_argument("--reference", default=None, help="Reference genome FASTA")
 
@@ -338,7 +338,7 @@ def main():
     script_dir = Path(__file__).parent.resolve()
     out = Path(args.output_dir).resolve()
 
-    # 布局解析 (CLI > MMPV_IO_LAYOUT > legacy) 并写回环境供子进程继承
+    # 布局解析 (CLI > MMPV_IO_LAYOUT > standard) 并写回环境供子进程继承
     normalize_layout_env(getattr(args, "io_layout", None))
 
     # Redirect all temp files to pipeline's own tmp dir (avoid /tmp overflow)

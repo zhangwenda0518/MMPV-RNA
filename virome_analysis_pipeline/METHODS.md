@@ -23,12 +23,16 @@
 
 ## 3. 高置信过滤（Stage 2）
 
-用 `filter_summary.py` 对最佳命中表做多维阈值过滤，仅保留高置信阳性。默认阈值（`--filter_cov` / `--filter_depth`）：
+用 `filter_summary.py` 对最佳命中表做多维阈值过滤，仅保留高置信阳性。默认阈值（`--filter_cov` / `--filter_depth` / `--filter_reads`）：
 
 - 最小覆盖度 `filter_cov` = **50%**
 - 最小平均深度 `filter_depth` = **5X**
+- 最小组装 EM reads `filter_reads` = **100**（对应 `Asm_EM_Reads ≥ 100`）
 
 记录通过所有阈值者输出至 `high_conf.summary.tsv`（本数据集 442 条样本×病毒关联、15 个高置信病毒、285 个样本），未通过者至 `high_conf.summary.discarded.tsv`。逐病毒/逐样本聚合统计写入 `filter_stats.per_virus.tsv` / `per_sample.tsv`。
+<!-- TODO(作者确认): 此处数字与 virome_analysis_pipeline/PAPER_known_virus_pipeline.md 的验证集数字（7 samples / 9 species / 25 variants / 22 genomes）不一致，需统一口径 -->
+
+**患病率（prevalence）分母定义**：`panvirome_prevalence.py` 汇总的序列级发生率总表（`prevalence_full_table.tsv`）中，每条病毒（以 contig_id/vOTU 为最小单元）的患病率 = 去重后的检出样本数（`high_conf.summary.tsv` 的 `Sample` 列）/ 分母 N。分母 N 为 detect 阶段（`batch_virus_depth.py`）该宿主物种实际处理的样本总数（即 detect 日志中的"总计发现样本"数），按宿主物种分别统计，由 detect 产物自动推导：优先取 `logs/pipeline_*.log` 中"总计发现样本: N 个"（多份日志取最新），其次 `logs/sample_resource_usage.tsv` 数据行数，再次 `logs/sample_*.log` 标记文件数；三者均不可得时报错退出并写 NA，也可用 `--sample-counts sp:N` 显式指定。若改用其它分母口径，需在方法/图注中显式声明。
 
 ## 4. 变异检测与功能注释（Stage 3）
 
@@ -79,9 +83,9 @@
 
 | 工具 | 版本 | 环境/位置 |
 |---|---|---|
-| Salmon | 2.5.1 | `.pixi` |
+| Salmon | 2.5.1 [待服务器核实：pixi 环境锁定版本] | `.pixi` |
 | samtools | 1.21 | `mambaforge` |
-| bcftools | 1.6 | `mambaforge` |
+| bcftools | 1.6 [待服务器核实：pixi 环境锁定版本] | `mambaforge` |
 | iVar | 1.4.4 | `biosoft/binary` |
 | freebayes | v1.3.1 | `biosoft` (MaSuRCA) |
 | LoFreq | 2.1.5 | `mambaforge` |

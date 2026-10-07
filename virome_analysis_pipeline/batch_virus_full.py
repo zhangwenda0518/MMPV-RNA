@@ -5,7 +5,7 @@ batch_virus_full.py — 桥接 VAP 产出与 OmniVirusAssembler 的自动化批�
 1. 严格规范化 Taxonomy 命名，消除空格、符号及括号。
 2. 按 [Taxonomy_Accession]/[Sample_Accession]/ 结构进行目录分发归档。
 3. 严格的双端 Reads 识别正则匹配 (修复 SRR 样本名冲突问题)。
-4. 支持基于 Covered% 过滤无效或极低丰度靶标。
+4. 支持基于覆盖率 (Rep_Coverage(%) / Covered%) 过滤无效或极低丰度靶标。
 """
 
 import argparse
@@ -185,6 +185,16 @@ def main():
     acc_col = 'Accession' if 'Accession' in df.columns else 'Rep_Accession' if 'Rep_Accession' in df.columns else None
     if not acc_col:
         sys.exit("❌ Summary 表格缺失 'Accession' 列。")
+
+    # 覆盖率列: 编排器传入的 summary 用 Rep_Coverage(%), Stage3 变体 summary 用 Covered%。
+    # 两列都缺时直接报错退出, 避免 --min_covered 静默失效 (恒不过滤)。
+    if 'Rep_Coverage(%)' in df.columns:
+        cov_col = 'Rep_Coverage(%)'
+    elif 'Covered%' in df.columns:
+        cov_col = 'Covered%'
+    else:
+        sys.exit("❌ Summary 表格缺失覆盖率列 ('Rep_Coverage(%)' 或 'Covered%'), "
+                 "无法执行 --min_covered 过滤。")
         
     out_base = Path(args.outdir)
     out_base.mkdir(parents=True, exist_ok=True)
@@ -200,13 +210,16 @@ def main():
         sample = str(row['Sample']).strip()
         virus = str(row[acc_col]).strip()
         
-        cov_val = 100.0  
-        if 'Covered%' in row:
+        # 覆盖率: 空值/非法值按 0.0 处理 (min_covered > 0 时会被过滤)
+        cov_raw = row[cov_col]
+        if pd.isna(cov_raw):
+            cov_val = 0.0
+        else:
             try:
-                cov_val = float(str(row['Covered%']).replace('%', ''))
-            except ValueError:
+                cov_val = float(str(cov_raw).replace('%', ''))
+            except (ValueError, TypeError):
                 cov_val = 0.0
-                
+
         if cov_val <= args.min_covered:
             skipped_cov += 1
             continue

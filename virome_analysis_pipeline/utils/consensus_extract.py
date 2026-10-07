@@ -70,10 +70,16 @@ def process_single_sample(fasta_path, gb_path, out_dir, fill_n=False):
 
     try:
         consensus_seqs = SeqIO.to_dict(SeqIO.parse(fasta_path, "fasta"))
-    except: return None
+    except Exception as e:
+        # 解析失败不再静默消失: 记录 skip 原因进汇总行 (total=0, 展示层不标 🟢)
+        reason = f"PARSE_ERROR:{type(e).__name__}"
+        print(f" [WARN] 共识序列解析失败, 记入汇总: {fasta_path.name} ({type(e).__name__}: {e})",
+              file=sys.stderr)
+        return prefix, {"total": 0, "pass": 0, "fail": 0, "failed_genes": [reason]}
 
     # 初始化样本统计
-    sample_stats = {"total": 0, "pass": 0, "fail": 0, "failed_genes": []}
+    sample_stats = {"total": 0, "pass": 0, "fail": 0, "failed_genes": [],
+                    "skipped": 0, "skipped_genes": []}
 
     contigs, total_bp, n50, gc, n_pct = calculate_assembly_stats(consensus_seqs)
     print(f" 📊 全局 N 比例: {n_pct:.2f}% | 序列长度: {total_bp} bp")
@@ -94,7 +100,22 @@ def process_single_sample(fasta_path, gb_path, out_dir, fill_n=False):
                     try:
                         nuc_seq = feature.location.extract(target_contig).seq
                         ref_nuc_seq = feature.location.extract(gb_record.seq)
-                    except: continue
+                    except Exception as e:
+                        # 区分"无该基因/坐标越界"(ValueError, 预期内) 与其它异常(显式记录),
+                        # 计数并 WARN, 不再静默 continue
+                        kind = "absent" if isinstance(e, ValueError) else f"error:{type(e).__name__}"
+                        sample_stats["skipped"] += 1
+                        sample_stats["skipped_genes"].append(f"{raw_name}:{kind}")
+                        print(f" [WARN] 特征提取跳过({kind}): {raw_name} @ {prefix}: {e}", file=sys.stderr)
+                        continue
+
+                    if len(nuc_seq) == 0 or len(ref_nuc_seq) == 0:
+                        # 坐标完全越界时 extract 返回空序列 (部分 Biopython 版本不报错),
+                        # 继续会对空序列算 N 比例 (ZeroDivisionError 终止整轮) → 同样显式跳过
+                        sample_stats["skipped"] += 1
+                        sample_stats["skipped_genes"].append(f"{raw_name}:out_of_range")
+                        print(f" [WARN] 特征提取为空(坐标越界), 跳过: {raw_name} @ {prefix}", file=sys.stderr)
+                        continue
 
                     orig_n_count = str(nuc_seq).upper().count('N')
                     orig_n_ratio = (orig_n_count / len(nuc_seq)) * 100
@@ -198,9 +219,15 @@ def main():
     print("-" * 60)
     
     for prefix, stats in global_summary.items():
-        pass_rate = "🟢" if stats["fail"] == 0 else ("🟡" if stats["pass"] > 0 else "🔴")
-        failed_str = ",".join(stats["failed_genes"])[:20] + ("..." if len(",".join(stats["failed_genes"])) > 20 else "")
-        failed_info = failed_str if stats["fail"] > 0 else "-"
+        # 展示原因: QC 失败基因 + 异常/缺基因跳过 (SKIP: 前缀区分)
+        reasons = list(stats["failed_genes"]) + \
+            [f"SKIP:{g}" for g in stats.get("skipped_genes", [])]
+        reason_str = ",".join(reasons)
+        # total==0 (一个特征都没提取到, 含解析失败) 不再标 🟢
+        pass_rate = "🟢" if (stats["fail"] == 0 and stats["total"] > 0) \
+            else ("🟡" if stats["pass"] > 0 else "🔴")
+        failed_str = reason_str[:20] + ("..." if len(reason_str) > 20 else "")
+        failed_info = failed_str if failed_str else "-"
         short_prefix = prefix[:23] + ".." if len(prefix) > 25 else prefix
         print(f"{pass_rate} {short_prefix:<23} | {stats['total']:<6} | {stats['pass']:<6} | {failed_info}")
     
@@ -221,7 +248,10 @@ def main():
             tsv_file.write("Sample_ID\tTotal_Features\tPassed_QC\tFailed_QC\tFailed_Genes_List\n")
             # 写入每一行数据 (\t 分隔)
             for prefix, stats in global_summary.items():
-                failed_full_list = "; ".join(stats["failed_genes"]) if stats["fail"] > 0 else "None"
+                # 写入 QC 失败 + 异常跳过 (SKIP: 前缀) 两类原因
+                all_reasons = list(stats["failed_genes"]) + \
+                    [f"SKIP:{g}" for g in stats.get("skipped_genes", [])]
+                failed_full_list = "; ".join(all_reasons) if all_reasons else "None"
                 tsv_file.write(f"{prefix}\t{stats['total']}\t{stats['pass']}\t{stats['fail']}\t{failed_full_list}\n")
         print(f" 🎉 汇总表格已成功保存至: {tsv_file_path.absolute()}")
     except Exception as e:

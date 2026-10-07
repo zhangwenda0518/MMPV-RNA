@@ -16,9 +16,24 @@ summarize_assemblies.py — 汇总 3_Virus_assemblies_final 中每个病毒的�
 import argparse
 import os
 import sys
+import re
 from pathlib import Path
 from collections import defaultdict
 import csv
+
+# RefSeq/GenBank 风格 accession 后缀 (如 NC_002634.1); 目录名以 accession 结尾
+_ACC_RE = re.compile(r'([A-Z]{1,2}_[0-9]{5,9}\.[0-9]+)$')
+
+
+def _int_or_none(value):
+    """数值字段容错解析: 空串/非法值返回 None (由调用方 WARN 并跳过)。"""
+    s = str(value).strip() if value is not None else ""
+    if not s:
+        return None
+    try:
+        return int(float(s))
+    except (ValueError, OverflowError):
+        return None
 
 
 def parse_evolution_stats(tsv_path):
@@ -35,9 +50,17 @@ def parse_evolution_stats(tsv_path):
 
 
 def extract_virus_from_dirname(dirname):
-    """从目录名提取 virus accession (最后一个 _ 之后的部分)"""
+    """从目录名提取 virus accession。
+
+    目录命名: {virus_name}_{accession}。accession 为 RefSeq 风格时
+    (如 NC_002634.1) 仅用 rsplit('_', 1) 会截成 '002634.1',
+    故优先按 accession 正则取末尾; 取不到再回退旧的 rsplit 行为。
+    """
+    m = _ACC_RE.search(str(dirname))
+    if m:
+        return m.group(1)
     # 例如: Grapevine_associated_RNA_virus_4_MW648525.1 → MW648525.1
-    parts = dirname.rsplit('_', 1)
+    parts = str(dirname).rsplit('_', 1)
     if len(parts) == 2 and '.' in parts[1]:
         return parts[1]
     return dirname
@@ -109,10 +132,19 @@ def main():
 
         sample = final_row.get('Sample', sample_dir)
         step = final_row.get('Step', '')
-        total_len = int(final_row.get('Total_Length', 0))
-        non_n = int(final_row.get('Non_N_Bases', 0))
-        n_count = int(final_row.get('N_Count', 0))
-        n50 = int(float(final_row.get('Contig_N50', 0)))
+        # 数值字段容错: 半成品/截断的 stats 文件缺字段时 WARN 并跳过该样本,
+        # 不再让单个文件的 ValueError 终止整个汇总
+        total_len = _int_or_none(final_row.get('Total_Length'))
+        non_n = _int_or_none(final_row.get('Non_N_Bases'))
+        n_count = _int_or_none(final_row.get('N_Count'))
+        n50 = _int_or_none(final_row.get('Contig_N50'))
+        if None in (total_len, non_n, n_count, n50):
+            print(f"  警告: {tsv_path} 最终行数值字段缺失/非法 "
+                  f"(Total_Length={final_row.get('Total_Length')!r}, "
+                  f"Non_N_Bases={final_row.get('Non_N_Bases')!r}, "
+                  f"N_Count={final_row.get('N_Count')!r}, "
+                  f"Contig_N50={final_row.get('Contig_N50')!r}), 跳过该样本")
+            continue
 
         # 推断 virus accession
         virus_acc = extract_virus_from_dirname(virus_dir)

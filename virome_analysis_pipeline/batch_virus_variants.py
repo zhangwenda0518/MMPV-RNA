@@ -271,17 +271,33 @@ def worker_align(args):
     out_bam = Path(out_bam_str)
     t_io = min(4, threads) 
     
+    def _fail(msg):
+        rec = f"\n[FAIL] worker_align {sname}: {msg}\n"
+        with open(log_file, "a") as lf:
+            lf.write(rec)
+        with open(master_log, "a") as mlf:
+            mlf.write(rec)
+
     try:
         if not (out_bam.exists() and resume):
             fq_arg = f"-1 '{fq['r1']}' -2 '{fq['r2']}'" if fq["r2"] else f"-U '{fq['r1']}'"
             format_flag = "-f" if fq["is_fasta"] else "-q"
             cmd = f"bowtie2 --local -p {threads} {format_flag} -x '{index_prefix}' {fq_arg} | samtools sort -@ {t_io} -o '{out_bam}'"
-            run_cmd(cmd, log_path=log_file, master_log=master_log, check=False)
-        
+            r = run_cmd(cmd, log_path=log_file, master_log=master_log, check=False)
+            if r.returncode != 0:
+                # bowtie2/samtools 失败: 清掉可能的半成品 BAM (避免 --resume 误复用), 显式记录并返回失败
+                if out_bam.exists():
+                    out_bam.unlink(missing_ok=True)
+                _fail(f"比对失败 (exit={r.returncode})")
+                return sname, None, fq["is_fasta"]
+
         bai_file = Path(str(out_bam) + ".bai")
         if out_bam.exists() and (not bai_file.exists() or bai_file.stat().st_mtime < out_bam.stat().st_mtime):
-            run_cmd(f"samtools index -@ {t_io} '{out_bam}'", log_path=log_file, master_log=master_log, check=False)
-            
+            r = run_cmd(f"samtools index -@ {t_io} '{out_bam}'", log_path=log_file, master_log=master_log, check=False)
+            if r.returncode != 0:
+                _fail(f"samtools index 失败 (exit={r.returncode})")
+                return sname, None, fq["is_fasta"]
+
         return sname, str(out_bam), fq["is_fasta"]
     except Exception as e:
         err = f"\n[Python Exception] worker_align 严重异常: {traceback.format_exc()}\n"
@@ -540,7 +556,12 @@ def worker_run_snpgenie(args):
         shutil.copy(gtf_file_str, gtf_work)
         
         cmd_sg = f"cd '{sg_dir}' && snpgenie.pl --vcfformat=2 --snpreport='{vcf_work.name}' --fastafile='{fa_work.name}' --gtffile='{gtf_work.name}'"
-        run_cmd(cmd_sg, log_path=log_file, master_log=master_log, check=False)
+        r = run_cmd(cmd_sg, log_path=log_file, master_log=master_log, check=False)
+        if r.returncode != 0:
+            # 显式失败记录 (run_cmd 已把 CMD/EXIT_CODE 写入 log_file 与 master_log)
+            with open(log_file, "a") as lf:
+                lf.write(f"\n[FAIL] SNPGenie {sample}/{virus} 运行失败 (exit={r.returncode})\n")
+            return False
         
         # 🚀 清理冗余外壳，将 SNPGenie_Results 内的所有核心分析外挂至本级目录
         sg_results_dir = sg_dir / "SNPGenie_Results"
@@ -1104,8 +1125,12 @@ class PostProcessPipeline:
 
             logger.info(f"\n🐒[3/3] 正在启动 进化动力学分析引擎 (SNPGenie) ...")
             with ProcessPoolExecutor(max_workers=min(len(tasks_sg), self.args.jobs)) as ex:
-                for _ in tqdm(as_completed([ex.submit(worker_run_snpgenie, t) for t in tasks_sg]), total=len(tasks_sg)): 
-                    pass
+                n_sg_fail = 0
+                for fut in tqdm(as_completed([ex.submit(worker_run_snpgenie, t) for t in tasks_sg]), total=len(tasks_sg)):
+                    if fut.result() is False:
+                        n_sg_fail += 1
+                if n_sg_fail:
+                    logger.warning(f"⚠️ SNPGenie 有 {n_sg_fail}/{len(tasks_sg)} 个任务失败, 详见各样本 *_snpgenie.log")
 
 
     def run(self):

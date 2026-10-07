@@ -35,7 +35,7 @@
 使用 **Salmon 2.5.1** 伪比对将 reads 比对至病毒参考序列库。判定参数：最小覆盖度 10%、最小泊松比 0.3（剔除 reads 局部堆叠假阳性）、最小平均深度 0.5X、最小 TPM 1.0、最小唯一比对 reads 10、物种 ANI 阈值 95%。输出每样本×病毒最佳命中表（覆盖率/深度/EM reads/唯一比/ANI/π/CPM/RPM/FPKM/TPM/相对丰度/支持度/泊松比）。
 
 ### 2.3 高置信过滤
-用多维阈值过滤：**最小覆盖度 50%、最小深度 5X**。通过者输出 `high_conf.summary.tsv`（442 条样本×病毒关联、15 个高置信病毒、285 个样本）。
+用多维阈值过滤：**最小覆盖度 50%、最小深度 5X、最小组装 EM reads 100（Asm_EM_Reads ≥ 100）**。通过者输出 `high_conf.summary.tsv`（442 条样本×病毒关联、15 个高置信病毒、285 个样本）。
 
 ### 2.4 变异检测与注释
 对每个高置信样本×病毒组合，提取病毒 reads 后调用变异（默认 **iVar 1.4.4**：`samtools mpileup -aa -A -d 0 -B -Q 0 | ivar variants -q 20 -t 0.01`）。动态深度过滤（mean_depth<50→DP≥10；<1000→DP≥20；否则 DP≥100；AF≥0.05），经 bcftools（1.6）`QUAL>20 && INFO/DP>=dp && INFO/AF>=frq` 双重过滤。等位基因频率表由 `extract_allele_frequency` 生成。变异注释用 **SnpEff 5.4c**；选择压力用 **SNPGenie**。
@@ -64,6 +64,7 @@ Salmon 2.5.1、samtools 1.21、bcftools 1.6、iVar 1.4.4、freebayes v1.3.1、Lo
 
 ### 3.1 病毒检测漏斗与病毒组构成
 对 1,348 份样本，检出 ≥1 病毒的样本 386 份，病原体 47 种（**Table 1**）。经高置信过滤，15 种病毒、285 个样本、442 条样本-病毒关联（**Fig. 2B**）。流行率最高的为 *Cytorhabdovirus* sp. 'lycii'（17.0%，n=224）与 *Potato spindle tuber viroid*（16.4%，n=216）（**Fig. 2A**）。
+<!-- TODO(作者确认): 此处数字（n=224 / n=216）与本文档 3.1 节 Table 2（n=186 / n=172）不一致，需统一口径 -->
 
 > **Table 1. 病毒检测与注释流程的逐级筛选统计**
 >
@@ -89,6 +90,7 @@ Salmon 2.5.1、samtools 1.21、bcftools 1.6、iVar 1.4.4、freebayes v1.3.1、Lo
 > | Potato spindle tuber viroid | 172 | 99.3 | 2248.2 | 71 | 39 | 172 |
 > | Tomato chlorotic dwarf viroid | 47 | 79.9 | 113.6 | 25 | 6 | 47 |
 > | ...（其余 12 种见结果 3.3）| | | | | | |
+<!-- TODO(作者确认): 此处数字（n=186 / n=172）与本文档 3.1 节正文（n=224 / n=216）不一致，需统一口径 -->
 
 ### 3.3 分病毒画像（15 种高置信病毒）
 

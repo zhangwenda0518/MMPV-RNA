@@ -119,7 +119,11 @@ def build_gb_record(contig_id, seq, features, taxonomy_info=None):
 
     for feat_data in features:
         start, end = feat_data['location']
-        location = FeatureLocation(start, end, strand=1)  # assume + strand
+        # 五列表规范: 互补链特征用"反转区间"(列1>列2)表示 → 解析出 start>end 即负链
+        if start > end:
+            location = FeatureLocation(end, start, strand=-1)
+        else:
+            location = FeatureLocation(start, end, strand=1)
         qualifiers = {k: v for k, v in feat_data['qualifiers'].items()}
         sf = SeqFeature(location, type=feat_data['type'], qualifiers=qualifiers)
         record.features.append(sf)

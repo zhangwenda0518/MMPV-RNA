@@ -23,7 +23,7 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 from mmpv_common.io_layout import layout_dirs as _layout_dirs
-_D = _layout_dirs(os.environ.get("MMPV_IO_LAYOUT", "legacy"))
+_D = _layout_dirs(os.environ.get("MMPV_IO_LAYOUT"))
 
 
 def _esc(v):
@@ -63,6 +63,8 @@ def collect_charts(post_dir, virus_acc):
     """Collect key chart paths for a virus (fuzzy match by accession in dir name)."""
     charts = {}
     vdir = Path(post_dir) / virus_acc
+    if not Path(post_dir).is_dir():
+        return charts
     if not vdir.exists():
         for d in Path(post_dir).iterdir():
             if d.is_dir() and virus_acc in d.name:
@@ -716,6 +718,94 @@ def _build_methods_section(viruses, overview_metrics, total_records):
     </div>'''
 
 
+def _build_funnel_section(out_dir):
+    """五阶段漏斗 (原始检出→best→高置信→全长组装→提取留存): 调 stage_funnel_summary 生成表+图并渲染 HTML。
+
+    任何失败都返回 '' (报告其余部分不受影响); 产物落在 09_Report/stage_funnel/。
+    """
+    out = Path(out_dir)
+    try:
+        _here = str(Path(__file__).parent)
+        if _here not in sys.path:
+            sys.path.insert(0, _here)
+        import stage_funnel_summary as _sfs
+        res = _sfs.build(out, out / os.path.join(_D['a_report'], 'stage_funnel'), make_plots=True)
+    except Exception as e:
+        print(f"  (stage funnel section skipped: {e})")
+        return ""
+    stages = res.get("stages")
+    if stages is None or len(stages) == 0 or int(stages["Records"].fillna(0).sum()) == 0:
+        return ""
+
+    # 指标卡片: 每阶段记录数 + 环比留存
+    cards = ""
+    for _, r in stages.iterrows():
+        ret = r.get("Retention_vs_Previous(%)", "")
+        ret_s = f' <span style="color:#c0392b;font-size:11px">&#8600;{ret}%</span>' if ret != "" else ""
+        cards += (f'<div class="card"><div class="value">{r["Records"]}</div>'
+                  f'<div class="label">{_esc(str(r["Stage"]))}{ret_s}<br>'
+                  f'<span style="font-size:10px">{r["Species"]} species &middot; {r["Samples"]} samples</span></div></div>')
+
+    # 图: 漏斗图 + 物种留存热图
+    charts = ""
+    for png, title in [(res.get("funnel_png"), "stage_funnel.png &mdash; records &amp; species per stage"),
+                       (res.get("heatmap_png"), "virus_stage_matrix.png &mdash; per-virus retention")]:
+        if png and Path(png).is_file():
+            b64 = img_to_base64(str(png), 2000)
+            if b64:
+                charts += (f'<div class="chart-card"><div class="chart-title">{title}</div>'
+                           f'<img src="data:image/png;base64,{b64}" loading="lazy" alt="{title}"></div>')
+    chart_html = f'<div class="chart-gallery">{charts}</div>' if charts else ""
+
+    # 漏斗摘要表 (5 行, 静态)
+    th = ''.join(f'<th>{_esc(c)}</th>' for c in stages.columns)
+    trs = ""
+    for _, r in stages.iterrows():
+        trs += '<tr>' + ''.join(f'<td>{_esc(str(v))}</td>' for v in r.values) + '</tr>'
+    summary_tbl = (f'<div class="tb-scroll"><table style="font-size:12px">'
+                   f'<thead><tr>{th}</tr></thead><tbody>{trs}</tbody></table></div>')
+
+    # 物种 × 阶段矩阵表 (分页, 复用 pg_tbl)
+    matrix_tbl = ""
+    mpath = Path(res["outdir"]) / "virus_stage_matrix.tsv"
+    if mpath.is_file():
+        try:
+            rows = [ln.rstrip("\n").split("\t") for ln in
+                    mpath.read_text(encoding="utf-8", errors="replace").splitlines() if ln.strip()]
+            if len(rows) > 1:
+                tid = 'tbl_funnel_matrix'
+                ar = rows[1:]
+                pp = 10
+                tp = max((len(ar) + pp - 1) // pp, 1)
+                mh = ''.join(f'<th>{_esc(c)}</th>' for c in rows[0])
+                matrix_tbl = f'<h3 style="color:var(--ink-secondary);font-size:14px;margin-top:12px">Per-Virus Stage Matrix ({len(ar)} species)</h3>'
+                matrix_tbl += f'<div class="pg-nav" id="{tid}_nav" style="display:flex;gap:8px;align-items:center;padding:6px 10px;background:#f8f9fa;border-bottom:1px solid #e0e0e0;font-size:12px">'
+                matrix_tbl += f'<button onclick="pg_tbl(\'{tid}\',-{pp})" style="padding:3px 10px;cursor:pointer;border:1px solid #ccc;border-radius:3px;background:#fff">&laquo; Prev</button>'
+                matrix_tbl += f'<span id="{tid}_info" style="color:#666">Page 1 of {tp}</span>'
+                matrix_tbl += f'<button onclick="pg_tbl(\'{tid}\',{pp})" style="padding:3px 10px;cursor:pointer;border:1px solid #ccc;border-radius:3px;background:#fff">Next &raquo;</button>'
+                matrix_tbl += f'</div><div class="tb-scroll"><table id="{tid}"><thead><tr>{mh}</tr></thead><tbody>'
+                for ri, r in enumerate(ar):
+                    cls = ' style="display:none"' if ri >= pp else ''
+                    matrix_tbl += f'<tr{cls}><td>' + '</td><td>'.join(_esc(c) for c in r) + '</td></tr>'
+                matrix_tbl += '</tbody></table></div>'
+        except Exception:
+            pass
+
+    outdir_note = (f'<p style="font-size:11px;color:var(--ink-secondary)">Data &amp; figures: '
+                   f'<code>{_esc(str(res["outdir"]))}</code> '
+                   f'(stage_funnel_summary.tsv / virus_stage_matrix.tsv / *.png *.pdf)</p>')
+
+    return (f'<section id="funnel"><h2>Stage Funnel: Detection &rarr; Full-Length</h2>'
+            f'<p style="color:var(--ink-secondary);font-size:13px;line-height:1.6">'
+            f'Five-stage retention from raw detection to usable full-length genomes: '
+            f'raw detection (pre-Poisson) &rarr; best (Poisson-filtered, per-species representative) &rarr; '
+            f'high-confidence filter &rarr; de novo full-length assembly &rarr; extracted full-length (length/N filtered). '
+            f'中文口径: 原始检出 &rarr; best 检出 &rarr; 过滤检出 &rarr; 全长组装 &rarr; 全长组装过滤(提取留存).</p>'
+            f'<div class="card-row" style="margin-top:8px">{cards}</div>'
+            f'<h3 style="color:var(--ink-secondary);font-size:14px;margin-top:12px">Funnel Summary</h3>'
+            f'{summary_tbl}{chart_html}{matrix_tbl}{outdir_note}</section>')
+
+
 def generate_html(out_dir, out_html, viruses, ai_html="", stage_summaries=None):
     """Generate interactive HTML report with sidebar navigation."""
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -841,6 +931,7 @@ def generate_html(out_dir, out_html, viruses, ai_html="", stage_summaries=None):
     ]
 
     nav_items = '<li class="nav-item"><a href="#overview" class="nav-link active">Global Overview</a></li>'
+    nav_items += '<li class="nav-item"><a href="#funnel" class="nav-link">Stage Funnel</a></li>'
     nav_items += '<li class="nav-header" style="padding:8px 20px 4px;font-size:12px;color:var(--ink-secondary);font-weight:600;border-top:1px solid var(--border);margin-top:4px">Pipeline Stages</li>'
     nav_items += '<div class="nav-sub">'
 
@@ -1297,6 +1388,7 @@ def generate_html(out_dir, out_html, viruses, ai_html="", stage_summaries=None):
     nav_items += '<li class="nav-item"><a href="#paper-reference" class="nav-link" style="font-size:11px;padding-left:24px;color:var(--sidebar-ink)">Paper Reference</a></li>'
     nav_items += '</div>'  # close Virus Summary nav-sub
 
+    funnel_section = _build_funnel_section(out)
     html = f"""<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Virus Pipeline Report</title>
 <style>
@@ -1739,6 +1831,8 @@ window.addEventListener('scroll',function(){{
         </div>
     </section>
 
+    {funnel_section}
+
     {stage_sections}
 
     <section id="virus-summary">
@@ -1966,22 +2060,39 @@ function runVirusAI(sn,acc){{
     return str(out_html)
 
 
+# Stage 2 过滤阈值: 与主流程 auto_known_virus.py 默认值 (-c 50 / -d 5 / -r 100,
+# 即 STAGE_METHODS 记载的 Rep_Coverage≥50%, Rep_MeanDepth≥5x, reads≥100) 保持一致
+_FILTER_MIN_COV, _FILTER_MIN_DEPTH, _FILTER_MIN_READS = 50.0, 5.0, 100.0
+
+
 def ensure_summary_plots(out_dir):
     import subprocess as _sp
     out = Path(out_dir)
     script_dir = Path(__file__).resolve().parent
-    fp_plot = out / _D['a_filter'] / "filter_summary_plot.pdf"
+    filter_dir = out / _D['a_filter']
+    fp_plot = filter_dir / "filter_summary_plot.pdf"
     if not fp_plot.exists():
+        high_conf_tsv = filter_dir / "high_conf.summary.tsv"
         best_tsv = None
-        for p in ["high_conf.summary.tsv","all_viruses.best.summary.tsv"]:
-            for d in [_D['a_filter'],os.path.join(_D['a_detect'], 'summary')]:
-                fpp = out / d / p
-                if fpp.is_file(): best_tsv = str(fpp); break
-            if best_tsv: break
-        if best_tsv:
+        for cand in (out / _D['a_detect'] / "summary" / "all_viruses.best.summary.tsv",
+                     filter_dir / "all_viruses.best.summary.tsv"):
+            if cand.is_file():
+                best_tsv = cand
+                break
+        # 仅当输入确为 high_conf 层时才允许回写 high_conf.summary.tsv;
+        # 用 best 层重跑时只写预览 TSV, 不得凭空生成"高置信"层 (阈值用主流程同款)。
+        if high_conf_tsv.is_file():
+            src, dst = high_conf_tsv, high_conf_tsv
+        elif best_tsv is not None:
+            src, dst = best_tsv, filter_dir / "filter_summary_preview.tsv"
+        else:
+            src = dst = None
+        if src is not None:
             fs = script_dir / "utils" / "filter_summary.py"
             if fs.is_file():
-                _sp.run([sys.executable,str(fs),"-i",best_tsv,"-o",str(out/_D['a_filter']/"high_conf.summary.tsv"),"--plot"], capture_output=True)
+                _sp.run([sys.executable, str(fs), "-i", str(src), "-o", str(dst),
+                         "-c", str(_FILTER_MIN_COV), "-d", str(_FILTER_MIN_DEPTH),
+                         "-r", str(_FILTER_MIN_READS), "--plot"], capture_output=True)
     asm_plot = _resolve_dir(out, _D['a_extract']) / "assembly_stats.pdf"
     if not asm_plot.exists():
         asm_dir = _resolve_dir(out_dir, _D['a_assembly'])
@@ -2037,6 +2148,9 @@ def copy_results_to_report(out_dir, report_dir):
     # Stage 5: Assembly stats
     _cp(os.path.join(_D['a_extract'], 'assembly_stats.png'), "S5_Assembly_Stats/assembly_stats.png")
     _cp(os.path.join(_D['a_extract'], 'assembly_stats.pdf'), "S5_Assembly_Stats/assembly_stats.pdf")
+
+    # Stage 9b: Stage funnel (五阶段漏斗表+图, 由 _build_funnel_section 生成)
+    _cp(os.path.join(_D['a_report'], 'stage_funnel'), "S9_StageFunnel")
 
     # Stage 6: Post-hoc charts (per-virus)
     post_dir = _resolve_dir(out, _D['a_post'])

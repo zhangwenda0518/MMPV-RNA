@@ -11,6 +11,10 @@ CheckV 完备性、以及 taxonomy 的完整分类等级，生成一张"序列�
 输入（按宿主物种，路径自动拼接）:
   {base}/prevalence_{sp}_{detect_tag}/02_filtering/high_conf.summary.tsv
       检测阶段的高置信检出表 (auto_known_virus.py --stage detect --filter 输出)
+  样本总数 (prevalence 分母) 自动从 detect 产物推导:
+      prevalence_{sp}_{tag}/01_detection/logs/pipeline_*.log ("总计发现样本: N 个")
+      或 logs/sample_resource_usage.tsv / logs/sample_*.log;
+      取不到时 prevalence 列写 NA 并以退出码 2 结束 (可用 --sample-counts 指定)
   {base}/{sp_prefix}_{sp}_out/08_Rescue/Plant/rescue_report.tsv
       拯救报告 (提供 genus_avg_len / branch / method)
   {base}/{sp_prefix}_{sp}_out/07_Checkv/*/completeness.tsv
@@ -43,7 +47,7 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 from mmpv_common.io_layout import layout_dirs as _layout_dirs
-_D = _layout_dirs(os.environ.get("MMPV_IO_LAYOUT", "legacy"))
+_D = _layout_dirs(os.environ.get("MMPV_IO_LAYOUT"))
 
 
 # ── 输出列 ──────────────────────────────────────────────
@@ -76,7 +80,7 @@ def parse_args():
     p.add_argument("--min-samples", type=int, default=0,
                    help="最低检出样本数过滤，0 不过滤 (默认 0)")
     p.add_argument("--sample-counts", default=None,
-                   help="手动指定样本总数，格式 sp1:n1,sp2:n2 (默认从 detect 日志自动读)")
+                   help="手动指定样本总数，格式 sp1:n1,sp2:n2 (默认从 detect 阶段产物自动推导)")
     p.add_argument("--checkv-hosts", default="Plant,Fungi,Animal,Unknown,Bacteria,Archaea,Algae,Protist,Mammalia",
                    help="CheckV 宿主目录列表，逗号分隔 (默认全部宿主)")
     return p.parse_args()
@@ -103,15 +107,30 @@ def load_tsv_map(path, key_col):
 
 
 def read_sample_total(detect_dir):
-    """从 detect 日志读取样本总数 (总计发现样本: N 个)"""
-    log = detect_dir / "detect.log"
-    if not log.exists():
-        return None
-    txt = log.read_text(errors="ignore")
-    m = re.search(r"总计发现样本[:\s]*(\d+)", txt)
-    if m:
-        return int(m.group(1))
-    return None
+    """推导 detect 阶段处理的样本总数 (prevalence 的分母)。
+
+    只认真实产物 (detect.log 全仓无脚本写, 已废弃不再读):
+      1) {detect_dir}/<a_detect>/logs/pipeline_*.log 里的 "总计发现样本: N 个"
+         (batch_virus_depth.py 的逐运行日志; 多份时取最新)
+      2) {detect_dir}/<a_detect>/logs/sample_resource_usage.tsv 数据行数
+      3) {detect_dir}/<a_detect>/logs/sample_*.log 逐样本 marker 文件数
+    取不到返回 None; 调用方不再用 0 兜底, 而是报错并以退出码 2 结束。
+    """
+    logs_dir = detect_dir / _D["a_detect"] / "logs"
+    log_files = sorted(logs_dir.glob("pipeline_*.log"),
+                       key=lambda p: p.stat().st_mtime, reverse=True)
+    for log in log_files:
+        m = re.search(r"总计发现样本[:\s]*(\d+)", log.read_text(errors="ignore"))
+        if m and int(m.group(1)) > 0:
+            return int(m.group(1))
+    usage = logs_dir / "sample_resource_usage.tsv"
+    if usage.exists():
+        with open(usage, encoding="utf-8") as fh:
+            n_rows = max(0, sum(1 for _ in fh) - 1)  # 去掉表头
+        if n_rows > 0:
+            return n_rows
+    n_marker = len(list(logs_dir.glob("sample_*.log")))
+    return n_marker if n_marker > 0 else None
 
 
 def load_checkv(sp_out, hosts):
@@ -184,6 +203,7 @@ def main():
                 manual_counts[k.strip()] = int(v.strip())
 
     all_rows = []
+    failed_species = []
     for sp in species:
         detect_dir = base / f"prevalence_{sp}_{args.detect_tag}"
         sp_out = base / f"{args.sp_prefix}_{sp}_out"
@@ -193,9 +213,13 @@ def main():
             continue
 
         n_total = manual_counts.get(sp) or read_sample_total(detect_dir)
-        if n_total is None:
-            print(f"[WARN] {sp}: 无法从日志读取样本总数，请用 --sample-counts 指定")
-            n_total = 0
+        if not n_total:
+            print(f"[ERROR] {sp}: 无法从 detect 产物推导样本总数 "
+                  f"(检查 {detect_dir / _D['a_detect'] / 'logs'} 下的 "
+                  f"pipeline_*.log / sample_resource_usage.tsv / sample_*.log); "
+                  f"可用 --sample-counts {sp}:N 指定。该物种 prevalence 将写 NA。")
+            failed_species.append(sp)
+            n_total = None
 
         groups = aggregate_high_conf(high_conf)
         rr = load_tsv_map(sp_out / _D['d_rescue'] / "Plant" / "rescue_report.tsv", "contig_id")
@@ -205,13 +229,19 @@ def main():
         n_rr = sum(1 for a in groups if a in rr)
         n_tx = sum(1 for a in groups if a in tx)
         n_cv = sum(1 for a in groups if a in cv)
-        print(f"{sp}: {len(groups)} 序列 (总样本={n_total}) | rescue={n_rr} taxonomy={n_tx} checkv={n_cv}")
+        print(f"{sp}: {len(groups)} 序列 (总样本={n_total if n_total else 'NA'}) | rescue={n_rr} taxonomy={n_tx} checkv={n_cv}")
 
         for acc in sorted(groups, key=lambda a: -len(groups[a]["n_samples"])):
             g = groups[acc]
             n_samples = len(g["n_samples"])
-            prev = round(n_samples / n_total * 100, 1) if n_total else 0.0
-            if n_samples < args.min_samples or prev < args.min_prevalence:
+            if n_total:
+                prev = round(n_samples / n_total * 100, 1)
+                prev_txt = f"{prev:.1f}"
+            else:
+                prev, prev_txt = None, "NA"
+            if n_samples < args.min_samples:
+                continue
+            if prev is not None and prev < args.min_prevalence:
                 continue
             r = rr.get(acc, {})
             t = tx.get(acc, {})
@@ -222,7 +252,7 @@ def main():
                 "length": g["length"] or "",
                 "genus_avg_len": clean(r.get("genus_avg_len")),
                 "n_samples": str(n_samples),
-                "prevalence_%": f"{prev:.1f}",
+                "prevalence_%": prev_txt,
                 "checkv_completeness": c[0],
                 "checkv_confidence": c[1],
                 "avg_ANI": str(_mean(g["ani"])),
@@ -242,6 +272,10 @@ def main():
         w.writeheader()
         w.writerows(all_rows)
     print(f"\n完成: {out} ({len(all_rows)} 行, {len(species)} 物种)")
+    if failed_species:
+        print(f"[ERROR] {len(failed_species)} 个物种无法确定样本总数, prevalence 已写 NA: "
+              f"{', '.join(failed_species)} (用 --sample-counts 指定后重跑)")
+        sys.exit(2)
 
 
 if __name__ == "__main__":

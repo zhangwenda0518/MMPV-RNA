@@ -181,13 +181,24 @@ for (v_dir in virus_dirs) {
       geom_density(fill="steelblue", alpha=0.5, color="darkblue") +
       theme_classic() + labs(x="Genomic Position", y="Mutation Density", title="Global Mutational Landscape")
     if (!is_viroid) {
-      y_est <- max(density(df_ivar$POS)$y, na.rm=TRUE)
-      p1 <- p1 +
-        geom_rect(data=genes_df, inherit.aes=FALSE,
-                  aes(xmin=start, xmax=end, ymin=-y_est*0.05, ymax=-y_est*0.01, fill=gene), alpha=0.8) +
-        geom_text(data=genes_df, inherit.aes=FALSE,
-                  aes(x=(start+end)/2, y=-y_est*0.03, label=gene), size=3, color="white", fontface="bold") +
-        theme(legend.position="none")
+      # 单点输入时 density() 会报错 ("need at least 2 points to select a bandwidth"),
+      # 且此处不在 safe_plot 内 → 一个低变异病毒会终止整轮 suite。
+      # 降级: 估计失败时跳过基因注释叠加层, 仍画主图。
+      y_est <- tryCatch(
+        if (length(df_ivar$POS) >= 2) max(density(df_ivar$POS)$y, na.rm=TRUE) else NA_real_,
+        error = function(e) {
+          cat("   -[warn] 突变密度估计失败, 跳过基因叠加层:", conditionMessage(e), "\n")
+          NA_real_
+        }
+      )
+      if (!is.na(y_est)) {
+        p1 <- p1 +
+          geom_rect(data=genes_df, inherit.aes=FALSE,
+                    aes(xmin=start, xmax=end, ymin=-y_est*0.05, ymax=-y_est*0.01, fill=gene), alpha=0.8) +
+          geom_text(data=genes_df, inherit.aes=FALSE,
+                    aes(x=(start+end)/2, y=-y_est*0.03, label=gene), size=3, color="white", fontface="bold") +
+          theme(legend.position="none")
+      }
     }
     safe_plot(file.path(v_dir, "Plot1_Mutation_Density.pdf"), 10, 4, quote(print(p1)))
     cat("  Plot1 Density\n")

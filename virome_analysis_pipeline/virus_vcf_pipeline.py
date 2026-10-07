@@ -18,6 +18,7 @@ All modules accessible via CLI flags; default behavior is v1-compatible.
 import os
 import sys
 import glob
+import math
 import subprocess
 import argparse
 import shutil
@@ -100,8 +101,9 @@ def run_command(cmd, return_output=False, check=True):
 def qc_sample_stats(merged_vcf):
     """
     从 merged VCF 提取每个样本的:
-      - n_variants: 非缺失基因型数
-      - missing_rate: 缺失率
+      - n_variants: 携带 alt 的位点数 (GT 解析: 仅含非 0 非缺失等位才计;
+        0/0、0/.、./. 不计)
+      - missing_rate: 缺失率 (无任何已测等位的 GT 占比)
       - ts_count / tv_count / ts_tv_ratio
     返回 dict: {sample_name: {...}}
     """
@@ -128,7 +130,9 @@ def qc_sample_stats(merged_vcf):
         if not line.strip():
             continue
         parts = line.strip().split("\t")
-        if len(parts) < 5 + len(samples):
+        # 查询格式为 CHROM POS REF ALT + 每样本一个 GT (共 4+n 列);
+        # 原判据 5+n 恒真 → 所有行被跳过, 统计全 0/missing_rate 恒 1.0
+        if len(parts) < 4 + len(samples):
             continue
         ref, alt = parts[2].upper(), parts[3].upper()
         is_ts = {ref, alt} in transitions
@@ -136,11 +140,15 @@ def qc_sample_stats(merged_vcf):
 
         n_sites += 1
         for i, gt_raw in enumerate(gts):
-            # iVar VCF 的 GT 可能是 "./." 或 "0" 或 "1" 或 "0/1" 等
-            if gt_raw in ("./.", ".", "./.", ""):
+            # iVar VCF 的 GT 可能是 "./." 或 "0" 或 "1" 或 "0/1" 等。
+            # 口径: 解析 GT 等位基因, 仅"携带至少一个非 0 非缺失等位"才计
+            # variant (0/0、0/. 不含 alt → 不计; 1/1、0/1、1 各计 1 个位点)。
+            alleles = [a for a in gt_raw.replace("|", "/").split("/") if a]
+            called = any(a != "." for a in alleles)
+            carried = any(a not in ("0", ".") for a in alleles)
+            if not called:
                 sample_missing[samples[i]] += 1
-            else:
-                # 只要不是缺失就算 variant
+            elif carried:
                 sample_variants[samples[i]] += 1
                 if is_ts:
                     sample_ts[samples[i]] += 1
@@ -151,7 +159,9 @@ def qc_sample_stats(merged_vcf):
     for s in samples:
         n_var = sample_variants.get(s, 0)
         n_mis = sample_missing.get(s, 0)
-        total = n_var + n_mis
+        # 缺失率分母 = 位点总数 (每位点每样本一个 GT; 与旧口径一致,
+        # 但参考基因型 0/0 不再被误计为 variant)
+        total = n_sites
         ts_c = sample_ts.get(s, 0)
         tv_c = sample_tv.get(s, 0)
         stats[s] = {
@@ -1147,9 +1157,15 @@ def compute_sliding_window_popgen(M, site_labels, win_size=0, step=0):
 
         window_M = M_T[idx]  # sites_in_window × samples
 
-        # π: mean pairwise difference per site
+        # π 计数尺度: 窗口内各位点成对差异数之和 (k̂, 即两序列间平均差异数)。
+        # 每位点取 2p(1-p)·n/(n-1) (期望成对差异数 + 有限样本校正);
+        # 不变位点差异数为 0, 不改变求和 → k̂ = Σh。
+        # 与仓库内参照实现一致: dnasp.py tajima_d(k=Σ差异数, S, n)、
+        # pypopart calculate_tajimas_d (π = total_diff/comparisons)、
+        # virus_variants_analyzer.py (pi_window = Σ per-site π)。
         pi_sum = 0.0
         valid_sites = 0
+        S = 0
         for row in window_M:
             valid = ~np.isnan(row)
             n_v = valid.sum()
@@ -1163,10 +1179,12 @@ def compute_sliding_window_popgen(M, site_labels, win_size=0, step=0):
             h_corrected = h * n_v / (n_v - 1) if n_v > 1 else h
             pi_sum += h_corrected
             valid_sites += 1
+            if h > 0:
+                S += 1  # 分离位点数 = 多态位点数 (0<p<1)
+        # 输出列 PI: 每参与比较位点均值 π (0~1, 含未分离但可比较的位点)
         pi_window = pi_sum / valid_sites if valid_sites > 0 else 0.0
-        S = valid_sites
 
-        # Tajima's D
+        # Tajima's D: 分子 (k̂ - S/a1) 两项同尺度 (Tajima 1989, Genetics 123:585)
         if S > 0 and n_samples >= 2:
             a1 = sum(1.0 / i for i in range(1, n_samples))
             a2 = sum(1.0 / (i ** 2) for i in range(1, n_samples))
@@ -1177,7 +1195,7 @@ def compute_sliding_window_popgen(M, site_labels, win_size=0, step=0):
             e1 = c1 / a1
             e2 = c2 / (a1 ** 2 + a2)
             V_d = e1 * S + e2 * S * (S - 1.0)
-            taj_d = (pi_window - S / a1) / math.sqrt(V_d) if V_d > 0 else np.nan
+            taj_d = (pi_sum - S / a1) / math.sqrt(V_d) if V_d > 0 else np.nan
         else:
             taj_d = np.nan
 
@@ -1305,11 +1323,13 @@ def build_per_gene_summary(M, site_labels, site_annotations, df_popgen, gene_spa
     site_positions = []
     site_genes = []
     for label in site_labels:
-        parts = label.split("_")
-        try:
-            pos = int(parts[1])
-            ref, alt = parts[2], parts[3]
-        except (IndexError, ValueError):
+        # 标签为 CHROM_POS_REF_ALT, CHROM 可能含下划线 (如 NC_002030.1)
+        # → 取末尾三段 (与 parse_site_pos 一致), 不能用 parts[1]
+        parts = str(label).split("_")
+        if len(parts) >= 4 and parts[-3].isdigit():
+            pos = int(parts[-3])
+            ref, alt = parts[-2], parts[-1]
+        else:
             site_genes.append("unknown")
             site_positions.append(0)
             continue
@@ -1475,13 +1495,13 @@ def plot_annotated_snp_heatmap(M, site_labels, site_annotations, samples, out_pa
     if M.shape[0] < 2 or M.shape[1] < 2:
         return
 
-    # 为每个位点分配基因
+    # 为每个位点分配基因 (标签 CHROM_POS_REF_ALT, CHROM 可能含下划线 → 取末尾三段)
     gene_list = []
     for label in site_labels:
-        parts = label.split("_")
-        try:
-            pos, ref, alt = parts[1], parts[2], parts[3]
-        except IndexError:
+        parts = str(label).split("_")
+        if len(parts) >= 4 and parts[-3].isdigit():
+            pos, ref, alt = parts[-3], parts[-2], parts[-1]
+        else:
             gene_list.append("unknown")
             continue
         ann = site_annotations.get((pos, ref, alt), {})
