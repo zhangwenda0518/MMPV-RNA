@@ -20,7 +20,7 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 from mmpv_common.io_layout import layout_dirs as _layout_dirs
-_D = _layout_dirs(os.environ.get("MMPV_IO_LAYOUT", "legacy"))
+_D = _layout_dirs(os.environ.get("MMPV_IO_LAYOUT"))
 _HOSTREF_ROOT = str(Path(_D['h_genome']).parent)   # legacy=host_reference / standard=05_HostRef
 
 try:
@@ -35,22 +35,28 @@ if sys.platform == 'win32':
     sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 
 def safe_read_csv(fp, sep=","):
-    """Read CSV/TSV, auto-detect separator."""
+    """Read CSV/TSV, auto-detect separator; 返回**全表**.
+
+    前几行只用来探测分隔符/列结构, 绝不把预览当结果返回 ——
+    历史 bug: sep="," 分支直接 return 了 nrows=5 的预览, 报告里的统计
+    (行数/字段完整度/分布) 全是按 5 行算的, 交付 HTML 的统计数字失实。
+    """
     p = Path(fp)
     if not p.is_file(): return None
     try:
         if not HAS_PANDAS: return None
-        # Try comma first, then tab
+        use_sep = sep
+        # Try comma first, then tab (预览只用于判定, 下面重读全表)
         try:
             df = pd.read_csv(p, sep=sep, nrows=5)
             if len(df.columns) <= 1 and sep == ",":
-                df = pd.read_csv(p, sep="\t")
+                use_sep = "\t"
         except:
             if sep == ",":
-                df = pd.read_csv(p, sep="\t")
+                use_sep = "\t"
             else:
                 return None
-        return pd.read_csv(p, sep="\t" if sep != "," else ",") if sep != "," else df
+        return pd.read_csv(p, sep=use_sep)
     except Exception:
         return None
 
@@ -62,6 +68,23 @@ def img_to_base64(path, max_kb=2000):
 
 def _esc(s):
     return str(s).replace("&","&amp;").replace("<","&lt;").replace(">","&gt;").replace('"',"&quot;")
+
+def _fmt_pct(v, nd=1):
+    """把百分数格式化成给人看的样子 —— 避免表格里出现 4.6e-05 这种科学计数法。
+
+    只用于展示; TSV/JSON 里保留原始精度给下游。
+    """
+    try:
+        x = float(v)
+    except (TypeError, ValueError):
+        return str(v)
+    if x == 0:
+        return "0"
+    if abs(x) < 0.001:
+        return "<0.001"
+    if abs(x) < 1:
+        return f"{x:.4f}".rstrip("0").rstrip(".")
+    return f"{x:.{nd}f}"
 
 # ═══════════════════════════════════════════
 # Data Collection
@@ -266,6 +289,143 @@ def collect_hostref_summary(out_dir):
             "genome_mb": round(genome.stat().st_size / 1024 ** 2, 1) if genome else None,
             "indexes": idx, "built": sum(idx.values())}
 
+def collect_prescreen_summary(out_dir, top_n=15):
+    """读取预筛产物 (sample_decision.tsv + prescreen_meta.json) 汇总成报告用数据。
+
+    纯 csv/json 读取, 不依赖 pandas —— 预筛是独立阶段, 不应因缺 pandas 而丢失。
+    返回 None 表示没跑过 prescreen 阶段。
+    """
+    out = Path(out_dir)
+    dec_path = next(iter(out.rglob("sample_decision.tsv")), None)
+    if not dec_path:
+        return None
+    try:
+        with open(dec_path, "r", encoding="utf-8", errors="replace") as f:
+            rows = list(csv.DictReader(f, delimiter="\t"))
+    except Exception:
+        return None
+    if not rows:
+        return None
+
+    def _f(v, d=0.0):
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return d
+
+    decision = Counter((r.get("decision") or "").strip() for r in rows)
+    status = Counter((r.get("status") or "").strip() for r in rows)
+    omatch = Counter((r.get("organism_match") or "").strip() for r in rows)
+    signal = Counter((r.get("virus_signal") or "").strip() for r in rows)
+
+    ok_rows = [r for r in rows if (r.get("status") or "").strip() == "OK"]
+    viral_rows = [r for r in ok_rows if _f(r.get("virus_pct_ident")) > 0]
+
+    vt = Counter()
+    for r in ok_rows:
+        tv = (r.get("top_virus") or "").strip()
+        if tv and tv != "Viruses (未细分)":
+            vt[tv] += 1
+
+    mism = sorted([r for r in ok_rows if (r.get("organism_match") or "").strip() == "MISMATCH"],
+                  key=lambda x: -_f(x.get("top_organism_pct")))[:top_n]
+    top_runs = sorted(viral_rows, key=lambda x: -_f(x.get("virus_pct_ident")))[:top_n]
+
+    by_cra = Counter()
+    for r in rows:
+        if (r.get("status") or "").strip() != "OK":
+            by_cra[(r.get("cra") or "(未解析)").strip()] += 1
+
+    meta = {}
+    mp = dec_path.parent / "prescreen_meta.json"
+    if mp.is_file():
+        try:
+            meta = _json.loads(mp.read_text(encoding="utf-8"))
+        except Exception:
+            meta = {}
+
+    try:
+        rel = str(dec_path.relative_to(out))
+    except ValueError:
+        rel = str(dec_path)
+
+    return {
+        "path": rel, "total": len(rows), "ok": len(ok_rows), "with_virus": len(viral_rows),
+        "decision": dict(decision), "status": dict(status),
+        "organism_match": dict(omatch), "virus_signal": dict(signal),
+        "virus_taxa": vt.most_common(top_n), "mismatch": mism, "top_runs": top_runs,
+        "unresolved_by_cra": by_cra.most_common(12), "meta": meta,
+        "virus_profile": _collect_virus_profile(dec_path.parent, out, top_n),
+    }
+
+
+def _collect_virus_profile(prescreen_dir, out, top_n=15):
+    """读 stat_virus_profile.py 的产物 (病毒层面画像), 供 HTML 展示。
+
+    病毒本身也是结果 —— 有哪些病毒 / 各占多少 / 在多少样本里出现。
+    返回 None 表示没跑过画像 (老版本产物, 或 --no-virus-profile)。
+    纯 csv/json 读取, 不依赖 pandas。
+    """
+    vdir = Path(prescreen_dir) / "virus_profile"
+    prev_tsv = vdir / "virus_prevalence.tsv"
+    if not prev_tsv.is_file():
+        return None
+    try:
+        with open(prev_tsv, "r", encoding="utf-8", errors="replace") as f:
+            prow = list(csv.DictReader(f, delimiter="\t"))
+    except Exception:
+        return None
+    if not prow:
+        return None
+
+    def _f(v, d=0.0):
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return d
+
+    vmeta = {}
+    mj = vdir / "virus_profile_meta.json"
+    if mj.is_file():
+        try:
+            vmeta = _json.loads(mj.read_text(encoding="utf-8"))
+        except Exception:
+            vmeta = {}
+
+    by_leaf = vmeta.get("prevalence_by", "leaf") == "leaf"
+    ncol = "n_leaf_samples" if by_leaf else "n_samples"
+    pcol = "leaf_prevalence_pct" if by_leaf else "prevalence_pct"
+    min_n = int(vmeta.get("min_samples", 2) or 2)
+
+    ranked = sorted(prow, key=lambda r: -_f(r.get(ncol)))
+    shown = [r for r in ranked if _f(r.get(ncol)) >= min_n][:top_n]
+
+    figs = sorted((vdir / "figures").glob("*.png")) if (vdir / "figures").is_dir() else []
+    # 优先展示：检出率条形图 → 组合图
+    pick = ([f for f in figs if "prevalence_bar" in f.name]
+            + [f for f in figs if "Combined" in f.name])
+
+    try:
+        rel = str(vdir.relative_to(out))
+    except ValueError:
+        rel = str(vdir)
+
+    return {
+        "dir": rel,
+        "scope": vmeta.get("plot_scope", "leaf-node" if by_leaf else "any-rank"),
+        "n_taxa": vmeta.get("n_viral_taxa_total", len(prow)),
+        "n_leaf": sum(1 for r in prow if (r.get("is_leaf_node") or "") == "yes"),
+        "n_samples": vmeta.get("n_samples_with_taxonomy", "?"),
+        "n_viral": vmeta.get("n_samples_with_virus", "?"),
+        "by_class": vmeta.get("by_class", {}) or {},
+        "rows": [{
+            "virus": r.get("virus", ""), "class": r.get("virus_class", ""),
+            "rank": r.get("rank", ""), "n": r.get(ncol, ""), "pct": r.get(pcol, ""),
+            "mean_pct": r.get("mean_pct", ""), "share": r.get("hits_share_pct", ""),
+        } for r in shown],
+        "figures": [str(f) for f in pick],
+    }
+
 # ═══════════════════════════════════════════
 # AI Summary
 # ═══════════════════════════════════════════
@@ -347,10 +507,10 @@ def generate_ai_summary(search_data, info_data, plot_images):
 # ═══════════════════════════════════════════
 
 def generate_html(out_dir, search_data, info_data, plot_images, ai_html="", out_html=None,
-                  download_data=None, handoff_data=None, hostref_data=None):
+                  download_data=None, handoff_data=None, hostref_data=None, prescreen_data=None):
     out = Path(out_dir); now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     s = search_data or {}; i = info_data or {}; d = download_data or {}
-    h = handoff_data or {}; hr = hostref_data or {}
+    h = handoff_data or {}; hr = hostref_data or {}; ps = prescreen_data or {}
 
     # Build stage data JSON for browser AI
     sd = {
@@ -360,6 +520,19 @@ def generate_html(out_dir, search_data, info_data, plot_images, ai_html="", out_
                       "bioprojects": s.get("bioprojects","?"), "species": s.get("species","?"), "years": s.get("years","?")},
         "s2_info": {"total": i.get("total","?"), "pmid_coverage": i.get("pmid_coverage","?"),
                     "fields": {k: v.get("pct","?") for k,v in (i.get("fields",{}) or {}).items()}},
+        "s3_prescreen": {"total": ps.get("total","?"), "ok": ps.get("ok","?"),
+                         "with_virus": ps.get("with_virus","?"),
+                         "decision": ps.get("decision",{}),
+                         "organism_match": ps.get("organism_match",{}),
+                         "virus_taxa": [list(x) for x in (ps.get("virus_taxa") or [])],
+                         "virus_profile": {
+                             "scope": (ps.get("virus_profile") or {}).get("scope"),
+                             "n_taxa": (ps.get("virus_profile") or {}).get("n_taxa"),
+                             "n_leaf": (ps.get("virus_profile") or {}).get("n_leaf"),
+                             "by_class": (ps.get("virus_profile") or {}).get("by_class"),
+                             "top": [[r.get("virus"), r.get("n"), r.get("pct")]
+                                     for r in ((ps.get("virus_profile") or {}).get("rows") or [])[:15]],
+                         }},
         "s3_down": {"report_rows": d.get("rows","?"), "status": d.get("status",{}),
                     "failed": d.get("failed","?"), "fastq_files": d.get("fastq_count","?"),
                     "fastq_gb": round(d.get("fastq_gb",0),1), "sra_left": d.get("sra_left","?")},
@@ -375,7 +548,7 @@ def generate_html(out_dir, search_data, info_data, plot_images, ai_html="", out_
     nav_items = '<li class="nav-item"><a href="#overview" class="nav-link active">Overview</a></li>'
     nav_items += '<li class="nav-header">Pipeline Stages</li>'
     nav_items += '<div class="nav-sub">'
-    for sid, label in [("stage-search","S1: Search"),("stage-info","S2: Info"),("stage-down","S3: Download"),("stage-plot","S4: Plot"),("stage-hostref","S5: HostRef"),("stage-handoff","S6: Handoff")]:
+    for sid, label in [("stage-search","S1: Search"),("stage-info","S2: Info"),("stage-prescreen","S3: Prescreen"),("stage-down","S4: Download"),("stage-plot","S5: Plot"),("stage-hostref","S6: HostRef"),("stage-handoff","S7: Handoff")]:
         nav_items += f'<li class="nav-item"><a href="#{sid}" class="nav-link stage-toggle" style="font-size:12px;padding-left:24px;font-weight:600">{label}</a></li>'
     nav_items += '</div>'
     nav_items += '<li class="nav-header">Report</li><div class="nav-sub">'
@@ -433,8 +606,153 @@ def generate_html(out_dir, search_data, info_data, plot_images, ai_html="", out_
         s2 += '<p style="color:var(--ink-secondary)">Info output not found. Run Stage 2 (info) first.</p>'
     s2 += '</section>'
 
-    # ── Stage 3: Download ──
-    s3 = f'''<section id="stage-down"><h2>S3: Download <button onclick="runStageAI('s3_down')" class="ai-stage-btn">AI</button></h2>
+    # ── Stage 3: Prescreen ──
+    s_ps = f'''<section id="stage-prescreen"><h2>S3: Prescreen 病毒预筛 &amp; 物种鉴定 <button onclick="runStageAI('s3_prescreen')" class="ai-stage-btn">AI</button></h2>
+    <p style="color:var(--ink-secondary);font-size:13px">基于 NCBI STAT / CNCB GSA 的<b>预计算分类结果</b> —— <b>不下载任何测序数据</b>即可回答两件事：
+    (1) <b>植物物种鉴定</b>：用实测主要物种对拍元信息 ScientificName，揪出记错的样本；
+    (2) <b>病毒预鉴定</b>：按病毒占比给出 decision，供下载阶段过滤，避免浪费资源。</p>'''
+    if ps:
+        dec = ps.get("decision", {})
+        s_ps += '<div class="card-row">'
+        s_ps += f'<div class="card"><div class="value">{ps.get("total","?")}</div><div class="label">Runs</div></div>'
+        s_ps += f'<div class="card"><div class="value">{ps.get("ok","?")}</div><div class="label">有分类数据</div></div>'
+        s_ps += f'<div class="card"><div class="value">{ps.get("with_virus","?")}</div><div class="label">检出病毒</div></div>'
+        for k, label, color in (("DOWNLOAD", "建议下载", "#16a34a"),
+                                ("REVIEW", "需复核", "#d97706"),
+                                ("SKIP", "可跳过", "#6b7280"),
+                                ("LOCAL_CHECK", "需本地比对", "#2563eb")):
+            s_ps += (f'<div class="card"><div class="value" style="color:{color}">{dec.get(k, 0)}</div>'
+                     f'<div class="label">{label}</div></div>')
+        s_ps += '</div>'
+
+        s_ps += ('<p style="font-size:12px;color:var(--ink-secondary);margin-top:6px">'
+                 'decision: <b>DOWNLOAD</b> 检出病毒且物种对拍一致 · '
+                 '<b>REVIEW</b> 检出病毒但主要物种与元信息不符（仍下载，人工复核）· '
+                 '<b>SKIP</b> 有分类数据但无病毒信号 · '
+                 '<b>LOCAL_CHECK</b> 拿不到预计算分类，只能下载 reads 本地比对</p>')
+
+        # ── 物种鉴定 ──
+        om = ps.get("organism_match", {})
+        if any(om.values()):
+            s_ps += '<details style="margin-top:8px" open><summary style="font-weight:600;color:var(--accent);cursor:pointer;font-size:13px">植物物种鉴定（元信息 vs 实测主要物种）</summary>'
+            s_ps += '<div class="tb-scroll"><table style="font-size:12px"><tr><th>判定</th><th>条数</th><th>含义</th></tr>'
+            for k, dsc in (("MATCH", "一致"), ("PARTIAL", "同属不同种（近缘 / 杂交）"),
+                           ("MISMATCH", "属名都不同且占比足够 —— 疑似元信息记错"),
+                           ("COARSE", "实测只到属以上阶元（分辨率不足）"),
+                           ("WEAK", "实测占比过低（证据不足）"),
+                           ("UNKNOWN", "一侧缺失，不下结论")):
+                v = om.get(k, 0)
+                hl = ' style="color:#b91c1c;font-weight:700"' if (k == "MISMATCH" and v) else ''
+                s_ps += f'<tr><td{hl}>{k}</td><td{hl}>{v}</td><td>{dsc}</td></tr>'
+            s_ps += '</table></div>'
+            mism = ps.get("mismatch") or []
+            if mism:
+                s_ps += ('<div class="tb-scroll" style="margin-top:6px"><table style="font-size:12px">'
+                         '<tr><th>Run</th><th>元信息记录</th><th>实测主要物种</th><th>实测%</th>'
+                         '<th>置信度</th><th>主要病毒</th></tr>')
+                for r in mism:
+                    s_ps += (f'<tr><td>{_esc(r.get("acc",""))}</td>'
+                             f'<td>{_esc(r.get("meta_species",""))}</td>'
+                             f'<td style="color:#b91c1c">{_esc(r.get("top_organism",""))}</td>'
+                             f'<td>{_esc(r.get("top_organism_pct",""))}</td>'
+                             f'<td>{_esc(r.get("organism_conf",""))}</td>'
+                             f'<td>{_esc(r.get("top_virus",""))}</td></tr>')
+                s_ps += '</table></div>'
+                s_ps += (f'<p style="font-size:11px;color:var(--ink-secondary)">'
+                         f'列出前 {len(mism)} 条疑似元信息记录有误的样本'
+                         f'（完整清单见 sample_decision.tsv 中 organism_match=MISMATCH）</p>')
+            s_ps += '</details>'
+
+        # ── 病毒类群分布 ──
+        vt = ps.get("virus_taxa") or []
+        if vt:
+            s_ps += '<details style="margin-top:6px"><summary style="font-weight:600;color:var(--accent);cursor:pointer;font-size:12px">检出病毒类群 Top</summary>'
+            s_ps += '<div class="tb-scroll"><table style="font-size:12px"><tr><th>病毒类群（最特异节点）</th><th>样本数</th></tr>'
+            for name, cnt in vt:
+                s_ps += f'<tr><td>{_esc(name)}</td><td>{cnt}</td></tr>'
+            s_ps += '</table></div></details>'
+
+        # ── 病毒占比 Top ──
+        tr = ps.get("top_runs") or []
+        if tr:
+            s_ps += '<details style="margin-top:6px"><summary style="font-weight:600;color:var(--accent);cursor:pointer;font-size:12px">病毒占比 Top 样本</summary>'
+            s_ps += ('<div class="tb-scroll"><table style="font-size:12px"><tr><th>Run</th><th>来源</th>'
+                     '<th>病毒%</th><th>病毒%(已鉴定口径)</th><th>主要病毒</th><th>测序量</th>'
+                     '<th>主要非病毒物种</th></tr>')
+            for r in tr:
+                s_ps += (f'<tr><td>{_esc(r.get("acc",""))}</td><td>{_esc(r.get("source",""))}</td>'
+                         f'<td>{_esc(r.get("virus_pct",""))}</td><td>{_esc(r.get("virus_pct_ident",""))}</td>'
+                         f'<td>{_esc(r.get("top_virus",""))}</td><td>{_esc(r.get("analysed",""))}</td>'
+                         f'<td>{_esc(r.get("top_organism",""))}</td></tr>')
+            s_ps += '</table></div></details>'
+
+        # ── 无分类数据 ──
+        uc = ps.get("unresolved_by_cra") or []
+        if uc:
+            n_unres = sum(v for _, v in uc)
+            s_ps += '<details style="margin-top:6px"><summary style="font-weight:600;color:var(--accent);cursor:pointer;font-size:12px">无预计算分类的样本（需本地比对）</summary>'
+            s_ps += '<div class="tb-scroll"><table style="font-size:12px"><tr><th>项目 (CRA)</th><th>无数据 run 数</th></tr>'
+            for k, v in uc:
+                s_ps += f'<tr><td>{_esc(k)}</td><td>{v}</td></tr>'
+            s_ps += '</table></div>'
+            s_ps += (f'<p style="font-size:11px;color:var(--ink-secondary)">共 {n_unres} 条。'
+                     f'这<b>不是分析失败</b>，而是上游没有这份预计算数据 —— 要判断物种只能下载 reads 本地比对。</p>')
+            s_ps += '</details>'
+
+        # ---- 病毒层面画像：病毒本身也是结果 ----
+        vp = ps.get("virus_profile") or {}
+        if vp:
+            s_ps += ('<div style="margin-top:16px;padding-top:12px;border-top:1px dashed var(--border)">')
+            s_ps += ('<h3 style="font-size:14px;margin:0 0 8px">病毒层面画像 '
+                     '<span style="font-weight:400;font-size:11px;color:var(--ink-secondary)">'
+                     '—— 有哪些病毒 / 各占多少 / 在多少样本里出现'
+                     f'（口径 {_esc(vp.get("scope",""))}）</span></h3>')
+            s_ps += '<div class="card-row">'
+            s_ps += (f'<div class="card"><div class="value">{vp.get("n_taxa","?")}</div>'
+                     f'<div class="label">病毒分类单元</div></div>')
+            s_ps += (f'<div class="card"><div class="value">{vp.get("n_leaf","?")}</div>'
+                     f'<div class="label">末端节点（实际检出最细）</div></div>')
+            s_ps += (f'<div class="card"><div class="value">{vp.get("n_viral","?")}</div>'
+                     f'<div class="label">检出病毒的样本</div></div>')
+            for c, n in sorted((vp.get("by_class") or {}).items(), key=lambda x: -x[1])[:3]:
+                s_ps += (f'<div class="card"><div class="value" style="font-size:20px">{n}</div>'
+                         f'<div class="label">{_esc(c)}</div></div>')
+            s_ps += '</div>'
+
+            for fp in (vp.get("figures") or [])[:2]:
+                b64 = img_to_base64(fp, 6000)
+                if b64:
+                    nm = Path(fp).name
+                    s_ps += (f'<div class="chart-card"><div class="chart-title">{_esc(nm)}</div>'
+                             f'<img src="data:image/png;base64,{b64}" loading="lazy" alt="{_esc(nm)}"></div>')
+
+            s_ps += ('<details style="margin-top:8px" open><summary style="font-weight:600;'
+                     'color:var(--accent);cursor:pointer;font-size:13px">'
+                     f'跨样本检出率 Top（{_esc(vp.get("scope",""))} 口径）</summary>')
+            s_ps += ('<div class="tb-scroll"><table style="font-size:12px">'
+                     '<tr><th>病毒</th><th>大类</th><th>阶元</th><th>检出样本</th>'
+                     '<th>检出率%</th><th>平均丰度%</th><th>命中份额%</th></tr>')
+            for r in vp.get("rows", []):
+                s_ps += (f'<tr><td>{_esc(r.get("virus",""))}</td><td>{_esc(r.get("class",""))}</td>'
+                         f'<td>{_esc(r.get("rank",""))}</td><td>{_esc(r.get("n",""))}</td>'
+                         f'<td>{_esc(_fmt_pct(r.get("pct"), 1))}</td>'
+                         f'<td>{_esc(_fmt_pct(r.get("mean_pct"), 3))}</td>'
+                         f'<td>{_esc(_fmt_pct(r.get("share"), 2))}</td></tr>')
+            s_ps += '</table></div></details>'
+            s_ps += (f'<p style="font-size:11px;color:var(--ink-secondary);margin-top:4px">'
+                     f'Source: <code>{_esc(vp.get("dir",""))}</code> —— '
+                     f'k-mer 快速分类，定位是<b>预筛</b>：低丰度病毒会漏、'
+                     f'噬菌体/人类病毒（如 Human gammaherpesvirus 4）属常见背景。'
+                     f'结论请用下游比对复核。</p>')
+            s_ps += '</div>'
+
+        s_ps += f'<p style="font-size:12px;color:var(--ink-secondary);margin-top:6px">Source: <code>{_esc(ps.get("path","?"))}</code></p>'
+    else:
+        s_ps += '<p style="color:var(--ink-secondary)">Pre-screen output not found. Run Stage 3 (prescreen) first —— 该阶段不下载数据，只查上游预计算分类。</p>'
+    s_ps += '</section>'
+
+    # ── Stage 4: Download ──
+    s3 = f'''<section id="stage-down"><h2>S4: Download <button onclick="runStageAI('s3_down')" class="ai-stage-btn">AI</button></h2>
     <p style="color:var(--ink-secondary);font-size:13px">Smart SRA downloader: dual-protocol (aria2c NGDC + prefetch NCBI), progress tracking, failed retry list.</p>'''
     if d.get("rows") or d.get("fastq_count"):
         chips = "".join(f'<div class="card"><div class="value">{v}</div><div class="label">Status: {_esc(k)}</div></div>'
@@ -451,22 +769,22 @@ def generate_html(out_dir, search_data, info_data, plot_images, ai_html="", out_
         if d.get("failed_files"):
             s3 += f'<p style="font-size:12px;color:var(--ink-secondary)">Retry lists: {_esc(", ".join(d["failed_files"]))}</p>'
     else:
-        s3 += '<p style="color:var(--ink-secondary)">Download report not found. Run Stage 3 (down) first.</p>'
+        s3 += '<p style="color:var(--ink-secondary)">Download report not found. Run Stage 4 (down) first.</p>'
     s3 += '</section>'
 
     # ── Stage 4: Plot ──
-    s4 = f'''<section id="stage-plot"><h2>S4: Plot <button onclick="runStageAI('s4_plot')" class="ai-stage-btn">AI</button></h2>
+    s4 = f'''<section id="stage-plot"><h2>S5: Plot <button onclick="runStageAI('s4_plot')" class="ai-stage-btn">AI</button></h2>
     <p style="color:var(--ink-secondary);font-size:13px">SCI-grade 6-panel landscape figure: (A) Temporal Distribution, (B) Database Proportion, (C) Top Organizations, (D) Top Tissues, (E) Top Locations, (F) Top Growth Stages.</p>'''
     if plot_images.get("landscape"):
         b64 = img_to_base64(plot_images["landscape"], 5000)
         if b64:
             s4 += f'<div class="chart-card"><div class="chart-title">Combined Landscape (6-panel SCI Figure)</div><img src="data:image/png;base64,{b64}" loading="lazy" alt="SCI Landscape Figure"></div>'
     else:
-        s4 += '<p style="color:var(--ink-secondary)">Plot not found. Run Stage 4 (plot) to generate the 6-panel figure.</p>'
+        s4 += '<p style="color:var(--ink-secondary)">Plot not found. Run Stage 5 (plot) to generate the 6-panel figure.</p>'
     s4 += '</section>'
 
     # ── Stage 5: HostRef ──
-    s_hr = f'''<section id="stage-hostref"><h2>S5: HostRef 宿主参考基因组</h2>
+    s_hr = f'''<section id="stage-hostref"><h2>S6: HostRef 宿主参考基因组</h2>
     <p style="color:var(--ink-secondary);font-size:13px">Host genome acquisition (datasets / ncbi-genome-download / FTP / gget, or user FASTA)
     and Kraken2 / Bowtie2 / HISAT2 / Minimap2 index building — consumed by the host-depletion stage downstream.</p>'''
     if hr:
@@ -487,7 +805,7 @@ def generate_html(out_dir, search_data, info_data, plot_images, ai_html="", out_
     s_hr += '</section>'
 
     # ── Stage 6: Handoff ──
-    s5 = f'''<section id="stage-handoff"><h2>S6: Handoff 交接清单</h2>
+    s5 = f'''<section id="stage-handoff"><h2>S7: Handoff 交接清单</h2>
     <p style="color:var(--ink-secondary);font-size:13px">Downstream handoff manifest: Run → FASTQ absolute paths + Core14 metadata.
     Consumed by <code>data_preprocessing_pipeline/clean-data.py --input</code> as the file-level sample list.</p>'''
     if h:
@@ -610,7 +928,7 @@ summary {{cursor:pointer;font-weight:600;color:var(--accent);padding:4px 0;font-
 <nav class="sidebar"><h3>Metadata Pipeline</h3><ul>{nav_items}</ul></nav>
 <main class="main">
   {overview}
-  {s1}{s2}{s3}{s4}{s_hr}{s5}
+  {s1}{s2}{s_ps}{s3}{s4}{s_hr}{s5}
   {ai_area}
   <div class="footer">Public Metadata Pipeline — {now}</div>
 </main>
@@ -748,6 +1066,15 @@ def main():
     else:
         print("  Not found (run hostref stage first)")
 
+    print("Collecting pre-screen summary...")
+    prescreen_data = collect_prescreen_summary(args.dir)
+    if prescreen_data:
+        _dec = prescreen_data.get("decision", {})
+        print(f"  {prescreen_data['total']} runs, {prescreen_data['with_virus']} with virus signal, "
+              f"decision: " + ", ".join(f"{k}={v}" for k, v in sorted(_dec.items())))
+    else:
+        print("  Not found (run prescreen stage first)")
+
     ai_html = ""
     if getattr(generate_ai_summary, '_api_key', ''):
         print("Generating AI summary...")
@@ -756,7 +1083,7 @@ def main():
     out_html = Path(args.output) if args.output else out / "Pipeline_Summary_Report.html"
     print("Generating HTML report...")
     generate_html(args.dir, search_data, info_data, plot_images, ai_html, out_html,
-                  download_data, handoff_data, hostref_data)
+                  download_data, handoff_data, hostref_data, prescreen_data)
     print(f"  Report: {out_html} ({out_html.stat().st_size / 1024:.0f} KB)")
 
 if __name__ == "__main__":

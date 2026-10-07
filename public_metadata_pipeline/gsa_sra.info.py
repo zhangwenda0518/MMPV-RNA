@@ -191,16 +191,65 @@ def get_retry_session(retries=5, backoff_factor=2.0):
     session.mount("http://", adapter)
     return session
 
+# 缺失/占位符的统一口径 (空值判定与 AI 回填共用; 空格/下划线两种写法都要认)
+_PLACEHOLDER_VALS = ['nan', 'none', 'null', 'not_provided', 'not provided',
+                     'missing', 'unknown', 'n/a', 'not collected',
+                     'not_collected', 'not applicable', 'not_applicable',
+                     '', '<na>']
+
+def is_blank(val):
+    """值为空 / 无效占位符时返回 True (pd.NA/NaN/None、空串、常见占位词)。"""
+    if val is None or val is pd.NA:
+        return True
+    try:
+        if pd.isna(val):
+            return True
+    except (TypeError, ValueError):
+        pass
+    return str(val).strip().lower() in _PLACEHOLDER_VALS
+
+def fill_ai_blanks(final_df, idx, ai_res, cols):
+    """把 AI 推断值**只回填到空白单元格** (已有真值一律保留), 返回回填的列名.
+
+    审核: 旧版逐列无条件 `final_df.at[idx, col] = val`, AI 的语义推断会盖掉
+    GSA 表格里的真值 —— 与仲裁提示词"数据 A 已有明确值必须 100% 信任"矛盾。
+    """
+    filled = []
+    for col in cols:
+        val = ai_res.get(col)
+        if not (pd.notna(val) and str(val).strip().lower()
+                not in ["not_provided", "unknown", "none", "nan", ""]):
+            continue
+        if col not in final_df.columns:
+            final_df[col] = pd.NA
+        if is_blank(final_df.at[idx, col]):
+            final_df.at[idx, col] = val
+            filled.append(col)
+    return filled
+
 def apply_fill_date(df, fill_date=False, is_gsa=False):
+    """CollectionDate 兜底填充。
+
+    兜底值来自 ReleaseDate (SRA) / LoadDate (GSA) —— 它**不是采集日期**, 所以
+    同时写 `CollectionDate_Source` 列标记来源 (original/release_date/load_date):
+    下游/报告可据此把"兜底日期"与"真采集日期"分开, 不再拿 ReleaseDate 当采集日期用。
+    """
     if not fill_date: return df
     missing_vals = ['nan', 'none', 'null', 'not_provided', 'not provided', 'missing', 'unknown', '', '<na>']
     if 'CollectionDate' not in df.columns: df['CollectionDate'] = pd.NA
     df['CollectionDate'] = df['CollectionDate'].astype(object)
     mask = df['CollectionDate'].astype(str).str.strip().str.lower().isin(missing_vals) | df['CollectionDate'].isna()
+    if 'CollectionDate_Source' not in df.columns: df['CollectionDate_Source'] = pd.NA
+    df['CollectionDate_Source'] = df['CollectionDate_Source'].astype(object)
     fallback_col = 'LoadDate' if is_gsa and 'LoadDate' in df.columns else ('ReleaseDate' if 'ReleaseDate' in df.columns else None)
     if fallback_col:
         valid_mask = ~df[fallback_col].astype(str).str.strip().str.lower().isin(missing_vals)
-        df.loc[mask, 'CollectionDate'] = df.loc[mask, fallback_col].where(valid_mask)
+        filled = mask & valid_mask
+        df.loc[filled, 'CollectionDate'] = df.loc[filled, fallback_col]
+        df.loc[filled, 'CollectionDate_Source'] = 'load_date' if is_gsa else 'release_date'
+    # 非兜底行: 值来自采集记录/上游提取, 标记 original (已有标记的行不动)
+    keep = (~mask) & df['CollectionDate'].notna() & df['CollectionDate_Source'].isna()
+    df.loc[keep, 'CollectionDate_Source'] = 'original'
     return df
 
 def save_dual_format(df, base_path):
@@ -519,9 +568,17 @@ class SRAPipeline:
                     rr["ReleaseDate"] = valid_dates[0] if valid_dates else "Not_Provided"
                     rr["LoadDate"] = "true" 
                     
+                    # 采集日期: 本地 SAMPLE_ATTRIBUTE 落的是小写键 (TAG.lower()),
+                    # 而 CORE_18_SRA/FINAL_14 只认驼峰 CollectionDate —— 不提升就整列
+                    # 丢失, 之后被 release date 兜底顶替 (审核实测: 输出的 CollectionDate
+                    # 根本不是采集日期)。这里显式写到规范列并标记来源; 缺失时的
+                    # release date 兜底交给 apply_fill_date (带 release_date 标记)。
                     c_date = rr.get('collection_date', rr.get('collection date', 'Not_Provided'))
-                    if str(c_date).lower() in ['not_provided', '', 'nan', 'none', '<na>', 'unknown', 'not collected', 'missing']:
-                        if valid_dates: rr['collection_date'] = valid_dates[0]
+                    if is_blank(c_date):
+                        rr['CollectionDate'] = "Not_Provided"
+                    else:
+                        rr['CollectionDate'] = str(c_date).strip()
+                        rr['CollectionDate_Source'] = "original"
                     records.append(rr)
             with open(jp, 'w', encoding='utf-8') as f: json.dump(records, f, indent=4, ensure_ascii=False)
             return records, "[✓Local解析]"
@@ -933,10 +990,8 @@ class GSAPipeline:
                                 ai_res['Location'] = self.org_loc_cache[org]
                                 logs.append("[✓位置同步]")
 
-                        for col in GSA_AI_10:
-                            val = ai_res.get(col)
-                            if pd.notna(val) and str(val).strip().lower() not in ["not_provided", "unknown", "none", "nan", ""]:
-                                final_df.at[idx, col] = val
+                        # AI 推断值只回填空缺单元格 (已有真值一律保留 —— 审核 F31②)
+                        fill_ai_blanks(final_df, idx, ai_res, GSA_AI_10)
 
                 # --- 步骤 4: 最终字段严格 28 列对齐 ---
                 final_df['query_id'] = acc

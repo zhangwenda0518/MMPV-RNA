@@ -2,11 +2,36 @@
 # -*- coding: utf-8 -*-
 
 """
-Public Data Pipeline - 公共数据获取管道 v3.1
+Public Data Pipeline - 公共数据获取管道 v3.2
 =============================================
-八阶段: search -> info -> down -> convert -> plot -> hostref -> hostdb -> report
+九阶段: search -> info -> prescreen -> down -> convert -> plot -> hostref -> hostdb -> report
 全部参数命令行指定。宿主参考基因组默认复用 --species/--taxid (检索物种即宿主物种)。
 stage 直接调用工作脚本 (download_host_genome.py / build_hostbase.py), 不嵌套子管道。
+
+prescreen 阶段 (v3.2 新增)
+--------------------------
+调 stat_prescreen.py, 用 NCBI STAT / CNCB GSA 的**预计算分类结果**做两件事,
+**不下载任何测序数据**:
+
+  1) 植物物种鉴定 —— 用实测主要物种对拍元信息 ScientificName, 揪出记错的样本
+     (避免元信息错误一路带到下游)
+  2) 病毒预鉴定   —— 按病毒占比给出 decision, 供 down 阶段过滤
+     (避免把无病毒样本也下载下来, 浪费带宽与磁盘)
+
+默认**不改变** down 的行为 (--prescreen-filter off); 显式指定才启用过滤。
+
+prescreen 之后的**病毒层面画像** (v3.2, 默认开)
+-----------------------------------------------
+样本级问题回答完, 病毒本身也是结果。prescreen 跑完自动调 stat_virus_profile.py,
+把 run×taxon 明细上卷成病毒层面的画像, 落到 <prescreen>/virus_profile/:
+
+  * 有哪些病毒 —— 病毒名录 + 阶元 + 大类 (viroid/virus/phage/...)
+  * 各占多少   —— 样本内丰度 (mean/median/max)
+  * 多少样本里出现 —— 跨样本检出率 (prevalence), 分 leaf(末端节点) / all 两套口径
+  * 图表       —— 检出率条形图 / 检出率-丰度气泡图 / 样本×病毒热图 / 大类构成 / 组合图
+
+纯附加产物, 不改 sample_decision.tsv, 也不影响 down。
+用 --no-virus-profile 关闭, --no-virus-profile-plot 只出表不绘图。
 
 用法:
   python public_data_pipeline.py --species "Lycium barbarum" --taxid 112863 \\
@@ -14,6 +39,10 @@ stage 直接调用工作脚本 (download_host_genome.py / build_hostbase.py), �
 
   python public_data_pipeline.py --species "Lycium barbarum" --taxid 112863 \\
       --deepseek-api "sk-xxx" --ncbi-api "xxx" --stage all
+
+  # 启用预筛过滤 (safe: 保留 DOWNLOAD+REVIEW+LOCAL_CHECK, 不漏未知样本)
+  python public_data_pipeline.py --species "Lycium barbarum" --taxid 112863 \\
+      --stage prescreen down --prescreen-filter safe
 """
 
 import os
@@ -42,17 +71,25 @@ if sys.platform == 'win32':
 # Public Data Pipeline
 # ==========================================
 class PublicDataPipeline:
-    STAGES = ['search', 'info', 'down', 'convert', 'plot', 'hostref', 'hostdb', 'report']
+    STAGES = ['search', 'info', 'prescreen', 'down', 'convert',
+              'plot', 'hostref', 'hostdb', 'report']
 
     STAGE_DESC = {
-        'search':  'GSA + SRA 双引擎物种检索',
-        'info':    '元数据深度解析 & 文献溯源',
-        'down':    '高通量数据下载 (NGDC + NCBI)',
-        'convert': 'SRA → FASTQ.GZ 转换',
-        'plot':    'SCI 级六图可视化',
-        'hostref': '宿主基因组下载 (datasets/ngd/FTP/gget 四通道; --host-fasta 可跳过)',
-        'hostdb':  '宿主索引构建 (Kraken2/Bowtie2/HISAT2/Minimap2)',
-        'report':  'HTML 报告 + sample_handoff.csv 交接清单',
+        'search':    'GSA + SRA 双引擎物种检索',
+        'info':      '元数据深度解析 & 文献溯源',
+        'prescreen': '病毒预筛 & 物种鉴定 (预计算分类, 不下载数据)',
+        'down':      '高通量数据下载 (NGDC + NCBI)',
+        'convert':   'SRA → FASTQ.GZ 转换',
+        'plot':      'SCI 级六图可视化',
+        'hostref':   '宿主基因组下载 (datasets/ngd/FTP/gget 四通道; --host-fasta 可跳过)',
+        'hostdb':    '宿主索引构建 (Kraken2/Bowtie2/HISAT2/Minimap2)',
+        'report':    'HTML 报告 + sample_handoff.csv 交接清单',
+    }
+
+    # prescreen 过滤模式: 决定 down 阶段保留哪些 decision 的样本
+    PRESCREEN_KEEP = {
+        'safe':   {'DOWNLOAD', 'REVIEW', 'LOCAL_CHECK'},  # 不漏「无分类数据」的未知样本
+        'strict': {'DOWNLOAD', 'REVIEW'},                 # 只下确有病毒信号的
     }
 
     # hostdb 建库默认参数 (与 build_host_pipeline.py 历史行为对齐)
@@ -65,7 +102,7 @@ class PublicDataPipeline:
         self.work_dir = os.path.abspath(args.work_dir)
         self.ckpt = Checkpoint(self.work_dir)
         self.log_dir = os.path.join(self.work_dir, 'logs')
-        # 布局解析 (CLI > MMPV_IO_LAYOUT > legacy) 并写回环境供子进程继承
+        # 布局解析 (CLI > MMPV_IO_LAYOUT > standard) 并写回环境供子进程继承
         self.layout = normalize_layout_env(getattr(args, 'io_layout', None))
         self.dirs = build_meta_dirs(Path(self.work_dir), self.layout)
         for _name, _path in self.dirs.items():
@@ -158,6 +195,152 @@ class PublicDataPipeline:
         self.ckpt.mark_fail(s, f"exit={rc}")
         return False
 
+    def _prescreen_filtered_list(self, mode: str) -> Optional[str]:
+        """按 sample_decision.tsv 的 decision 列生成过滤后的 run 列表。
+
+        mode: safe   -> 保留 DOWNLOAD + REVIEW + LOCAL_CHECK (不漏未知样本)
+              strict -> 只保留 DOWNLOAD + REVIEW (最大化省资源)
+
+        返回 None 表示无法过滤 (预筛产物不存在或 mode 非法),
+        调用方应回退到完整列表 —— 绝不因为过滤失败而少下样本。
+        """
+        dec = os.path.join(self.dirs['prescreen'], 'sample_decision.tsv')
+        if not os.path.isfile(dec):
+            UI.warn(f"未找到预筛主表 {dec} —— 过滤跳过, 将下载全部样本")
+            UI.warn("  (需要先运行 prescreen 阶段; 或去掉 --prescreen-filter)")
+            return None
+        keep = self.PRESCREEN_KEEP.get(mode)
+        if not keep:
+            UI.err(f"未知 --prescreen-filter 模式: {mode}")
+            return None
+
+        runs, tally = [], {}
+        with open(dec, 'r', encoding='utf-8') as f:
+            for row in csv.DictReader(f, delimiter='\t'):
+                d = (row.get('decision') or '').strip()
+                tally[d] = tally.get(d, 0) + 1
+                if d in keep:
+                    runs.append((row.get('acc') or '').strip())
+        runs = [r for r in runs if r]
+
+        out = os.path.join(self.dirs['prescreen'], f'prescreen_filtered_{mode}.list')
+        with open(out, 'w', encoding='utf-8') as f:
+            f.write('\n'.join(sorted(runs)) + ('\n' if runs else ''))
+        UI.ok(f"预筛过滤 [{mode}]: 保留 {len(runs)} runs -> {out}")
+        UI.info("  决策分布: " + ", ".join(f"{k}={v}" for k, v in sorted(tally.items())))
+        dropped = sum(v for k, v in tally.items() if k not in keep)
+        if dropped:
+            UI.warn(f"  {dropped} 个样本按预筛结论过滤掉, 不会下载")
+        return out
+
+    def run_prescreen(self) -> bool:
+        """病毒预筛 & 物种鉴定: 调 stat_prescreen.py, **不下载任何测序数据**。
+
+        输入: info 产出的 sra.list + Global_Unified_Metadata_Core14.csv
+        产出: sample_decision.tsv (主表) / prescreen_run.list (下载清单) / ...
+        产物落在 self.dirs['prescreen'], 供 down 阶段 (--prescreen-filter) 消费。
+        """
+        s = 'prescreen'
+        UI.stage(self.STAGE_DESC[s], 'start')
+        self.ckpt.mark_start(s)
+
+        sra_list = os.path.join(self.dirs['info'], 'sra.list')
+        if not os.path.isfile(sra_list):
+            # 与 run_down 一致: 缺 sra.list 时从 search 产物重建
+            _, n = self._extract_runs()
+            sra_list = os.path.join(self.dirs['info'], 'sra.list')
+            if n:
+                UI.info(f"从 search 产物重建 sra.list ({n} runs)")
+        if not os.path.isfile(sra_list):
+            UI.err(f"missing sra list: {sra_list} (先运行 search/info 阶段)")
+            self.ckpt.mark_fail(s, "missing sra.list")
+            return False
+
+        outdir = self.dirs['prescreen']
+        os.makedirs(outdir, exist_ok=True)
+
+        # 物种对拍基准: 优先 Core14 的逐 run ScientificName, 退回 --species
+        core_csv = os.path.join(self.dirs['info'], 'Global_Unified_Metadata_Core14.csv')
+        core_arg = f'--core-csv {shlex.quote(core_csv)}' if os.path.isfile(core_csv) else ''
+        if not core_arg:
+            UI.warn("未找到 Core14 元数据 —— 物种对拍退化为全局 --species 基准")
+
+        thr_arg = ''
+        if self.args.prescreen_virus_pct_ident is not None:
+            thr_arg = f'--virus-pct-ident {self.args.prescreen_virus_pct_ident}'
+        elif self.args.prescreen_virus_pct is not None:
+            thr_arg = f'--virus-pct {self.args.prescreen_virus_pct}'
+
+        taxdump_arg = f'--taxdump {shlex.quote(self.args.taxdump)}' if self.args.taxdump else ''
+        gsa_arg = '--no-gsa' if self.args.prescreen_no_gsa else ''
+
+        cmd = (
+            f'python {shlex.quote(self._bin("stat_prescreen.py"))} '
+            f'--runs {shlex.quote(sra_list)} '
+            f'{core_arg} '
+            f'--expect-species {shlex.quote(self.args.species)} '
+            f'{thr_arg} {taxdump_arg} {gsa_arg} '
+            f'-j {self.args.prescreen_jobs} '
+            f'--gsa-jobs {self.args.prescreen_gsa_jobs} '
+            f'-o {shlex.quote(outdir)}'
+        )
+        UI.info("预筛只查上游预计算分类结果, 不下载测序数据")
+        rc = run_cmd(cmd, s, self.log_dir, timeout=7200)
+        dec = os.path.join(outdir, 'sample_decision.tsv')
+        if rc == 0 and os.path.isfile(dec):
+            UI.ok(f"output: {dec}")
+            self._run_virus_profile(outdir)
+            self.ckpt.mark_done(s)
+            return True
+        self.ckpt.mark_fail(s, f"exit={rc}")
+        return False
+
+    def _run_virus_profile(self, prescreen_dir: str) -> bool:
+        """prescreen 之后跑**病毒层面画像** (名录 / 丰度 / 跨样本检出率 + 图)。
+
+        病毒本身也是结果: 项目里有哪些病毒、各占多少、在多少样本里出现,
+        与"这条 run 要不要下载"是两件独立的事。本步骤纯附加 ——
+        只往 <prescreen>/virus_profile/ 写新文件, 不改 sample_decision.tsv,
+        也不影响 down 阶段; 绘图依赖缺失时自动降级为只出表。
+        """
+        if not getattr(self.args, 'virus_profile', True):
+            return True
+        taxa = os.path.join(prescreen_dir, 'stat_viral_taxa.tsv')
+        if not os.path.isfile(taxa):
+            UI.warn("  未找到 stat_viral_taxa.tsv, 跳过病毒层面画像")
+            return True
+
+        outdir = os.path.join(prescreen_dir, 'virus_profile')
+        plot_arg = '--plot' if getattr(self.args, 'virus_profile_plot', True) else ''
+        if plot_arg:
+            import importlib.util as _ilu
+            missing = [m for m in ('numpy', 'pandas', 'matplotlib', 'seaborn')
+                       if _ilu.find_spec(m) is None]
+            if missing:
+                UI.warn(f"  本解释器缺少 {'/'.join(missing)} —— 画像只出表不出图; "
+                        f"要图请换用装了 matplotlib/seaborn 的解释器运行本管线")
+        # 用**当前解释器**跑, 不用裸 `python`: run_cmd 经 shell 启动, Windows 下
+        # `python` 会按 PATH 解析到另一个解释器 (实测父进程 C:\Python312, 子进程
+        # 却落到无 matplotlib 的 3.13.12), 导致画像静默出不了图。用 sys.executable
+        # 可保证子进程与父进程能力一致, 上面那次依赖探测也才代表子进程的真实情况。
+        py = shlex.quote(sys.executable or 'python')
+        cmd = (
+            f'{py} {shlex.quote(self._bin("stat_virus_profile.py"))} '
+            f'-i {shlex.quote(prescreen_dir)} '
+            f'-o {shlex.quote(outdir)} '
+            f'--min-samples {self.args.virus_profile_min_samples} '
+            f'--top-n {self.args.virus_profile_top_n} '
+            f'--prevalence-by {self.args.virus_profile_by} '
+            f'{plot_arg}'
+        )
+        UI.info("病毒层面画像: 有哪些病毒 / 各占多少 / 在多少样本里出现")
+        rc = run_cmd(cmd, 'prescreen', self.log_dir, timeout=1800)
+        if rc == 0:
+            UI.ok(f"output: {os.path.join(outdir, 'virus_prevalence.tsv')}")
+        else:
+            UI.warn(f"  病毒层面画像失败 (exit={rc}), 不影响 prescreen 主产物")
+        return True
+
     def run_down(self) -> bool:
         s = 'down'
         UI.stage(self.STAGE_DESC[s], 'start')
@@ -170,6 +353,13 @@ class PublicDataPipeline:
             UI.err(f"missing sra list: {sra_list}")
             self.ckpt.mark_fail(s)
             return False
+
+        # 预筛过滤: 默认 off, 不改变既有行为; 显式指定才按 sample_decision.tsv 筛
+        if self.args.prescreen_filter != 'off':
+            filtered = self._prescreen_filtered_list(self.args.prescreen_filter)
+            if filtered:
+                sra_list = filtered
+
         skip_arg = f'--skip-list {shlex.quote(self.args.skip_list)}' if self.args.skip_list else ''
         links_file = os.path.join(self.dirs['search'], 'download_links.csv')
         links_arg = f'--links {shlex.quote(links_file)}' if os.path.isfile(links_file) else ''
@@ -345,7 +535,7 @@ class PublicDataPipeline:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Public Data Pipeline v3.1 - 公共数据获取管道",
+        description="Public Data Pipeline v3.2 - 公共数据获取管道",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 examples:
@@ -354,6 +544,11 @@ examples:
 
   python public_data_pipeline.py --species "Lycium barbarum" --taxid 112863 \\
       --deepseek-api "sk-xxx" --ncbi-api "xxx" --stage all
+
+  # 预筛 + 过滤下载 (safe: 不漏「无分类数据」的未知样本)
+  python public_data_pipeline.py --species "Lycium barbarum" --taxid 112863 \\
+      --stage prescreen down --prescreen-filter safe \\
+      --prescreen-virus-pct-ident 0.01
         """
     )
     parser.add_argument('--species', required=True, help='物种拉丁学名')
@@ -366,12 +561,47 @@ examples:
     parser.add_argument('--ncbi-api', help='NCBI API Key')
     parser.add_argument('--work-dir', default='./public_data_pipeline_output', help='输出根目录')
     parser.add_argument('--io-layout', choices=['legacy', 'standard'], default=None,
-                        help='I/O 目录布局: legacy=v3.0 现行名 (默认); standard=统一编号'
-                             '(doc/IO_LAYOUT_DESIGN.md); 亦可 MMPV_IO_LAYOUT 环境变量')
+                        help='I/O 目录布局: standard=统一编号 (默认); legacy=v3.0 现行名 '
+                             '(存量项目/checkpoint 兼容; doc/IO_LAYOUT_DESIGN.md); '
+                             '亦可 MMPV_IO_LAYOUT 环境变量')
     parser.add_argument('--bin-dir', help='脚本目录 (默认自动检测)')
     parser.add_argument('--source-type', default='TRANSCRIPTOMIC', help='测序类型')
     parser.add_argument('--detailed', action='store_true', default=True, help='详细模式')
     parser.add_argument('--no-detailed', action='store_false', dest='detailed', help='关闭详细模式')
+    # ---- prescreen 阶段 (病毒预筛 & 物种鉴定) ----
+    parser.add_argument('--prescreen-filter', default='off', choices=['off', 'safe', 'strict'],
+                        help='down 是否按预筛结论过滤下载清单: off=不过滤(默认, 行为不变); '
+                             'safe=保留 DOWNLOAD+REVIEW+LOCAL_CHECK(不漏无分类数据的样本); '
+                             'strict=只保留 DOWNLOAD+REVIEW(最省资源)')
+    parser.add_argument('--prescreen-jobs', type=int, default=6, help='prescreen NCBI 并发数')
+    parser.add_argument('--prescreen-gsa-jobs', type=int, default=3,
+                        help='prescreen GSA 并发数 (NGDC 有反爬, 勿调高)')
+    parser.add_argument('--prescreen-virus-pct-ident', type=float, default=None,
+                        help='prescreen 归一化病毒占比阈值(%%) —— 病毒命中/已鉴定命中, '
+                             '跨 NCBI/GSA 可比, 推荐用这个; 同时驱动 decision 列')
+    parser.add_argument('--prescreen-virus-pct', type=float, default=None,
+                        help='prescreen 旧口径病毒占比阈值(%%)')
+    parser.add_argument('--prescreen-no-gsa', action='store_true',
+                        help='prescreen 只跑 NCBI STAT, 跳过 GSA 通路')
+    # ---- prescreen 之后的病毒层面画像 (名录/丰度/检出率 + 图) ----
+    parser.add_argument('--virus-profile', dest='virus_profile', action='store_true',
+                        default=True,
+                        help='prescreen 后生成病毒层面画像 (默认开; 纯附加产物, '
+                             '不改 sample_decision.tsv, 也不影响 down)')
+    parser.add_argument('--no-virus-profile', dest='virus_profile', action='store_false',
+                        help='关闭病毒层面画像')
+    parser.add_argument('--virus-profile-plot', dest='virus_profile_plot',
+                        action='store_true', default=True,
+                        help='画像生成图表 (默认开; 缺 matplotlib/seaborn 时自动降级为只出表)')
+    parser.add_argument('--no-virus-profile-plot', dest='virus_profile_plot',
+                        action='store_false', help='画像只出表, 不绘图')
+    parser.add_argument('--virus-profile-min-samples', type=int, default=2,
+                        help='画像收录的样本数下限 (默认 2, 滤掉单例噪声; 表仍保留全部)')
+    parser.add_argument('--virus-profile-top-n', type=int, default=25,
+                        help='画像条形图展示的病毒数 (默认 25)')
+    parser.add_argument('--virus-profile-by', default='leaf', choices=['leaf', 'all'],
+                        help='画像绘图口径: leaf=末端节点(默认, 父子不并列); all=任意层级')
+    parser.add_argument('--taxdump', help='NCBI taxdump 目录(含 nodes.dmp), 用于精确病毒子树判定')
     parser.add_argument('--ngdc-method', default='aria2c', choices=['aria2c', 'requests', 'wget'])
     parser.add_argument('--ngdc-concurrency', type=int, default=5)
     parser.add_argument('--prefetch-concurrency', type=int, default=3)
@@ -398,7 +628,7 @@ examples:
     if not args.bin_dir:
         args.bin_dir = os.path.dirname(os.path.abspath(__file__))
 
-    UI.banner("Public Data Pipeline v3.1")
+    UI.banner("Public Data Pipeline v3.2")
 
     if 'all' in args.stage:
         stages_to_run = list(PublicDataPipeline.STAGES)
@@ -426,9 +656,9 @@ examples:
         return
 
     p = PublicDataPipeline(args)
-    funcs = {'search': p.run_search, 'info': p.run_info, 'down': p.run_down,
-             'convert': p.run_convert, 'plot': p.run_plot, 'hostref': p.run_hostref,
-             'hostdb': p.run_hostdb, 'report': p.run_report}
+    funcs = {'search': p.run_search, 'info': p.run_info, 'prescreen': p.run_prescreen,
+             'down': p.run_down, 'convert': p.run_convert, 'plot': p.run_plot,
+             'hostref': p.run_hostref, 'hostdb': p.run_hostdb, 'report': p.run_report}
     failed = []
     t0 = time.time()
     for s in stages_to_run:

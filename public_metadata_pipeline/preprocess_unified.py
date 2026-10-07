@@ -45,6 +45,7 @@ convert → clean → [hostref] → deplete → [bbnorm]，
 
 import argparse
 import os
+import shutil
 import sys
 import subprocess
 import logging
@@ -104,28 +105,79 @@ def run_cmd(cmd, logger, desc, timeout=None):
         return False
 
 
-def has_reads(d):
-    """目录存在且含可直接归一化的 reads (bbnorm 输入检查)"""
+READ_PATTERNS = ("*.fastq.gz", "*.fq.gz", "*.fasta.gz", "*.fa.gz",
+                 "*.fasta", "*.fa")
+
+
+def has_reads(d, recursive=False):
+    """目录存在且含可直接归一化的 reads (bbnorm 输入检查).
+
+    recursive=True 时连子目录一起看 (sra_dir 里 fastq 可能落在子目录)。
+    """
     d = Path(d)
     if not d.is_dir():
         return False
-    pats = ("*.fastq.gz", "*.fq.gz", "*.fasta.gz", "*.fa.gz", "*.fasta", "*.fa")
-    return any(next(d.glob(p), None) is not None for p in pats)
+    finder = d.rglob if recursive else d.glob
+    return any(next(finder(p), None) is not None for p in READ_PATTERNS)
+
+
+def collect_converted_files(sra_paths, outdir, logger):
+    """把 convert 阶段落在 .sra 旁的产物归集到 outdir (00_Converted).
+
+    为什么必须归集: sra2fastx.process_sra 是**就地转换** —— fasterq-dump 的
+    `-O` 指向 .sra 所在目录, 压缩也在原地, 成功后删除 .sra。产物跟 00_Converted
+    毫无关系, 旧版只把 outdir 传给 convert_all 当"落点"其实从未被使用 ——
+    于是 00_Converted/ 恒空, clean 阶段必然"未找到任何 fastq"(README 的一条命令
+    路径断在这里)。
+
+    这里按每个 .sra 的 stem 找 `<sra 所在目录>/<stem>*.<fa/fa.gz/...>` 移到 outdir;
+    同名冲突 (不同子目录同名样本) 加父目录名前缀, 不互相覆盖。返回归集文件数。
+    """
+    out = Path(outdir)
+    out.mkdir(parents=True, exist_ok=True)
+    moved = 0
+    for sra in sra_paths:
+        sra = Path(sra)
+        for pat in (f"{sra.stem}*.fastq.gz", f"{sra.stem}*.fq.gz",
+                    f"{sra.stem}*.fasta.gz", f"{sra.stem}*.fa.gz"):
+            for f in sorted(sra.parent.glob(pat)):
+                # stem 边界防误收: SRR12345 不得匹配 SRR123456 的产物
+                # (fasterq-dump/sra-tools 命名为 <stem>.fastq.gz / <stem>_001.fastq.gz)
+                rest = f.name[len(sra.stem):f.name.rfind('.')]
+                if rest and rest[0] not in ('_', '.', '-'):
+                    continue
+                dst = out / f.name
+                if dst.exists():
+                    dst = out / f"{f.parent.name}_{f.name}"
+                shutil.move(str(f), str(dst))
+                moved += 1
+                logger.info("  归集 %s → %s", f, dst)
+    return moved
 
 
 def stage_convert(sra_dir, outdir, logger, jobs=2, threads=6):
-    """SRA → FASTQ.GZ"""
+    """SRA → FASTQ.GZ (归集到 outdir/00_Converted)"""
     from sra2fastx import convert_all
     logger.info("=== [convert] SRA → FASTQ.GZ ===")
-    if not any(Path(sra_dir).rglob("*.sra")):
+    sra_files = sorted(Path(sra_dir).rglob("*.sra"))
+    if not sra_files:
         logger.info("  未找到 .sra 文件, 跳过")
         return True
 
     success, failures = convert_all(sra_dir, jobs=jobs, threads=threads, progress=True)
+    # 先归集再判失败: 混合成败时 (部分 .sra 在盘上), 成功那批的产物也要进
+    # 00_Converted, 失败的重跑时补转 (collect 按 stem 找产物, 失败样本自然找不到)
+    n_moved = collect_converted_files(sra_files, outdir, logger)
     if failures:
-        logger.error("  %d 个转换失败", len(failures))
+        logger.error("  %d 个转换失败 (成功 %d 个已归集 %d 个产物)",
+                     len(failures), success, n_moved)
         return False
-    logger.info("  %d 个 .sra 转换完成 → %s", success, outdir)
+    if not n_moved:
+        logger.error("  转换报告成功但 %s 里没有找到任何产物 (fastq.gz), "
+                     "clean 阶段将无输入", outdir)
+        return False
+    logger.info("  %d 个 .sra 转换完成, 归集 %d 个文件 → %s",
+                success, n_moved, outdir)
     return True
 
 
@@ -250,8 +302,9 @@ def main():
     g = parser.add_argument_group("输出")
     g.add_argument("--outdir", "-o", default="./preprocessed", help="输出根目录 (默认: ./preprocessed)")
     g.add_argument("--io-layout", choices=["legacy", "standard"], default=None,
-                   help="I/O 目录布局: legacy=v3.0 现行名 (默认); standard=统一编号"
-                        "(doc/IO_LAYOUT_DESIGN.md); 亦可 MMPV_IO_LAYOUT 环境变量")
+                   help="I/O 目录布局: standard=统一编号 (默认); legacy=v3.0 现行名 "
+                        "(存量项目/checkpoint 兼容; doc/IO_LAYOUT_DESIGN.md); "
+                        "亦可 MMPV_IO_LAYOUT 环境变量")
 
     g = parser.add_argument_group("阶段控制")
     g.add_argument("--skip-convert", action="store_true", help="跳过 SRA 转换")
@@ -289,7 +342,7 @@ def main():
 
     args = parser.parse_args()
 
-    # 布局解析 (CLI > MMPV_IO_LAYOUT > legacy) 并写回环境供子进程继承
+    # 布局解析 (CLI > MMPV_IO_LAYOUT > standard) 并写回环境供子进程继承
     normalize_layout_env(getattr(args, "io_layout", None))
 
     # 输入校验
@@ -351,6 +404,13 @@ def main():
         clean_input = args.fastq_dir
     elif not args.skip_convert and args.sra_dir:
         clean_input = str(convert_dir)
+        if "convert" not in failed and not has_reads(convert_dir):
+            # 归集结果为空 (例如 sra_dir 里是历史版本留下的就地 fastq, 已无 .sra):
+            # 回退用 sra_dir 里现成的 fastq, 不让 clean 空手报错
+            if has_reads(args.sra_dir, recursive=True):
+                logger.warning("  %s 无产物, 回退用 --sra-dir 里的现成 reads 作为 clean 输入",
+                               convert_dir)
+                clean_input = str(args.sra_dir)
     else:
         clean_input = str(args.sra_dir)
 
