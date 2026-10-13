@@ -12,7 +12,7 @@
 |---|---|---|
 | **`README.md`**（本文件） | **入口索引** + BEAST 踩坑 + 服务器路径 | 「从哪读起、哪里有坑」 |
 | **`RUN_GUIDE.md`** | **CLI 参数 · config 分区 · 输出目录 · checkpoint** | 「怎么跑」唯一权威 |
-| **`STAGE_REFERENCE.md`** | **18 个 stage 的逐项细节**（输入/处理/输出/参数/依赖/checkpoint） | 「每个 stage 干什么」唯一权威 |
+| **`STAGE_REFERENCE.md`** | **20 个 stage 的逐项细节**（输入/处理/输出/参数/依赖/checkpoint） | 「每个 stage 干什么」唯一权威 |
 | **`PIPELINE_FLOW.md`** | **模块归属总图 / 数据流分叉**（概念层） | 「模块坐在数据流哪里」唯一权威 |
 | **`METHODS.md`** | **论文方法章**（科学表述、阈值、参考文献） | 「论文里怎么写」唯一权威 |
 | **`RUNNING_PROCESS.md`** | **端到端叙事**（跑起来发生什么） | 叙事版，**表格一律指向 `RUN_GUIDE.md`** |
@@ -34,7 +34,7 @@
 
 ```
 virome_phylo_pipeline/
-├── phylo_pipeline.py           # 总管线（96 个 CLI 参数；三入口：--extract_dir / --virus / --work_dir）
+├── phylo_pipeline.py           # 总管线（114 个 CLI 参数；三入口：--extract_dir / --virus / --work_dir）
 ├── run_phylogeo.py             # BEAST 统一入口（XML 生成 → 提交 → 状态登记）
 ├── capheine_pipeline.py        # 正选择（stage capheine 的实现）
 ├── gene_partition_dating.py    # 分基因 BEAST 定年（stage gene_dating 的实现）

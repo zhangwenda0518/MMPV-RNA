@@ -45,7 +45,7 @@ MODULES = [
         "summaries": ["ncbi_harvest/seqgroup_*.csv"],
         "plots": ["ncbi_harvest/*.png", "ncbi_harvest/*.pdf", "ncbi_harvest/*.svg",
                   "**/*.pdf"],
-        "notes": ["combined.fasta 样本+参考序列", "dates.csv / sample_metadata.csv", "ncbi_harvest 公共序列收集"],
+        "notes": ["combined.fasta samples + reference sequences", "dates.csv / sample_metadata.csv", "ncbi_harvest public sequence collection"],
     },
     {
         "key": "phylogeny", "name": "Phylogeny (align + saturation + tree + splitstree)",
@@ -55,16 +55,22 @@ MODULES = [
         "plots": ["saturation_out/*.png", "qc/*.png", "tree_circular.png", "splitstree/*.png",
                   "gene_analysis/*.png", "cross_validation/*.png",
                   "qc/*.pdf", "tree_circular.pdf", "**/*.pdf"],
-        "notes": ["MAFFT 比对 + IQ-TREE ML 树", "Xia 替换饱和检验", "比对 QC"],
+        "notes": ["MAFFT alignment + IQ-TREE ML tree", "Xia substitution saturation test", "alignment QC"],
     },
     {
         "key": "popgen", "name": "Population genetics (popgen + host)",
         "dir": ph_dir("popgen"),
         "stages": ["popgen", "host"],
-        "summaries": ["dnasp/results.tsv", "dnasp/ld_pairs.tsv", "location_pops.tsv"],
+        "summaries": ["dnasp/results.tsv", "dnasp/ld_pairs.tsv", "location_pops.tsv",
+                      # popgen_stats (2026-10-12): 多面板统计图的数据源 + EasyHap 借鉴三表
+                      "popgen_stats.json",
+                      "popgen_stats.private_haplotypes.tsv",
+                      "popgen_stats.haplotype_enrichment.tsv",
+                      "popgen_stats.similarity_clusters.tsv"],
         "plots": ["dnasp/figures/*.png", "host_analysis/*.png", "distance/*.png",
-                  "popgen_metrics.png", "**/*.pdf"],
-        "notes": ["单倍型多样性 + Tajima's D / Fu's Fs", "宿主分化分析"],
+                  "popgen_metrics.png", "popgen_stats.png",
+                  "*hap_state_heatmap.png", "**/*.pdf"],
+        "notes": ["haplotype diversity + Tajima's D / Fu's Fs", "host differentiation analysis"],
     },
     {
         "key": "recomb", "name": "Recombination (rdp5)",
@@ -72,7 +78,7 @@ MODULES = [
         "stages": ["rdp5"],
         "summaries": ["rdp5/recombination_report.md", "rdp5/*.csv"],
         "plots": ["rdp5/*.png", "rdp5/figures/*.png", "**/*.pdf"],
-        "notes": ["RDP5 七方法 + mask 重组区"],
+        "notes": ["RDP5 seven methods + recombinant masking"],
     },
     {
         "key": "select", "name": "Selection (capheine)",
@@ -80,24 +86,28 @@ MODULES = [
         "stages": ["capheine"],
         "summaries": ["capheine/drhip/combined_sites.csv", "capheine/multiqc/*summary*.txt"],
         "plots": ["capheine/**/*.png", "capheine/**/*.pdf"],
-        "notes": ["HyPhy FEL/MEME/BUSTED 等 + DRHIP 位点整合"],
+        "notes": ["HyPhy FEL/MEME/BUSTED etc. + DRHIP site integration"],
     },
     {
-        "key": "time", "name": "Time (rtt + temporal + beast + gene_dating)",
+        "key": "time", "name": "Time (rtt + temporal + beast + gene_dating + treetime)",
         "dir": ph_dir("time"),
-        "stages": ["rtt", "temporal", "beast", "gene_dating"],
+        "stages": ["rtt", "temporal", "beast", "gene_dating", "treetime"],
         "summaries": ["clock_summary.tsv", "temporal_signal/drt_summary.csv",
                       "beast/merged/parameter_summary.csv",
                       "treetime_rtt/robust/robust_report.json"],
+                      # 注: treetime stage 的 molecular_clock.txt 不进 summaries ——
+                      # 该 stage 默认关, 没跑过的病毒会在报告里常驻 "declared but
+                      # not found" 噪音; 产物本身仍被 plots/**.pdf 与文件树覆盖。
         "plots": ["treetime_rtt/*.png", "treetime_rtt/robust/*.png", "treedater_ltt/*.png",
                   "temporal_signal/real/*.png", "beast/postprocess/*.png",
                   "beast/merged/*.png", "gene_dating/*.png", "**/*.pdf"],
-        "notes": ["Root-to-tip + DRT 时间信号", "BEAST 贝叶斯定年", "clock_summary 汇总各方法速率"],
+        "notes": ["Root-to-tip + DRT temporal signal", "BEAST Bayesian dating", "clock_summary — rate estimates across methods",
+                  "treetime: TreeTime CLI timetree.nexus (prerequisite for the phymapr route, 2026-10-12)"],
     },
     {
-        "key": "geography", "name": "Geography (phylogeo + geo)",
+        "key": "geography", "name": "Geography (phylogeo + geo + phymapr)",
         "dir": ph_dir("geography"),
-        "stages": ["phylogeo", "geo", "geo_paths"],
+        "stages": ["phylogeo", "geo", "geo_paths", "phymapr"],
         "summaries": ["phylogeography/merged/parameter_summary.json",
                       "tempmig/migration_yearly_summary.csv", "geo_analysis/spatiotemporal_counts.csv",
                       # geo_paths (2026-09-16): 事件级路径/episode/LTL/扩散统计
@@ -106,13 +116,18 @@ MODULES = [
                       "geo_analysis/pathways/ltl_summary.csv",
                       "geo_analysis/dispersion/dispersion_summary.json",
                       "geo_analysis/timescale_consistency.json",
-                      "geo_analysis/markov_jumps.json"],
+                      "geo_analysis/markov_jumps.json",
+                      # phymapr (2026-10-12): TreeTime 路线 (BM-ASR + 传播地图)
+                      "phymapr/phymapr_summary.json",
+                      "phymapr/pathways.csv", "phymapr/episodes.csv"],
         # visualization/ 里既有 SpreaD3 地图 (html) 也有发表级多面板图 (pdf)
         "plots": ["visualization/*.png", "geo_analysis/*.png", "tempmig/*.png",
                   "visualization/*.gif",
+                  "phymapr/*.png", "phymapr/*.gif",
                   "**/*.pdf", "visualization/*.html", "geo_analysis/*.html"],
-        "notes": ["CTMC+BSSVS 祖先地理重建", "Mantel 遗传-地理相关", "时序迁移",
-                  "geo_paths: 事件级传播路径/episode/三级置信 + 扩散统计 (2026-09-16)"],
+        "notes": ["CTMC+BSSVS ancestral geographic reconstruction", "Mantel genetic-geographic correlation", "temporal migration",
+                  "geo_paths: event-level transmission pathways/episodes/three-tier confidence + dispersal stats (2026-09-16)",
+                  "phymapr: TreeTime route BM-ASR + transmission map GIF (2026-10-12)"],
     },
 ]
 
@@ -158,23 +173,23 @@ def embed_asset(path: str,
     调用方据此在报告里显式写出「未内联原因」，不静默丢产物。
     """
     if not path:
-        return "", "", "路径为空"
+        return "", "", "empty path"
     p = Path(path)
     if not p.is_file():
-        return "", "", "文件不存在"
+        return "", "", "file not found"
     ext = p.suffix.lower()
     if ext not in PLOT_EXTS:
-        return "", "", f"扩展名 {ext or '(无)'} 不在可渲染白名单 {PLOT_EXTS}"
+        return "", "", f"extension {ext or '(none)'} not in renderable whitelist {PLOT_EXTS}"
     kind = "pdf" if ext in PLOT_PDF_EXTS else "img"
     size_kb = p.stat().st_size / 1024
     cap = max_pdf_kb if kind == "pdf" else max_img_kb
     if size_kb > cap:
-        return kind, "", f"{size_kb:.0f} KB > 内联上限 {cap} KB"
+        return kind, "", f"{size_kb:.0f} KB > inline limit {cap} KB"
     try:
         with open(path, "rb") as f:
             b64 = base64.b64encode(f.read()).decode()
     except OSError as e:
-        return kind, "", f"读取失败: {e}"
+        return kind, "", f"read failed: {e}"
     return kind, f"data:{_MIME[ext]};base64,{b64}", ""
 
 
@@ -194,9 +209,9 @@ def asset_card(path: str, output_dir: Optional[str] = None) -> Tuple[str, str]:
     if Path(path).suffix.lower() in PLOT_LINK_EXTS:
         href = _html.escape(_rel_href(path, output_dir), quote=True)
         return (f'<div class="img-card"><div class="img-label">{label}'
-                f'<span class="tag">HTML 交互图</span></div>'
-                f'<p class="asset-note">↗ <a href="{href}">在新标签打开 {_html.escape(name, quote=True)}</a>'
-                f'（单文件自包含, 零外链）</p></div>'), ""
+                f'<span class="tag">Interactive HTML</span></div>'
+                f'<p class="asset-note">↗ <a href="{href}">Open in new tab {_html.escape(name, quote=True)}</a>'
+                f'(single self-contained file, no external links)</p></div>'), ""
     kind, uri, reason = embed_asset(path)
     if uri:
         if kind == "pdf":
@@ -207,9 +222,9 @@ def asset_card(path: str, output_dir: Optional[str] = None) -> Tuple[str, str]:
                 f'<img src="{uri}" /></div>'), ""
     href = _html.escape(_rel_href(path, output_dir), quote=True)
     return (f'<div class="img-card off"><div class="img-label">{label}'
-            f'<span class="tag warn">未内联</span></div>'
+            f'<span class="tag warn">not inlined</span></div>'
             f'<p class="asset-note">⚠ {_html.escape(reason, quote=True)}<br>'
-            f'<a href="{href}" download>下载 {_html.escape(name, quote=True)}</a></p></div>'), reason
+            f'<a href="{href}" download>Download {_html.escape(name, quote=True)}</a></p></div>'), reason
 
 
 def collect_plots(vdir: str, patterns: List[str], max_imgs: int = 20,
@@ -227,7 +242,7 @@ def collect_plots(vdir: str, patterns: List[str], max_imgs: int = 20,
             ext = p.suffix.lower()
             if ext not in PLOT_EXTS and ext not in PLOT_LINK_EXTS:
                 if skipped is not None:
-                    skipped.append((str(p), f"扩展名 {ext or '(无)'} 不在可渲染白名单"))
+                    skipped.append((str(p), f"extension {ext or '(none)'} not in renderable whitelist"))
                 continue
             key = (p.parent.as_posix(), p.stem.lower())
             cur = by_stem.get(key)
@@ -235,16 +250,16 @@ def collect_plots(vdir: str, patterns: List[str], max_imgs: int = 20,
                 by_stem[key] = p
             elif _EXT_PRIORITY[ext] < _EXT_PRIORITY[cur.suffix.lower()]:
                 if skipped is not None:
-                    skipped.append((str(cur), f"同名单格式 {ext} 优先级更高, 不重复嵌入"))
+                    skipped.append((str(cur), f"same-stem format {ext} has higher priority, not embedded twice"))
                 by_stem[key] = p
             elif skipped is not None:
-                skipped.append((str(p), f"同名单格式 {cur.suffix.lower()} 优先级更高, 不重复嵌入"))
+                skipped.append((str(p), f"same-stem format {cur.suffix.lower()} has higher priority, not embedded twice"))
     out = [str(p) for p in sorted(by_stem.values(),
                                   key=lambda x: (x.parent.as_posix(), x.stem.lower()))]
     if len(out) > max_imgs:
         if skipped is not None:
             for _p in out[max_imgs:]:
-                skipped.append((_p, f"超出单模块上限 max_imgs={max_imgs}"))
+                skipped.append((_p, f"beyond per-module limit max_imgs={max_imgs}"))
         out = out[:max_imgs]
     return out
 
@@ -279,7 +294,11 @@ def _fmt_cell(v) -> str:
             s = f"{f:.4g}"
         except ValueError:
             pass
-    return s
+    # 2026-10-12 修 (P2-7): 表格单元格一律 HTML 转义 —— 产物里的序列名/病毒名/
+    # 备注可能含 `<`/`&`(如 `<script>`), 旧实现直接内插进 <td>, 报告页可被注入
+    # 裸标签。所有单元格只经本函数这一个出口 (csv/json/kv 同源), 故只在这里
+    # 转义一次 (render_md 自己转义, 不走本函数, 不会二次转义)。
+    return _html.escape(s)
 
 
 def render_table(path: str, max_rows: int = 50) -> str:
@@ -394,7 +413,9 @@ def build_html_report(
     virus_sections = []
 
     for i, r in enumerate(results):
-        vname = r.get("virus", f"Virus_{i}")
+        # 2026-10-12 修 (P2-7): 病毒名进 HTML (总表 <td> 与卡片 <h3>) 前必须转义 ——
+        # 病毒名来自目录/数据集元数据, 可能含 `<`/`&`。
+        vname = _html.escape(str(r.get("virus", f"Virus_{i}")))
         metrics = r.get("metrics", {})
         success = r.get("success", False)
         vdir = r.get("virus_dir") or r.get("output_dir") or ""
@@ -423,21 +444,11 @@ def build_html_report(
             overall = "PASS"
         else:
             overall = "PARTIAL"
-        summary_rows.append(f"""
-        <tr>
-            <td>{vname}</td>
-            <td><span class="badge {'ok' if overall == 'PASS' else ('fail' if overall == 'FAIL' else 'skip')}">{overall}</span></td>
-            <td>{n_done} / {n_skip} / {n_fail} / {n_blocked}</td>
-            <td>{fmt_metric(hm['rate'], hm['rate_source'])}</td>
-            <td>{fmt_metric(hm['r2'], hm['r2_source'])}</td>
-            <td>{tmrca_cell}</td>
-            <td>{mantel if mantel != '' else '—'}</td>
-            <td>{metrics.get("n_pathways", '') if metrics.get("n_pathways", '') != '' else '—'}</td>
-            <td>{metrics.get("geo_mean_velocity_km_yr", '') if metrics.get("geo_mean_velocity_km_yr", '') != '' else '—'}</td>
-        </tr>""")
 
         # ── 每模块一节 ──
         mod_html = []
+        n_rendered = 0        # 实际渲染出的表/图件数 (P2-8 闸门用)
+        n_decl_missing = 0    # "声明但未找到"的产物数
         for m in MODULES:
             mdir = os.path.join(vdir, m["dir"]) if vdir else ""
             badges = "".join(stage_badge(s, r) for s in m["stages"])
@@ -478,17 +489,19 @@ def build_html_report(
 
             # E2: stage 已完成但声明的 summary 产物不在磁盘 → 显式列出 (G3 复发护栏)
             missing = missing_declared_summaries(vdir, m, r.get("stages_done", []))
+            n_decl_missing += len(missing)
+            n_rendered += len(tables) + len(img_tags)
             warn_html = ""
             if missing:
-                warn_html += ('<p class="asset-note">⚠ 声明但未找到产物 (产出路径与报告 glob '
-                              '可能不一致): ' + _html.escape("、".join(missing)) + '</p>')
+                warn_html += ('<p class="asset-note">⚠ declared but not found (output path may '
+                              'not match the report glob): ' + _html.escape(", ".join(missing)) + '</p>')
             if not_inlined:
-                warn_html += ('<p class="asset-note">⚠ 有产物未内联: ' + _html.escape(
-                    "；".join(f"{Path(p).name} ({why})" for p, why in not_inlined)) + '</p>')
+                warn_html += ('<p class="asset-note">⚠ assets not inlined: ' + _html.escape(
+                    "; ".join(f"{Path(p).name} ({why})" for p, why in not_inlined)) + '</p>')
             if plot_skips:
-                warn_html += ('<p class="asset-note">· 同模块未嵌入的候选 ('
-                              f'{len(plot_skips)} 项): ' + _html.escape(
-                    "；".join(f"{Path(p).name} ({why})" for p, why in plot_skips[:8])
+                warn_html += ('<p class="asset-note">· candidates not embedded in this module ('
+                              f'{len(plot_skips)}): ' + _html.escape(
+                    "; ".join(f"{Path(p).name} ({why})" for p, why in plot_skips[:8])
                     + ("…" if len(plot_skips) > 8 else "")) + '</p>')
 
             # 未运行且无目录 → 整节灰显
@@ -502,7 +515,7 @@ def build_html_report(
             if warn_html:
                 body += warn_html
             if not body:
-                body = f'<p class="mod-empty">{"未运行 / 不适用 (skip)" if not has_dir else "该模块无表格与图片产物"}</p>'
+                body = f'<p class="mod-empty">{"not run / not applicable (skip)" if not has_dir else "no table or figure assets in this module"}</p>'
             mod_html.append(f"""
             <div class="{state_cls}">
                 <div class="mod-head">
@@ -513,9 +526,32 @@ def build_html_report(
                 {body}
             </div>""")
 
+        # 2026-10-12 修 (P2-8): 「零产物仍 PASS」闸门 —— overall 原先只看
+        # stages_done/success: stage 全部"完成"但**一张表/一张图都没渲染出来**
+        # (声明的 summary 产物全部未找到) 时, 报告照打 PASS。现改为:
+        # 渲染产物计数为 0 且存在"声明但未找到"条目 → 降为 PARTIAL 并给出原因。
+        overall_note = ""
+        if n_rendered == 0 and n_decl_missing and overall == "PASS":
+            overall = "PARTIAL"
+            overall_note = (f'<span class="asset-note">PARTIAL reason: zero rendered assets — '
+                            f'{n_decl_missing} declared asset(s) not found</span>')
+
+        summary_rows.append(f"""
+        <tr>
+            <td>{vname}</td>
+            <td><span class="badge {'ok' if overall == 'PASS' else ('fail' if overall == 'FAIL' else 'skip')}">{overall}</span>{overall_note}</td>
+            <td>{n_done} / {n_skip} / {n_fail} / {n_blocked}</td>
+            <td>{fmt_metric(hm['rate'], hm['rate_source'])}</td>
+            <td>{fmt_metric(hm['r2'], hm['r2_source'])}</td>
+            <td>{tmrca_cell}</td>
+            <td>{mantel if mantel != '' else '—'}</td>
+            <td>{metrics.get("n_pathways", '') if metrics.get("n_pathways", '') != '' else '—'}</td>
+            <td>{metrics.get("geo_mean_velocity_km_yr", '') if metrics.get("geo_mean_velocity_km_yr", '') != '' else '—'}</td>
+        </tr>""")
+
         virus_sections.append(f"""
         <div class="virus-card">
-            <h3>{vname} <span class="badge {'ok' if overall == 'PASS' else ('fail' if overall == 'FAIL' else 'skip')}">{overall}</span></h3>
+            <h3>{vname} <span class="badge {'ok' if overall == 'PASS' else ('fail' if overall == 'FAIL' else 'skip')}">{overall}</span>{overall_note}</h3>
             <div class="metrics">
                 <span>β={fmt_metric(hm['rate'], hm['rate_source'])}</span>
                 <span>R²={fmt_metric(hm['r2'], hm['r2_source'])}</span>
@@ -593,10 +629,10 @@ def build_html_report(
     </tbody>
 </table>
 <p style="max-width:1100px;margin:8px auto 0;color:#888;font-size:12px;">
-    括号内为指标来源。优先级: 速率 td_mean_rate(treedater) → pic_rate(PIC)；
-    R²  pic_r(PIC) → r_squared(RTT)；P  td_relaxed_clock_p(treedater) → p_value(RTT)；
-    TMRCA  beast_tmrca(BEAST) → td_tmrca(treedater)。
-    与 <code>phylo_summary.csv</code> 同源同值（该表另存 <code>*_source</code> 与 <code>alt_*</code> 备用口径列）。
+    Metric sources are given in parentheses. Priority: rate td_mean_rate(treedater) → pic_rate(PIC);
+    R²  pic_r(PIC) → r_squared(RTT); P  td_relaxed_clock_p(treedater) → p_value(RTT);
+    TMRCA  beast_tmrca(BEAST) → td_tmrca(treedater).
+    Same source and same values as <code>phylo_summary.csv</code> (that table also stores <code>*_source</code> and <code>alt_*</code> alternate-estimator columns).
 </p>
 
 <h2 style="max-width:1200px;margin:30px auto 10px;font-size:16px;">Per-virus Results by Module</h2>

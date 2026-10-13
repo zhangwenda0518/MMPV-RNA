@@ -24,6 +24,9 @@ rdp5:
   # (或在命令行用 --disable rdp5)。
   enabled: true
   script: ~/MMPV-RNA/biosoft/rdp5/run_rdp5.sh
+  # ⚠ script 指向的 run_rdp5.sh 不存在时 (环境无 RDP5, 如本机 Windows): rdp5 stage
+  #   记 skip(na) 用原比对继续, 不 fail 也不写 checkpoint (2026-10-12)。
+  #   脚本存在但执行失败 (wine/RDP5 故障) 仍记 fail。
   genes: null
   mask_min_methods: 3
   stage: run
@@ -97,11 +100,17 @@ geo_paths:
   censor_years: 0.5
   n_perm: 200
   # 出厂默认开启 (2026-09-17): 每次 --stage geo_paths 自动出传播图+树图联动
+  # 2026-10-09: map/gif 的**代码层默认值**已提为 True —— 原先代码里是
+  #   defaults.get(..., False), 只有本文件写了 true 才生效, 于是换用其他 config
+  #   时图**静默不出**且无提示。现在本文件显式 true 与代码默认一致,
+  #   保留是为了可读 + 便于持久关闭 (改 false 即可)。
   map: true
   # 2026-10-03 起默认开启动画 GIF (实测 36 帧渲染 ~6s, 成本可忽略);
   # 单次关闭: --no-geo_gif; 持久关闭: 改回 false。帧数与论文版动图保持一致 (36)。
+  # 2026-10-09: 代码层默认值同步为 True (同 map)。
   gif: true
   gif_frames: 36
+  # ⚠ tree_map 仍是 **config 层**默认 (代码层仍为 defaults.get(..., False)), 未在本次改动范围。
   tree_map: true
 temporal:
   check: false
@@ -109,6 +118,28 @@ temporal:
   bets: false
   bets_steps: 20
   bets_chain: 1000000
+# ── TreeTime 路线 (2026-10-12 新增, 参考 ADHS-Taylor/phymap-workflow) ──
+# 与 BEAST 路线并列的第二条时间-地理方法:
+#   treetime → python -m treetime CLI 完整时间树 (timetree.nexus + 置信)
+#   phymapr  → phymapr R BM-ASR 祖先重建 + 传播地图 GIF/树图
+# 两条依赖链: treetime 只吃 tree; phymapr 吃 treetime 产物, 不依赖 BEAST。
+# ⚠ 默认 enabled: false —— phymapr 需要一批 R 包 (ggtree/gganimate/gifski 等,
+#   完整清单见 STAGE_REFERENCE §treetime/phymapr 节), 服务器装好后改 true。
+# 开启方式: 此处改 true / CLI --treetime --phymapr / --stage geography (点名豁免门控,
+#   且依赖保护会自动带上 treetime)。
+treetime:
+  enabled: false
+  clock_filter: 4.0     # IQD 离群 tip 剔除阈值 (0=关)
+  coalescent: skyline   # const / skyline / optimal / 0.0
+  clock_rate: null      # 手动钟速率 (慢进化病原用; null=TreeTime 回归自估)
+phymapr:
+  enabled: false
+  map_style: polygon        # polygon=离线矢量; tile=暗色瓦片(需联网)
+  n_prune_early: 4          # 动画丢弃最早 N 条 pathway (深层演化史噪声)
+  direct_snp: 2.0           # Direct 置信阈值 (phymapr 内部 snp_distance 语义)
+  indirect_snp: 5.0
+  distant_style: import_arrow   # import_arrow / pulse / curve / hide
+  pace: 0.5                 # 动画节奏: 1=纯日历时间 0=事件均速
 report:
   # 2026-09-15 (P1-7): 该开关此前没有注册成命令行参数, 因此是死的;
   # 现对应 --report_enabled / --no-report。false 时不再产出

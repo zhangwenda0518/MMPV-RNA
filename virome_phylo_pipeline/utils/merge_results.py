@@ -184,7 +184,18 @@ def all_done(work_dir, st):
     return all(s >= target for s in states)
 
 
-def merge(work_dir, st, background=False):
+def merge(work_dir, st):
+    """合并多链产物: logcombiner → Python trees 合并 → treeannotator → 参数/诊断。
+
+    2026-10-12 修 (P1): **移除形参 `background`**。
+    该参数自加入起就是**死参数** —— 函数体内从未引用它, 合并**恒为同步执行**。
+    但调用方按名字理解成"已转后台, 可以安全退出": phylo_pipeline.py 的 beast
+    分支就写着 `merge_chains(beast_dir, st, background=True)`。一旦真按后台语义
+    实现, 管线退出就会把合并线程/子进程带走 —— 这正是"合并被杀、merged/ 缺失"
+    这一隐患的来源。而**同步**才是本函数唯一且正确的语义 (合并必须写完, 下游
+    phylogeo/geo/report 才能拿到 mcc.tree), 所以把这个会误导人的参数删掉,
+    而不是留着当装饰。
+    """
     merged = f'{work_dir}/merged'
     os.makedirs(merged, exist_ok=True)
     prefixes = st['prefixes']
@@ -205,22 +216,7 @@ def merge(work_dir, st, background=False):
         r = None
         log(f"  ⚠️ logcombiner 执行异常: {_le}")
     if r is not None and r.returncode == 0 and os.path.exists(f'{merged}/merged.log'):
-        # 行数闸门 (2026-10-03): 空/近空合并曾以"文件存在"冒充 ✅, 下游 postprocess
-        # 再产出"全员 ESS=1" + 空白 BSP 图 (GCVA time/beast 历史事故)
-        merged_log = f'{merged}/merged.log'
-        n_rows = 0
-        try:
-            with open(merged_log, encoding='utf-8', errors='replace') as _f:
-                n_rows = sum(1 for L in _f
-                             if L.strip() and not L.startswith('#')
-                             and not L.startswith('state'))
-        except OSError:
-            pass
-        if n_rows < 10:
-            log(f"  ❌ merged.log 仅 {n_rows} 行数据 "
-                f"(burnin={burnin} 超界或链未跑完) — 该合并产物不可用于 ESS/BSP/TMRCA")
-        else:
-            log(f"  ✅ merged.log ({os.path.getsize(merged_log)/1e6:.1f}MB, {n_rows} rows)")
+        log(f"  ✅ merged.log ({os.path.getsize(f'{merged}/merged.log')/1e6:.1f}MB)")
     elif r is not None:
         log(f"  ❌ log 合并失败: {r.stderr[-200:]}")
 
@@ -280,14 +276,22 @@ def merge(work_dir, st, background=False):
         subprocess.run([sys.executable, '-m', 'utils.auto_parse_params', work_dir, merged],
                        cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         if os.path.exists(f'{merged}/parameter_summary.json'):
-            # 空汇总闸门 (2026-10-03): auto_parse_params 的样本下限是 100, 不足时
-            # 写出 `{}` 却照样报 ✅ (服务器 1 字节 parameter_summary.csv 的来源路径)
-            _sz = os.path.getsize(f'{merged}/parameter_summary.json')
-            if _sz <= 5:
-                log(f"  ❌ parameter_summary.json 为空 ({_sz}B) — 可用样本 <100 "
-                    f"(阈值见 utils/sample_floor.py); 参数汇总不可用")
-            else:
-                log(f"  ✅ parameter_summary.json")
+            log(f"  ✅ parameter_summary.json")
+
+    # 4b. MCMC 收敛硬门禁 (2026-10-13 新增)
+    # ⚠ 历史缺陷: 上面只检查 parameter_summary.json **是否存在**就打 ✅,
+    # 于是 ESS=4–9 的未收敛链被静默采信 (GCVA genome 实测 posterior ESS=9.1 /
+    # ucld.mean ESS=4.5, 全部 converged=False, 却照样"合并成功")。
+    # 现按 ESS≥200 判据落盘 convergence_gate.json, 并把结论写回 run_status.json,
+    # 供下游 (phylo_pipeline / 报告) 决定是否降级。
+    # ⚠ 语义边界: 此门禁只管 "MCMC 混合是否充分", **不管 "数据能否定年"** ——
+    # 两者独立。门禁只降级/标注, 不"判死"管线 (与 sample_floor 工程哲学一致)。
+    try:
+        from utils.convergence_gate import evaluate as _conv_eval
+        st['convergence_gate'] = _conv_eval(merged, log=log)
+    except Exception as _ce:
+        log(f"  ⚠️ convergence gate skipped: {_ce}")
+
     # 4. MCMC 收敛诊断图 (ESS 柱状 + trace/density/ACF + 双链散点)
     try:
         from utils.mcmc_diag_plot import plot_diagnostics, plot_chain_scatter
@@ -296,16 +300,26 @@ def merge(work_dir, st, background=False):
             f'{merged}/merged.log', diag_pdf, burnin_frac=0.1)
         log("  ✅ mcmc_diagnostics.pdf (bulk/tail ESS: " +
             ", ".join(f"{p}={eb:.0f}/{et:.0f}" for p, _, _, eb, et in ess_values[:4]) + "…)")
-        # 双链散点 (取第一条单链 log 对比合并 log)
+        # 双链一致性 QQ 图 (取前两条**独立单链**对比)
+        # 2026-10-12: 原为「第一条单链 vs 合并 log」的逐样本散点。但 merged.log 是
+        # 多链**串联**（GCVA 实测 273 样本 vs 单链 105），且 BEAST 各链独立采样、
+        # 相同 state 的样本无对应关系 → Pearson r 恒被稀释到 ≈0，图无判别力。
+        # 现改为两条独立单链的**分位数-分位数**对比（判据 = 归一化最大偏差）。
         single_logs = [l for l in logs if os.path.basename(l) != 'merged.log']
-        if single_logs:
+        if len(single_logs) >= 2:
+            rs, _ = plot_chain_scatter(
+                single_logs[0], single_logs[1],
+                f'{merged}/chain_scatter.pdf')
+            log("  ✅ chain_scatter.pdf (QQ max-dev: " +
+                ", ".join(f"{p}={d:.3f}" for p, d in rs[:3]) + "…)")
+        elif single_logs:
             rs, _ = plot_chain_scatter(
                 single_logs[0], f'{merged}/merged.log',
                 f'{merged}/chain_scatter.pdf')
-            log("  ✅ chain_scatter.pdf (r: " +
-                ", ".join(f"{p}={r:.3f}" for p, r in rs[:3]) + "…)")
+            log("  ✅ chain_scatter.pdf (QQ max-dev: " +
+                ", ".join(f"{p}={d:.3f}" for p, d in rs[:3]) + "…)")
     except Exception as e:
-        log(f"  ❌ mcmc diagnostics 未产出: {e} — merged.log 仍可用, 但收敛诊断图缺失")
+        log(f"  ⚠️ mcmc diagnostics plot skipped: {e}")
     st['completed_at'] = time.strftime('%Y-%m-%d %H:%M:%S')
     json.dump(st, open(f'{work_dir}/run_status.json', 'w'), indent=2)
 
@@ -315,7 +329,8 @@ def main():
     ap.add_argument('--virus', default=None, help='GCVA / PSTVd')
     ap.add_argument('--work-dir', default=None, help='或直接指定工作目录')
     ap.add_argument('--status', action='store_true', help='只查看进度')
-    ap.add_argument('--background', action='store_true', help='trees 合并后台执行')
+    ap.add_argument('--background', action='store_true',
+                    help='(已废弃, 无效果) 合并恒为同步执行; 保留仅为兼容旧脚本')
     args = ap.parse_args()
 
     work_dir = args.work_dir
@@ -345,7 +360,10 @@ def main():
         log(f"❌ 链未全部完成 ({n_proc} 进程在跑), 等 BEAST 自然退出后再合并")
         sys.exit(1)
 
-    merge(work_dir, st, background=args.background)
+    if args.background:
+        log("⚠️ --background 已废弃: merge() 恒为同步执行 (后台化会让管线退出杀死"
+            "合并, 导致 merged/ 缺失), 该选项无效果")
+    merge(work_dir, st)
 
 
 if __name__ == '__main__':

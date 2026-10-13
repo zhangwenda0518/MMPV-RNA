@@ -28,6 +28,21 @@ def parse_args():
     p.add_argument("-n", "--name", default="Virus", help="Virus name for plot title")
     p.add_argument("--taxid", default="", help="NCBI TaxID (optional)")
     p.add_argument("-o", "--output", default=None, help="Output PDF path (default: <name>_breakpoint_plot.pdf)")
+    # 2026-10-12: 画布尺寸原先在 ggsave 里**写死 width=30, height=8** —— 30 in 宽
+    # 的图塞进 9.8 in 通栏只剩 0.33 倍，源图 12 pt 文字排到 4 pt，**无法排版**。
+    # 现暴露为 CLI（默认仍 30/8 → 既有调用行为逐字节不变）。
+    p.add_argument("--width", type=float, default=30.0,
+                   help="Output canvas width in inches (default 30; 组合图排版建议 12–16)")
+    p.add_argument("--height", type=float, default=8.0,
+                   help="Output canvas height in inches (default 8)")
+    # 2026-10-12: R 主题字号是**绝对 pt**（MainFile.R: fontSizeMultiplier <- 2 →
+    # title 40 / axis.text 30 / axis.title 20 pt），画布一小就溢出被裁。
+    # 暴露为 --font-scale（默认 None = 沿用 R 里写死的 2 → 行为逐字节不变）。
+    # 组合图排版建议：画布 16 in 宽时用 ~1.0–1.1。
+    p.add_argument("--font-scale", type=float, default=None,
+                   help="覆盖 R 的 fontSizeMultiplier (默认沿用 R 内写死的 2)")
+    p.add_argument("--gene-font-size", type=float, default=None,
+                   help="覆盖 R 的 fontSizeForGeneMap (默认沿用 R 内写死的 6)")
     p.add_argument("--rscript", default=RSCRIPT, help="Path to Rscript executable")
     return p.parse_args()
 
@@ -105,11 +120,42 @@ def run():
     )
     r_code = r_code.replace('virusName <- "Sarbecovirus"', f'virusName <- "{args.name}"')
     r_code = r_code.replace('taxId <- "694014"', f'taxId <- "{args.taxid}"')
-    
+    # 2026-10-12: taxid 缺省是空串 → 标题会渲染成 "Virus [TaxID: ]"（空括号很难看）。
+    # 改成有 taxid 才拼方括号。
+    r_code = r_code.replace(
+        'ggtitle(paste0(virusName, " [TaxID: ", taxId, "]"))',
+        'ggtitle(if (nzchar(taxId)) paste0(virusName, " [TaxID: ", taxId, "]") else virusName)')
+    # 2026-10-12: 可选覆盖 R 主题字号倍率（默认 None → 不改，沿用 R 内写死的 2）
+    if args.font_scale is not None:
+        r_code = r_code.replace('fontSizeMultiplier <- 2',
+                                f'fontSizeMultiplier <- {args.font_scale}')
+    if args.gene_font_size is not None:
+        r_code = r_code.replace('fontSizeForGeneMap <- 6',
+                                f'fontSizeForGeneMap <- {args.gene_font_size}')
+
+    # 2026-10-12: 配色统一到项目 OKABE 调色板。原 MainFile.R 用的是
+    # #E85E5D(红) / #C2DBD5(浅青) / #5F6AB1(蓝紫) / #87B4A9(青灰) —— 都不在
+    # 项目调色板内，与其它 21 个面板的色语义对不上。与字体/尺寸一样在运行时
+    # 做字符串覆盖，**不改第三方源码**（RDP5_RBDP_Rgrapher 保持原样）。
+    _RDP5_COLORS = {
+        '"#E85E5D"': '"#D55E00"',   # 断点 RBN 主填充      → 朱红
+        '"#C2DBD5"': '"#56B4E9"',   # 99% CI 上界填充      → 天蓝
+        '"#5F6AB1"': '"#0072B2"',   # 99% CI 下界填充      → 蓝
+        '"#87B4A9"': '"#999999"',   # 99% CI 边界线        → 灰
+    }
+    for _old, _new in _RDP5_COLORS.items():
+        r_code = r_code.replace(_old, _new)
+    # 基因轨道青色渐变 → OKABE 蓝系
+    r_code = r_code.replace(
+        'c("#043F3D", "#085F63", "#0B7F89", "#13A3A9", "#17C6C9")',
+        'c("#56B4E9", "#0072B2")')
+    r_code = r_code.replace('geneMapDataFrame$color <- "#085F63"',
+                            'geneMapDataFrame$color <- "#0072B2"')
+
     # Replace print(p) with ggsave
     r_code = r_code.replace(
         'print(p)',
-        f'ggsave("{r_out_pdf.as_posix()}", plot=p, width=30, height=8, limitsize=FALSE)'
+        f'ggsave("{r_out_pdf.as_posix()}", plot=p, width={args.width}, height={args.height}, limitsize=FALSE)'
     )
     r_code = r_code.replace(
         'print("Graph generated successfully without overlapping gene names.")',

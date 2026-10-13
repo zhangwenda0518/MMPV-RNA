@@ -279,7 +279,7 @@ def genetic_subsample(
         "params": {"max_reps": max_reps, "min_snp_diff": min_snp_diff,
                    "clade_cutoff": clade_cutoff, "date_resolution": date_resolution},
         "needs_calibration": True,
-        "note": "阈值沿用 phymap 默认（病原基因组级多样性设定）；小基因组(如 PSTVd 359bp)须先按本数据成对 SNP 分布重标定",
+        "note": "thresholds follow the phymap defaults (set for pathogen-genome-level diversity); for small genomes (e.g. PSTVd 359 bp) recalibrate against the pairwise SNP distribution of this dataset first",
     }
     out = {"success": True, "output_fasta": output_fasta, "qc": qc,
            "removed": removed_rows, "retained": retained}

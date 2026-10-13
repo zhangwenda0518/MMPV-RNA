@@ -35,6 +35,7 @@ import matplotlib.pyplot as plt
 
 from pypopart.io import load_alignment
 from pypopart.algorithms.mjn import MedianJoiningNetwork
+from pypopart.algorithms.msn import MinimumSpanningNetwork
 from pypopart.visualization.static_plot import create_publication_figure
 from pypopart.visualization.interactive_plot import InteractiveNetworkPlotter
 
@@ -116,15 +117,24 @@ def make_geo_meta(meta_path, out_path):
     return out_path
 
 
-def build(virus, color_by='location'):
+def build(virus, color_by='location', net='auto'):
+    """net: auto(默认) = MSN 优先 —— 近全唯一单倍型 (病毒全长常见) 下 MJN 的
+    准中介枚举是 3^k 指数爆炸 (实测 PSTVd 348GB / GCVA 32GB 帽被杀, 均为
+    _quasi_medians MemoryError); MSN (PopART AbstractMSN 移植) 多项式复杂度,
+    同样产出 HaplotypeNetwork 供 create_publication_figure。显式 net='mjn'
+    可强制旧口径 (短片段/低多样数据适用)。"""
     cfg = _haplo_cfg(virus)
     os.makedirs(cfg['out'], exist_ok=True)
-    print(f"=== {virus} (着色: {color_by}) ===")
+    print(f"=== {virus} (着色: {color_by}, 网络: {net}) ===")
 
     # 1. 构建网络
     aln = load_alignment(cfg['fasta'])
-    network = MedianJoiningNetwork(distance_method='hamming', epsilon=0).build_network(aln)
-    print(f"网络: {network.num_nodes} 节点, {network.num_edges} 边")
+    if net in ('auto', 'msn'):
+        network = MinimumSpanningNetwork().build_network(aln)
+        print(f"网络 (MSN): {network.num_nodes} 节点, {network.num_edges} 边")
+    else:
+        network = MedianJoiningNetwork(distance_method='hamming', epsilon=0).build_network(aln)
+        print(f"网络 (MJN): {network.num_nodes} 节点, {network.num_edges} 边")
 
     # 1.5 设置 population (地点或宿主)
     colors_map = _loc_colors() if color_by == 'location' else _host_colors()
@@ -266,10 +276,13 @@ def build(virus, color_by='location'):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--virus', choices=known_dataset_names(), required=True)
+    ap.add_argument('--net', choices=['auto', 'mjn', 'msn'], default='auto',
+                    help='单倍型网络算法: auto=MSN 优先 (近全唯一单倍型下 MJN 准中介'
+                         '枚举指数爆炸, 实测 32GB+ MemoryError); mjn=强制 Median-Joining')
     ap.add_argument('--color-by', choices=['location', 'host'], default='location',
                     help='着色方式: location(地点) 或 host(宿主)')
     args = ap.parse_args()
-    build(args.virus.upper(), color_by=args.color_by)
+    build(args.virus.upper(), color_by=args.color_by, net=args.net)
 
 
 if __name__ == '__main__':

@@ -12,10 +12,12 @@
 > ⚠ **已废弃 stage（2026-08-27）**：`saturation` / `rtt` / `temporal` / `genes` / `concat`
 > 这 5 个 stage 已从 `STAGE_ORDER` 移除，不再参与自动编排；单独调用仍可运行（保留兼容），
 > 但**不会**被任何大模块自动展开。下文对应章节保留作历史参考，标题已加废弃标注。
-> 现行 `STAGE_ORDER` 共 18 个（脚本清点，见附录 B）：
+> 现行 `STAGE_ORDER` 共 20 个（2026-10-12 更新，脚本清点，见附录 B）：
 > `prep → metadata → online → clean → align → splitstree → rdp5 → tree → popgen → host
-> → capheine → clock → beast → gene_dating → phylogeo → geo → geo_paths → report`
-> （其中 `splitstree` 为新增的可选网络分析，详见 §6）
+> → capheine → clock → beast → gene_dating → treetime → phylogeo → geo → geo_paths
+> → phymapr → report`
+> （其中 `splitstree` 为新增的可选网络分析，详见 §6；`treetime`/`phymapr` 为
+> TreeTime 路线时间-地理双 stage，详见 §19/§20，默认关闭）
 
 > **同步状态**：本文件已于 **2026-09-16** 与代码逐项复核并修正 9 处过期内容
 > （rdp5 默认策略/路径、tree 命令与路径与支持值、popgen 路径、phylogeo checkpoint 与
@@ -42,8 +44,8 @@
 | `recomb` | rdp5 | 重组检测（Phase R） |
 | `select` | capheine | 选择压力（Phase S） |
 | `phylogeny` | align + splitstree + tree | 序列比对+建树（Phase 3） |
-| `time` | clock + beast + gene_dating | 时间信号+定年（Phase 0a/0b/5/G） |
-| `geography` | phylogeo + geo + geo_paths | 系统地理（Phase 6，含遗传-地理相关性） |
+| `time` | clock + beast + gene_dating + treetime | 时间信号+定年（Phase 0a/0b/5/G + TreeTime 路线时间树） |
+| `geography` | phylogeo + geo + geo_paths + phymapr | 系统地理（Phase 6，BEAST CTMC 与 TreeTime/phymapr 双路线） |
 | `report` | report | 可视化+报告（Phase 7） |
 
 ```bash
@@ -321,17 +323,17 @@ barbarum 推不出的 1 行：`Unknown:Unknown`（确无地理信息）。
 
 | 项 | 内容 |
 |---|---|
-| **输入** | `align` 的 `mafft.aln.fasta`（work-dir 模式用 `--alignment`） |
-| **处理** | `utils/splitstree_bridge.py` → SplitsTree6 命令行，`--network neighbornet` 构建分裂网络（split decomposition） |
-| **输出** | `<virus>/phylogeny/splitstree/neighbornet.nexus`（+ 内部 nsplits 指标） |
-| **参数** | `--splitstree_max_taxa`(200) |
+| **输入** | `align` 的 `mafft.aln.fasta`（work-dir 模式用 `--alignment`）+ 分组用元数据（地理通道 `meta_csv` / 宿主通道 `host_csv`） |
+| **处理** | `utils/splitstree_bridge.py` → SplitsTree6 命令行，`--network neighbornet` 构建分裂网络（split decomposition）；随后 `utils/splitstree_viz.py` **出版级渲染**（2026-10-12 接线）：equal-angle 等角布局 + 外圈彩色分组弧线（同组 tip 在 CYCLE 上取角度区间画细闭合弧，嵌套区间逐层外推，组名同色标注；分组值含中文自动切 CJK 字体） |
+| **输出** | `<virus>/phylogeny/splitstree/neighbornet.nexus`（+ nsplits 指标）+ `neighbornet.pdf/png`（渲染图；PDF 矢量、PNG 300dpi） |
+| **参数** | `--splitstree_max_taxa`(200)、`--splitstree_group_col {auto,location,host,none}`(默认 auto=location→host 自动回退; none=只画网络) |
 | **依赖** | align |
-| **Checkpoint** | `phylogeny/splitstree/neighbornet.nexus` 存在 |
-| **单独运行** | `--stage splitstree` |
+| **Checkpoint** | `phylogeny/splitstree/neighbornet.nexus` 存在（渲染图是加分产物，失败只降级不重跑） |
+| **单独运行** | `--stage splitstree`；手工重渲染：`python -m utils.splitstree_viz -i neighbornet.nexus -o nn.pdf --png nn.png --meta meta.csv --group-col location` |
 | **定位** | 与 `tree` 并列：`tree` 强制给出**一棵树**（隐含"数据是树状"假设），`splitstree` 不假设树状，用分裂图暴露**冲突信号**（重组、不完全谱系分选）。两者互不依赖，可同时开 |
-| **降级** | 无比对 / bridge 不可用 / 未产出 → 记 warning 跳过，不阻断流程 |
+| **降级** | 无比对 / bridge 不可用 / 未产出 → 记 warning 跳过，不阻断流程；无可用的分组列 / 弧线绘制失败 → 只出网络本体并告警 |
 
-> 判读：NeighborNet 图上出现**箱形（box）结构**而非干净树状分支时，提示存在网状进化——此时应回看 `rdp5` 的重组检测结果。
+> 判读：NeighborNet 图上出现**箱形（box）结构**而非干净树状分支时，提示存在网状进化——此时应回看 `rdp5` 的重组检测结果。分组弧线只是**可视化分组**，弧线相套不代表统计显著（与单倍型网络"视觉分区 ≠ Fst 显著"同一纪律）。
 
 ---
 
@@ -347,6 +349,7 @@ barbarum 推不出的 1 行：`Unknown:Unknown`（确无地理信息）。
 | **Checkpoint** | `recomb/rdp5/rdp5_dropped.realn.fasta`（`--rdp5_mask` 时为 `recomb/rdp5/masked/masked_N.fasta`） |
 | **单独运行** | `--stage rdp5` |
 | **短序列防御** (2026-09-02) | 比对 <500 bp（如类病毒 ~359nt）RDP5 窗口方法无足够位点，记 skip 返回原比对，不再空跑 11 分钟后 fail |
+| **环境无 RDP5 → 跳过** (2026-10-12) | `--rdp5_stage` 含 run 且 `rdp5.script`（默认 `~/MMPV-RNA/biosoft/rdp5/run_rdp5.sh`）**不存在**时，stage 块预检直接记 **skip(na)**：不写 checkpoint（装上 RDP5 后重跑会自动补检）、下游用原比对继续、退出码不受影响。**脚本存在但执行失败仍走 fail**（真工具故障要暴露，不可与"环境没有"混同） |
 
 ---
 
@@ -399,12 +402,14 @@ barbarum 推不出的 1 行：`Unknown:Unknown`（确无地理信息）。
 | 项 | 内容 |
 |---|---|
 | **输入** | mafft.aln.fasta + sample_metadata.csv |
-| **处理** | `popgen_analysis`：π/θ/Tajima D/Fu's Fs/Fst/MJN 网络 |
-| **输出** | `<virus>/popgen/popgen_report.txt`（stdout 捕获）+ metrics；下游另有 `popgen/distance/`（距离矩阵+NJ树）、`popgen/dnasp/`、可选 `popgen/haplo`/`popgen/figures` |
+| **处理** | `popgen_analysis`：全局 π/θ-W/S/Hd/k/Tajima's D/**Fu's Fs**（2026-10-12 起实算, Ewens 递推口径）+ 按群体拆分统计 (`diversity_by_population`) + 全局 Fst（位点法+单倍型法+置换）+ **pairwise Fst 矩阵** (`fst_pairwise`, 与位点法同口径) → 结构化 `popgen_stats.json` |
+| **输出** | `<virus>/popgen/popgen_report.txt`（stdout 捕获）+ `popgen_stats.json`（结构化统计：全局+按群体+pairwise Fst+**私有单倍型/单倍型×群体富集(Fisher+BH)/相似性聚类**——2026-10-12 借 EasyHap research.py/stats.py 思想）+ `popgen_stats.private_haplotypes.tsv` / `.haplotype_enrichment.tsv` / `.similarity_clusters.tsv` / `.haplotypes.fasta` + **`popgen_stats.pdf/png`**（2×3 多面板：A π vs θ-W(%)、B Hd、C Tajima's D、D Fu's Fs、E pairwise Fst 下三角热图、F 摘要含私单倍型/聚类/富集星号；Okabe-Ito、CJK 自适应）+ **`hap_state_heatmap.pdf/png`**（单倍型×多态位点等位状态栅格，`--genes-csv` 可画基因结构带+连接线——借 EasyHap plot_haplotype_heatmap/_connect_gene_to_axis；位点>400 自动抽稀）+ metrics；下游另有 `popgen/distance/`（距离矩阵+NJ树）、`popgen/dnasp/`、网络图见 report 后处理 `build_haplo_outputs`；transmission_map/sample_plot 底图可叠加 EasyHap 离线世界海岸线（utils/world_basemap.py，失败静默降级） |
 | **参数** | `--popgen_group`(location)、`--popgen_min_n`(5)、`--popgen_perm`(999) |
 | **依赖** | align |
-| **Checkpoint** | `popgen/popgen_report.txt` |
-| **单独运行** | `--stage popgen` |
+| **Checkpoint** | `popgen/popgen_report.txt`（统计图是加分产物, 渲染失败只降级不重跑） |
+| **单独运行** | `--stage popgen`；手工重渲染：`python -m utils.popgen_plots --stats popgen_stats.json --pdf s.pdf --png s.png` |
+| **Fu's Fs 口径** | 完整 Ewens 递推（θ̂ 由单倍型数 k MLE 拟合, Fs=ln P(K≤k)，Fu 1997 / Arlequin 族）；**只依赖 (n,k)** 是该检验族固有性质；pypopart 自带 `calculate_fu_fs` 是 ±ln(k/E[k]) 的简化近似（其源码自认），两者不可互比；中性预期 ≈ln(0.5)=-0.69 邻域, 扩张群体显著更负 |
+| **失败语义** | 渲染/JSON 失败 → warning 降级（报告文本不受影响） |
 
 ---
 
@@ -517,13 +522,13 @@ barbarum 推不出的 1 行：`Unknown:Unknown`（确无地理信息）。
 | 项 | 内容 |
 |---|---|
 | **输入** | phylogeo 的 `merged/mcc.tree`（吃 `location.states.set/.set.prob` 后验）+ meta（name,location）+ mafft.aln.fasta（推 seq_len） |
-| **处理** | ① `utils/transmission_paths.py::run_pathways`：逐分支时空表（seraphim `treeExtractions` 同构）→ 只留地点变化分支 = 事件级 pathway → 同地点连续节点折叠为 episode（**自根 DFS 拓扑序**，免疫 phymapr 按日期排序的同日期 NA bug）→ 三级置信分类 Direct/Indirect/Distant-Import（SNP 维度=期望替换数 `rate×Δheight×L`，**非实测**；阈值 2/5 沿用 phymapr，**论文前须按本数据 E[S] 分布标定**）→ LTL 持久性摘要（删失窗 0.5 年，polio-wpv1 同款）② `utils/diffusion_stats.py`：分支扩散速度/扩散系数/wavefront 时间序列 + **坐标重标注置换零模型**（种子 42；初版端点洗牌在单源网络下无检验力已废弃）③ 可选 `--geo_map`（现默认开）：`utils/transmission_map.py` 贝塞尔弧线+末段箭头+时间色带静态图（**默认纯矢量无第三方瓦片，合规**）+ `--geo_gif` 时间揭示动画（2026-10-03 起默认开，`--no-geo_gif` 关） |
+| **处理** | ① `utils/transmission_paths.py::run_pathways`：逐分支时空表（seraphim `treeExtractions` 同构）→ 只留地点变化分支 = 事件级 pathway → 同地点连续节点折叠为 episode（**自根 DFS 拓扑序**，免疫 phymapr 按日期排序的同日期 NA bug）→ 三级置信分类 Direct/Indirect/Distant-Import（SNP 维度=期望替换数 `rate×Δheight×L`，**非实测**；阈值 2/5 沿用 phymapr，**论文前须按本数据 E[S] 分布标定**）→ LTL 持久性摘要（删失窗 0.5 年，polio-wpv1 同款）② `utils/diffusion_stats.py`：分支扩散速度/扩散系数/wavefront 时间序列 + **坐标重标注置换零模型**（种子 42；初版端点洗牌在单源网络下无检验力已废弃）③ `--geo_map`（**代码层默认开**，2026-10-09 起；`--no-geo_map` 关）：`utils/transmission_map.py` 贝塞尔弧线+末段箭头+时间色带静态图（**默认纯矢量无第三方瓦片，合规**）+ `--geo_gif` 时间揭示动画（**代码层默认开**；`--no-geo_gif` 关）。⚠ GIF 嵌在 `geo_map` 的同一 `if` 块内（`run_stage_geo_paths`），故 `--no-geo_map` 会**连带关掉 GIF**；想只关 GIF 用 `--no-geo_gif` |
 | **输出** | `geography/geo_analysis/pathways/{branch_table,pathways,episodes,ltl_summary}.csv + pathway_qc.json`；`geography/geo_analysis/dispersion/{velocity_table,wavefront_series}.csv + dispersion_summary.json`、`geo_analysis/timescale_consistency.json`（双流一致性闸门：时间流 RTT/DRT vs 地理流根高/速率并排 + WARN 旗标，2026-09-17）；可选 `geography/visualization/transmission_map.png(+.pdf/.svg/.gif)` |
-| **参数** | `--no_pathways`(关)、`--direct_snp`(2.0)、`--indirect_snp`(5.0)、`--censor_years`(0.5)、`--n_perm`(200)、`--geo_map`、`--geo_gif` / `--no-geo_gif`、`--geo_gif_frames`(36)、`--geo_tree_map`(树-图联动双面板)、`--calibrate`(auto=E[S] 分位数 q25/q75 自标定, 默认经 config) |
+| **参数** | `--no_pathways`(关)、`--direct_snp`(2.0)、`--indirect_snp`(5.0)、`--censor_years`(0.5)、`--n_perm`(200)、`--geo_map` / `--no-geo_map`、`--geo_gif` / `--no-geo_gif`、`--geo_gif_frames`(36)、`--geo_tree_map`(树-图联动双面板, 仍仅 config 层默认)、`--calibrate`(auto=E[S] 分位数 q25/q75 自标定, 默认经 config) |
 | **依赖** | phylogeo（checkpoint 即其 MCC） |
 | **Checkpoint** | `geography/geo_analysis/pathways/pathway_qc.json` |
 | **单独运行** | `--stage geo_paths`（geography 组自动包含） |
-| **出图默认** (2026-09-17; GIF 2026-10-03 起) | config `geo_paths.map/tree_map/gif: true` → 每次 run 自动产出 `visualization/transmission_map.{png,pdf,svg}`、`transmission_map.gif`（36 帧时间揭示动画）与 `transmission_tree_map.*`；单次关闭任一项用对应否定旗标（当前仅 GIF 有 `--no-geo_gif`）。GIF 实测渲染 ~6s；缺地点坐标时跳过并告警（不致命） |
+| **出图默认** (2026-09-17; GIF 2026-10-03 起; `map`/`gif` 提到代码层 2026-10-09) | `map` / `gif` 的**代码层默认值**现为 `True`（原为 `defaults.get(..., False)` —— 只有 config 写了才生效，换 config 时**静默不出图**且无提示）→ 每次 run 自动产出 `visualization/transmission_map.{png,pdf,svg}` 与 `transmission_map.gif`（36 帧时间揭示动画）；`tree_map` 仍为 **config 层**默认（`geo_paths.tree_map: true`）。单次关闭：`--no-geo_map`（⚠ 连带关 GIF）/ `--no-geo_gif`；config 改 `false` 可持久关闭。GIF 实测渲染 ~6s；缺地点坐标时跳过并告警（不致命） |
 | **方法定位** | MCC **描述层**（与 RRT/TEMPMIG 并列），不改动 BSSVS BF 推断结论；置换零模型与 seraphim RRW 参数化零模型**不同**，不可互换引用。方法出处逐条见各模块 docstring 与 `INTEGRATION_20260916.md` |
 
 ---
@@ -556,6 +561,54 @@ barbarum 推不出的 1 行：`Unknown:Unknown`（确无地理信息）。
 | **Checkpoint** | `phylo_summary.csv` |
 | **单独运行** | `--stage report`（batch 模式需已有产物） |
 | **收尾语义**（2026-09-16 澄清） | 汇总**不是** `process_virus` 里的 stage 分支，而是 `main()` 收尾时**无条件**产出 —— 这样 `--stage clock` 这类局部重跑也会刷新汇总表。开关用 config `report.enabled`（`--report_enabled` / `--no-report`），**不是** stage 清单 |
+
+---
+
+## 19. `treetime` — TreeTime CLI 完整时间树（2026-10-12 新增，phymapr 路线前置）
+
+> 与 BEAST 路线并列的**第二条时间-地理方法**的第一环（参考 ADHS-Taylor/phymap-workflow）。
+> 与 `clock` 阶段的关系：`clock` 的 `run_treetime_rtt` 走 TreeTime Python API 只做 RTT
+> 回归口径（无注解 newick）；本 stage 走 **`python -m treetime` CLI**，打开 clock-filter
+> (IQD)、coalescent(skyline) 先验、`--confidence`，产出带 `[&date=...]` 注解的
+> **timetree.nexus** —— phymapr BM-ASR（`treeio::read.beast`）的硬性输入。
+
+| 项 | 内容 |
+|---|---|
+| **输入** | `iqtree.treefile` + `mafft.aln.fasta` + `dates.csv` |
+| **处理** | `utils/treetime_bridge.py::run_treetime_full`：日期有效性过滤（委托 `metadata_governance.decimal_year`）→ 无日期 tip 按 TreeDater 模式剪树（`timetree_input_dated.nwk`）→ 写只含 `name,date` 的 `dates_filtered.tsv` → `python -m treetime --tree --aln --dates --outdir --clock-filter 4 --coalescent skyline --confidence --rng-seed 42` |
+| **输出** | `time/treetime/timetree.nexus` + `dates_filtered.tsv` + `molecular_clock.txt` +（可选）`timetree_input_dated.nwk` |
+| **参数** | `--treetime`、`--treetime_clock_filter`(4.0, 0=关)、`--treetime_coalescent {const,skyline,optimal,0.0}`、`--treetime_clock_rate`（慢进化病原手动速率） |
+| **依赖** | tree |
+| **Checkpoint** | `time/treetime/timetree.nexus` |
+| **单独运行** | `--stage treetime` |
+| **默认状态** | **关闭**（config `treetime.enabled: false`；`--stage` 点名 / CLI 开关 / config 改 true 三种开启方式） |
+| **metrics** | `treetime_clock_rate`、`treetime_n_tips_total/used/pruned_undated`、`treetime_clock_filter_iqd/coalescent/rng_seed`；clock 阶段 DRT 未通过时打 `treetime_temporal_caveat` 警示旗标（产物仅供探索，不进论文定年结论——与"PSTVd 不报 TMRCA"同一纪律） |
+| **失败语义** | 有日期 tip <3 / treetime 未装 / CLI 失败 → skip(na)（`timetree.nexus 未产出`; 2026-10-13 与代码对齐: 默认关闭的 stage, 工具缺失**不阻断主线**, 不计 blocked、不影响退出码） |
+
+---
+
+## 20. `phymapr` — 系统地理 TreeTime 路线（2026-10-12 新增；BM-ASR + 传播地图）
+
+> TreeTime 路线的地理环：吃 `treetime` 的时间树，**全程不需要 BEAST**。
+> 祖先地点 = phymapr 自研 BM-ASR（对 lat/lon 连续祖先重建后吸附最近采样点），
+> 与 BEAST CTMC+BSSVS 推断**方法不同源**——`episodes.csv`/`pathways.csv` 与
+> geo_paths 的同名产物**同构不同源**（阈值 2/5 是 phymapr 内部 snp_distance 语义，
+> 非 geo_paths 的期望替换数 E[S]），可双方法对照但不可互相引用。
+
+| 项 | 内容 |
+|---|---|
+| **输入** | `time/treetime/timetree.nexus` + `sample_metadata.csv`（name,date,location） |
+| **处理** | `utils/phymapr_bridge.py`：①元数据桥 `build_phymapr_metadata`——坐标走 `coord_lookup`（含省市连写拆分梯子：省名前缀 → 全称截尾 → 末段/去"市"后缀，全落空才退省级，再落空诚实剔除），日期中点规范化（年→07-02 / 月→月中日），**lat/long 预写入 TSV → phymapr 检测到即跳过 OSM 在线编码（离线）**；②R 侧（模块级脚本常量 + JSON 哨兵 `___PHYMAPR_JSON_END___`，TreeDater 同范式）：依赖探测（缺→列清单+安装提示+blocked）→ phymapr 加载（`PHYMAPR_SRC` 环境变量 source 本地源码 > library > GitHub 安装，无硬编码路径）→ `treeio::read.beast` + `drop.tip` 对齐树-元数据（无元数据/无日期/无坐标 tip 剔除）→ `generate_phylo_transmission()` → 落盘 |
+| **输出** | `geography/phymapr/`：`tree_plot.png`、`transmission_map.gif`、`transmission_map_static.png`（workflow 漏存，本桥补上）、`episodes.csv`、`pathways.csv`、`phymapr_metadata_used.tsv`、`timetree_matched.nexus`、`phymapr_summary.json`（checkpoint） |
+| **参数** | `--phymapr`、`--phymapr_map_style {polygon,tile}`（默认 polygon 离线）、`--phymapr_n_prune_early`(4，动画丢弃最早 N 条 pathway)、`--phymapr_direct_snp`(2)、`--phymapr_indirect_snp`(5)、`--phymapr_distant_style {import_arrow,pulse,curve,hide}`、`--phymapr_pace`(0.5，1=纯日历时间 0=事件均速) |
+| **依赖** | treetime |
+| **Checkpoint** | `geography/phymapr/phymapr_summary.json` |
+| **单独运行** | `--stage phymapr`（依赖闭包自动带 treetime） |
+| **默认状态** | **关闭**（config `phymapr.enabled: false`；服务器需先装 R 依赖） |
+| **R 依赖** | hard: ape/treeio/ggtree/ggplot2/dplyr/tidyr/tibble/gganimate/gifski/lubridate/maps/tidygeocoder/jsonlite；soft（非 source 模式）: sf/ggspatial/phytools。安装：CRAN + BiocManager(ggtree/treeio) + `remotes::install_github('ADHS-Taylor/phymapr')`；离线用 `PHYMAPR_SRC` |
+| **metrics** | `phymapr_n_pathways/n_episodes/n_locations/n_tips_used/n_tips_total/n_tips_dropped`、`phymapr_conf_<transmission_type>` |
+| **失败语义** | 坐标可解析样本 <5 / R 依赖缺失 / timetree.nexus 缺失 → skip(na)（日志给出具体原因与安装清单; 2026-10-13 与代码对齐: 缺失不阻断主线, 不计 blocked） |
+| **方法定位** | 与 BEAST CTMC 路线**并列的描述/推断层**，方法出处 phymapr（ADHS-Taylor）；不改动 BSSVS BF 结论 |
 
 ---
 
@@ -624,16 +677,18 @@ barbarum 推不出的 1 行：`Unknown:Unknown`（确无地理信息）。
 
 ## 附录 B：stage 速查表（与 `STAGE_ORDER` 逐字对应）
 
-`STAGE_ORDER` 共 **18 项**（`phylo_pipeline.py:126-132`，逐字抄录并于 2026-09-16 用脚本清点）：
+`STAGE_ORDER` 共 **20 项**（2026-10-12 更新：新增 `treetime` / `phymapr`）：
 
 ```text
 STAGE_ORDER = [
     'prep', 'metadata', 'online', 'clean', 'align', 'splitstree', 'rdp5', 'tree',
     'popgen', 'host', 'capheine',
     'clock', 'beast', 'gene_dating',
+    'treetime',
     'phylogeo', 'geo', 'geo_paths',
+    'phymapr',
     'report',
-]   # len == 18
+]   # len == 20
 ```
 
 | `STAGE_ORDER` 序号 | stage | 本文档章节 |
@@ -652,16 +707,18 @@ STAGE_ORDER = [
 | 12 | clock | §11（整合旧 rtt/temporal/genes） |
 | 13 | beast | §12 |
 | 14 | gene_dating | §13 |
-| 15 | phylogeo | §14 |
-| 16 | geo | §15 |
-| 17 | geo_paths | §16 |
-| 18 | report | §18 |
+| 15 | treetime | §19（2026-10-12 新增） |
+| 16 | phylogeo | §14 |
+| 17 | geo | §15 |
+| 18 | geo_paths | §16 |
+| 19 | phymapr | §20（2026-10-12 新增） |
+| 20 | report | §18 |
 
 > ⚠ **章节号 ≠ 执行序**：本文档把 `capheine`/`clock` 提前（按"选择压力→分子钟"的逻辑
 > 归组更易读），`host` 后置；`STAGE_ORDER` 里 `host` 紧跟 `popgen`。
 > **执行顺序一律以 `STAGE_ORDER` 为准，本章节号仅供检索。**
 >
-> 校验方法（可复现）：`python -c "import re,io; s=io.open('phylo_pipeline.py',encoding='utf-8').read(); m=re.search(r'STAGE_ORDER = \[(.*?)\]',s,re.S); print(len(re.findall(r\"'(\w+)'\",m.group(1))))"` → `17`
+> 校验方法（可复现）：`python -c "import re,io; s=io.open('phylo_pipeline.py',encoding='utf-8').read(); m=re.search(r'STAGE_ORDER = \[(.*?)\]',s,re.S); print(len(re.findall(r\"'(\w+)'\",m.group(1))))"` → `20`
 
 ---
 
@@ -674,8 +731,8 @@ STAGE_ORDER = [
 | `recomb` | rdp5 |
 | `select` | capheine |
 | `phylogeny` | align, splitstree, tree |
-| `time` | clock, beast, gene_dating |
-| `geography` | phylogeo, geo, geo_paths |
+| `time` | clock, beast, gene_dating, treetime |
+| `geography` | phylogeo, geo, geo_paths, phymapr |
 | `report` | report |
 
 > `metadata` 不在任何别名里：它由 `--metadata` 入口参数驱动、在 `prep` 之后自动执行；

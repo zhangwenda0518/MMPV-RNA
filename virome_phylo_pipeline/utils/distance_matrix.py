@@ -128,7 +128,7 @@ def plot_matrix(mat, names, out_path):
     ax.set_title('p-distance matrix')
     fig.colorbar(im, ax=ax, label='p-distance')
     fig.tight_layout()
-    fig.savefig(out_path, dpi=200, bbox_inches='tight')
+    fig.savefig(out_path, dpi=300, bbox_inches='tight')
     plt.close(fig)
     return out_path
 
@@ -143,7 +143,7 @@ def plot_tree(tree, out_path):
     Phylo.draw(tree, axes=ax, do_show=False)
     ax.set_title('Neighbor-Joining tree (p-distance)')
     fig.tight_layout()
-    fig.savefig(out_path, dpi=200, bbox_inches='tight')
+    fig.savefig(out_path, dpi=300, bbox_inches='tight')
     plt.close(fig)
     return out_path
 

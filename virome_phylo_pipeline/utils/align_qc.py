@@ -127,15 +127,15 @@ def main():
         # 判定
         issues = []
         if len_ratio < args.min_length:
-            issues.append(f'长度不足 ({len_ratio:.2f} < {args.min_length})')
+            issues.append(f'length too short ({len_ratio:.2f} < {args.min_length})')
         if gap_ratio > args.max_gap:
-            issues.append(f'gap过多 ({gap_ratio:.2f} > {args.max_gap})')
+            issues.append(f'gap fraction too high ({gap_ratio:.2f} > {args.max_gap})')
         if n_ratio > args.max_n:
-            issues.append(f'N过多 ({n_ratio:.2f} > {args.max_n})')
+            issues.append(f'N fraction too high ({n_ratio:.2f} > {args.max_n})')
         if identity is not None:
             expected = (1 - args.max_identity_drop) * 100
             if identity < expected:
-                issues.append(f'与参考identity过低 ({identity:.1f}% < {expected:.1f}%)')
+                issues.append(f'identity to reference too low ({identity:.1f}% < {expected:.1f}%)')
 
         status = 'REMOVE' if issues else 'KEEP'
         reason = '; '.join(issues) if issues else ''

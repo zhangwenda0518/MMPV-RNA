@@ -412,48 +412,96 @@ def _load_dates(dates_csv: str) -> Optional[Dict[str, float]]:
 def _plot_robust_rtt(xs, ys, names, dropped_names, fit_before, fit_after,
                     out_pdf, out_png, dpi=300):
     """稳健 RTT 对比图 (借鉴 shinyTempSignal 图设计):
-    灰点+灰虚线=全样本, 蓝/橙点+实线=剔除后, 离群样本红色标出
-    SCI 风格: 白底, Okabe-Ito 配色, 全英文标签"""
+    灰点+灰虚线=全样本, 蓝点+橙实线=剔除离群后, 离群样本用红 X 标出
+    SCI 风格: 白底, Okabe-Ito 配色, 全英文标签
+
+    2026-10-12（审稿人视角修复）：旧版有四处硬伤 ——
+      ① 灰点(全样本)先画、蓝点(保留集)后画且**位置完全相同** → 灰点被完全盖住，
+         "All samples" 图例项在图上一个点都看不到；
+      ② 灰虚线(All 拟合) zorder 低于橙实线(Trimmed 拟合)，两条线数值几乎相同 →
+         灰线同样看不见，图例里却挂着 "All: R²=…"；
+      ③ 图例把"点"和"线"混着当同一序列的句柄，读者无法判断 R² 对应哪一组点；
+      ④ 没给每组样本量 n。
+    现改为：灰点画大一圈当"底"，蓝点缩小叠在其上 → 两者同时可见；
+    灰虚线加粗垫底、橙实线细线压上 → 两条拟合同时可见；
+    图例改为显式代理句柄（点/线分开），并在标签里给出 n。
+    """
     try:
         import matplotlib
         matplotlib.use('Agg')
         import matplotlib.pyplot as plt
+        from matplotlib.lines import Line2D
     except ImportError:
         return False
+    try:
+        from utils.sci_palette import apply_sci_style, OKABE_ITO, despine
+    except ImportError:
+        from sci_palette import apply_sci_style, OKABE_ITO, despine
+    apply_sci_style(base_size=8)
+
+    C_ALL = "#BBBBBB"      # 全样本（灰）
+    C_ALL_EDGE = "#888888"
+    C_RETAIN = OKABE_ITO[4]   # 保留集（蓝）
+    C_FIT = OKABE_ITO[5]      # 剔除后拟合（朱红）
+    C_OUT = OKABE_ITO[5]
+
     dropped_set = set(dropped_names)
     fig, ax = plt.subplots(figsize=(5.2, 4.0), dpi=dpi)
-    # 全样本 (灰)
-    ax.scatter(xs, ys, s=22, c='#BBBBBB', edgecolors='#888888',
-               linewidths=0.4, zorder=2, label='All samples')
+
+    # 全样本（灰，画大一圈做底）
+    ax.scatter(xs, ys, s=26, c=C_ALL, edgecolors=C_ALL_EDGE,
+               linewidths=0.4, zorder=2)
     if fit_before:
         x0, x1 = min(xs), max(xs)
         y0 = fit_before['intercept'] + fit_before['slope'] * x0
         y1 = fit_before['intercept'] + fit_before['slope'] * x1
-        ax.plot([x0, x1], [y0, y1], '--', c='#999999', lw=1.1, zorder=3,
-                label=f"All: R²={fit_before.get('r2', float('nan')):.3f}")
-    # 剔除后 (蓝) + 离群点 (红)
+        ax.plot([x0, x1], [y0, y1], '--', c=C_ALL_EDGE, lw=2.4, zorder=3)
+
+    # 剔除后（蓝，缩小叠在灰点之上 → 灰圈仍可见）+ 离群点（红 X）
     kx = [(x, y, n) for x, y, n in zip(xs, ys, names) if n not in dropped_set]
     dx = [x for x, y, n in zip(xs, ys, names) if n in dropped_set]
     dy = [y for x, y, n in zip(xs, ys, names) if n in dropped_set]
     if kx:
-        ax.scatter([t[0] for t in kx], [t[1] for t in kx], s=24,
-                   c='#0072B2', edgecolors='white', linewidths=0.4,
-                   zorder=4, label='Retained')
+        ax.scatter([t[0] for t in kx], [t[1] for t in kx], s=13,
+                   c=C_RETAIN, edgecolors='none', zorder=4)
         if fit_after:
             x0, x1 = min(t[0] for t in kx), max(t[0] for t in kx)
             y0 = fit_after['intercept'] + fit_after['slope'] * x0
             y1 = fit_after['intercept'] + fit_after['slope'] * x1
-            ax.plot([x0, x1], [y0, y1], '-', c='#D55E00', lw=1.4, zorder=5,
-                    label=f"Trimmed: R²={fit_after.get('r2', float('nan')):.3f}")
+            ax.plot([x0, x1], [y0, y1], '-', c=C_FIT, lw=1.3, zorder=5)
     if dx:
-        ax.scatter(dx, dy, s=30, c='#D55E00', marker='X',
-                   edgecolors='white', linewidths=0.4, zorder=6,
-                   label=f'Outliers (n={len(dx)})')
+        ax.scatter(dx, dy, s=30, c=C_OUT, marker='X',
+                   edgecolors='white', linewidths=0.4, zorder=6)
+
     ax.set_xlabel('Sampling date (decimal year)', fontsize=10)
     ax.set_ylabel('Root-to-tip divergence', fontsize=10)
-    ax.spines[['top', 'right']].set_visible(False)
+    despine(ax)
     ax.tick_params(labelsize=9)
-    ax.legend(fontsize=8, frameon=False, loc='best')
+
+    # 显式代理句柄：点归点、线归线，标签里给出 n 与 R²
+    handles, labels = [], []
+    handles.append(Line2D([], [], marker='o', linestyle='none', markersize=5.0,
+                          markerfacecolor=C_ALL, markeredgecolor=C_ALL_EDGE,
+                          markeredgewidth=0.4))
+    labels.append(f'All samples (n = {len(xs)})')
+    if fit_before:
+        handles.append(Line2D([], [], linestyle='--', color=C_ALL_EDGE, lw=2.0))
+        labels.append(f'Fit, all ($R^2$ = {fit_before.get("r2", float("nan")):.3f})')
+    if kx:
+        handles.append(Line2D([], [], marker='o', linestyle='none', markersize=3.4,
+                              markerfacecolor=C_RETAIN, markeredgecolor='none'))
+        labels.append(f'Retained (n = {len(kx)})')
+    if kx and fit_after:
+        handles.append(Line2D([], [], linestyle='-', color=C_FIT, lw=1.3))
+        labels.append(f'Fit, retained ($R^2$ = {fit_after.get("r2", float("nan")):.3f})')
+    if dx:
+        handles.append(Line2D([], [], marker='X', linestyle='none', markersize=5.0,
+                              markerfacecolor=C_OUT, markeredgecolor='white',
+                              markeredgewidth=0.4))
+        labels.append(f'Outliers (n = {len(dx)})')
+    ax.legend(handles, labels, fontsize=7.0, frameon=False, loc='best',
+              labelspacing=0.35, handletextpad=0.6)
+
     fig.tight_layout()
     fig.savefig(out_pdf, dpi=dpi)
     fig.savefig(out_png, dpi=dpi)

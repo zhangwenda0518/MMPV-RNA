@@ -124,7 +124,7 @@ def permutation_test(
     locs = sorted({l for l in list(pw["start_location"]) + list(pw["end_location"])
                    if coords.get(l)})
     if len(locs) < 3:
-        return {"n_perm": n_perm, "seed": seed, "note": "地点数<3，置换无意义，跳过",
+        return {"n_perm": n_perm, "seed": seed, "note": "fewer than 3 locations, permutation is meaningless, skipped",
                 "p_displacement": None, "p_velocity": None}
     coord_pool = [coords[l] for l in locs]
     dur = pw["duration"].astype(float).fillna(0).values
@@ -162,7 +162,7 @@ def permutation_test(
         "perm_mean_velocity_km_yr": round(float(perm_v.mean()), 4),
         "p_displacement": round(float((perm_d >= obs_d).mean()), 4),
         "p_velocity": round(float((perm_v >= obs_v).mean()), 4),
-        "note": "坐标重标注置换（描述层零模型）；与 seraphim RRW 参数化零模型不同，不替代 BSSVS 推断",
+        "note": "coordinate relabelling permutation (descriptive null model); different from the seraphim RRW parametric null model and no substitute for BSSVS inference",
     }
 
 
@@ -313,8 +313,8 @@ def markov_jumps_posterior(
         "mean": round(float(a.mean()), 2),
         "median": int(np.median(a)),
         "hpd95": [int(np.percentile(a, 2.5)), int(np.percentile(a, 97.5))],
-        "note": "后验 Markov jumps (每次 MCMC 采样的地点变迁边数); "
-                "MCC 单树计数是其单个保守实现",
+        "note": "posterior Markov jumps (number of location-change edges per MCMC sample); "
+                "counting on a single MCC tree is one conservative realisation of it",
     }
     log.emit(f"Markov jumps: mean={out['mean']} median={out['median']} "
              f"95%CI={out['hpd95']} ({out['n_trees_used']} trees)")

@@ -103,11 +103,13 @@
 | Phase 0b | BETS 时间信号 | 比对 + meta | path_sampling | log BF | ⛔ 已归档止损（开关 `--bets` 仍在，但结论不纳入结果） |
 | Phase 5 | BEAST 全长定年 | 比对 + dates | BEAST **1.x**（`time/beast/beast1.xml`） | 全长 MRCA | ✅ 开关（`--beast`） |
 | **Phase G** | **分基因定年** | **capheine 产物** | **gene_partition_dating --genes-dir** | **分基因 MRCA** | ✅ 开关（`--gene_dating`） |
+| **Phase T** | **TreeTime 完整时间树**（2026-10-12 新增） | **比对 + dates + tree** | **treetime CLI**（`utils/treetime_bridge.py`） | **`time/treetime/timetree.nexus`**（带 date 注解 + 置信） | ✅ 开关（`--treetime`；默认关，phymapr 前置） |
 | **Phase S** | **正选择** | **GBK CDS** | **capheine → HyPhy** | **FEL/MEME/BUSTED/DRHIP** | ✅ 主线 (`capheine`) |
-| Phase 6 | 系统地理 | 比对 + meta + tree | discrete CTMC + BSSVS | SpreaD3 地图 | ✅ 开关 |
+| Phase 6 | 系统地理（BEAST 路线） | 比对 + meta + tree | discrete CTMC + BSSVS | SpreaD3 地图 | ✅ 开关 |
+| **Phase 6'** | **系统地理（TreeTime 路线，2026-10-12 新增）** | **timetree.nexus + meta** | **phymapr R**（`utils/phymapr_bridge.py`；BM-ASR） | **传播地图 GIF/树图 + episodes/pathways.csv** | ✅ 开关（`--phymapr`；默认关，吃 treetime 产物，不依赖 BEAST） |
 | Phase 7 | 可视化 + 报告 | 各阶段产物 | SpreaD3 + report_builder | 汇总 HTML | ✅ 主线 |
 
-> **挂载状态说明**：✅ 主线 = 已由 `phylo_pipeline.py --stage` 编排；✅ 开关 = 已挂载但需 flag 触发（`--beast`/`--phylogeo`/`--check_temporal`/`--rdp5`/`--gene_dating`，可组合，`--beast`+`--gene_dating` 同开即全长+分基因都定年）；⚠️ 独立 CLI = 未进总管线，需 `python -m xxx` 手工调用。
+> **挂载状态说明**：✅ 主线 = 已由 `phylo_pipeline.py --stage` 编排；✅ 开关 = 已挂载但需 flag 触发（`--beast`/`--phylogeo`/`--check_temporal`/`--rdp5`/`--gene_dating`/`--treetime`/`--phymapr`，可组合，`--beast`+`--gene_dating` 同开即全长+分基因都定年；⚠️ treetime/phymapr 的 config `enabled` **默认 false**——phymapr 需一批 R 包，`--stage geography` 点名可豁免门控且依赖保护自动带上 treetime）；⚠️ 独立 CLI = 未进总管线，需 `python -m xxx` 手工调用。
 
 ---
 

@@ -328,9 +328,6 @@ def clean_sequences(
         allowed = legal if gap_is_illegal else (legal | GAP_CHARS)
         illegal = sorted({c for c in no_ws if c not in allowed})
         n_illegal = sum(no_ws.count(c) for c in illegal)
-        if illegal:
-            issues_this.append(f"非法字符 {'/'.join(illegal)} x{n_illegal}")
-
         work = no_ws
         stripped = 0
         if illegal and strip_illegal:
@@ -338,6 +335,15 @@ def clean_sequences(
                 stripped += work.count(c)
                 work = work.replace(c, "")
             n_stripped_total += stripped
+            # 2026-10-13 修 (P1, AUDIT-1009 P1-1): --strip-illegal 此前无效 ——
+            # issue 先记、status 只看 issues 非空 → 开了开关照样 REMOVE。现剥离
+            # 成功且残留非空时撤销该 issue (剥空仍经下方"序列为空"判 REMOVE)。
+            if work:
+                issues_this = [i for i in issues_this if not i.startswith("非法字符")]
+            else:
+                issues_this.append("剥离非法字符后序列为空")
+        elif illegal:
+            issues_this.append(f"非法字符 {'/'.join(illegal)} x{n_illegal}")
 
         if not work:
             issues_this.append("序列为空")
@@ -357,8 +363,16 @@ def clean_sequences(
         has_date = has_loc = None
         if metadata_path:
             if row is None:
+                # 2026-10-13 修 (P0, AUDIT-1009 P0-2): 「metadata 无此行」此前无条件
+                # 计入 issues → 整批 REMOVE (FASTA id 与 metadata name 对不上时静默
+                # 清空, 上层 clean 失败后还会降级用原始序列继续跑, 无人知晓)。现只在
+                # 开了 drop 门槛时才经 has_date/has_loc=False 走对应门槛判删;
+                # 未开门槛仅告警保留。
                 has_date = has_loc = False
-                issues_this.append("metadata 无此行")
+                if drop_no_date or drop_no_location:
+                    issues_this.append("metadata 无此行")
+                else:
+                    emit(f"[seq_clean] ⚠ {sid}: metadata 无此行 (未开 drop 门槛, 保留)")
             else:
                 has_date = _is_present(row.get(m_date, ""))
                 has_loc = _is_present(row.get(m_loc, ""))

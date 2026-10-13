@@ -136,10 +136,32 @@ def run_seqgrouper(
                 labels.append('Other'); sizes.append(other_s)
 
         fig, ax = plt.subplots(figsize=(10, 8))
-        colors = plt.get_cmap('tab20', len(labels))(range(len(labels)))
+        # CJK 字体 (2026-10-12): 分组值常是中文地点/宿主 (本图验收实测 DejaVu Sans
+        # 出方框) —— 探测系统 CJK 字体并插到 sans-serif 首位, 没有则保持默认。
+        # 与 utils/sample_plot.py::_use_cjk_font_if_available 同一清单。
+        try:
+            from matplotlib import font_manager as _fm
+            _names = {f.name for f in _fm.fontManager.ttflist}
+            for _cand in ("Microsoft YaHei", "SimHei", "Noto Sans CJK SC",
+                          "Source Han Sans SC", "WenQuanYi Zen Hei", "PingFang SC"):
+                if _cand in _names:
+                    matplotlib.rcParams['font.sans-serif'] = [_cand] + list(
+                        matplotlib.rcParams['font.sans-serif'])
+                    break
+            matplotlib.rcParams['axes.unicode_minus'] = False
+        except Exception:  # noqa: BLE001 — 字体探测失败不致命
+            pass
+        # 2026-10-12 修 (P2-12): 旧版 `plt.get_cmap('tab20')` 与项目统一 OKABE 口径
+        # 不符 (同类图换色板 → 同一分组在不同图里颜色不同)。改为分组数不定时取
+        # 前 n 个 OKABE 色 (utils.sci_palette.colors, 顺序固定), 超出自动循环。
+        try:                                       # 包内导入
+            from utils.sci_palette import colors as _sc_colors
+        except ImportError:                        # utils/ 目录内直接运行
+            from sci_palette import colors as _sc_colors
+        palette = _sc_colors(max(len(labels), 1))
         wedges, texts, autotexts = ax.pie(
             sizes, labels=None, autopct='%1.1f%%', startangle=90,
-            colors=colors, pctdistance=0.85)
+            colors=palette, pctdistance=0.85)
         ax.legend(wedges, [f'{l} ({s})' for l, s in zip(labels, sizes)],
                  title=group_by.title(), loc='center left',
                  bbox_to_anchor=(1, 0.5), fontsize=9)

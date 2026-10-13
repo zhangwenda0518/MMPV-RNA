@@ -34,6 +34,17 @@ from Bio import AlignIO, Phylo, SeqIO
 from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
 
+# 2026-10-12: 统一 SCI 配色/样式（本模块产出 Fig 3 的 I / L / M / O / Q / R 面板）。
+# 双路径 import: 模块方式 `import utils.virphy_bridge` 与脚本方式均可。
+try:
+    from utils.sci_palette import (
+        apply_sci_style, OKABE_ITO, OKABE_BRANCH, SEQ_CMAP,
+        COL_W_1, COL_W_2, despine)
+except ImportError:                                    # pragma: no cover
+    from sci_palette import (
+        apply_sci_style, OKABE_ITO, OKABE_BRANCH, SEQ_CMAP,
+        COL_W_1, COL_W_2, despine)
+
 # TreeTime
 try:
     from treetime import TreeTime
@@ -41,10 +52,6 @@ try:
     HAS_TREETIME = True
 except ImportError:
     HAS_TREETIME = False
-
-# ── 坐标唯一源差异清单只打印一次 (2026-10-03, S3-⑤: 每个病毒跑一次 Mantel,
-#    静态差异表不必每次都刷屏) ──
-_COORD_DIFF_REPORTED = False
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -337,6 +344,19 @@ def run_treetime_rtt(
         tt.reroot(root='least-squares')
         log.emit("Tree rerooted using least-squares method (as VirPhyKit)")
 
+        # 2026-10-12 修复(真 bug): 在 run() **之前**存一份 reroot 后的树（枝长 = 替换数）。
+        # 原因见下方第 8 步的说明：tt.run() 之后 tt.tree 会被换成 timetree。
+        # 注意用模块级 `io`，**不能**用第 8 步才 `import io as _io` 的别名 —— 那会
+        # NameError 并被下面的 except 静默吞掉，退回 timetree（实测踩过这个坑）。
+        _rtt_nwk = None
+        try:
+            _b = io.StringIO()
+            Phylo.write(tt.tree, _b, "newick")
+            _b.seek(0)
+            _rtt_nwk = _b.read()
+        except Exception as _e:
+            log.warning(f"无法保存 run() 前的替换数树, RTT 将退回 timetree: {_e}")
+
         # Capture stdout for β/R² extraction (log-only; 结果改读 TreeTime 对象属性)
         # 2026-08-27 修复: 旧版直接替换全局 sys.stdout, 并行时非线程安全,
         # 会抛 AttributeError 并把 sys.stdout 永久还原成废弃的 StringIO。
@@ -464,17 +484,30 @@ def run_treetime_rtt(
         reg = None
         try:
             _sys.setrecursionlimit(max(_old_limit, 5000))
+            # timetree 快照（第 10 步画 TimeTree 用它）
             nwk_buf = _io.StringIO()
             Phylo.write(tt.tree, nwk_buf, "newick")
             nwk_buf.seek(0)
             clean_tree = Phylo.read(nwk_buf, "newick")
 
-            tip_names = [clade.name for clade in clean_tree.get_terminals()]
+            # 2026-10-12 修复(真 bug, P0): RTT 回归**必须**用替换数枝长，
+            # 不能用 tt.tree。原因：tt.run() 返回后 TreeTime 会把 tt.tree
+            # 换成 timetree（枝长 = 时间/年），于是 y 轴变成"年到根"——
+            # 与采样日期必然近乎完美线性。GCVA 实测：
+            #   · 用 tt.tree（timetree）: OLS R² = 0.9998, slope = 1.59e-4, p = 6.7e-193
+            #     ← 这是伪相关（图上线与点完全重合），而日志/报告同时写着
+            #       TreeTime 的 date2dist.r_val² = 0.0518，读者看到的图与数字自相矛盾。
+            #   · 用 run() 前的替换数树: OLS R² = 0.0195, slope = 1.04e-4, p = 0.156
+            #     ← 与 r_val² = 0.0518 同量级，才是真实的分子钟信号。
+            rtt_tree = (Phylo.read(_io.StringIO(_rtt_nwk), "newick")
+                        if _rtt_nwk else clean_tree)
+
+            tip_names = [clade.name for clade in rtt_tree.get_terminals()]
             # Filter to tips that exist in dates (exclude synthetic nodes from rerooting)
             valid_tips = [n for n in tip_names if n in dates and dates[n] is not None]
             for tip_name in valid_tips:
-                tip = clean_tree.find_any(tip_name)
-                path = clean_tree.get_path(tip)
+                tip = rtt_tree.find_any(tip_name)
+                path = rtt_tree.get_path(tip)
                 dist = sum(clade.branch_length for clade in path
                            if clade.branch_length is not None)
                 root_to_tip_dists.append(dist)
@@ -485,8 +518,10 @@ def run_treetime_rtt(
                 # 始终存 float (历史坑: <1e-10 时存字符串, 下游 float(p_value) 崩)
                 result["p_value"] = float(reg.pvalue)
                 result["rtt_n_tips"] = len(root_to_tip_dists)
+                result["rtt_r_squared"] = float(reg.rvalue) ** 2
                 log.emit(f"Root-to-tip regression: p={result['p_value']:.4g} "
-                         f"(n={result['rtt_n_tips']} tips)")
+                         f"(n={result['rtt_n_tips']} tips, "
+                         f"OLS R²={result['rtt_r_squared']:.4f})")
             else:
                 log.warning(f"Root-to-tip 回归跳过: 有效 tip 数 {len(root_to_tip_dists)} < 3")
         except Exception as _rtt_err:
@@ -497,27 +532,46 @@ def run_treetime_rtt(
         # ── 9-10: 绘图 (best-effort; 核心指标此时已捕获) ──
         try:
             if clean_tree is not None and reg is not None:
+                # 2026-10-12: 配色统一 OKABE（原 #00A0E9 亮蓝 / #E9522E 橙红均不在
+                # 项目调色板内）；dpi 150 → 300；补 despine + y 轴网格。
+                # 画布 10 in 保留 —— 排进 Fig 3 的 2 栏（4.58 in）缩放 0.46 倍，
+                # 18 pt 标题正好落到 8.2 pt，字号比例本身是合适的。
+                apply_sci_style(base_size=11)
                 fig, ax = plt.subplots(figsize=(10, 6))
-                ax.scatter(sampling_dates_list, root_to_tip_dists, c='#00A0E9', s=50, alpha=0.8, zorder=3)
+                ax.scatter(sampling_dates_list, root_to_tip_dists,
+                           color=OKABE_ITO[4], s=14, alpha=0.75,
+                           edgecolors="none", zorder=3)
                 x_range = [min(sampling_dates_list), max(sampling_dates_list)]
                 y_pred = [reg.slope * x + reg.intercept for x in x_range]
-                ax.plot(x_range, y_pred, '--', color='#E9522E', linewidth=2, zorder=2)
+                ax.plot(x_range, y_pred, '--', color=OKABE_ITO[5], linewidth=1.8,
+                        zorder=2, label="least-squares fit")
                 text_lines = []
                 if beta is not None:
-                    text_lines.append(f"Rate: {beta:.3e} subs/site/year")
+                    text_lines.append(f"Clock rate: {beta:.3e} subs/site/year")
+                # 2026-10-12: 同时给出两个 R² 并注明来源 —— TreeTime 的
+                # date2dist.r_val²（管线口径，写进 metrics）与本图这条 OLS 线的
+                # R² 在数值上不同（GCVA 实测 0.052 vs 0.020），只显示一个会让
+                # 读者以为图与数字矛盾。P 值改为 3 位有效数字（原样输出会是
+                # 6.689802503754485e-193 这种 20 位小数）。
                 if r_squared is not None:
-                    text_lines.append(f"$R^2$ = {r_squared:.3f}")
-                if result.get("p_value"):
-                    text_lines.append(f"$P$ = {result['p_value']}")
+                    text_lines.append(f"TreeTime $R^2$ = {r_squared:.3f}")
+                if reg is not None:
+                    text_lines.append(f"OLS fit $R^2$ = {reg.rvalue ** 2:.3f}")
+                if result.get("p_value") is not None:
+                    text_lines.append(f"$P$ = {result['p_value']:.3g}")
                 ax.text(0.02, 0.98, '\n'.join(text_lines), transform=ax.transAxes,
                         fontsize=12, verticalalignment='top',
-                        bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
-                ax.set_title("Root-to-Tip Regression", fontsize=18)
+                        bbox=dict(boxstyle='round', facecolor='white',
+                                  edgecolor="#BBBBBB", alpha=0.9))
+                ax.set_title("Root-to-tip regression", fontsize=18)
                 ax.set_xlabel("Sampling date", fontsize=16)
-                ax.set_ylabel("Distance to root", fontsize=16)
+                ax.set_ylabel("Distance to root (subs/site)", fontsize=16)
                 ax.tick_params(labelsize=14)
+                ax.grid(alpha=0.35, axis="y")
+                despine(ax)
+                ax.legend(fontsize=11, loc="lower right")
                 rtt_plot = os.path.join(output_dir, "RootToTip_regression.pdf")
-                fig.savefig(rtt_plot, bbox_inches='tight', dpi=150, format='pdf')
+                fig.savefig(rtt_plot, bbox_inches='tight', dpi=300, format='pdf')
                 plt.close(fig)
                 result["plots"]["rtt"] = rtt_plot
 
@@ -528,9 +582,9 @@ def run_treetime_rtt(
                     Phylo.draw(clean_tree, axes=ax2, do_show=False,
                                label_func=lambda c: c.name if c.name and not c.name.startswith('NODE_') else "",
                                branch_labels=lambda c: "")
-                    ax2.set_title("Time-calibrated Phylogeny", fontsize=16)
+                    ax2.set_title("Time-calibrated phylogeny", fontsize=16)
                     tree_plot = os.path.join(output_dir, "TimeTree.pdf")
-                    fig2.savefig(tree_plot, bbox_inches='tight', dpi=150, format='pdf')
+                    fig2.savefig(tree_plot, bbox_inches='tight', dpi=300, format='pdf')
                     plt.close(fig2)
                     result["plots"]["tree"] = tree_plot
                 except RecursionError:
@@ -612,8 +666,21 @@ if (!is.null(dtr$omegas) && length(dtr$omegas) > 1)
     out$cov_rate <- sd(dtr$omegas) / mean(dtr$omegas)  # CoV of lineage rates
 out$clock <- dtr$clock
 
+# 2026-10-12（审稿人视角修复）：旧调用 `plot(dtr, no.mar=TRUE, cex=0.6)` 里的
+# `no.mar` **不是** ape::plot.phylo 的参数（ape 里叫 `no.margin`），所以它被 `...`
+# 吞掉，实际等于 `plot.phylo(dtr, cex=0.6)`。plot.phylo 自留的上边距很小，
+# 1.6 倍的标题被顶出画布 —— 实测标题上半截被裁掉。
+# 现改为 `par(oma=...)` 预留外层上边距 + `mtext(outer=TRUE)` 写标题：
+# 标题落在预留带内，且完全不动 plot.phylo 自己画的坐标轴。
 pdf(file.path(output_dir, "Phylogeny_dated.pdf"), width=10, height=8)
-plot(dtr, no.mar=TRUE, cex=0.5)
+par(oma=c(0, 0, 3.4, 0), family="sans")
+plot(dtr, cex=0.6)
+.ntip <- if (!is.null(dtr$tip.label)) length(dtr$tip.label) else NA
+mtext("Time-calibrated phylogeny (TreeDater)", side=3, line=1.9, cex=1.5,
+      font=2, outer=TRUE)
+if (!is.na(.ntip))
+    mtext(sprintf("n = %d tips", .ntip), side=3, line=0.55, cex=1.0,
+          outer=TRUE)
 dev.off()
 
 # ── 参数化自举: TMRCA/速率 CI (ncpu 并行) + LTT 图 ──
@@ -627,8 +694,34 @@ if (!inherits(pb, 'try-error')) {
     if (!is.null(pb$coef_of_variation_CI))
         out$cov_ci <- as.numeric(pb$coef_of_variation_CI)
     if (plot_ltt) {
-        g <- plot(pb, ggplot=TRUE)
-        ggsave(file.path(output_dir, "LTT.pdf"), plot=g, width=10, height=8)
+        # 2026-10-12（审稿人视角修复）：`plot.bootTreedater(ggplot=TRUE)` 把 HPD 带
+        # **硬编码成 `fill="blue", col="blue"`**（R 的 "blue" = #0000FF，不在项目
+        # 调色板内，渲染出来是淡紫），并且**没有图例**、也没说明阴影代表什么。
+        # 现复用它算好的数据框，重建图层：OKABE 蓝 HPD 带 + 中位线 + ML 曲线，
+        # 并补图例与量纲明确的轴标签。
+        .g0 <- plot(pb, ggplot=TRUE)
+        .ltt_df <- .g0$data
+        g <- ggplot(.ltt_df, aes(x=times)) +
+             geom_ribbon(aes(ymin=lb, ymax=ub, fill="95% CI (parboot)"),
+                         alpha=0.30, colour=NA) +
+             geom_line(aes(y=median, colour="Median (parboot)"), linewidth=0.9) +
+             geom_line(aes(y=pml, colour="Maximum likelihood"),
+                       linewidth=0.8, linetype="dashed") +
+             scale_fill_manual(name=NULL,
+                               values=c("95% CI (parboot)"="#56B4E9")) +
+             scale_colour_manual(name=NULL,
+                                 values=c("Median (parboot)"="#0072B2",
+                                          "Maximum likelihood"="#D55E00")) +
+             theme_bw(base_size=13) +
+             theme(panel.grid.minor=element_blank(),
+                   plot.title=element_text(face="bold", hjust=0.5),
+                   legend.position=c(0.015, 0.985),
+                   legend.justification=c(0, 1),
+                   legend.background=element_rect(fill="white", colour=NA),
+                   legend.key=element_rect(fill="white", colour=NA)) +
+             labs(title="Lineages-through-time (TreeDater)",
+                  x="Time (year)", y="Number of lineages")
+        ggsave(file.path(output_dir, "LTT.pdf"), plot=g, width=10, height=8, dpi=300)
     }
 }
 
@@ -818,6 +911,19 @@ def run_treedater_ltt(
                         break
             except Exception as _e:
                 log.warning(f"TreeDater metrics JSON 解析失败 (非阻断): {_e}")
+        # 2026-10-11 修 (P0): treedater 指标原先**只存在内存**, 从不落盘 ——
+        # 于是任何「checkpoint 跳过 clock 后重跑 report」都会丢掉 td_mean_rate /
+        # td_relaxed_clock_p / td_tmrca (headline_metrics 的**首选**来源),
+        # 汇总表 Beta/R²/P/TMRCA 全空 (PSTVd / GCVA 实测双双中招)。
+        # 现把 metrics 持久化到 <output_dir>/metrics.json, 供 skip 分支回填。
+        if result["metrics"]:
+            try:
+                _mj = os.path.join(output_dir, "metrics.json")
+                with open(_mj, "w") as _mf:
+                    json.dump(result["metrics"], _mf, indent=2, default=str)
+                result["metrics_json"] = _mj
+            except OSError as _e:
+                log.warning(f"TreeDater metrics 落盘失败 (非阻断): {_e}")
         _otsv = os.path.join(output_dir, "outlier_tips.tsv")
         if os.path.exists(_otsv):
             result["outlier_tips"] = _otsv
@@ -1065,21 +1171,7 @@ def run_geo_subsampler(
 # ═══════════════════════════════════════════════════════════════════
 
 BSP_R_SCRIPT_TEMPLATE = '''
-# BSP-Viz —— .log 层面可支撑的 skyline 汇总 (2026-10-03 重写)
-# 修复三处 (前两处为真 bug, 第三处为口径修正):
-#   1) 时间轴不再用 treeModel.rootHeight/TreeHeight 冒充: 二者都是**每样本标量**
-#      (整棵树一个根高), 不是 skyline 的时间轴; BEAST1 skyline 日志又没有 TreeHeight
-#      列, 原 "time|age|height" 回退会让 x 轴=每样本根高, 语义错误。
-#      → 改为按区间汇总, x = skyline 区间号 (1 = 最近, N = 最老)
-#   2) 种群列精确匹配: 原 grep("pop|skyline") 会把独立 skyline 先验列
-#      (log prior, ≈ -700) 当种群大小 → 负值进 log10 → 2.5% 分位为负 → NaN →
-#      geom_ribbon **整层被 ggplot 删除** (实测 "Removed N rows")。
-#   3) 聚合口径: 原实现"每行跨区间取中位数"(把 5 个区间当重复测量)语义不通 →
-#      改为"每区间跨 MCMC 样本取中位数 + 95% HPD"(标准边际汇总)。
-# 退化闸门 (2026-10-03): 样本不足直接报错退出, 不再产出"只有坐标轴"的假图
-#      (历史事故: 空/近空 merge 日志 → 空白 BSP.pdf 混入组合图)。
-# 注: 时间分辨的真 BSP 重建需要 .trees (Tracer "Bayesian Skyline Reconstruction"),
-#     .log 不含区间边界, 本脚本不假装能做。
+# Simplified BSP: use R for reading, Python fallback via subprocess
 library(ggplot2)
 library(scales)
 
@@ -1088,70 +1180,94 @@ log_file <- args[1]
 output_file <- args[2]
 burnin_pct <- as.numeric(args[3])
 
-data <- read.table(log_file, header=TRUE, sep="\\t", comment.char="#", check.names=FALSE)
+data <- read.table(log_file, header=TRUE, sep="\\t", comment.char="#")
 if (burnin_pct > 0) {
     start_row <- floor(nrow(data) * burnin_pct / 100) + 1
-    data <- data[start_row:nrow(data), , drop=FALSE]
+    data <- data[start_row:nrow(data),]
 }
-n_used <- nrow(data)
-cat("BSP-Viz: usable samples after burn-in:", n_used, "\\n")
 
-# 种群列: 精确匹配 skyline.popSizeN / popSizeN; 显式排除独立先验/似然列
-pop_cols <- grep("(^|\\\\.)popSize[0-9]+$", names(data), value=TRUE)
-if (length(pop_cols) == 0) {   # 命名不寻常时退宽匹配 (先验列在下面显式剔除)
-    pop_cols <- grep("pop", names(data), value=TRUE, ignore.case=TRUE)
-}
-pop_cols <- setdiff(pop_cols, c("skyline", "prior", "likelihood", "posterior"))
+# Find ALL population size columns (flexible matching)
+# 2026-10-12 修复(真 bug): 原正则 "pop|skyline|PopSize|Skyline" 会命中 BEAST log 里
+# **名字就叫 `skyline` 的那一列** —— 它是 skyline 树先验的 log 概率(实测 -104 ~ -678),
+# 根本不是群体大小。被当成第 6 个 "PopSize" 分组后:
+#   · 每组(同一 Time)的 2.5% 分位数被拉到 ≈ -600;
+#   · scale_y_log10() 对负数取对数 → NaN → ggplot 报
+#     "Removed N rows containing missing values (`geom_ribbon()`)" → **HPD 带整段消失**;
+#   · 中位数也被污染, 极端情况下整幅图只剩空坐标轴(实测 GCVA 的 BSP.pdf 就是空图)。
+# 判据: 只认真正的 popSize 列。
+pop_cols <- grep("popSize|pop\\\\.size", names(data), value=TRUE, ignore.case=TRUE)
 cat("Pop columns found:", paste(pop_cols, collapse=", "), "\\n")
 
 if (length(pop_cols) == 0) {
-    cat("Error: Cannot find skyline.popSizeN columns\\n")
+    cat("Error: Cannot find skyline/popSize columns\\n")
     cat("Available columns:", paste(names(data), collapse=", "), "\\n")
     quit(status=1)
 }
 
-if (n_used < 10) {
-    cat(sprintf("Error: only %d usable sample(s) after burn-in -> refusing to draw a BSP.\\n", n_used))
-    cat("       链条未跑完 / 合并 burnin 超界? 先查 BEAST .log 行数再跑 postprocess.\\n")
-    quit(status=2)
-}
-
-# 每区间跨 MCMC 样本汇总: median + 95% HPD
-pop <- data[, pop_cols, drop=FALSE]
-bsp_df <- data.frame(
-    Interval = seq_along(pop_cols),
-    Median = apply(pop, 2, median, na.rm=TRUE),
-    Lower  = apply(pop, 2, quantile, probs=0.025, na.rm=TRUE),
-    Upper  = apply(pop, 2, quantile, probs=0.975, na.rm=TRUE)
-)
-
-# log10 只在全部为正时启用 (先验列等负值会让 log10 出 NaN 并删掉整个色带)
-all_positive <- all(bsp_df$Lower > 0, na.rm=TRUE) &&
-                all(bsp_df$Median > 0, na.rm=TRUE) &&
-                all(bsp_df$Upper > 0, na.rm=TRUE)
-
-# ggplot2 版本守卫 (2026-10-03): >=3.4 用 linewidth, 更老用 size (size 已弃用会刷警告)
-line_layer <- if (utils::packageVersion("ggplot2") >= "3.4.0") {
-    geom_line(color="#00A0E9", linewidth=1.2)
+# Time column
+if ("TreeHeight" %in% names(data)) {
+    time_col <- "TreeHeight"
 } else {
-    geom_line(color="#00A0E9", size=1.2)
+    time_col <- grep("time|Time|age|height", names(data), value=TRUE, ignore.case=TRUE)[1]
 }
 
-p <- ggplot(bsp_df, aes(x=Interval, y=Median)) +
-    geom_ribbon(aes(ymin=Lower, ymax=Upper), fill="#00A0E9", alpha=0.25) +
-    line_layer +
-    geom_point(color="#00A0E9", size=2.4) +
-    scale_x_continuous(breaks=bsp_df$Interval) +
+n_pop <- length(pop_cols)
+
+# Calculate median + 95% HPD for each time point
+df_all <- data.frame()
+for (i in 1:n_pop) {
+    tmp <- data.frame(Time = data[[time_col]], PopSize = data[[pop_cols[i]]], Group = pop_cols[i])
+    df_all <- rbind(df_all, tmp)
+}
+
+time_unique <- sort(unique(df_all$Time))
+medians <- c()
+lowers <- c()
+uppers <- c()
+for (t in time_unique) {
+    vals <- df_all$PopSize[df_all$Time == t]
+    medians <- c(medians, median(vals, na.rm=TRUE))
+    lowers <- c(lowers, quantile(vals, 0.025, na.rm=TRUE))
+    uppers <- c(uppers, quantile(vals, 0.975, na.rm=TRUE))
+}
+
+bsp_df <- data.frame(Time = time_unique, Median = medians, Lower = lowers, Upper = uppers)
+
+# 退化守卫 (2026-10-12): 有效(有限)点不足 2 个, 或中位数无变化(零方差) →
+# 统计量等于算不出来, 按项目规则**不产图**并让 Python 侧删掉旧图。
+ok <- is.finite(bsp_df$Median) & is.finite(bsp_df$Lower) & is.finite(bsp_df$Upper)
+n_ok <- sum(ok)
+n_med <- length(unique(bsp_df$Median[ok]))
+cat("BSP finite points:", n_ok, " distinct medians:", n_med, "\\n")
+if (n_ok < 2 || n_med < 2) {
+    cat("Error: degenerate skyline (finite=", n_ok, ", distinct medians=", n_med,
+        ") -> no plot written\\n")
+    quit(status = 2)
+}
+
+# 2026-10-12: 配色统一 OKABE 蓝 #0072B2（原 #00A0E9 不在项目调色板内）；
+# dpi 150 → 300；标题加粗、去次网格。
+# 2026-10-12（审稿人视角修复）：补图例（阴影 = 95% HPD、实线 = 后验中位数）
+# 并把 x 轴量纲写全（旧版只有 "Time"，读者无法判断是年份还是年前）。
+p <- ggplot(bsp_df, aes(x=Time)) +
+    geom_ribbon(aes(ymin=Lower, ymax=Upper, fill="95% HPD"), alpha=0.30,
+                colour=NA) +
+    geom_line(aes(y=Median, colour="Posterior median"), linewidth=1.2) +
+    scale_fill_manual(name=NULL, values=c("95% HPD"="#56B4E9")) +
+    scale_colour_manual(name=NULL, values=c("Posterior median"="#0072B2")) +
+    scale_y_log10(labels=comma) +
     theme_bw(base_size=14) +
-    labs(x="Skyline interval (1 = most recent)", y="Effective population size",
-         title="Bayesian Skyline Plot (per-interval median, 95% HPD)",
-         subtitle=sprintf("BEAST .log summary | %d usable samples | time-resolved BSP requires .trees (Tracer)", n_used)) +
-    theme(panel.grid.minor=element_blank())
-if (all_positive) {
-    p <- p + scale_y_log10(labels=comma)
-}
+    labs(x="Time (years before present)",
+         y=expression("Effective population size ("*N[e]*tau*")"),
+         title="Bayesian skyline plot") +
+    theme(panel.grid.minor=element_blank(),
+          plot.title=element_text(face="bold", hjust=0.5),
+          legend.position=c(0.015, 0.985),
+          legend.justification=c(0, 1),
+          legend.background=element_rect(fill="white", colour=NA),
+          legend.key=element_rect(fill="white", colour=NA))
 
-ggsave(output_file, plot=p, width=10, height=6, dpi=150)
+ggsave(output_file, plot=p, width=10, height=6, dpi=300)
 cat("BSP plot saved to", output_file, "\\n")
 '''
 
@@ -1164,15 +1280,7 @@ def run_bsp_viz(
     log: Optional[LogCollector] = None,
 ) -> Dict:
     """
-    从 BEAST .log 文件生成 skyline 汇总图 (BSP.pdf)。
-
-    2026-10-03 重写 (三处修复, 详见 BSP_R_SCRIPT_TEMPLATE 注释):
-      ① 不再把每样本根高/树高当时间轴 (x = skyline 区间号, 1 = 最近);
-      ② 种群列精确匹配, 不再把独立 skyline 先验列 (≈-700) 当种群大小
-         (旧版会让 log10 出 NaN 并删掉整层 95% 色带);
-      ③ 按区间跨 MCMC 样本汇总 median + 95% HPD (旧版"每行跨区间取中位数")。
-    退化输入 (burn-in 后 < 10 个样本) → 退出码 2, **不产出 PDF**, 报错信息写明行数。
-    时间分辨的真 BSP 重建需要 .trees (Tracer), .log 不含区间边界。
+    从 BEAST .log 文件生成 Bayesian Skyline Plot。
 
     Parameters
     ----------
@@ -1208,6 +1316,13 @@ def run_bsp_viz(
         if proc.returncode != 0:
             result["error"] = proc.stderr or proc.stdout
             log.error(f"BSP-Viz failed: {result['error']}")
+            # 退化守卫 (2026-10-12): 本次没算出可用图 → 不能留上一次的旧图冒充新结果
+            if os.path.exists(output_file):
+                try:
+                    os.remove(output_file)
+                    log.warning(f"BSP-Viz: 删除陈旧图 {output_file}")
+                except OSError as _e:
+                    log.warning(f"BSP-Viz: 陈旧图删除失败 {output_file}: {_e}")
             return result
 
         result["plot"] = output_file
@@ -1290,8 +1405,7 @@ def run_mantel_test(
 
     Returns
     -------
-    dict: {success, mantel_r, p_value, mantel_permutation ('label'), n_samples,
-           geo_dist_matrix, gen_dist_matrix, plot}
+    dict: {success, mantel_r, p_value, geo_dist_matrix, gen_dist_matrix, plot}
     """
     log = log or LogCollector()
     os.makedirs(output_dir, exist_ok=True)
@@ -1352,29 +1466,52 @@ def run_mantel_test(
     gen_dist_condensed = squareform(gen_dist)
 
     # ── 4. Compute geographic distance matrix ──
-    # 坐标统一源 (2026-10-03, S3-⑤): 原字面量 COORD_LOOKUP 已并入 utils/coord_lookup
-    # (geo_resolver 省/市表为权威基底; 省份键取省质心)。本函数只调 coord_lookup.lookup。
-    # 裸加载兜底: coord_lookup 有 spec_from_file_location 路径 (与 geo_resolver 同款)。
-    try:
-        from utils.coord_lookup import (lookup as _coord_lookup,
-                                        diff_lines as _coord_diff_lines,
-                                        flush as _coord_flush)
-    except ImportError:
-        import importlib.util as _ilu
-        _spec = _ilu.spec_from_file_location(
-            'coord_lookup', os.path.join(os.path.dirname(__file__), 'coord_lookup.py'))
-        _cmod = _ilu.module_from_spec(_spec)
-        _spec.loader.exec_module(_cmod)
-        _coord_lookup = _cmod.lookup
-        _coord_diff_lines = _cmod.diff_lines
-        _coord_flush = _cmod.flush
-
-    global _COORD_DIFF_REPORTED
-    if not _COORD_DIFF_REPORTED and log is not None:
-        for _line in _coord_diff_lines('virphy_bridge'):
-            log.warning(f"[Mantel] {_line}")
-        _COORD_DIFF_REPORTED = True
-
+    # Real coordinate lookup for Chinese locations (lat, lon)
+    COORD_LOOKUP = {
+        'China, Ningxia, Yinchuan': (38.47, 106.27),
+        'China, Ningxia, Zhongning': (37.49, 105.68),
+        'China, Neimenggu': (40.82, 111.75),
+        'China, Beijing, Beijing': (39.90, 116.40),
+        'China, Beijing': (39.90, 116.40),
+        'China, Beijing, Unknown': (39.90, 116.40),
+        'China, Guangdong, Guangzhou': (23.13, 113.26),
+        'China, Qinghai, Xining': (36.62, 101.78),
+        'China, Gansu, Wuwei': (37.93, 102.64),
+        'China, Liaoning, Shenyang': (41.80, 123.43),
+        'China, ningxia, Yinchuan': (38.47, 106.27),
+        # ── 裸省份名 (PSTVd metadata 格式, 2026-09-02 补) ──
+        'Ningxia': (38.47, 106.27),          # 宁夏 (银川)
+        'Gansu': (36.06, 103.83),            # 甘肃 (兰州)
+        'Qinghai': (36.62, 101.78),          # 青海 (西宁)
+        'Neimenggu': (40.82, 111.75),        # 内蒙古 (呼和浩特)
+        'Inner Mongolia': (40.82, 111.75),
+        'Beijing': (39.90, 116.40),
+        'Guangdong': (23.13, 113.26),
+        'Jiangsu': (32.06, 118.78),          # 江苏 (南京)
+        'Shandong': (36.67, 117.02),
+        'Hebei': (38.04, 114.51),
+        'Xinjiang': (43.79, 87.63),
+        'Yunnan': (25.04, 102.71),
+        'Sichuan': (30.66, 104.07),
+        'Hunan': (28.23, 112.94),
+        'Hubei': (30.59, 114.31),
+        'Henan': (34.75, 113.63),
+        'Shaanxi': (34.27, 108.95),
+        'Shanxi': (37.87, 112.55),
+        'Liaoning': (41.80, 123.43),
+        'Fujian': (26.08, 119.30),
+        'Zhejiang': (30.27, 120.16),
+        'Anhui': (31.86, 117.28),
+        'Heilongjiang': (45.80, 126.53),
+        'Jilin': (43.88, 125.32),
+        'Guangxi': (22.82, 108.32),
+        'Guizhou': (26.65, 106.63),
+        'Hainan': (20.04, 110.32),
+        'Chongqing': (29.56, 106.55),
+        'Tianjin': (39.08, 117.20),
+        'Shanghai': (31.23, 121.47),
+        'Tibet': (29.65, 91.13),
+    }
     import math
     def haversine_km(lat1, lon1, lat2, lon2):
         R = 6371
@@ -1386,19 +1523,35 @@ def run_mantel_test(
     geo_dist = np.zeros((n, n))
     coords = {}
     skipped_locs = set()
-    # 分层地名解析: 唯一坐标源 coord_lookup (静态合并表 → 段拆分 → 模糊 → 缓存 →
-    # 可选在线)。来源统计写进日志便于核对 (geo_resolver:* / legacy:* / resolver:*)。
+    # 分层地名解析 (2026-09-02, geo_resolver): 旧 COORD_LOOKUP 作 L0 遗留精确层,
+    # 其后走 省/市中英文名+拼音变体 → 段拆分 → 模糊匹配 → 缓存 → (可选)在线
+    try:
+        from utils.geo_resolver import get_resolver
+        _gres = get_resolver()
+    except ImportError:
+        import importlib.util as _ilu
+        _spec = _ilu.spec_from_file_location(
+            'geo_resolver', os.path.join(os.path.dirname(__file__), 'geo_resolver.py'))
+        _mod = _ilu.module_from_spec(_spec)
+        _spec.loader.exec_module(_mod)
+        _gres = _mod.get_resolver()
     _src_stats = {}
     for name in common:
         loc_str = sample_locs[name]
-        hit = _coord_lookup(loc_str)
-        if hit:
-            coords[name] = (float(hit[0]), float(hit[1]))
-            _src_stats[hit[2]] = _src_stats.get(hit[2], 0) + 1
+        coord = None
+        if loc_str in COORD_LOOKUP:
+            coord = COORD_LOOKUP[loc_str]
+            _src_stats['legacy'] = _src_stats.get('legacy', 0) + 1
+        else:
+            coord, src = _gres.resolve(loc_str)
+            if coord:
+                _src_stats[src] = _src_stats.get(src, 0) + 1
+        if coord:
+            coords[name] = coord
         else:
             # 解析失败: 不伪造坐标 (假坐标会制造虚假地理距离), 排除并列明
             skipped_locs.add(loc_str)
-    _coord_flush()
+    _gres.flush()
     if _src_stats:
         log.emit(f"[Mantel] 坐标解析来源: {_src_stats}")
     if skipped_locs:
@@ -1437,15 +1590,11 @@ def run_mantel_test(
     # ── 5. Mantel test ──
     r_obs = np.corrcoef(gen_dist_condensed, geo_dist_condensed)[0, 1]
 
-    # Permutation —— Mantel 标准做法: 对**样本标签**做置换 (矩阵行/列同步),
-    # 即 permuted = squareform(gen_dist[np.ix_(idx, idx)]); 地理矩阵保持固定。
-    # 2026-10-03 修复: 旧实现对压缩距离向量的元素直接 rng.permutation(...),
-    # 生成的"零分布"不是置换零分布 (破坏矩阵对称/三角结构), p 值无意义。
+    # Permutation
     perm_vals = []
     rng = np.random.RandomState(42)
     for _ in range(n_permutations):
-        idx = rng.permutation(n)
-        permuted = squareform(gen_dist[np.ix_(idx, idx)])
+        permuted = rng.permutation(gen_dist_condensed)
         perm_vals.append(np.corrcoef(permuted, geo_dist_condensed)[0, 1])
     perm_vals = np.array(perm_vals)
 
@@ -1454,39 +1603,53 @@ def run_mantel_test(
     result["mantel_r"] = float(r_obs)
     result["p_value"] = float(p_value)
     result["n_samples"] = n
-    # 方法标注 (2026-10-03, S3-⑥): 置换口径 = **标签置换** (对样本标签重排, 即矩阵
-    # 行/列同步; 地理矩阵固定)。2026-10-03 前的口径是"对压缩距离向量元素直接打乱",
-    # p 值语义不同且不可比 —— 落 dict / 打印 / 图题显式标注, 重算时可区分。
-    result["mantel_permutation"] = "label"
-    log.emit(f"Mantel r = {r_obs:.4f}, p = {p_value:.4f} (n={n}, {n_permutations} perms, "
-             f"permutation=label)")
+    log.emit(f"Mantel r = {r_obs:.4f}, p = {p_value:.4f} (n={n}, {n_permutations} perms)")
 
     # ── 6. Plot ──
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
+    # 2026-10-12: 配色统一 OKABE（原 #00A0E9 / #E9522E 不在调色板内）；热图
+    # YlOrRd → 项目连续色 viridis；dpi 150 → 300。
+    # 画布 14 in → 9.32 in：T 面板在 Fig 3 里占 2 栏（4.58 in），源 14 in 缩放
+    # 0.33 倍会把 13 pt 标题压到 4.3 pt。改成 9.32 in 后缩放 0.49，标题 ≈6.4 pt。
+    apply_sci_style(base_size=11)
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(9.32, 4.6))
 
     # Scatter
-    ax1.scatter(geo_dist_condensed, gen_dist_condensed, alpha=0.5, s=20, c='#00A0E9', edgecolors='none')
+    ax1.scatter(geo_dist_condensed, gen_dist_condensed, alpha=0.5, s=12,
+                color=OKABE_ITO[4], edgecolors='none',
+                label=f"{len(geo_dist_condensed):,} sample pairs")
     z = np.polyfit(geo_dist_condensed, gen_dist_condensed, 1)
     x_line = np.linspace(0, geo_dist_condensed.max(), 100)
-    ax1.plot(x_line, z[0]*x_line + z[1], '--', color='#E9522E', linewidth=2)
+    ax1.plot(x_line, z[0]*x_line + z[1], '--', color=OKABE_ITO[5], linewidth=1.6,
+             label="least-squares fit")
     ax1.set_xlabel("Geographic distance (km)", fontsize=13)
     ax1.set_ylabel("Genetic distance (p-distance)", fontsize=13)
-    ax1.set_title(f"Mantel test: r={r_obs:.3f}, p={p_value:.4f} (label permutation)",
-                  fontsize=14, fontweight='bold')
+    # 2026-10-12（审稿人视角）：Mantel 的 P 值在"配对数极大"时极易显著，
+    # 必须同时给出效应量（r）与配对数，否则读者会把 r≈0 误读成"存在地理隔离"。
+    # ⚠ 配对数**只写在图例里**：标题里再写一遍会与右图的
+    #   "Genetic distance matrix  (n = ...)" 标题在 4.58 in 半栏宽下相撞
+    #   （实测 "(7,140 pairs)" 与 "Genetic" 直接叠字），且属信息重复。
+    ax1.set_title(f"Mantel test:  $r$ = {r_obs:.3f},  $P$ = {p_value:.4f}",
+                  fontsize=13, fontweight='bold')
+    ax1.grid(alpha=0.3)
+    ax1.legend(fontsize=9, loc="upper left", frameon=False)
+    despine(ax1)
 
-    # Both heatmaps
-    labels_short = [c.split('.')[0][:8] if '.' in c else c[:8] for c in common]
-    im = ax2.imshow(gen_dist, cmap='YlOrRd', aspect='auto')
-    ax2.set_xticks(range(n))
-    ax2.set_yticks(range(n))
-    ax2.set_xticklabels(labels_short, fontsize=7, rotation=90)
-    ax2.set_yticklabels(labels_short, fontsize=7)
-    ax2.set_title("Genetic distance matrix", fontsize=14, fontweight='bold')
+    # Genetic distance heatmap
+    # 2026-10-12（审稿人视角）：旧版在 127×127 的矩阵上等间隔抽 28 个样本名做刻度，
+    # 抽出来的又都是被截断到 8 字符的 accession 前缀（CRR11261…）—— 既糊又无信息量，
+    # 而且同一 accession 的多个样本会重复出现，读者会误以为图错。
+    # 现直接去掉刻度标签，把维度写进标题（矩阵本身的可读性不依赖逐样本标签）。
+    im = ax2.imshow(gen_dist, cmap=SEQ_CMAP, aspect='auto',
+                    interpolation='nearest')
+    ax2.set_xticks([])
+    ax2.set_yticks([])
+    ax2.set_title(f"Genetic distance matrix  (n = {n})",
+                  fontsize=13, fontweight='bold')
     plt.colorbar(im, ax=ax2, shrink=0.8, label='p-distance')
 
     plt.tight_layout()
     plot_path = os.path.join(output_dir, "mantel_test.pdf")
-    fig.savefig(plot_path, bbox_inches='tight', dpi=150, format='pdf')
+    fig.savefig(plot_path, bbox_inches='tight', dpi=300, format='pdf')
     plt.close(fig)
     result["plot"] = plot_path
 
@@ -1652,38 +1815,78 @@ args <- commandArgs(trailingOnly=TRUE)
 input_csv <- args[1]
 output_file <- args[2]
 
-data <- read.csv(input_csv, header=TRUE, stringsAsFactors=FALSE)
+# 2026-10-12（审稿人视角修复，四处）：
+#  ① `check.names=FALSE` —— 默认 TRUE 会用 make.names() 把表头 "China, Beijing"
+#     改写成 "China..Beijing"（空格/逗号都变点），图例里于是出现双点标签；
+#  ② 显示名统一取**最后一段**（最具体地名），与 Python 侧
+#     `sample_plot._canonical_label` 同口径 —— 否则 V 的 "China.Beijing.Beijing"
+#     和 A/B 的 "Beijing" 对不上；
+#  ③ 配色改为"按地名排序后依次取 OKABE_ITO"，与 `sample_plot.loc_color_map`
+#     完全一致 —— 否则同一地点在 A/B 与 V 里颜色不同（多面板图的硬伤）；
+#  ④ 图例原为单行 7 项、base_size=15 → 右侧被裁掉；现压到 2 行、缩小字号，
+#     并给气泡图补"大小 = 样本数"的图例。
+data <- read.csv(input_csv, header=TRUE, stringsAsFactors=FALSE, check.names=FALSE)
 
-# Expect columns: Year, Location1, Location2, ...
-# First column = Year, rest = location counts
 loc_cols <- names(data)[-1]
 
-# Reshape
+short_label <- function(x) {
+    parts <- trimws(strsplit(x, ",")[[1]])
+    parts <- parts[nzchar(parts)]
+    parts[length(parts)]
+}
+
 df <- pivot_longer(data, cols=all_of(loc_cols), names_to="Location", values_to="Count")
+df$Location <- vapply(df$Location, short_label, character(1))
 df <- df[df$Count > 0,]
 
-# Plot 1: Time series by location
+okabe <- c("#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2",
+           "#D55E00", "#CC79A7", "#000000", "#999999")
+locs <- sort(unique(df$Location))
+loc_map <- setNames(rep(okabe, length.out=length(locs)), locs)
+
+# 整数年份刻度，两幅子图共用（旧版上图整数、下图小数，同一张图两种口径）
+yr <- sort(unique(df$Year))
+step <- max(1, floor(length(yr) / 6))
+brk <- yr[seq(1, length(yr), by=step)]
+
+# Plot 1: stacked bars by location
 p1 <- ggplot(df, aes(x=Year, y=Count, fill=Location)) +
     geom_bar(stat="identity", position="stack", width=0.8) +
-    scale_fill_locuszoom() +
+    scale_fill_manual(values=loc_map) +
+    scale_x_continuous(breaks=brk) +
     theme_bw(base_size=13) +
-    labs(x="Year", y="Number of isolates", title="Temporal distribution by location") +
-    theme(legend.position="bottom", legend.title=element_blank())
+    labs(x="Year", y="Number of isolates",
+         title="Temporal distribution by location") +
+    theme(legend.position="bottom", legend.title=element_blank(),
+          legend.text=element_text(size=8),
+          legend.key.size=unit(0.28, "cm"),
+          panel.grid.minor=element_blank(),
+          plot.title=element_text(face="bold", hjust=0.5)) +
+    guides(fill=guide_legend(nrow=2, byrow=TRUE))
 
-# Plot 2: Dot plot (location vs year, size = count)
+# Plot 2: dot plot (location vs year, size = count)
 p2 <- ggplot(df, aes(x=Year, y=Location)) +
-    geom_point(aes(color=Location, size=Count), alpha=0.8) +
-    scale_color_locuszoom() +
+    geom_point(aes(color=Location, size=Count), alpha=0.85) +
+    scale_color_manual(values=loc_map, guide="none") +
+    scale_x_continuous(breaks=brk) +
+    scale_size_continuous(name="isolates", range=c(1.5, 9),
+                          breaks=pretty(range(df$Count), n=4)) +
     theme_bw(base_size=13) +
     labs(x="Year", y="", title="Spatiotemporal sample distribution") +
-    theme(legend.position="none", panel.grid.minor=element_blank()) +
-    scale_size_continuous(range=c(2, 12))
+    theme(panel.grid.minor=element_blank(),
+          legend.position="right",
+          legend.title=element_text(size=8),
+          legend.text=element_text(size=7),
+          legend.key.size=unit(0.28, "cm"),
+          plot.title=element_text(face="bold", hjust=0.5))
 
 # Combine
 library(patchwork)
 combined <- p1 / p2 + plot_layout(heights=c(2, 1))
 
-ggsave(output_file, plot=combined, width=12, height=9, dpi=150)
+# 画布 = Fig 3 的 2 栏宽度量级（源 9.32 in 排进 4.58 in → 0.49 倍，
+# 13 pt 落到 ≈6.4 pt，可读）。原 12×9 in + 13 pt 排进去只有 5 pt。
+ggsave(output_file, plot=combined, width=9.32, height=7.4, dpi=300)
 cat("VirSpaceTime plot saved to", output_file, "\\n")
 '''
 
@@ -2054,30 +2257,56 @@ def run_host_differentiation(
         log.emit(f"Within: {within_mean:.5f}, Between: {between_mean:.5f}, diff={obs_diff:.5f}, p={p_value:.4f}, effect={effect_size:.3f}")
 
         # Plot
+        # 2026-10-12: 配色统一 OKABE（原 #2ecc71/#e74c3c/#3498db 均不在项目调色板内）；
+        # dpi 150 → 300；补 y 轴网格。画布 14 in 保留 —— 排进 Fig 3 的通栏
+        # （9.32 in）缩放 0.67 倍，13 pt 标题落到 8.7 pt，比例本身合适。
+        apply_sci_style(base_size=10)
         fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
 
         # Boxplot
         box_data = [within_dists, between_dists]
-        bp = ax1.boxplot(box_data, labels=['Within host', 'Between hosts'],
-                         patch_artist=True, widths=0.5)
-        bp['boxes'][0].set_facecolor('#2ecc71')
-        bp['boxes'][1].set_facecolor('#e74c3c')
+        bp = ax1.boxplot(box_data, patch_artist=True, widths=0.5)
+        bp['boxes'][0].set_facecolor(OKABE_ITO[4])      # blue   — within host
+        bp['boxes'][1].set_facecolor(OKABE_ITO[5])      # vermillion — between hosts
+        for b in bp['boxes']:
+            b.set_edgecolor("#333333")
+            b.set_linewidth(0.8)
+        for el in ('whiskers', 'caps', 'medians'):
+            for art in bp[el]:
+                art.set_color("#333333")
+                art.set_linewidth(0.8)
+        ax1.set_xticks([1, 2])
+        # 2026-10-12（审稿人视角）：箱线图必须给出每组样本量 —— 否则读者无法判断
+        # "between − within = 0.007" 是建立在多少对比较上的。
+        ax1.set_xticklabels([f'Within host\n({len(within_dists):,} pairs)',
+                             f'Between hosts\n({len(between_dists):,} pairs)'],
+                            fontsize=12)
         ax1.set_ylabel('p-distance', fontsize=13)
-        ax1.set_title(f'Host differentiation\nbetween−within={obs_diff:.5f}, p={p_value:.4f}',
-                     fontsize=13, fontweight='bold')
+        ax1.set_title(f'Host differentiation\nbetween − within = {obs_diff:.5f}, '
+                      f'$P$ = {p_value:.4f}',
+                      fontsize=13, fontweight='bold')
+        ax1.grid(alpha=0.35, axis='y')
+        despine(ax1)
 
         # Permutation histogram
-        ax2.hist(perm_diffs, bins=50, color='#3498db', alpha=0.7, edgecolor='white')
-        ax2.axvline(obs_diff, color='#e74c3c', linewidth=2, linestyle='--',
-                    label=f'Observed diff={obs_diff:.5f}')
-        ax2.set_xlabel('Between − Within mean distance', fontsize=13)
+        ax2.hist(perm_diffs, bins=50, color=OKABE_ITO[4], alpha=0.75,
+                 edgecolor='white', linewidth=0.3)
+        ax2.axvline(obs_diff, color=OKABE_ITO[5], linewidth=2.0, linestyle='--',
+                    label=f'Observed difference = {obs_diff:.5f}')
+        ax2.set_xlabel('Between − within mean distance', fontsize=13)
         ax2.set_ylabel('Frequency', fontsize=13)
-        ax2.set_title(f'Permutation test ({n_permutations} perms)', fontsize=13, fontweight='bold')
-        ax2.legend(fontsize=10)
+        # 2026-10-12: 把 P 值同时写进右图标题（右图才是 P 的来源），
+        # 并用千分位标出置换次数。
+        ax2.set_title(f'Permutation test  ({n_permutations:,} permutations)\n'
+                      f'$P$ = {p_value:.4f}',
+                      fontsize=13, fontweight='bold')
+        ax2.legend(fontsize=10, loc="upper left")
+        ax2.grid(alpha=0.35, axis='y')
+        despine(ax2)
 
         plt.tight_layout()
         plot_path = os.path.join(output_dir, "host_differentiation.pdf")
-        fig.savefig(plot_path, bbox_inches='tight', dpi=150, format='pdf')
+        fig.savefig(plot_path, bbox_inches='tight', dpi=300, format='pdf')
         plt.close(fig)
         result["plot"] = plot_path
         result["success"] = True
@@ -2167,8 +2396,8 @@ def run_rrt(
             # 全平后验会被当成"地理信号显著"的假阳性。
             result["passed"] = True
             result["skipped"] = True
-            result["note"] = ("原树后验接近均匀（相邻差 < 0.01）→ 上游口径判"
-                              "'无需检验'，非'检验通过'")
+            result["note"] = ("original-tree posterior is near uniform (adjacent difference < 0.01) → upstream convention calls this "
+                              "'test not needed', not 'test passed'")
             result["error"] = "Posterior probability too small, RRT not needed"
             return result
 

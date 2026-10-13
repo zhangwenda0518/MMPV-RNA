@@ -21,7 +21,10 @@
 import argparse, json, os, subprocess, sys
 from pathlib import Path
 
-UTILS = Path(__file__).parent
+# 2026-10-13 修 (P1): 原值 = Path(__file__).parent (管线根) —— rdp5_validate.py /
+# rdp5_bdp_plot.py 实际在 utils/ 子目录, 旧值使 --rdp5_stage all 的 validate/plot
+# 两个子步骤以"无法打开文件"退出码 2 静默降级。
+UTILS = Path(__file__).parent / "utils"
 
 
 def run_rdp5(rdp5_script, fasta, prefix, outdir):
@@ -222,32 +225,32 @@ def main():
     if 'plot' in stages:
         plot(bdp_csv, args.genes, outdir, prefix)
 
-    report = [f'# 重组分析报告: {prefix}\n',
-              f'## RDP5 事件 ({len(events)})']
+    report = [f'# Recombination analysis report: {prefix}\n',
+              f'## RDP5 events ({len(events)})']
     if events:
         for ev in events:
             # 历史坑: methods 为空 dict 时 min() 崩 (所有方法 p 值 NS/空)
             best_p = min(ev['methods'].values()) if ev.get('methods') else float('nan')
             report.append(
                 f"- **Event {ev['num']}** {ev['bp_start']}-{ev['bp_end']}: "
-                f"重组子 {ev['recombinant']} ({ev['minor_parent']}/{ev['major_parent']}), "
-                f"{ev['n_methods']} 方法 (best p={best_p:.2e})")
+                f"recombinant {ev['recombinant']} ({ev['minor_parent']}/{ev['major_parent']}), "
+                f"{ev['n_methods']} methods (best p={best_p:.2e})")
     else:
-        report.append('- 无事件或未解析')
+        report.append('- No events detected or none parsed')
 
     if 'cross' in stages:
         cross = dnasp_rm_cross(args.fasta, events, args.genes)
-        report.append(f"\n## dnasp Rm 交叉验证")
+        report.append(f"\n## dnasp Rm cross-validation")
         if 'error' in cross:
             report.append(f"- {cross['error']}")
         else:
-            report.append(f"- dnasp Rm = {cross['rm']} ({cross['n_incompatible_pairs']} 不兼容对)")
-            report.append(f"- dnasp 断点热点窗口: {cross['rm_hotspot_windows']}")
-            report.append(f"- RDP5 断点窗口: {cross['rdp5_breakpoint_windows']}")
-            report.append(f"- **重合窗口: {cross['overlap_windows']}**")
+            report.append(f"- dnasp Rm = {cross['rm']} ({cross['n_incompatible_pairs']} incompatible pairs)")
+            report.append(f"- dnasp breakpoint hotspot windows: {cross['rm_hotspot_windows']}")
+            report.append(f"- RDP5 breakpoint windows: {cross['rdp5_breakpoint_windows']}")
+            report.append(f"- **Overlapping windows: {cross['overlap_windows']}**")
             _og = cross.get('overlap_genes') or {}
             if _og:
-                report.append("- 重合窗口 → 基因:")
+                report.append("- Overlapping windows → genes:")
                 for _w, _gs in sorted(_og.items()):
                     report.append(f"  - {_w}-{_w + 99}: {', '.join(_gs)}")
         with open(outdir / 'rdp5_events.json', 'w') as f:

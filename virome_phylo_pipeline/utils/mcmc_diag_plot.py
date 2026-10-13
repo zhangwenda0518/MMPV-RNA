@@ -9,7 +9,7 @@
     chain_scatter.pdf     — 双链收敛对比 (y=x 散点 + 相关系数 R, 可选)
 
 ESS 算法: utils.ess (Geyer 1992 initial monotone sequence, 与 Tracer 一致)。
-颜色约定同 Tracer: ESS>=200 绿, >=100 黄, <100 红。
+颜色约定同 Tracer 分级、配色用项目 OKABE: ESS>=200 绿, >=100 橙, <100 朱红。
 """
 import os
 import csv
@@ -22,6 +22,16 @@ import matplotlib.pyplot as plt
 
 from utils.ess import calculate_ess
 from utils.ess_metrics import ess_bulk, ess_tail, ess_evolution
+
+# 2026-10-12: 统一 SCI 配色/样式。脚本既能 `import utils.mcmc_diag_plot`，
+# 也能被直接 `python utils/mcmc_diag_plot.py` 执行（此时 sys.path[0]=utils/，
+# 包路径不存在）→ 双路径 import。
+try:
+    from utils.sci_palette import (
+        apply_sci_style, OKABE_ITO, COL_W_1, COL_W_2, despine, sci_legend)
+except ImportError:                                    # pragma: no cover
+    from sci_palette import (
+        apply_sci_style, OKABE_ITO, COL_W_1, COL_W_2, despine, sci_legend)
 
 
 def _hdi(x, prob=0.95):
@@ -89,20 +99,29 @@ def pick_params(header, params_arg=None, max_params=6):
 
 
 def _ess_color(ess):
+    """ESS 分级配色（Tracer 口径 → 项目 OKABE 语义色）。
+
+    2026-10-12: 原为手写 #7fbf7f/#eede91/#ee9191（淡绿/淡黄/淡粉），
+    在 300 dpi 印刷下饱和度不足、且不属于项目调色板。现改用
+    OKABE 绿(#009E73)/橙(#E69F00)/朱红(#D55E00)。
+    """
     if ess >= 200:
-        return "#7fbf7f"
+        return OKABE_ITO[2]      # bluish green — 充分
     if ess >= 100:
-        return "#eede91"
-    return "#ee9191"
+        return OKABE_ITO[0]      # orange       — 偏低
+    return OKABE_ITO[5]          # vermillion   — 不足
 
 
 def plot_diagnostics(log_file, out_pdf, burnin_frac=0.1, params=None):
+    # 2026-10-12: 统一 SCI 样式 + 画布按**排版栏宽**（Fig 3 里 N/S 面板占 2 栏 = 4.58 in）。
+    # 旧画布固定 16 in 宽 → 排进 4.58 in 只剩 0.29 倍，9 pt 标题变 2.6 pt，完全不可读。
+    apply_sci_style(base_size=6.5)
     header, cols = read_log_columns(log_file, burnin_frac)
     picked = pick_params(header, params)
     if not picked:
         raise ValueError("No plottable parameters found")
     n = len(picked)
-    fig, axes = plt.subplots(n, 3, figsize=(16, 2.8 * n))
+    fig, axes = plt.subplots(n, 3, figsize=(COL_W_2, COL_W_2 * 0.185 * n))
     if n == 1:
         axes = axes.reshape(1, 3)
     ess_values = []
@@ -110,25 +129,26 @@ def plot_diagnostics(log_file, out_pdf, burnin_frac=0.1, params=None):
         v = cols[p]
         # trace
         ax = axes[i, 0]
-        ax.plot(v, lw=0.4, color="#4e699a")
+        ax.plot(v, lw=0.35, color=OKABE_ITO[4])
         burn_x = int(len(v) * burnin_frac)
-        ax.axvline(burn_x, color="gray", ls="--", lw=0.8)
-        ax.set_ylabel(p, fontsize=8)
-        ax.set_title("Trace", fontsize=9, loc="left")
+        ax.axvline(burn_x, color=OKABE_ITO[8], ls="--", lw=0.7)
+        ax.set_ylabel(p, fontsize=5.5)
+        ax.set_title("Trace", fontsize=6.5, loc="left")
+        despine(ax)
         # density: 直方图 + 95% HPD 阴影标注 + 统计盒
         ax = axes[i, 1]
-        ax.hist(v, bins=60, density=True, color="#4e699a", alpha=0.75)
+        ax.hist(v, bins=60, density=True, color=OKABE_ITO[4], alpha=0.75)
         lo, hi = _hdi(v, 0.95)
-        ax.axvspan(lo, hi, color="red", alpha=0.1)
+        ax.axvspan(lo, hi, color=OKABE_ITO[5], alpha=0.10)
         for xv in (lo, hi):
-            ax.axvline(xv, color="red", ls="--", lw=0.9)
-        q05, q95 = np.quantile(v, [0.05, 0.95])
+            ax.axvline(xv, color=OKABE_ITO[5], ls="--", lw=0.8)
         ax.text(0.02, 0.97,
                 f"mean={np.mean(v):.4g}\nmedian={np.median(v):.4g}\n"
                 f"95% HPD=[{lo:.4g}, {hi:.4g}]\ntailESS={ess_tail(v):.0f}",
-                transform=ax.transAxes, va="top", fontsize=7,
-                bbox=dict(fc="white", ec="#999", alpha=0.85, pad=2))
-        ax.set_title("Density (95% HPD)", fontsize=9, loc="left")
+                transform=ax.transAxes, va="top", fontsize=5,
+                bbox=dict(fc="white", ec=OKABE_ITO[8], alpha=0.85, pad=1.4))
+        ax.set_title("Density (95% HPD)", fontsize=6.5, loc="left")
+        despine(ax)
         # autocorrelation 前 100 lag
         ax = axes[i, 2]
         vc = v - v.mean()
@@ -137,68 +157,92 @@ def plot_diagnostics(log_file, out_pdf, burnin_frac=0.1, params=None):
             lags = min(100, len(v) // 2)
             acf = [1.0] + [float(np.sum(vc[:-k] * vc[k:]) / (var * len(vc)))
                            for k in range(1, lags)]
-            ax.bar(range(len(acf)), acf, color="#4e699a", width=0.9)
-            ax.axhline(0, color="black", lw=0.5)
-        ax.set_title("ACF", fontsize=9, loc="left")
+            ax.bar(range(len(acf)), acf, color=OKABE_ITO[4], width=0.9)
+            ax.axhline(0, color="#222222", lw=0.5)
+        ax.set_title("ACF", fontsize=6.5, loc="left")
+        despine(ax)
         ess_values.append((p, float(calculate_ess(v)), len(v),
                            float(ess_bulk(v)), float(ess_tail(v))))
 
     # ESS 柱状图: bulk + tail 双柱 (Tracer 1.7+ 双指标)
-    fig2, ax = plt.subplots(figsize=(9, 0.6 * len(ess_values) + 1.5))
+    fig2, ax = plt.subplots(figsize=(COL_W_2, 0.22 * len(ess_values) + 0.95))
     names = [e[0] for e in ess_values][::-1]
     bulk = [e[3] for e in ess_values][::-1]
     tail = [e[4] for e in ess_values][::-1]
     tot = [e[2] for e in ess_values][::-1]
     y = np.arange(len(names))
     ax.barh(y + 0.2, bulk, height=0.38, color=[_ess_color(v) for v in bulk],
-            edgecolor="#333", label="ESS bulk")
+            edgecolor="#333333", linewidth=0.4, label="ESS bulk")
     ax.barh(y - 0.2, tail, height=0.38, color=[_ess_color(v) for v in tail],
-            edgecolor="#333", alpha=0.55, label="ESS tail")
+            edgecolor="#333333", linewidth=0.4, alpha=0.55, label="ESS tail")
     ax.set_yticks(y)
-    ax.set_yticklabels(names, fontsize=8)
+    ax.set_yticklabels(names, fontsize=5.5)
     for j, (b, t, tt) in enumerate(zip(bulk, tail, tot)):
-        ax.text(b, j + 0.2, f" {b:.0f}/{tt}", va="center", fontsize=7)
-        ax.text(t, j - 0.2, f" {t:.0f}", va="center", fontsize=7)
-    ax.axvline(200, color="green", ls=":", lw=0.8)
-    ax.axvline(100, color="orange", ls=":", lw=0.8)
-    ax.set_xlabel("ESS (green>=200, yellow>=100, red<100)")
-    ax.legend(fontsize=8, loc="lower right")
-    ax.set_title(f"ESS bulk/tail — {os.path.basename(log_file)} (burnin={burnin_frac:.0%})")
+        ax.text(b, j + 0.2, f" {b:.0f}/{tt}", va="center", fontsize=4.8)
+        ax.text(t, j - 0.2, f" {t:.0f}", va="center", fontsize=4.8)
+    ax.axvline(200, color=OKABE_ITO[2], ls=":", lw=0.8)
+    ax.axvline(100, color=OKABE_ITO[0], ls=":", lw=0.8)
+    ax.set_xlabel("ESS   (green $\\geq$200, orange $\\geq$100, red <100)", fontsize=6)
+    # 图例用**中性灰** Patch：柱子颜色编码的是 ESS 分级，若图例沿用柱色会被误读成
+    # “红=bulk / 浅红=tail”。分级含义已写在 x 轴标签里。
+    from matplotlib.patches import Patch
+    _h = [Patch(facecolor="#888888", edgecolor="#333333", linewidth=0.4,
+                label="ESS bulk"),
+          Patch(facecolor="#888888", edgecolor="#333333", linewidth=0.4,
+                alpha=0.55, label="ESS tail")]
+    sci_legend(ax, handles=_h, loc="lower right", fontsize=5.5)
+    ax.set_title(f"ESS bulk/tail — {os.path.basename(log_file)} "
+                 f"(burnin={burnin_frac:.0%})", fontsize=6.5)
+    despine(ax)
     fig2.tight_layout()
-    fig2.savefig(out_pdf, bbox_inches="tight", dpi=150)
+    fig2.savefig(out_pdf, bbox_inches="tight", dpi=300)
     plt.close(fig2)
 
     # trace+density 也存一份
     fig.tight_layout()
     trace_pdf = out_pdf.replace(".pdf", "_trace.pdf")
-    fig.savefig(trace_pdf, bbox_inches="tight", dpi=150)
+    fig.savefig(trace_pdf, bbox_inches="tight", dpi=300)
     plt.close(fig)
 
     # ESS evolution 面板: bulk/tail 随链长增长 (回答"链长够不够")
     evo_pdf = out_pdf.replace(".pdf", "_evolution.pdf")
     n_par = len(picked)
-    fig3, axes3 = plt.subplots(n_par, 1, figsize=(8, 2.2 * n_par))
+    fig3, axes3 = plt.subplots(n_par, 1, figsize=(COL_W_2, 0.46 * n_par))
     if n_par == 1:
         axes3 = [axes3]
     for ax3, p in zip(axes3, picked):
         fr, bl, tl = ess_evolution(cols[p])
-        ax3.plot(fr * len(cols[p]), bl, color="#4e699a", lw=1.5, label="ESS bulk")
-        ax3.plot(fr * len(cols[p]), tl, color="#c46a6a", lw=1.5, ls="--", label="ESS tail")
-        ax3.axhline(200, color="green", ls=":", lw=0.8)
-        ax3.axhline(100, color="orange", ls=":", lw=0.8)
-        ax3.set_ylabel(p, fontsize=8)
-        ax3.legend(fontsize=7, loc="lower right")
+        ax3.plot(fr * len(cols[p]), bl, color=OKABE_ITO[4], lw=1.2, label="ESS bulk")
+        ax3.plot(fr * len(cols[p]), tl, color=OKABE_ITO[5], lw=1.2, ls="--",
+                 label="ESS tail")
+        ax3.axhline(200, color=OKABE_ITO[2], ls=":", lw=0.8)
+        ax3.axhline(100, color=OKABE_ITO[0], ls=":", lw=0.8)
+        ax3.set_ylabel(p, fontsize=5.5)
+        sci_legend(ax3, loc="lower right", fontsize=5)
         ax3.grid(alpha=0.3)
-    axes3[-1].set_xlabel("Samples (cumulative)")
-    fig3.suptitle("ESS evolution — curves should plateau above thresholds")
+        despine(ax3)
+    axes3[-1].set_xlabel("Samples (cumulative)", fontsize=6)
+    fig3.suptitle("ESS evolution — curves should plateau above thresholds",
+                  fontsize=7, fontweight="bold")
     fig3.tight_layout()
-    fig3.savefig(evo_pdf, bbox_inches="tight", dpi=150)
+    fig3.savefig(evo_pdf, bbox_inches="tight", dpi=300)
     plt.close(fig3)
     return ess_values, trace_pdf, evo_pdf
 
 
 def plot_chain_scatter(log1, log2, out_pdf, burnin_frac=0.1, params=None):
-    """YR-MPE tracecomp 式双链收敛对比: y=x 散点 + 相关系数。"""
+    """链间一致性 **QQ 图**: 两条链同参数的分位数是否落在 y=x 上。
+
+    2026-10-12 修正
+    --------------
+    原实现是「按行号逐样本对齐的散点 + Pearson r」。但 BEAST 各链**独立采样**，
+    相同 state 的样本之间**没有对应关系** → 点云天然是两团云而非沿对角线，
+    r 恒被稀释到 ≈0（GCVA 实测 0.22 / −0.21 / 0.07 …），读者会把它误读成
+    "两链相关性低"，而它其实什么也没说明。
+    改为分位数-分位数对比：两条链的边际后验一致 → 点落 y=x；系统性偏离 → 未收敛。
+    判据量取 **归一化最大偏差** max|Q1−Q2| / 数据跨度（0 = 完全一致）。
+    """
+    apply_sci_style(base_size=6.5)
     h1, c1 = read_log_columns(log1, burnin_frac)
     h2, c2 = read_log_columns(log2, burnin_frac)
     common = [k for k in pick_params(h1, params) if k in h2]
@@ -207,25 +251,44 @@ def plot_chain_scatter(log1, log2, out_pdf, burnin_frac=0.1, params=None):
     if not common:
         raise ValueError("No common numeric columns between the two logs")
     n = len(common)
-    fig, axes = plt.subplots(1, n, figsize=(3.2 * n, 3.4))
-    if n == 1:
-        axes = [axes]
+    # 2026-10-12: 原为 1×n 横排（n=6 → 每格 0.53 in，标签全糊）。
+    # 改为 3 列网格；画布 = Fig 3 的**通栏**宽度（9.32 in，P 面板独占一行）。
+    ncol = min(3, n)
+    nrow = -(-n // ncol)
+    fig, axes = plt.subplots(nrow, ncol,
+                             figsize=(COL_W_1, COL_W_1 * 0.30 * nrow))
+    axes = np.atleast_1d(axes).ravel()
     rs = []
     for ax, p in zip(axes, common):
-        # 长度对齐 (min)
-        m = min(len(c1[p]), len(c2[p]))
-        x, y = c1[p][:m], c2[p][:m]
-        r = float(np.corrcoef(x, y)[0, 1])
-        rs.append((p, r))
-        lims = [min(x.min(), y.min()), max(x.max(), y.max())]
-        ax.scatter(x, y, s=6, alpha=0.4, color="#4e699a", edgecolors="none")
-        ax.plot(lims, lims, "k--", lw=0.8)
-        ax.set_xlabel(f"chain1 {p}", fontsize=8)
-        ax.set_ylabel(f"chain2 {p}", fontsize=8)
-        ax.set_title(f"r={r:.3f}", fontsize=9)
-    fig.suptitle(f"Chain convergence: {os.path.basename(log1)} vs {os.path.basename(log2)}")
+        x, y = np.sort(c1[p]), np.sort(c2[p])
+        m = max(min(len(x), len(y)), 2)
+        q = np.linspace(0.0, 1.0, m)
+        xs, ys = np.quantile(x, q), np.quantile(y, q)
+        lo = min(xs.min(), ys.min())
+        hi = max(xs.max(), ys.max())
+        span = (hi - lo) or 1.0
+        dev = float(np.max(np.abs(xs - ys)) / span)
+        rs.append((p, dev))
+        ax.scatter(xs, ys, s=2.6, alpha=0.5, color=OKABE_ITO[4], edgecolors="none")
+        ax.plot([lo, hi], [lo, hi], "--", color="#222222", lw=0.7)
+        ax.set_xlabel(f"chain 1  {p}", fontsize=6.5)
+        ax.set_ylabel(f"chain 2  {p}", fontsize=6.5)
+        # 2026-10-12（审稿人视角）：dev 是**已归一化**的量（max|Δ分位数| ÷ 数据跨度），
+        # 旧标签只写 "max dev = 0.645" 读者无从判断量纲，也没法和别的参数比。
+        # 现写明"占该参数数据跨度的百分比"。
+        ax.set_title(f"max deviation = {dev * 100:.1f}% of range", fontsize=7)
+        # 刻度过密会互相压字（ucld.mean 一档 7 位小数）→ 限 3 个刻度
+        ax.locator_params(axis="x", nbins=3)
+        ax.locator_params(axis="y", nbins=4)
+        despine(ax)
+    for ax in axes[len(common):]:
+        ax.axis("off")
+    fig.suptitle(f"Chain agreement (QQ): {os.path.basename(log1)} vs {os.path.basename(log2)}"
+                 f"   — points on the dashed line = identical marginal posteriors;"
+                 f" deviation is relative to each parameter's own range",
+                 fontsize=8, fontweight="bold")
     fig.tight_layout()
-    fig.savefig(out_pdf, bbox_inches="tight", dpi=150)
+    fig.savefig(out_pdf, bbox_inches="tight", dpi=300)
     plt.close(fig)
     return rs, out_pdf
 

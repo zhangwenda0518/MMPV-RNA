@@ -34,7 +34,7 @@ utils/transmission_map.py — 发表级静态传播图 + 事件级时间动画
 Natural Earth / CartoDB / OSM —— 无审图号，不合中国发表要求）。
 
 自包含性：numpy/pandas/matplotlib/Pillow + 标准库；坐标解析优先用户 CSV，
-否则走 utils.coord_lookup（唯一坐标源, 含 geo_resolver 离线省/市表; 默认离线）。
+否则走 utils.geo_resolver 离线词典（11960 条，默认离线）。
 """
 
 from __future__ import annotations
@@ -54,6 +54,12 @@ try:
     from utils.virphy_bridge import LogCollector
 except ImportError:  # 允许直接运行
     from .virphy_bridge import LogCollector  # type: ignore
+
+# 2026-10-12: 项目统一 SCI 调色板（原 #d64541 红 / #2c3e50 深蓝灰边不在调色板内）。
+try:
+    from utils.sci_palette import OKABE_ITO
+except ImportError:  # 允许直接运行
+    from .sci_palette import OKABE_ITO  # type: ignore
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -75,11 +81,7 @@ def resolve_coordinates(
     coord_csv: Optional[str] = None,
     log: Optional[LogCollector] = None,
 ) -> Dict[str, Optional[Tuple[float, float]]]:
-    """地点 → (lat, lon)。优先 coord_csv（列: location,lat,lon），否则唯一坐标源 coord_lookup。
-
-    2026-10-03 (S3-⑤): 本模块一直无自有坐标表 (原走 geo_resolver), 现收敛到
-    utils/coord_lookup (它已合并 geo_resolver 省/市表 + 其他消费方旧表, 默认离线)。
-    """
+    """地点 → (lat, lon)。优先 coord_csv（列: location,lat,lon），否则离线 geo_resolver。"""
     log = log or LogCollector()
     out: Dict[str, Optional[Tuple[float, float]]] = {}
     csv_map: Dict[str, Tuple[float, float]] = {}
@@ -91,20 +93,20 @@ def resolve_coordinates(
                 csv_map[k] = (float(row["lat"]), float(row["lon"]))
             except (TypeError, ValueError, KeyError):
                 continue
-    _coord_lookup = None
+    use_resolver = False
     for loc in locations:
         if loc in csv_map:
             out[loc] = csv_map[loc]
             continue
-        if _coord_lookup is None:
+        if not use_resolver:
             try:
-                from utils.coord_lookup import lookup as _coord_lookup  # 唯一坐标源, 默认离线
+                from utils.geo_resolver import resolve_location  # 离线词典，默认不走网络
+                use_resolver = True
             except Exception as e:  # noqa: BLE001
-                log.warning(f"coord_lookup 不可用 ({e})，无 CSV 的地点将无坐标")
-                _coord_lookup = False
+                log.warning(f"geo_resolver 不可用 ({e})，无 CSV 的地点将无坐标")
         try:
-            hit = _coord_lookup(loc) if _coord_lookup else None
-            coord = (float(hit[0]), float(hit[1])) if hit else None
+            from utils.geo_resolver import resolve_location
+            coord = resolve_location(loc)
         except Exception:  # noqa: BLE001
             coord = None
         out[loc] = coord
@@ -218,9 +220,17 @@ def draw_static_map(
     pw = pw.assign(_color_age=(pw["start_age"].astype(float)
                                + pw["end_age"].astype(float)) / 2.0)
 
-    fig, ax = plt.subplots(figsize=(11, 9))
+    fig, ax = plt.subplots(figsize=(9.32, 7.6))
     if boundaries_geojson:
         _draw_boundaries(ax, boundaries_geojson)
+    else:
+        # 2026-10-12: 无 GeoJSON 时叠加 EasyHap 世界海岸线 (借 biosoft/EasyHap,
+        # 零依赖离线; 失败静默降级为无底图, 不违反离线合规红线)
+        try:
+            from utils.world_basemap import draw_world
+            draw_world(ax)
+        except Exception:  # noqa: BLE001
+            pass
 
     ages = pw["_color_age"].values
     amin, amax = float(np.nanmin(ages)), float(np.nanmax(ages))
@@ -241,7 +251,7 @@ def draw_static_map(
                 seen.add(loc)
     for loc in sorted(seen):
         lat, lon = coords[loc]
-        ax.scatter(lon, lat, s=90, c="#d64541", edgecolors="#2c3e50",
+        ax.scatter(lon, lat, s=90, c=OKABE_ITO[5], edgecolors="#333333",
                    linewidths=1.2, zorder=5)
         ax.annotate(loc, (lon, lat), textcoords="offset points",
                     xytext=(6, 6), fontsize=10, zorder=6)
@@ -280,7 +290,7 @@ def draw_static_map(
         p = float(np.mean(pv))
         if p < 0.9:
             lat, lon = coords[loc]
-            ax.scatter(lon, lat, s=340, facecolors="none", edgecolors="#2c3e50",
+            ax.scatter(lon, lat, s=340, facecolors="none", edgecolors="#333333",
                        linewidths=1.6, linestyles="dashed", alpha=min(1.0, 1.1 - p),
                        zorder=4)
             ax.annotate(f"p={p:.2f}", (lon, lat), textcoords="offset points",
@@ -304,7 +314,10 @@ def draw_static_map(
     root, ext = os.path.splitext(out_path)
     for ve in (".pdf", ".svg"):
         if ext.lower() != ve:
-            fig.savefig(root + ve, bbox_inches="tight")
+            # ⚠ 必须显式 dpi：不传则吃全局 rcParams['savefig.dpi']，同一进程里
+            #   是否先跑过 apply_sci_style 会让内嵌位图分辨率在 150/300 间跳变
+            #   （顺序依赖 → 不可复现）。
+            fig.savefig(root + ve, bbox_inches="tight", dpi=dpi)
     plt.close(fig)
     log.emit(f"静态传播图: {out_path} (+pdf/svg), {len(pw)} 条弧线")
     return out_path
@@ -391,7 +404,7 @@ def draw_animation(
             _draw_boundaries(ax, boundaries_geojson)
         for loc in sorted(set(pw["start_location"]) | set(pw["end_location"])):
             lat, lon = coords[loc]
-            ax.scatter(lon, lat, s=70, c="#d64541", edgecolors="#2c3e50",
+            ax.scatter(lon, lat, s=70, c=OKABE_ITO[5], edgecolors="#333333",
                        linewidths=1.0, zorder=5)
             ax.annotate(loc, (lon, lat), textcoords="offset points",
                         xytext=(5, 5), fontsize=9, zorder=6)
@@ -517,13 +530,21 @@ def draw_progress_polys(
     amin, amax = float(min(cuts)), float(max(cuts))
     norm = plt.Normalize(vmin=amin, vmax=max(amax, amin + 1e-9))
 
-    fig, ax = plt.subplots(figsize=(11, 9))
+    fig, ax = plt.subplots(figsize=(9.32, 7.6))
     if boundaries_geojson:
         _draw_boundaries(ax, boundaries_geojson)
+    else:
+        # 2026-10-12: 无 GeoJSON 时叠加 EasyHap 世界海岸线 (借 biosoft/EasyHap,
+        # 零依赖离线; 失败静默降级为无底图, 不违反离线合规红线)
+        try:
+            from utils.world_basemap import draw_world
+            draw_world(ax)
+        except Exception:  # noqa: BLE001
+            pass
     all_pts = _active_positions(pw, coords, amin - 1e9)
     for loc in sorted({l for l in pw["start_location"]} | {l for l in pw["end_location"]}):
         lat, lon = coords[loc]
-        ax.scatter(lon, lat, s=90, c="#d64541", edgecolors="#2c3e50",
+        ax.scatter(lon, lat, s=90, c=OKABE_ITO[5], edgecolors="#333333",
                    linewidths=1.2, zorder=5)
         ax.annotate(loc, (lon, lat), textcoords="offset points", xytext=(6, 6),
                     fontsize=10, zorder=6)
@@ -550,7 +571,7 @@ def draw_progress_polys(
     fig.tight_layout()
     fig.savefig(out_path, dpi=dpi, bbox_inches="tight")
     root, _ = os.path.splitext(out_path)
-    fig.savefig(root + ".pdf", bbox_inches="tight")
+    fig.savefig(root + ".pdf", bbox_inches="tight", dpi=dpi)
     plt.close(fig)
     log.emit(f"进展多边形图: {out_path} (+pdf), {len(cuts)} 个扩散阶段")
     return out_path
@@ -604,8 +625,8 @@ def draw_snapshot_panels(
             lat, lon = coords[loc]
             shown = (loc in set(sub["start_location"]) | set(sub["end_location"]))
             ax.scatter(lon, lat, s=60 if shown else 14,
-                       c="#d64541" if shown else "#c9c9c9",
-                       edgecolors="#2c3e50" if shown else "#bdbdbd",
+                       c=OKABE_ITO[5] if shown else "#c9c9c9",
+                       edgecolors="#333333" if shown else "#bdbdbd",
                        linewidths=0.8, zorder=5)
             if shown:
                 ax.annotate(loc, (lon, lat), textcoords="offset points", xytext=(5, 5),
@@ -638,7 +659,7 @@ def draw_snapshot_panels(
     fig.tight_layout()
     fig.savefig(out_path, dpi=dpi, bbox_inches="tight")
     root, _ = os.path.splitext(out_path)
-    fig.savefig(root + ".pdf", bbox_inches="tight")
+    fig.savefig(root + ".pdf", bbox_inches="tight", dpi=dpi)
     plt.close(fig)
     log.emit(f"快照多面板: {out_path} (+pdf), {n_panels} 格")
     return out_path
@@ -673,10 +694,14 @@ def _to_decimal_year(val) -> Optional[float]:
 
 
 def _categorical_palette(locations: List[str]) -> Dict[str, tuple]:
-    """地点 → 分类色（tab20；两面板共用的 Region 配色）。"""
-    import matplotlib.pyplot as plt
-    cmap = plt.get_cmap("tab20")
-    return {loc: cmap(i % 20) for i, loc in enumerate(sorted(locations))}
+    """地点 → 分类色（项目 OKABE_ITO；两面板共用的 Region 配色）。
+
+    2026-10-12: 原用 matplotlib 内置 `tab20` —— 它不属于项目调色板，
+    且与其它面板的颜色语义无法对应。改为 OKABE_ITO 固定顺序循环。
+    """
+    import matplotlib.colors as mcolors
+    palette = [mcolors.to_rgb(c) for c in OKABE_ITO]
+    return {loc: palette[i % len(palette)] for i, loc in enumerate(sorted(locations))}
 
 
 def _ladderize_children(nodes: List[Dict], edges: List[Dict]) -> Dict[str, List[str]]:
@@ -783,7 +808,19 @@ def draw_tree_map(
     tip_dates = [d for d in tip_dates if d is not None]
     present = max(tip_dates) if tip_dates else None
     if present is None:
-        raise SystemExit("元数据无可用日期 → 无法标定时间轴（需要 date 列）")
+        # 2026-10-12 修 (P2-10): 旧文案一律报"元数据无可用日期（需要 date 列）" ——
+        # 但实测最常见的原因是**树 tip 名与 metadata name 一条都对不上**
+        # (去重/改名后命名不一致), 此时 date 列明明存在。如实区分两种原因,
+        # 并打印双方前几个名字示例帮助排查 (不再误导去改元数据)。
+        if dcol is None:
+            raise SystemExit("元数据无 date 列 → 无法标定时间轴（需要 date 列）")
+        _tree_names = [n["name"] for n in nodes if n["is_tip"] and n["name"]]
+        _meta_names = [str(x).strip() for x in meta.get("name", [])][:5]
+        _n_match = sum(1 for n in _tree_names if n in dates)
+        raise SystemExit(
+            f"时间轴无法标定: tip 名与 metadata.name 匹配 {_n_match}/{len(_tree_names)} 条 → "
+            f"请检查命名 (树 tip 示例: {', '.join(_tree_names[:5])} | "
+            f"metadata name 示例: {', '.join(_meta_names)})")
 
     # ── y 布局: tip 按 DFS 序编号, 内部节点=子节点均值 ──
     tip_y: Dict[str, float] = {}
@@ -850,7 +887,7 @@ def draw_tree_map(
         x, yy = node_x[n["node_id"]], node_y[n["node_id"]]
         if n["is_tip"]:
             axT.scatter(x, yy, s=52, c=palette[n["location"]],
-                        edgecolors="#2c3e50", linewidths=0.7, zorder=4)
+                        edgecolors="#333333", linewidths=0.7, zorder=4)
             if n["name"]:
                 lbl = rmap.get(n["name"], n["name"])
                 lbl = lbl if len(lbl) <= 24 else lbl[:23] + "…"
@@ -898,7 +935,7 @@ def draw_tree_map(
         if coords.get(loc) is None:
             continue
         lat, lon = coords[loc]
-        axM.scatter(lon, lat, s=80, c=palette[loc], edgecolors="#2c3e50",
+        axM.scatter(lon, lat, s=80, c=palette[loc], edgecolors="#333333",
                     linewidths=1.0, zorder=5)
         axM.annotate(loc, (lon, lat), textcoords="offset points", xytext=(5, 5),
                      fontsize=9, zorder=6)
@@ -910,7 +947,7 @@ def draw_tree_map(
     axM.margins(0.12)
 
     # ── 共用图例: Region（两panel配色）居中; Pathway Type 在地图内 ──
-    region_handles = [Patch(facecolor=palette[l], edgecolor="#2c3e50", label=l)
+    region_handles = [Patch(facecolor=palette[l], edgecolor="#333333", label=l)
                       for l in sorted(palette)]
     fig.legend(handles=region_handles, loc="center", bbox_to_anchor=(0.615, 0.28),
                title="Region", fontsize=8, title_fontsize=9, frameon=True)
@@ -926,7 +963,7 @@ def draw_tree_map(
     os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
     fig.savefig(out_path, dpi=dpi, bbox_inches="tight")
     root_, _ = os.path.splitext(out_path)
-    fig.savefig(root_ + ".pdf", bbox_inches="tight")
+    fig.savefig(root_ + ".pdf", bbox_inches="tight", dpi=dpi)
     plt.close(fig)
     log.emit(f"树-图联动面板: {out_path} (+pdf), {len(nodes)} 节点 / {len(pw)} 事件")
     return out_path
@@ -943,7 +980,7 @@ def main():
     ap.add_argument("--branch-table", default=None, help="transmission_paths 的 branch_table.csv")
     ap.add_argument("--mcc-tree", default=None, help="或直接给 MCC 树（现场解析）")
     ap.add_argument("--metadata", default=None, help="name,location CSV（--mcc-tree 时用）")
-    ap.add_argument("--coords", default=None, help="location,lat,lon CSV（缺省走离线唯一坐标源 coord_lookup）")
+    ap.add_argument("--coords", default=None, help="location,lat,lon CSV（缺省走离线 geo_resolver）")
     ap.add_argument("--boundaries", default=None,
                     help="国界/省界 GeoJSON（须自备审图号来源；缺省不画边界）")
     ap.add_argument("-o", "--out", default="transmission_map.png", help="静态图输出(PNG)")

@@ -449,10 +449,13 @@ def parse_fel_meme(path, gene, fdr=0.1, method='FEL'):
         if not isinstance(p, (int, float)):
             continue
         q = qs[qi]; qi += 1
+        # 2026-10-13 修 (10-10 P0-6): 阳性判定改由 BH 校正后的 q 值门控
+        # (q < --fdr 阈值) —— 旧实现只看原始 p<0.05, q 值算了不用、
+        # --fdr 形参失效, 多重校正形同虚设。
         if method == 'FEL':
-            positive = (s.get('beta', 0) > s.get('alpha', 0)) and p < 0.05
+            positive = (s.get('beta', 0) > s.get('alpha', 0)) and (q < fdr)
         else:
-            positive = p < 0.05
+            positive = q < fdr
         if positive:
             hits.append({'site': si, 'alpha': s.get('alpha'),
                          'beta': s.get('beta'), 'p_value': p, 'q_value': q,

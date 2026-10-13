@@ -278,17 +278,17 @@ def _skyline_series(df) -> Optional[Dict]:
         if root_h and root_h > 0:
             rel = abs(tot - root_h) / root_h
             if rel > 0.05:
-                warn.append(f"组跨度之和 {tot:.3g} 与树高 {root_h:.3g} 相差 "
-                            f"{rel*100:.1f}% (量纲可能不是年) → 时间轴按组跨度, 标为相对时间")
+                warn.append(f"sum of group spans {tot:.3g} differs from tree height {root_h:.3g} by "
+                            f"{rel*100:.1f}% (unit may not be years) → x axis uses group spans, labelled relative time")
                 bounds = None
             else:
                 bounds = np.cumsum([0.0] + spans).tolist()
         else:
-            warn.append("log 无 treeModel.rootHeight, 无法校验组跨度量纲 → 用组跨度当时间轴")
+            warn.append("log has no treeModel.rootHeight, cannot validate group-span unit → using group spans as the time axis")
             bounds = np.cumsum([0.0] + spans).tolist()
     else:
-        warn.append(f"log 无 skyline.groupSize 列 (找到 {len(grp_cols)} 个, popSize "
-                    f"{len(pop_cols)} 个) → x 轴只能等距排布, 不代表真实时间")
+        warn.append(f"log has no skyline.groupSize column (found {len(grp_cols)} group, popSize "
+                    f"{len(pop_cols)}) → x axis can only be equally spaced, not real time")
 
     n = len(pop_cols)
     if bounds is None:
@@ -373,14 +373,14 @@ def build_skyline_html(log_file: str, output_path: str,
         bp = list(edges)                                  # 距今年 (0=现在)
         if max_tip_year is not None:
             xs = [max_tip_year - b for b in bp]
-            xlab = "采样年（日历年）"
+            xlab = "Sampling year (calendar year)"
         else:
             xs = bp
-            xlab = "距今年代（年，0 = 采样最晚样本）"
-            ser["warnings"].append("未提供 max_tip_year → x 轴为距今年, 不是日历年")
+            xlab = "Time before present (years; 0 = most recent sample)"
+            ser["warnings"].append("max_tip_year not provided → x axis is time before present, not calendar years")
     else:
         xs = [0.0] + list(mid)                            # 等距回退
-        xlab = "相对时间（等距，非真实时间）"
+        xlab = "Relative time (equally spaced, not to scale)"
 
     # 逐步 (piecewise-constant) 折线: 每个组一条水平段
     xl, y_med, y_lo, y_hi = [], [], [], []
@@ -397,28 +397,28 @@ def build_skyline_html(log_file: str, output_path: str,
                              fill="tonexty", fillcolor="rgba(77,187,213,0.35)",
                              name="95% HPD", hoverinfo="skip"))
     fig.add_trace(go.Scatter(x=xl, y=y_med, mode="lines", line=dict(color="#3C5488", width=2.5),
-                             name="中位数 (Nₑτ)"))
+                             name="Median (Nₑτ)"))
 
-    nsig = f"{ser['n']} 个时间组"
-    unit = "日历年" if max_tip_year is not None and edges is not None else "相对/距今年代"
+    nsig = f"{ser['n']} time groups"
+    unit = "calendar years" if max_tip_year is not None and edges is not None else "relative / time before present"
     title = f"Bayesian Skyline — {Path(log_file).name}"
     fig.update_layout(
         title=dict(text=title, x=0.02, xanchor="left", font=dict(size=15)),
         xaxis=dict(title=dict(text=xlab), tickfont=dict(size=10), showgrid=True,
                    gridcolor="#eee"),
-        yaxis=dict(title=dict(text="有效群体大小 Nₑτ"), tickfont=dict(size=10),
+        yaxis=dict(title=dict(text="Effective population size Nₑτ"), tickfont=dict(size=10),
                    showgrid=True, gridcolor="#eee"),
         legend=dict(orientation="h", y=1.02, x=0.98, xanchor="right"),
         margin=dict(l=70, r=30, t=70, b=70), height=height,
         plot_bgcolor="white", font=dict(family="Microsoft YaHei, Segoe UI, Arial", size=11))
 
-    _root_txt = f"{ser['root_h']:.3g}" if ser["root_h"] else "log 未提供 (无法校验量纲)"
-    note = (f"burnin {burnin_pct:g}% 后 {len(df)} 条样本 · {nsig} · 时间轴: {unit} · "
-            f"树高中位数 {_root_txt} · 95% HPD = Tracer 口径 (utils/ess.calculate_95hpd)")
+    _root_txt = f"{ser['root_h']:.3g}" if ser["root_h"] else "not in log (unit unverified)"
+    note = (f"{len(df)} samples after {burnin_pct:g}% burnin · {nsig} · time axis: {unit} · "
+            f"median tree height {_root_txt} · 95% HPD = Tracer convention (utils/ess.calculate_95hpd)")
     if ser["warnings"]:
-        note += "<br>⚠ " + "；".join(ser["warnings"])
+        note += "<br>⚠ " + "; ".join(ser["warnings"])
     if max_tip_year is not None and edges is not None:
-        note += f"<br>日历年换算: 采样最晚样本 {max_tip_year:.2f} 年, 根 ~{max_tip_year - edges[-1]:.1f} 年"
+        note += f"<br>calendar-year conversion: latest sample {max_tip_year:.2f}, root ~{max_tip_year - edges[-1]:.1f}"
 
     try:
         write_figure(fig, output_path, title=title, note=note, height=height, log=log)
@@ -536,7 +536,7 @@ def plot_migration_heatmap(
     ax.set_yticks(range(n_loc))
     ax.set_xticklabels(locations, rotation=45, ha='right', fontsize=10)
     ax.set_yticklabels(locations, fontsize=10)
-    ax.set_title('E. Migration Routes (log₁₀ BF)', fontsize=14,
+    ax.set_title('E. Migration Routes (log10 BF)', fontsize=14,
                 fontweight='bold', loc='left')
 
     # Annotate significant routes
@@ -550,7 +550,7 @@ def plot_migration_heatmap(
                        fontsize=8, color=color, fontweight='bold')
 
     cbar = plt.colorbar(im, ax=ax, shrink=0.8)
-    cbar.set_label('log₁₀(Bayes Factor)', fontsize=10)
+    cbar.set_label('log10(Bayes Factor)', fontsize=10)
 
     fig.savefig(output_path, bbox_inches='tight', dpi=300, format='pdf',
                 facecolor='white', edgecolor='none')
@@ -618,7 +618,7 @@ def build_multipanel_figure(
     ax_b.set_title('B. Migration Network (circular layout)', fontsize=14,
                   fontweight='bold', loc='left')
     ax_b.text(0.5, -0.04, 'nodes = locations on a circle (no geographic projection) · '
-                          'arrow width ∝ BF · significant routes only',
+                          'arrow width proportional to BF · significant routes only',
               transform=ax_b.transAxes, ha='center', va='top',
               fontsize=8, color='#7f8c8d')
 
@@ -834,7 +834,7 @@ def _draw_heatmap_on_ax(ax, migration_csv, locations):
         ax.set_yticks(range(n))
         ax.set_xticklabels(locations, rotation=45, ha='right', fontsize=9)
         ax.set_yticklabels(locations, fontsize=9)
-        plt.colorbar(im, ax=ax, shrink=0.8, label='log₁₀ BF')
+        plt.colorbar(im, ax=ax, shrink=0.8, label='log10 BF')
         return True
     except Exception:
         ax.text(0.5, 0.5, 'Migration data unavailable', ha='center', va='center',

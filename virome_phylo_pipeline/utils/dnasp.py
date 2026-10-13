@@ -3522,6 +3522,20 @@ def make_figures(output_dir: Path, results: dict) -> list[Path]:
     if not HAS_MPL:
         return paths
 
+    # ── 统一 SCI 样式 / 配色 (2026-10-12) ──
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    # dnasp.py 既可 `import utils.dnasp` 也可被 dnasp_bridge 当**脚本**直接执行
+    # (`python .../utils/dnasp.py`) —— 后者 sys.path[0] 是 utils/, 包路径不存在。
+    try:
+        from utils.sci_palette import (apply_sci_style, OKABE_ITO,
+                                       COL_W_1, COL_W_2, SEQ_CMAP, despine, sci_legend)
+    except ImportError:                       # 以脚本方式运行时
+        from sci_palette import (apply_sci_style, OKABE_ITO,
+                                 COL_W_1, COL_W_2, SEQ_CMAP, despine, sci_legend)
+    apply_sci_style(base_size=7)
+
     global_stats = results["global"]
     window_stats = results["windows"]
     ld: Optional[LDStats] = results.get("ld")
@@ -3539,53 +3553,184 @@ def make_figures(output_dir: Path, results: dict) -> list[Path]:
                 midpoints.append(0)
         pi_vals = [ws.Pi for ws in window_stats]
         d_vals = [ws.TajimaD if ws.TajimaD is not None else float("nan") for ws in window_stats]
-        fig, axes = plt.subplots(2, 1, figsize=(10, 6), sharex=True)
-        axes[0].plot(midpoints, pi_vals, color="#2166ac", linewidth=1.5)
-        axes[0].set_ylabel("Nucleotide diversity (π)")
-        axes[0].set_title("Sliding Window Analysis")
-        axes[1].plot(midpoints, d_vals, color="#d6604d", linewidth=1.5)
-        axes[1].axhline(0, color="grey", linewidth=0.8, linestyle="--")
+        fig, axes = plt.subplots(2, 1, figsize=(COL_W_1, COL_W_1 * 0.52), sharex=True)
+        axes[0].plot(midpoints, pi_vals, color=OKABE_ITO[4], linewidth=1.1)
+        axes[0].set_ylabel("Nucleotide diversity (\u03c0)")
+        axes[0].set_title("Sliding-window analysis", fontsize=8, fontweight="bold")
+        despine(axes[0])
+        axes[1].plot(midpoints, d_vals, color=OKABE_ITO[5], linewidth=1.1)
+        axes[1].axhline(0, color=OKABE_ITO[8], linewidth=0.8, linestyle="--")
         axes[1].set_ylabel("Tajima's D")
         axes[1].set_xlabel("Position (bp)")
-        plt.tight_layout()
+        despine(axes[1])
+        plt.tight_layout(pad=0.4)
         fig_path = figs_dir / "sliding_window.png"
-        plt.savefig(fig_path, dpi=150)
+        plt.savefig(fig_path, dpi=300)
         plt.close()
         paths.append(fig_path)
 
     # Summary bar chart
-    labels = ["π", "θ_W", "Hd"]
-    values = [global_stats.Pi, global_stats.ThetaW_nuc, global_stats.Hd]
-    colors = ["#2166ac", "#4dac26", "#d6604d"]
-    fig, ax = plt.subplots(figsize=(5, 4))
-    bars = ax.bar(labels, values, color=colors, edgecolor="white", linewidth=1.2)
-    ax.set_ylabel("Value")
-    ax.set_title("Population Genetics Summary")
+    # 2026-10-12（审稿人视角修复）：旧版把 **Hd（0–1）与 π / θ_W（~0.01–0.03）画在
+    # 同一根线性轴上** —— Hd 柱高≈1.0 会把两根多样性柱压成看不见的细条，等于把
+    # π 与 θ_W 的信息完全抹掉（同一坐标系下不同量纲的量并排比较，属误导性作图）。
+    # 现拆成两个并排子图，各自独立 y 轴，并在轴标签里写明量纲：
+    #   左 = 每碱基核苷酸多样性（π, θ_W）   右 = 单倍型多样性（Hd, 0–1）
+    labels = [r"$\pi$", r"$\theta_W$"]
+    values = [global_stats.Pi, global_stats.ThetaW_nuc]
+    bar_colors = [OKABE_ITO[4], OKABE_ITO[2]]
+    hd_val = float(global_stats.Hd or 0.0)
+
+    fig, (axL, axR) = plt.subplots(
+        1, 2, figsize=(COL_W_2, COL_W_2 * 0.78),
+        gridspec_kw={"width_ratios": [1.55, 1.0]})
+
+    bars = axL.bar(labels, values, color=bar_colors, edgecolor="white",
+                   linewidth=0.8, width=0.55)
+    axL.set_ylabel("Nucleotide diversity (per site)")
+    axL.set_title("Nucleotide diversity", fontsize=8, fontweight="bold")
+    _vmax = max(values) if values and max(values) > 0 else 1.0
+    axL.set_ylim(0, _vmax * 1.28)
     for bar, val in zip(bars, values):
-        ax.text(
-            bar.get_x() + bar.get_width() / 2,
-            bar.get_height() + max(values) * 0.01 if max(values) > 0 else 0.001,
-            f"{val:.4f}", ha="center", va="bottom", fontsize=9,
-        )
-    plt.tight_layout()
+        axL.text(bar.get_x() + bar.get_width() / 2,
+                 bar.get_height() + _vmax * 0.05,
+                 f"{val:.4f}", ha="center", va="bottom", fontsize=6.5)
+    despine(axL)
+
+    bar_h = axR.bar(["Hd"], [hd_val], color=OKABE_ITO[0], edgecolor="white",
+                    linewidth=0.8, width=0.42)
+    axR.set_ylabel("Haplotype diversity")
+    axR.set_title("Haplotype diversity", fontsize=8, fontweight="bold")
+    axR.set_ylim(0, 1.12)
+    axR.text(bar_h[0].get_x() + bar_h[0].get_width() / 2,
+             hd_val + 0.04, f"{hd_val:.4f}", ha="center", va="bottom",
+             fontsize=6.5)
+    despine(axR)
+
+    fig.suptitle("Population genetics summary", fontsize=8, fontweight="bold",
+                 y=0.995)
+    plt.tight_layout(pad=0.4)
     fig_path = figs_dir / "summary.png"
-    plt.savefig(fig_path, dpi=150)
+    plt.savefig(fig_path, dpi=300)
     plt.close()
     paths.append(fig_path)
 
-    # LD scatter: R² vs distance
+    # LD decay: R² vs distance
+    # 2026-10-12（审稿人视角重做 v2）：1,595,791 个 SNP 对散点画在 4.58×3.4 in 的
+    # 坐标区里 —— 每点覆盖约 4 pt²、总覆盖是坐标区面积的 ~79 倍，**任何 alpha 都
+    # 会饱和成实心块**（实测旧图就是一片蓝 + 一条 y=1.0 的假"横线"）。
+    # 且 R² 分布极度右偏（中位数 0.0006 / p90 0.036 / 1.3 % 恰为 1.0），单轴 0–1
+    # 把全部信息压在底部 5 % 里，分箱均值线细到看不见。
+    # 现改两联子图：
+    #   (a) 全域 2D 密度 (hexbin, log 计数) —— 诚实展示"多数对 R² 极低 + 1.0 尖峰"
+    #   (b) 放大到 R² 0–0.1 —— 等宽分箱均值 ± SE + 中位数 + 指数拟合 + 半衰距离
+    # ⚠ 同时给"均值"与"中位数"：分布右偏时均值会被 6 % 的尾部拉高，只给均值
+    #   会让读者高估 LD（本项目均值 0.05 vs 中位数 0.0006，差两个数量级）。
     if ld is not None and ld.pairs:
-        dists = [p.dist for p in ld.pairs]
-        r2s = [p.R2 if p.R2 is not None else 0 for p in ld.pairs]
-        fig, ax = plt.subplots(figsize=(6, 4))
-        ax.scatter(dists, r2s, alpha=0.5, s=20, color="#762a83")
-        ax.set_xlabel("Nucleotide distance (bp)")
-        ax.set_ylabel("R²")
-        ax.set_title("LD Decay")
-        ax.set_ylim(0, 1.05)
-        plt.tight_layout()
+        import numpy as np
+        dists = np.asarray([p.dist for p in ld.pairs], dtype=float)
+        r2s = np.asarray([p.R2 if p.R2 is not None else np.nan
+                          for p in ld.pairs], dtype=float)
+        ok = np.isfinite(dists) & np.isfinite(r2s)
+        dists, r2s = dists[ok], r2s[ok]
+
+        fig, (axA, ax) = plt.subplots(1, 2, figsize=(COL_W_1 * 0.62, COL_W_1 * 0.30))
+        dmax = float(dists.max()) if dists.size else 1.0
+
+        if dists.size:
+            # ── (a) 全域密度 (hexbin + log 色标) ──
+            hb = axA.hexbin(dists, r2s, gridsize=(60, 40),
+                            extent=(0.0, dmax, 0.0, 1.0), cmap=SEQ_CMAP,
+                            bins='log', mincnt=1, linewidths=0.0, zorder=1)
+            cb = fig.colorbar(hb, ax=axA, pad=0.02, fraction=0.05)
+            cb.set_label('SNP pairs per bin (log$_{10}$)', fontsize=5.4)
+            cb.ax.tick_params(labelsize=4.8, length=1.5, pad=1.0)
+            cb.outline.set_linewidth(0.4)
+            med = float(np.median(r2s))
+            frac_lo = 100.0 * float((r2s < 0.2).mean())
+            axA.axhline(med, color=OKABE_ITO[5], lw=0.9, ls='--', zorder=3)
+            axA.text(0.025, 0.97,
+                     'median $R^2$ = %.4f\n%.1f%% of pairs have $R^2$ < 0.2'
+                     % (med, frac_lo),
+                     transform=axA.transAxes, ha='left', va='top', fontsize=5.0,
+                     color='#222222',
+                     bbox=dict(facecolor='white', edgecolor='none', alpha=0.82,
+                               pad=1.0))
+            axA.set_xlim(0, dmax)
+            axA.set_ylim(0, 1.02)
+            axA.set_xlabel('Nucleotide distance (bp)')
+            axA.set_ylabel('Linkage disequilibrium ($R^2$)')
+            axA.set_title('All SNP pairs (n = %s)' % f'{dists.size:,}',
+                          fontsize=6.4, fontweight='bold')
+            despine(axA)
+
+            # ── (b) 放大 + 分箱统计 + 指数拟合 ──
+            nb = 50
+            edges = np.linspace(0.0, dmax, nb + 1)
+            idx = np.clip(np.digitize(dists, edges) - 1, 0, nb - 1)
+            bx, by, bse, bmed = [], [], [], []
+            for b in range(nb):
+                m = idx == b
+                if int(m.sum()) >= 10:
+                    bx.append(0.5 * (edges[b] + edges[b + 1]))
+                    by.append(float(np.mean(r2s[m])))
+                    bmed.append(float(np.median(r2s[m])))
+                    bse.append(float(np.std(r2s[m], ddof=1) / np.sqrt(int(m.sum()))))
+            bx, by, bmed = np.asarray(bx), np.asarray(by), np.asarray(bmed)
+            if bx.size >= 3:
+                ax.errorbar(bx, by, yerr=np.asarray(bse), fmt='o', ms=2.4,
+                            lw=0.8, capsize=1.1, color=OKABE_ITO[0],
+                            ecolor=OKABE_ITO[0], markeredgecolor='white',
+                            markeredgewidth=0.4, zorder=4,
+                            label='binned mean $\\pm$ SE')
+                ax.plot(bx, bmed, ls=':', lw=1.0, color=OKABE_ITO[7], zorder=3,
+                        label='binned median')
+
+            # 指数衰减拟合（网格搜索，不引入新依赖）
+            if bx.size >= 5:
+                y1 = float(np.max(by))
+                D_grid = np.exp(np.linspace(np.log(max(dmax / 500.0, 1.0)),
+                                            np.log(dmax * 5.0), 300))
+                y0_grid = np.linspace(0.0, max(0.0, float(np.min(by))), 12)
+                best = None
+                for D in D_grid:
+                    expo = np.exp(-bx / D)
+                    for y0 in y0_grid:
+                        pred = y0 + (y1 - y0) * expo
+                        sse = float(np.sum((by - pred) ** 2))
+                        if best is None or sse < best[0]:
+                            best = (sse, float(D), float(y0))
+                if best is not None:
+                    _, D_hat, y0_hat = best
+                    dd = np.linspace(0.0, dmax, 400)
+                    ax.plot(dd, y0_hat + (y1 - y0_hat) * np.exp(-dd / D_hat),
+                            color=OKABE_ITO[5], lw=1.3, zorder=6,
+                            label=(f'exponential fit  ($R^2$ = {y0_hat:.3f} + '
+                                   f'{y1 - y0_hat:.3f}$\\,e^{{-d/{D_hat:.0f}}}$)'))
+                    # 半衰距离：拟合曲线降到 d=0 处一半的位置
+                    r_half = 0.5 * (y0_hat + (y1 - y0_hat))
+                    if r_half > y0_hat and y1 > y0_hat:
+                        d_half = -D_hat * np.log((r_half - y0_hat) / (y1 - y0_hat))
+                        note = (f'half-decay at {d_half:,.0f} bp'
+                                if d_half <= dmax else
+                                f'no half-decay within {dmax:,.0f} bp')
+                        ax.text(0.975, 0.97, note, transform=ax.transAxes,
+                                ha='right', va='top', fontsize=5.0,
+                                color=OKABE_ITO[5],
+                                bbox=dict(facecolor='white', edgecolor='none',
+                                          alpha=0.85, pad=1.0))
+            ax.set_xlim(0, dmax)
+            ax.set_ylim(0, max(0.08, float(np.nanmax(by)) * 1.45) if by.size else 0.08)
+            ax.set_xlabel('Nucleotide distance (bp)')
+            ax.set_ylabel('Linkage disequilibrium ($R^2$)')
+            ax.set_title('Binned LD decay (zoom)', fontsize=6.4, fontweight='bold')
+            despine(ax)
+            sci_legend(ax, loc='upper right', fontsize=4.8, frameon=True,
+                       bbox_to_anchor=(1.0, 0.90))
+        fig.suptitle('Linkage disequilibrium decay', fontsize=8,
+                     fontweight='bold', y=0.995)
+        plt.tight_layout(pad=0.4)
         fig_path = figs_dir / "ld_decay.png"
-        plt.savefig(fig_path, dpi=150)
+        plt.savefig(fig_path, dpi=300)
         plt.close()
         paths.append(fig_path)
 
@@ -3595,14 +3740,16 @@ def make_figures(output_dir: Path, results: dict) -> list[Path]:
         counts = [popsize.observed[d] for d in diffs]
         total = sum(counts)
         props = [c / total for c in counts]
-        fig, ax = plt.subplots(figsize=(7, 4))
-        ax.bar(diffs, props, color="#1a9850", edgecolor="white", linewidth=0.8)
+        fig, ax = plt.subplots(figsize=(COL_W_2, COL_W_2 * 0.74))
+        ax.bar(diffs, props, color=OKABE_ITO[2], edgecolor="white", linewidth=0.6)
         ax.set_xlabel("Pairwise nucleotide differences")
         ax.set_ylabel("Proportion of pairs")
-        ax.set_title(f"Mismatch Distribution  (r = {_fmt(popsize.raggedness, 4)})")
-        plt.tight_layout()
+        ax.set_title(f"Mismatch distribution  (r = {_fmt(popsize.raggedness, 4)})",
+                     fontsize=8, fontweight="bold")
+        despine(ax)
+        plt.tight_layout(pad=0.4)
         fig_path = figs_dir / "mismatch.png"
-        plt.savefig(fig_path, dpi=150)
+        plt.savefig(fig_path, dpi=300)
         plt.close()
         paths.append(fig_path)
 
@@ -3613,7 +3760,7 @@ def make_figures(output_dir: Path, results: dict) -> list[Path]:
         # Determine panels
         has_unfolded = sfs.unfolded is not None and bool(sfs.unfolded)
         n_panels = 2 if has_unfolded else 1
-        fig, axes = plt.subplots(1, n_panels, figsize=(5 * n_panels, 4))
+        fig, axes = plt.subplots(1, n_panels, figsize=(COL_W_2 * n_panels, COL_W_2 * 0.76))
         if n_panels == 1:
             axes = [axes]
 
@@ -3621,26 +3768,28 @@ def make_figures(output_dir: Path, results: dict) -> list[Path]:
         max_i = n // 2
         folded_x = list(range(1, max_i + 1))
         folded_y = [sfs.folded.get(i, 0) for i in folded_x]
-        axes[0].bar(folded_x, folded_y, color="#4575b4", edgecolor="white", linewidth=0.8)
+        axes[0].bar(folded_x, folded_y, color=OKABE_ITO[4], edgecolor="white", linewidth=0.6)
         axes[0].set_xlabel("Minor allele count (i)")
         axes[0].set_ylabel("Number of sites")
-        axes[0].set_title("Folded SFS")
+        axes[0].set_title("Folded SFS", fontsize=8, fontweight="bold")
         axes[0].set_xticks(folded_x)
+        despine(axes[0])
 
         # Unfolded SFS
         if has_unfolded:
             unfolded_x = list(range(1, n))
             unfolded_y = [sfs.unfolded.get(i, 0) for i in unfolded_x]  # type: ignore[union-attr]
-            axes[1].bar(unfolded_x, unfolded_y, color="#d73027", edgecolor="white", linewidth=0.8)
+            axes[1].bar(unfolded_x, unfolded_y, color=OKABE_ITO[5], edgecolor="white", linewidth=0.6)
             axes[1].set_xlabel("Derived allele count (i)")
             axes[1].set_ylabel("Number of sites")
-            axes[1].set_title("Unfolded SFS (outgroup-polarised)")
+            axes[1].set_title("Unfolded SFS (outgroup-polarised)", fontsize=8, fontweight="bold")
             axes[1].set_xticks(unfolded_x)
+            despine(axes[1])
 
-        plt.suptitle("Site Frequency Spectrum", y=1.01)
-        plt.tight_layout()
+        plt.suptitle("Site frequency spectrum", fontsize=9, fontweight="bold", y=1.02)
+        plt.tight_layout(pad=0.4)
         fig_path = figs_dir / "sfs.png"
-        plt.savefig(fig_path, dpi=150, bbox_inches="tight")
+        plt.savefig(fig_path, dpi=300, bbox_inches="tight")
         plt.close()
         paths.append(fig_path)
 
@@ -3651,10 +3800,8 @@ def make_figures(output_dir: Path, results: dict) -> list[Path]:
         bar_labels: list[str] = []
         bar_values: list[float] = []
         bar_colors: list[str] = []
-        # Cycle colours across amino acid families for visual grouping
-        palette = ["#4575b4", "#d73027", "#1a9850", "#fdae61",
-                   "#74add1", "#f46d43", "#66bd63", "#fee090",
-                   "#313695", "#a50026", "#006837", "#ffffbf"]
+        # 统一 OKABE_ITO 循环配色（同一氨基酸家族同色）
+        palette = OKABE_ITO
         for idx, aa in enumerate(sorted(_SYNONYMOUS_FAMILIES.keys())):
             codons = sorted(_SYNONYMOUS_FAMILIES[aa])
             col = palette[idx % len(palette)]
@@ -3663,19 +3810,22 @@ def make_figures(output_dir: Path, results: dict) -> list[Path]:
                 bar_values.append(codon_s.rscu.get(c, 0.0))
                 bar_colors.append(col)
 
-        fig, ax = plt.subplots(figsize=(max(12, len(bar_labels) * 0.35), 5))
+        fig, ax = plt.subplots(figsize=(max(6.5, len(bar_labels) * 0.16), 3.0))
         x_pos = list(range(len(bar_labels)))
-        ax.bar(x_pos, bar_values, color=bar_colors, edgecolor="white", linewidth=0.5)
-        ax.axhline(1.0, color="black", linewidth=0.8, linestyle="--", label="RSCU = 1 (uniform)")
+        ax.bar(x_pos, bar_values, color=bar_colors, edgecolor="white", linewidth=0.4)
+        ax.axhline(1.0, color=OKABE_ITO[7], linewidth=0.8, linestyle="--",
+                   label="RSCU = 1 (uniform)")
         ax.set_xticks(x_pos)
-        ax.set_xticklabels(bar_labels, fontsize=6, rotation=90)
+        ax.set_xticklabels(bar_labels, fontsize=4.2, rotation=90)
         ax.set_ylabel("RSCU")
         enc_label = f"  ENC = {codon_s.ENC:.1f}" if codon_s.ENC is not None else ""
-        ax.set_title(f"Relative Synonymous Codon Usage (RSCU){enc_label}")
-        ax.legend(fontsize=8)
-        plt.tight_layout()
+        ax.set_title(f"Relative synonymous codon usage{enc_label}",
+                     fontsize=8, fontweight="bold")
+        ax.legend(fontsize=6)
+        despine(ax)
+        plt.tight_layout(pad=0.4)
         fig_path = figs_dir / "codon_usage.png"
-        plt.savefig(fig_path, dpi=150, bbox_inches="tight")
+        plt.savefig(fig_path, dpi=300, bbox_inches="tight")
         plt.close()
         paths.append(fig_path)
 
@@ -3684,25 +3834,28 @@ def make_figures(output_dir: Path, results: dict) -> list[Path]:
     if HAS_MPL and fst_s is not None and fst_s.fst_pairwise:
         pairs = [f"{p1}\nvs\n{p2}" for (p1, p2) in fst_s.fst_pairwise]
         fst_vals = [v if v is not None else 0.0 for v in fst_s.fst_pairwise.values()]
-        fig, ax = plt.subplots(figsize=(max(4, len(pairs) * 1.2), 4))
-        colours = ["#E05C5C" if v >= 0.25 else "#F5A623" if v >= 0.15 else
-                   "#7ED321" if v >= 0.05 else "#4A90D9" for v in fst_vals]
-        bars = ax.bar(range(len(pairs)), fst_vals, color=colours, edgecolor="white", linewidth=0.5)
+        fig, ax = plt.subplots(figsize=(max(COL_W_2, len(pairs) * 0.7), COL_W_2 * 0.8))
+        # Wright (1978) 分级 → OKABE 语义色（越大越暖）
+        colours = [OKABE_ITO[5] if v >= 0.25 else OKABE_ITO[0] if v >= 0.15 else
+                   OKABE_ITO[2] if v >= 0.05 else OKABE_ITO[4] for v in fst_vals]
+        bars = ax.bar(range(len(pairs)), fst_vals, color=colours, edgecolor="white", linewidth=0.6)
         ax.set_xticks(range(len(pairs)))
-        ax.set_xticklabels(pairs, fontsize=8)
+        ax.set_xticklabels(pairs, fontsize=6.5)
         ax.set_ylim(0, max(1.0, max(fst_vals) * 1.15))
-        ax.axhline(0.05, color="steelblue", lw=0.8, ls="--", label="Little (0.05)")
-        ax.axhline(0.15, color="goldenrod", lw=0.8, ls="--", label="Moderate (0.15)")
-        ax.axhline(0.25, color="tomato",    lw=0.8, ls="--", label="Great (0.25)")
+        ax.axhline(0.05, color=OKABE_ITO[4], lw=0.8, ls="--", label="Little (0.05)")
+        ax.axhline(0.15, color=OKABE_ITO[0], lw=0.8, ls="--", label="Moderate (0.15)")
+        ax.axhline(0.25, color=OKABE_ITO[5], lw=0.8, ls="--", label="Great (0.25)")
         ax.set_ylabel("Fst")
-        ax.set_title("Population Differentiation (Fst)  -  Hudson et al. 1992")
-        ax.legend(fontsize=7, loc="upper right")
+        ax.set_title("Population differentiation (Fst, Hudson et al. 1992)",
+                     fontsize=8, fontweight="bold")
+        ax.legend(fontsize=6, loc="upper right")
         for bar, val in zip(bars, fst_vals):
             ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.01,
-                    f"{val:.3f}", ha="center", va="bottom", fontsize=8)
-        plt.tight_layout()
+                    f"{val:.3f}", ha="center", va="bottom", fontsize=6)
+        despine(ax)
+        plt.tight_layout(pad=0.4)
         fig_path = figs_dir / "fst.png"
-        plt.savefig(fig_path, dpi=150, bbox_inches="tight")
+        plt.savefig(fig_path, dpi=300, bbox_inches="tight")
         plt.close()
         paths.append(fig_path)
 

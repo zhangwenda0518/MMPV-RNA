@@ -219,8 +219,8 @@ def generate_spread3_json(
                 "coord_missing": missing,
                 "generated": datetime.now().isoformat(),
                 "source_log": os.path.basename(log_file),
-                "units": {"height": "时间 (与 BEAST log 的 treeModel.rootHeight 同单位)",
-                          "rate": "迁移率 (BSSVS 后验均值, 见 log 中的 location.rates)"},
+                "units": {"height": "time (same unit as treeModel.rootHeight in the BEAST log)",
+                          "rate": "migration rate (BSSVS posterior mean, see location.rates in the log)"},
             }
         }
 
@@ -708,7 +708,7 @@ def _offline_svg_html(nodes, links, all_links, metadata, title) -> str:
         svg.append(f'<text x="{lx:.1f}" y="{y-11:.1f}" font-size="11" fill="#2c3e50" '
                    f'text-anchor="{anchor}" font-weight="600">{_esc(n["label"])}</text>')
     svg.append(f'<text x="{pad}" y="{H-8}" font-size="10" fill="#9aa">'
-               f'equirectangular projection · 自绘 SVG, 无底图 / 无 CDN / 无 JS</text>')
+               f'equirectangular projection · self-drawn SVG; no basemap / no CDN / no JS</text>')
     svg.append('</svg>')
 
     # 路线表
@@ -721,19 +721,19 @@ def _offline_svg_html(nodes, links, all_links, metadata, title) -> str:
                     f'<td class="{"sig" if bf >= thr else ""}">{bf:.1f}</td>'
                     f'<td>{float(l.get("posterior", 0) or 0):.3f}</td>'
                     f'<td>{float(l.get("rate", 0) or 0):.4g}</td></tr>')
-    more = (f'<p class="meta" style="margin-top:6px">共 {len(all_links)} 条路线, '
-            f'表中按 BF 取前 15。</p>') if len(all_links) > 15 else ''
+    more = (f'<p class="meta" style="margin-top:6px">{len(all_links)} routes in total; '
+            f'table shows the top 15 by BF.</p>') if len(all_links) > 15 else ''
 
     banner = ''
     if missing:
-        banner = (f'<div class="banner">⚠ {len(missing)} 个地点没有坐标, '
-                  f'<b>未在地图上画点</b>（不编造坐标）：{_esc("、".join(missing))}<br>'
-                  f'修复: 调用方传 lat_lon_map, 或用 geo_resolver 认识的地名。</div>')
+        banner = (f'<div class="banner">⚠ {len(missing)} locations lack coordinates, '
+                  f'<b>not drawn on the map</b> (no fabricated coordinates): {_esc(", ".join(missing))}<br>'
+                  f'fix: pass lat_lon_map from the caller, or use place names known to geo_resolver.</div>')
     if not pts:
-        banner += '<div class="banner err">没有任何地点可画 (全部缺坐标)。</div>'
+        banner += '<div class="banner err">no drawable location (all lack coordinates).</div>'
 
     return f'''<!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -745,22 +745,22 @@ def _offline_svg_html(nodes, links, all_links, metadata, title) -> str:
   <h1>{_esc(title)}</h1>
   <p class="meta">{metadata.get('n_locations', '?')} locations ·
      {metadata.get('n_significant', '?')} significant routes (BF≥{thr}) ·
-     {metadata.get('n_routes', '?')} total · 源: {_esc(metadata.get('source_log', '?'))}</p>
+     {metadata.get('n_routes', '?')} total · source: {_esc(metadata.get('source_log', '?'))}</p>
   {banner}
   <div class="card">{''.join(svg)}
     <div class="legend">
-      <span><span class="swatch" style="border-color:#e74c3c"></span>显著路线 (BF≥{thr})</span>
-      <span><span class="swatch" style="border-color:#95a5a6;border-top-style:dashed"></span>非显著 (虚线)</span>
-      <span>线宽 ∝ √BF (最大 BF={bf_max:.1f})</span>
-      <span>悬停看 BF / 后验 / 速率</span>
+      <span><span class="swatch" style="border-color:#e74c3c"></span>Significant route (BF≥{thr})</span>
+      <span><span class="swatch" style="border-color:#95a5a6;border-top-style:dashed"></span>Non-significant (dashed)</span>
+      <span>Line width ∝ √BF (max BF={bf_max:.1f})</span>
+      <span>Hover for BF / posterior / rate</span>
     </div>
   </div>
   <div class="card">
     <table><thead><tr><th>From</th><th>To</th><th>BF</th><th>Posterior</th><th>Rate</th></tr></thead>
-    <tbody>{''.join(rows) or '<tr><td colspan="5">无路线</td></tr>'}</tbody></table>
+    <tbody>{''.join(rows) or '<tr><td colspan="5">No routes</td></tr>'}</tbody></table>
     {more}
   </div>
-  <p class="foot">MMPV-RNA virome_phylo_pipeline · 单文件离线地图 ·
+  <p class="foot">MMPV-RNA virome_phylo_pipeline · single-file offline map ·
      {metadata.get('generated', '')}</p>
 </div>
 </body>
@@ -786,8 +786,9 @@ def _leaflet_html(nodes, links, all_links, metadata, title,
         tile_js = (f"L.tileLayer('{tile_url}', "
                    f"{{attribution: '{tile_attribution}', maxZoom: 12}}).addTo(map);")
     else:
-        tile_js = ("// 底图合规默认: 不加载第三方瓦片 (无审图号底图不可用于中国发表)。\n"
-                   "// 需要底图请经 generate_interactive_map_html(..., tile_url=<合规XYZ模板>) 传入。")
+        tile_js = ("// Basemap compliance default: no third-party tiles are loaded (basemaps without\n"
+                   "// an approval number cannot be used in Chinese publications).\n"
+                   "// To add a basemap, pass a compliant XYZ template via generate_interactive_map_html(..., tile_url=...).")
     return f'''<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -847,7 +848,7 @@ if (typeof L === 'undefined') {{
   document.addEventListener('DOMContentLoaded', () => {{
     document.getElementById('map').innerHTML =
       '<div style="padding:16px;color:#c0392b;font-weight:600">' +
-      '⚠ Leaflet CDN 不可用 (离线) —— 请改用 offline=True 生成自绘 SVG 地图 ' +
+      '⚠ Leaflet CDN unavailable (offline) — regenerate with offline=True for a self-drawn SVG map ' +
       '(generate_interactive_map_html(..., offline=True))</div>';
   }});
 }} else {{
@@ -1007,16 +1008,16 @@ def build_phylogeo_report(
     loc_rows = ""
     for n in nodes:
         absent = (n.get('latitude') is None or n.get('longitude') is None)
-        note = ' <span style="color:#e67e22">(缺坐标, 未画点)</span>' if absent else ""
+        note = ' <span style="color:#e67e22">(missing coordinates, not drawn)</span>' if absent else ""
         loc_rows += (f"<tr><td>{_esc(n['label'])}{note}</td>"
                      f"<td>{_fmt_coord(n.get('latitude'))}</td>"
                      f"<td>{_fmt_coord(n.get('longitude'))}</td></tr>")
 
     coord_note = ""
     if _coord_missing:
-        coord_note = (f'<p class="meta" style="color:#e67e22">⚠ {len(_coord_missing)} 个地点解析不到经纬度'
-                      f' (未画点): {_esc(", ".join(sorted(_coord_missing)))} — '
-                      f'补法: 传 lat_lon_map 或往 utils/geo_resolver 内置表加条目</p>')
+        coord_note = (f'<p class="meta" style="color:#e67e22">⚠ {len(_coord_missing)} locations have no resolvable coordinates'
+                      f' (not drawn): {_esc(", ".join(sorted(_coord_missing)))} — '
+                      f'fix: pass lat_lon_map or extend the built-in table in utils/geo_resolver</p>')
 
     route_rows = ""
     for l in sorted(links, key=lambda x: -x.get("bf", 0))[:20]:

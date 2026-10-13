@@ -133,7 +133,9 @@ STAGE_ORDER = [
     'prep', 'metadata', 'online', 'clean', 'align', 'splitstree', 'rdp5', 'tree',
     'popgen', 'host', 'capheine',
     'clock', 'beast', 'gene_dating',
+    'treetime',
     'phylogeo', 'geo', 'geo_paths',
+    'phymapr',
     'report',
 ]
 
@@ -151,6 +153,11 @@ STAGE_DEPS = {
     'capheine':     ['prep'],
     'beast':        ['tree'],
     'gene_dating':  ['clock', 'capheine'],
+    # 2026-10-12 新增 (STAGE_REFERENCE §19/§20): TreeTime 路线的两环。
+    # treetime 只吃 tree (+比对/日期); phymapr 吃 treetime 的 timetree.nexus,
+    # **不依赖 BEAST** —— 与 BEAST 路线 (phylogeo→geo_paths) 完全并列。
+    'treetime':     ['tree'],
+    'phymapr':      ['treetime'],
     'phylogeo':     ['tree'],
     'geo':          ['tree'],
     'geo_paths':    ['phylogeo'],   # 2026-09-16 新增: 吃 phylogeo 的 merged/mcc.tree
@@ -175,7 +182,9 @@ STAGE_MODULE_DIR = {
     'rdp5': 'recomb',
     'capheine': 'select',
     'beast': 'time', 'gene_dating': 'time', 'clock': 'time',
+    'treetime': 'time',
     'phylogeo': 'geography', 'geo': 'geography', 'geo_paths': 'geography',
+    'phymapr': 'geography',
     'popgen': 'popgen', 'host': 'popgen',
     'report': 'report',
 }
@@ -187,8 +196,8 @@ STAGE_GROUPS = {
     'recomb':    ['rdp5'],
     'select':    ['capheine'],
     'phylogeny': ['align', 'splitstree', 'tree'],
-    'time':      ['clock', 'beast', 'gene_dating'],
-    'geography': ['phylogeo', 'geo', 'geo_paths'],
+    'time':      ['clock', 'beast', 'gene_dating', 'treetime'],
+    'geography': ['phylogeo', 'geo', 'geo_paths', 'phymapr'],
     'report':    ['report'],
 }
 
@@ -206,9 +215,11 @@ STAGE_DESC = {
     'capheine':     '正选择分析 (CAWLign→IQ-TREE→HyPhy→DRHIP)',
     'beast':        '全长 BEAST 定年',
     'gene_dating':  '分基因 BEAST 定年 (吃 capheine 产物)',
+    'treetime':     'TreeTime CLI 完整时间树 (timetree.nexus; phymapr 路线前置)',
     'phylogeo':     '系统地理 (CTMC+BSSVS)',
     'geo':          '地理分析 (Mantel/树地理)',
     'geo_paths':    '事件级传播路径 (pathways/episode/置信分级 + 扩散统计 + 传播图)',
+    'phymapr':      'phymapr R BM-ASR 系统地理 + 传播地图 (TreeTime 路线)',
     'host':         '宿主分化',
     'report':       '汇总 CSV + HTML 报告',
 }
@@ -231,10 +242,23 @@ STAGE_CHECKPOINT_FILES = {
     'clock':       'time/treedater_ltt/Phylogeny_dated.pdf',
     'popgen':      'popgen/popgen_report.txt',
     'capheine':    'select/capheine/drhip',
-    'beast':       'time/beast/merged/merged.log',  # 2026-10-03: 由 beast1.xml 改 —
-        # XML 在 --skip_beast_run(只出 XML)时就会写出, 会把"没跑过 BEAST"当已完成;
-        # 现要求有后验日志才算完成 (旧 .done 另有 _beast_ran() 二次判定)。
+    # 2026-10-12 修 (P1): 旧值 'time/beast/beast1.xml' 是**输入 XML** —— 它由
+    # generate_beast1_phylogeo_xml() 在 BEAST 开跑**之前**写出。于是只要 XML 一落盘,
+    # stage_done('beast') 就为真, 哪怕 BEAST 一条链都没跑、merge 一次都没做:
+    #   · run_phase_beast 的 `beast_pending` 分支注释写着"不写 checkpoint, 下次跑
+    #     检查合并" —— 但下次 _done('beast') 依然为真 → 整段跳过 → merge_chains()
+    #     永不执行 → time/beast/merged/ 永久缺失。(实测: GCVA 结果树 merged/ 缺失,
+    #     只能手工 `python -m utils.merge_results --work-dir ...` 补。)
+    #   · 与同类 'phylogeo' 的标志产物 (merged/mcc.tree) 口径必须一致: 标志产物
+    #     是**产物**, 不是输入。
+    # 取 merged/mcc.tree: 多链模式的终态产物 (logcombiner + treeannotator 之后)。
+    # 单链模式没有 merged/, 首次重入会走 run_phase_beast 的"输出已存在, skip run"
+    # 分支并 _mark('beast') 写下 .done —— 自限, 不会反复重跑。
+    'beast':       'time/beast/merged/mcc.tree',
     'gene_dating': 'time/gene_dating/gcva_watch_parse.sh',
+    # 2026-10-12 新增 (STAGE_REFERENCE §19/§20; TreeTime 路线两 stage)
+    'treetime':    'time/treetime/timetree.nexus',
+    'phymapr':     'geography/phymapr/phymapr_summary.json',
     'phylogeo':    'geography/phylogeography/merged/mcc.tree',
     'geo':         'geography/geo_analysis/mantel_test.pdf',
     'geo_paths':   'geography/geo_analysis/pathways/pathway_qc.json',  # 2026-09-16 新增
@@ -246,6 +270,26 @@ STAGE_CHECKPOINT_FILES = {
 
 def _cp_file(virus_dir, stage):
     return os.path.join(virus_dir, CHECKPOINT_DIR, f"{stage}.done")
+
+
+# STAGE_CHECKPOINT_FILES 里的相对路径第一段是**模块名**(legacy 口径)。
+# standard (默认) 布局下模块目录带编号 (time→06_time, report→08_report …),
+# 直接 join 会永远不命中 —— 探测时把第一段换算成 ph_dir(), 并与 legacy 字面量
+# 一并尝试 (存量结果树兼容)。
+_MARKER_MODULE_KEYS = ("data", "phylogeny", "popgen", "recomb", "select",
+                       "time", "geography", "report")
+
+
+def _marker_candidates(virus_dir, marker: str) -> List[str]:
+    """checkpoint 标志产物 (legacy 相对字面量) → 候选绝对路径 (standard 名优先)。"""
+    parts = marker.split("/")
+    cands = []
+    if parts[0] in _MARKER_MODULE_KEYS and len(parts) > 1:
+        cands.append(os.path.join(virus_dir, ph_dir(parts[0]), *parts[1:]))
+    legacy = os.path.join(virus_dir, marker)
+    if legacy not in cands:
+        cands.append(legacy)
+    return cands
 
 
 def _inputs_fingerprint(paths, params: Optional[str] = None) -> str:
@@ -300,44 +344,14 @@ def stage_done(virus_dir, stage, force=False, inputs=None) -> bool:
         return True
     marker = STAGE_CHECKPOINT_FILES.get(stage)
     if marker:
-        p = os.path.join(virus_dir, marker)
-        if os.path.exists(p) and os.path.getsize(p) > 0:
-            return True
+        # 2026-10-12 修 (P1-6): 表内路径是 legacy 字面量 (report/phylo_summary.csv),
+        # 而 standard (默认) 布局的模块目录叫 08_report/… —— 旧实现直接 join
+        # 永远不命中, "标志产物回退"这条判定路径在 standard 下形同虚设。
+        # 现按当前布局换算第一段模块名, 并与 legacy 字面量一并探测 (存量树兼容)。
+        for p in _marker_candidates(virus_dir, marker):
+            if os.path.exists(p) and os.path.getsize(p) > 0:
+                return True
     return False
-
-
-def count_beast_log_rows(path: str) -> int:
-    """BEAST .log 的**数据行数** (跳过 '#' 注释与 'state' 表头行)。
-
-    2026-10-03 引入: 退化日志闸门共用 (链未跑完 / logcombiner burnin 超界 →
-    近空 merged.log; 该日志会让 ESS 走"样本数"兜底、BSP 画空白图)。
-    返回 0 = 空/仅表头/不可读。
-    """
-    try:
-        with open(path, encoding="utf-8", errors="replace") as f:
-            return sum(1 for L in f
-                       if L.strip() and not L.startswith("#")
-                       and not L.startswith("state"))
-    except OSError:
-        return 0
-
-
-def pipeline_exit_code(all_results) -> tuple:
-    """退出码约定 (2026-10-03, P1-1): failed→1; blocked/pending→2; 干净→0。
-
-    旧版 main 无论如何退出 0 → 自动化/`&&` 链/per-virus driver 一律"成功"。
-    返回 (code, 说明)。工作目录模式与批量模式共用 (两处出口都要调)。
-    """
-    n_fail = sum(len(r.get("stages_failed", [])) for r in all_results)
-    n_blocked = sum(len(r.get("stages_blocked", [])) for r in all_results)
-    n_pending = sum(1 for r in all_results
-                    if r.get("incomplete") and not r.get("stages_blocked"))
-    if n_fail:
-        return 1, f"{n_fail} 个 stage 失败 — 见 Stages_failed"
-    if n_blocked or n_pending:
-        extra = f", 另有 {n_pending} 个病毒有 pending 链" if n_pending else ""
-        return 2, f"结果不完整 (受阻 stage {n_blocked} 个{extra}) — 修好前置后重跑"
-    return 0, "全部 stage 干净"
 
 
 def mark_stage_done(virus_dir, stage, meta=None) -> None:
@@ -350,6 +364,105 @@ def mark_stage_done(virus_dir, stage, meta=None) -> None:
         json.dump(data, f, ensure_ascii=False, indent=1)
 
 
+def _usable_alignment(path) -> bool:
+    """比对文件是否"可用" —— 存在 + 非空 + 至少有一条 FASTA 记录。
+
+    2026-10-11 新增 (修 P0)。此前全管线对输入只用 `os.path.exists()` 判定:
+    PSTVd 工作副本 `pstvd_mafft.aln.fasta` 被截成 0 字节后, align 的 checkpoint
+    分支照样把它当成合法比对 → rdp5/tree/clock/beast 全部吃空文件, 各自以
+    "没有产出"的形式失败, 而**真正的原因(输入为空)从未被喊出来**。
+    「0 字节不是合法输入」必须在唯一的入口处断言。
+    """
+    if not path:
+        return False
+    try:
+        if not os.path.isfile(path) or os.path.getsize(path) == 0:
+            return False
+        with open(path, "rb") as f:
+            head = f.read(4096)
+    except OSError:
+        return False
+    # 必须是 FASTA: 首部出现 '>' 记录符
+    return b">" in head
+
+
+def _usable_file(path) -> bool:
+    """存在且非空 (用于 tree/dates 等非 FASTA 输入)。"""
+    if not path:
+        return False
+    try:
+        return os.path.isfile(path) and os.path.getsize(path) > 0
+    except OSError:
+        return False
+
+
+def _derive_virus_name(data_dir, ds) -> str:
+    """从 dataset 条目推出**病毒名** (用于汇总表 Virus 列 / 产物文件名前缀)。
+
+    2026-10-11 修 (P1)。原写法是
+        os.path.basename(os.path.dirname(data_dir.rstrip('/\\\\')))
+    即"病毒名 = data_dir 的**父目录名**" —— 这要求 datasets.yaml 的 dir 恰好是
+    `<phase>/<virus>` 两层。实测 PSTVD_FULL 的 dir 是
+        {base}/PSTVd/phylo_pstvd_full_20260831/Potato_spindle_tuber_viroid_NC_002030.1
+    父目录名 = `phylo_pstvd_full_20260831` → 汇总表 Virus 列写成了**阶段目录名**,
+    而 GCVA (dir 多一层 `gcva_analysis`) 恰好推对。同一张表里两个病毒的 Virus 列
+    口径不同。
+
+    新规则(按证据强度):
+      ① 路径中**含 accession 的那一层** —— 这是病毒目录的命名契约
+         (`<物种>_<accession>`), 与 dir 嵌套层数无关;
+      ② 退而用 species+accession 拼 (与 ① 同构);
+      ③ 再退: 从深到浅找**第一个非通用目录名** (跳过 `phylo_*` 阶段目录与
+         `gcva_analysis`/`analysis_v2`/`data` 之类的工作目录名) —— 这一步修正了
+         旧写法"取父目录名"的错误 (父目录恰好是阶段目录)。
+    """
+    acc = str(ds.get("accession") or "").strip()
+    parts = [p for p in Path(data_dir).parts if p not in ("/", "\\")]
+    if acc:
+        for p in reversed(parts):
+            if acc in p:
+                return p
+    sp = str(ds.get("species") or "").strip()
+    if sp and acc:
+        return f"{sp.replace(' ', '_')}_{acc}"
+    # ③ 跳过通用/阶段目录名, 取最深的"像病毒名"的那一层
+    for p in reversed(parts):
+        if p in _GENERIC_DIR_NAMES or p.startswith("phylo_"):
+            continue
+        return p
+    return parts[-1] if parts else "unknown_virus"
+
+
+# 非病毒名的通用目录 (阶段目录 / 工作目录)。_derive_virus_name 的兜底规则用它。
+_GENERIC_DIR_NAMES = {
+    "gcva_analysis", "analysis", "analysis_v2", "analysis_v3", "phylo_results",
+    "results", "data", "report", "time", "phylogeny", "popgen", "geography",
+    "recomb", "select", "assembly", "extraction", "phylogeny_out",
+}
+
+# 各布局下"模块目录"的代表名, 用于从既有工作目录**反推**它用的是哪套布局。
+_LAYOUT_MARKERS = {
+    "standard": ("01_data", "08_report"),
+    "legacy": ("data", "report"),
+}
+
+
+def detect_layout_from_tree(work_dir: str) -> Optional[str]:
+    """从既有工作目录反推 I/O 布局; 判不出 (空目录 / 两套都在) 返回 None。
+
+    2026-10-11 新增。布局解析优先级是 `--io-layout` > `MMPV_IO_LAYOUT` >
+    **standard**(默认), 而存量结果树可能是 legacy。此时按默认跑会**静默新建一套
+    并行目录树**, 老目录纹丝不动 —— 用户去看老报告发现"什么都没变"。
+    实测 2026-10-11: 不带 --io-layout 跑 PSTVd 的 report, 直接在病毒目录下新建了
+    `01_data/` 与 `08_report/`, 而全部存量结果都在 `data/` 与 `report/` 里。
+    """
+    if not work_dir or not os.path.isdir(work_dir):
+        return None
+    hits = [lay for lay, marks in _LAYOUT_MARKERS.items()
+            if any(os.path.isdir(os.path.join(work_dir, m)) for m in marks)]
+    return hits[0] if len(hits) == 1 else None
+
+
 def clear_stage_checkpoint(virus_dir, stage=None) -> None:
     """清除 checkpoint (stage=None 清全部)"""
     cp_dir = os.path.join(virus_dir, CHECKPOINT_DIR)
@@ -357,10 +470,602 @@ def clear_stage_checkpoint(virus_dir, stage=None) -> None:
         p = _cp_file(virus_dir, stage)
         if os.path.exists(p):
             os.remove(p)
+        # 2026-10-11: 连同状态快照一起清 —— 否则清了 .done 却留着 <stage>.state.json,
+        # 重跑若中途失败, 下游 _restore 会把**上一轮**的 outputs/metrics 当成
+        # 本轮结果回填 (幽灵数据)。状态快照与 .done 必须同生共死。
+        sp = _state_file(virus_dir, stage)
+        if os.path.exists(sp):
+            os.remove(sp)
         return
     if os.path.isdir(cp_dir):
         import shutil
         shutil.rmtree(cp_dir, ignore_errors=True)
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Stage 状态快照 (2026-10-11 新增, 修 P0: "重跑即空汇总")
+# ═══════════════════════════════════════════════════════════════════
+# 【问题】每个 stage 的 `if _done(x): log(...); _skip(x)` 分支只打一行日志,
+#   **不恢复该 stage 的 outputs/metrics**。于是任何「checkpoint 已存在, 只重跑
+#   report / beast / gene_dating」的增量重跑里, results["metrics"] 只含**本次
+#   请求的 stage** 写过的东西 → headline_metrics() 取不到任何速率/R²/p/TMRCA。
+#
+#   实测 (PSTVd, 2026-09-22 活副本 report/phylo_summary.csv):
+#     Virus,Phase,Success,Stages_done,...,Beta,R_squared,P_value,TMRCA
+#     phylo_pstvd_full_20260831,,True,clean;align;saturation,,,,,,
+#   即整行只有 3 个 stage 名, 全部头条指标为空 —— 而磁盘上
+#   time/clock_summary.tsv / time/temporal_signal/drt_results.json /
+#   time/beast/merged/ 的结果一直都在。
+#
+# 【修法】stage 成功时把状态落盘:
+#     <virus_dir>/.checkpoints/<stage>.state.json
+#       {"stage":…, "time":…, "outputs":{…}, "metrics":{…}, "extra":{…}}
+#   skip 分支统一调 _restore(stage) 把它读回来 → 汇总/报告与"当次真跑"完全等价。
+#   extra 承载 stage 间的局部变量 (align→aln_file, tree→tree_file,
+#   clean→combined_fasta, metadata→metadata_std, rdp5→aln_file)。
+#
+# 【为什么不直接从产物反推】产物反推 (如从 clock_summary.tsv 读 β/R²) 需要每个
+#   stage 各写一套解析器, 且口径易漂移; 落盘快照是**同一份内存对象**的副本,
+#   与当次运行的 results 逐键一致, 不会出现"报告与产物对不上"。
+STAGE_STATE_SUFFIX = ".state.json"
+
+# 整个 results 的快照 (供 main() 在"只跑部分 stage"时重建汇总)
+STAGE_RESULTS_FILE = "stage_results.json"
+
+
+def _state_file(virus_dir, stage):
+    return os.path.join(virus_dir, CHECKPOINT_DIR, f"{stage}{STAGE_STATE_SUFFIX}")
+
+
+def _jsonable(obj):
+    """把任意对象压成 JSON 可序列化形式 (不可序列化的退化成 str)。
+
+    2026-10-11: metrics 里混有 numpy 标量 / Path / set, 直接 json.dump 会抛
+    TypeError 且**冒泡打断整个 stage** —— 状态落盘是"锦上添花"的能力,
+    绝不允许它把主流程搞挂, 故先做一次显式降级。
+    """
+    if obj is None or isinstance(obj, (bool, int, float, str)):
+        return obj
+    if isinstance(obj, dict):
+        return {str(k): _jsonable(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_jsonable(v) for v in obj]
+    if isinstance(obj, set):
+        return sorted(str(v) for v in obj)
+    try:
+        import numpy as _np
+        if isinstance(obj, _np.generic):
+            return obj.item()
+        if isinstance(obj, _np.ndarray):
+            return _jsonable(obj.tolist())
+    except Exception:
+        pass
+    return str(obj)
+
+
+def save_stage_state(virus_dir, stage, outputs=None, metrics=None, extra=None) -> None:
+    """落盘单 stage 状态快照 (失败仅告警, 绝不阻断主流程)。"""
+    try:
+        cp_dir = os.path.join(virus_dir, CHECKPOINT_DIR)
+        os.makedirs(cp_dir, exist_ok=True)
+        payload = {
+            "stage": stage,
+            "time": datetime.now().isoformat(timespec="seconds"),
+            "outputs": _jsonable(outputs or {}),
+            "metrics": _jsonable(metrics or {}),
+            "extra": _jsonable(extra or {}),
+        }
+        with open(_state_file(virus_dir, stage), "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False, indent=1)
+    except Exception as e:                      # noqa: BLE001 — 兜底不阻断
+        try:
+            print(f"[checkpoint] ⚠ {stage} 状态快照落盘失败 (非阻断): {e}",
+                  file=sys.stderr)
+        except Exception:
+            pass
+
+
+def load_stage_state(virus_dir, stage) -> Dict:
+    """读回单 stage 状态快照; 不存在/损坏返回 {}。"""
+    p = _state_file(virus_dir, stage)
+    if not os.path.exists(p):
+        return {}
+    try:
+        with open(p, encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def save_stage_results(virus_dir, results) -> None:
+    """落盘整个 results (供 main() 在部分 stage 重跑时重建完整汇总)。"""
+    try:
+        os.makedirs(virus_dir, exist_ok=True)
+        payload = {
+            "time": datetime.now().isoformat(timespec="seconds"),
+            "results": _jsonable(results),
+        }
+        with open(os.path.join(virus_dir, STAGE_RESULTS_FILE), "w",
+                  encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False, indent=1)
+    except Exception as e:                      # noqa: BLE001
+        try:
+            print(f"[checkpoint] ⚠ results 快照落盘失败 (非阻断): {e}",
+                  file=sys.stderr)
+        except Exception:
+            pass
+
+
+def load_stage_results(virus_dir) -> Dict:
+    """读回整个 results 快照; 不存在/损坏返回 {}。"""
+    p = os.path.join(virus_dir, STAGE_RESULTS_FILE)
+    if not os.path.exists(p):
+        return {}
+    try:
+        with open(p, encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception:
+        return {}
+    res = data.get("results") if isinstance(data, dict) else None
+    return res if isinstance(res, dict) else {}
+
+
+def _stage_state_files(virus_dir) -> Dict[str, Dict]:
+    """扫描 .checkpoints/*.state.json → {stage: payload} (按 stage 名排序)。"""
+    out: Dict[str, Dict] = {}
+    cp_dir = os.path.join(virus_dir, CHECKPOINT_DIR)
+    if not os.path.isdir(cp_dir):
+        return out
+    for fn in sorted(os.listdir(cp_dir)):
+        if not fn.endswith(STAGE_STATE_SUFFIX):
+            continue
+        stage = fn[: -len(STAGE_STATE_SUFFIX)]
+        data = load_stage_state(virus_dir, stage)
+        if data:
+            out[stage] = data
+    return out
+
+
+def merge_persisted_results(results: Dict, virus_dir: str) -> Dict:
+    """把磁盘持久化的 stage 状态并入当次 results (当次值优先, 磁盘只补缺)。
+
+    用途: 「只跑 report」「只跑 beast」这类增量重跑里, process_virus 只记录了
+    **本次请求的 stage** —— 汇总表/HTML 报告因此退化成只有本次 stage 的空壳。
+    这里把 <virus_dir>/stage_results.json 与 .checkpoints/*.state.json 里的
+    outputs/metrics/stage 清单回填, 使"重跑一次 report"能产出与全量跑等价的汇总。
+
+    返回**新的** results dict (不改入参), 便于调用方显式接管。
+    """
+    if not virus_dir or not os.path.isdir(virus_dir):
+        return results
+    merged = dict(results or {})
+    # ⚠ 必须**深一层拷贝** outputs/metrics —— `dict(results)` 是浅拷贝, 内层
+    # 仍是同一个 dict 对象; 后面往 merged["metrics"][k] 写值会**改到调用方的
+    # results**, 破坏"纯函数"契约 (本文件单测 [6] 的「merge 不改入参」断言
+    # 就是专门守这一点的)。
+    merged["outputs"] = dict((results or {}).get("outputs") or {})
+    merged["metrics"] = dict((results or {}).get("metrics") or {})
+
+    # ① 整份 results 快照 (上一轮全量/增量跑的最终态)
+    prev = load_stage_results(virus_dir)
+
+    # ② 逐 stage 快照 (比整份快照更细, 且能覆盖"整份快照还没写"的旧数据)
+    per_stage = _stage_state_files(virus_dir)
+
+    def _fill_from(src_outputs, src_metrics):
+        """当次值优先; 只补磁盘上有、当次没有的键。"""
+        for k, v in (src_outputs or {}).items():
+            if k not in merged["outputs"] and v not in (None, "", {}):
+                merged["outputs"][k] = v
+        for k, v in (src_metrics or {}).items():
+            # 指标缺值判定: 键不存在 **或** 值为 None/"" —— 与
+            # summary_metrics._pick 的"空串/None 都视为缺"保持一致
+            if merged["metrics"].get(k) in (None, "") and v not in (None, ""):
+                merged["metrics"][k] = v
+
+    # 先并入整份快照, 再用逐 stage 快照补齐(逐 stage 通常更完整)
+    sources = []
+    if prev:
+        sources.append((prev.get("outputs"), prev.get("metrics")))
+    for stage, payload in per_stage.items():
+        sources.append((payload.get("outputs"), payload.get("metrics")))
+
+    for so, sm in sources:
+        _fill_from(so, sm)
+
+    # 2026-10-11: 对"有 <stage>.done 但没有 state 快照"的 stage 补一次**产物重建**。
+    # 【为什么必须在 merge 里做, 而不是只在 process_virus 的 skip 分支里做】
+    #   ① 老结果树的 *.done **全部**没有 state 快照 (实测活副本 23/23), 而跳过分支
+    #      只覆盖"本次请求的 stage" —— 跑 `--stage report` 时 align/clock/beast 的
+    #      代码块根本不会进入, 汇总依旧是空的;
+    #   ② merge 是三种模式 (--virus / --work_dir / batch) 汇总前的唯一公共入口。
+    # 【优先级】本次运行写下的值 > *.state.json 快照 > 磁盘产物重建
+    #   (_fill_from 只在当前值为空时才写, 故顺序天然满足)。
+    # 重建成功后落盘快照 → 下次不必重复解析 (自愈)。
+    try:
+        _cp_entries = sorted(os.listdir(os.path.join(virus_dir, CHECKPOINT_DIR)))
+    except OSError:
+        _cp_entries = []
+    for _fn in _cp_entries:
+        if not _fn.endswith(".done"):
+            continue
+        _st = _fn[:-len(".done")]
+        if _st in per_stage:          # 已有快照, 上面已并入
+            continue
+        _rd = rediscover_stage_state(virus_dir, _st)
+        if not _rd:
+            continue
+        _fill_from(_rd.get("outputs"), _rd.get("metrics"))
+        save_stage_state(virus_dir, _st, outputs=_rd.get("outputs"),
+                         metrics=_rd.get("metrics"), extra=_rd.get("extra"))
+
+    # stage 清单取并集 (当次在前, 历史在后, 保序去重)
+    for field in ("stages_done", "stages_skipped", "stages_failed"):
+        cur = [str(x) for x in (merged.get(field) or [])]
+        for src in [prev] + list(per_stage.values()):
+            if field not in src:
+                continue
+            for x in (src.get(field) or []):
+                x = str(x)
+                if x not in cur:
+                    cur.append(x)
+        merged[field] = cur
+    # 显式 `<stage>.skipped` 标记 (内层已定性"不适用") —— 对 done 有**否决权**。
+    _skipped_marks = {_fn[:-len(".skipped")] for _fn in _cp_entries
+                      if _fn.endswith(".skipped")}
+
+    # (a) 用 <stage>.done 的存在补齐 stages_done。
+    # 2026-10-11 修: 原实现只遍历 `per_stage` (有 *.state.json 的那些) —— 老结果树
+    # 一个快照都没有, 于是 Stages_done 只剩"本次请求的 stage"(PSTVd 实测只写了
+    # `clean;align;saturation`), 报告里所有模块都被判成"未运行"。改为认**全部** .done。
+    # 注意: 必须保留这条 —— 有些 stage 不在 STAGE_ORDER 里 (saturation / splitstree),
+    # 只能靠 *.done 发现。
+    for _fn in _cp_entries:
+        if not _fn.endswith(".done"):
+            continue
+        _st = _fn[:-len(".done")]
+        if _st in _skipped_marks:      # 不适用标记优先 (遗留 .done 可能是旧的虚报)
+            continue
+        if _st not in merged["stages_done"]:
+            merged["stages_done"].append(_st)
+
+    # (b) 2026-10-11 二次修: 只认 *.done 会**漏报** —— `stage_done()` 还有一条
+    # 「STAGE_CHECKPOINT_FILES 声明的标志产物存在」的回退路径。实测 GCVA:
+    # `time/beast/beast1.xml` 存在 → `stage_done('beast')` 为真 (于是 beast 整段被
+    # checkpoint 跳过), 但 `beast.done` 从未写过 → 汇总表 Stages_done 里没有 beast,
+    # 与管线自己的判断**自相矛盾**。这里补一次 stage_done() 判定, 与管线同源。
+    for _st in STAGE_ORDER:
+        if _st in ("prep", "report") or _st in _skipped_marks:
+            continue
+        if _st in merged["stages_done"]:
+            continue
+        try:
+            if stage_done(virus_dir, _st):
+                merged["stages_done"].append(_st)
+        except Exception:
+            pass
+
+    # (c) 2026-10-11 三次修: `<stage>.skipped` → stages_skipped, 并从 done 里剔除。
+    # 此前"不适用"只在**本次运行请求了该 stage** 时才进 st['skipped'] —— 而
+    # `--stage report` 不进任何 stage 代码块, 于是 rdp5/capheine 的"不适用"在
+    # 汇总表里**彻底消失** (既不在 done 也不在 skipped)。标记文件是权威来源。
+    if _skipped_marks:
+        merged["stages_done"] = [x for x in merged["stages_done"]
+                                 if x not in _skipped_marks]
+        for _st in sorted(_skipped_marks):
+            if _st not in merged["stages_skipped"]:
+                merged["stages_skipped"].append(_st)
+
+    if prev.get("virus") and not merged.get("virus"):
+        merged["virus"] = prev["virus"]
+    if prev.get("virus_dir") and not merged.get("virus_dir"):
+        merged["virus_dir"] = prev["virus_dir"]
+    # success: 只要**没有失败 stage** 且**有实质产物**就算成功 (与 process_virus 同判据)
+    merged["success"] = (not merged["stages_failed"]) and bool(
+        merged["outputs"] or merged["metrics"] or merged["stages_done"])
+    return merged
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Stage 状态重建 (rediscover) —— 状态快照缺失时从磁盘产物反推
+# ═══════════════════════════════════════════════════════════════════
+# 【为什么还需要这一层】
+#   <stage>.state.json 只在**新代码跑过的 stage** 里才会产生。以下情况它必然缺失,
+#   而 skip 分支若只认快照, 汇总表照旧为空:
+#     ① 结果树由**旧代码**产出 (PSTVd 2026-09-22 / GCVA 2026-09-02 都是);
+#     ② 结果树被 `cp -a` 到别处 —— 只剩 *.done, 没有 *.state.json;
+#     ③ 手工删过 state 文件。
+#   实测: 活副本 results_PSTVd_GCVA_20260905 下 23 个 *.done, 带 state 快照的 **0 个**。
+#
+# 【设计原则】
+#   · 只认**唯一权威产物** → 指标, 口径与"当次真跑"逐字一致 (同一文件 / 同一列 /
+#     同一解析函数)。例: beast 的 TMRCA 一律取 parse_beast_log 的
+#     treeModel.rootHeight.**median**; merged/parameter_summary.json 里的 tmrca.mean
+#     是另一个估计量 —— 混用会让"跳过"与"真跑"对同一份数据给出不同数字。
+#   · 不二次推断 / 不插值 / 不编造默认值: 产物缺失或解析失败就**留空**
+#     (与 headline_metrics "空 = 没算出来" 的语义一致, 绝不用 0 冒充)。
+#   · 重建成功即**落盘快照** → 下次直接读快照, 不再重复解析 (自愈)。
+#
+# 【覆盖范围为什么只到"指标 + 路径"】
+#   HTML 报告的图件由 report_builder 的 MODULES 表按**目录 glob 扫盘**收集,
+#   不读 results["outputs"]; 汇总 CSV 只读 results["metrics"]。故重建只需保证
+#   ① metrics 齐 (clock/beast 是 headline_metrics 的唯一来源);
+#   ② extra 齐 (align/clean/tree/rdp5/metadata 的产物路径 —— 下游 stage 靠它定位输入)。
+def _rd_read_tsv(path) -> List[Dict[str, str]]:
+    """读 TSV → [{列名: 值}]; 读不了返回 []。"""
+    if not _usable_file(path):
+        return []
+    try:
+        with open(path, encoding="utf-8-sig", newline="") as f:
+            return [dict(r) for r in csv.DictReader(f, delimiter="\t")]
+    except (OSError, UnicodeDecodeError, csv.Error):
+        return []
+
+
+def _rd_read_json(path) -> Dict:
+    """读 JSON → dict; 读不了或顶层不是 dict 返回 {}。"""
+    if not _usable_file(path):
+        return {}
+    try:
+        with open(path, encoding="utf-8") as f:
+            d = json.load(f)
+    except (OSError, ValueError):
+        return {}
+    return d if isinstance(d, dict) else {}
+
+
+def _rd_num(v) -> Optional[float]:
+    """→ float; 空 / NA / 布尔 / 非有限 → None (区分"没算出来"与"算出 0")。"""
+    if v is None or v == "" or isinstance(v, bool):
+        return None
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return None
+    return f if f == f and f not in (float("inf"), float("-inf")) else None
+
+
+def _rd_bool(v) -> Optional[bool]:
+    """'True'/'False'/'1'/'0'/… → bool; 认不出 → None。"""
+    if isinstance(v, bool):
+        return v
+    s = str(v or "").strip().lower()
+    if s in ("true", "1", "yes", "y", "t"):
+        return True
+    if s in ("false", "0", "no", "n", "f"):
+        return False
+    return None
+
+
+def _rd_beast_burnin_pct(virus_dir) -> float:
+    """从 run_status.json 反推本次 BEAST 的 burnin 百分比 (与真跑同源)。
+
+    parse_beast_log 的 burnin_pct 直接决定 TMRCA 的取样区间 —— 重建时若硬编码
+    10% 而实跑是别的值, 两边数字就对不上。run_status.json 记着 merge_burnin 与
+    chain_length, 相除即真值; 文件缺失时退回 10.0 (config/argparse 默认)。
+    """
+    st = _rd_read_json(os.path.join(virus_dir, ph_dir('time'), "beast", "run_status.json"))
+    b, n = _rd_num(st.get("merge_burnin")), _rd_num(st.get("chain_length"))
+    if b is not None and n:
+        return 100.0 * b / n
+    return 10.0
+
+
+def rediscover_stage_state(virus_dir: str, stage: str) -> Dict:
+    """从磁盘产物重建单 stage 的 {outputs, metrics, extra}; 无法重建返回 {}。
+
+    仅在 <stage>.state.json 缺失时被 _restore() 调用 (见 process_virus)。
+    返回空 dict 表示"该 stage 的产物不足以反推" —— 调用方照常告警。
+    """
+    if not virus_dir or not os.path.isdir(virus_dir):
+        return {}
+    outs: Dict = {}
+    mets: Dict = {}
+    extra: Dict = {}
+
+    def _reg(key, *parts, fasta=False):
+        """产物存在且可用 → 登记 outputs 并返回路径; 否则 None。"""
+        fp = os.path.join(virus_dir, *parts)
+        if (_usable_alignment(fp) if fasta else _usable_file(fp)):
+            outs[key] = fp
+            return fp
+        return None
+
+    if stage == "metadata":
+        fp = _reg("metadata_std", ph_dir('data'), "metadata", "metadata_std.csv")
+        if fp:
+            extra["metadata_std"] = fp
+
+    elif stage == "clean":
+        fp = (_reg("clean_fasta", ph_dir('data'), "clean", "clean.fasta", fasta=True)
+              or _reg("clean_fasta", ph_dir('phylogeny'), "qc", "clean.fasta", fasta=True))
+        if fp:
+            extra["clean_fasta"] = fp
+
+    elif stage == "align":
+        # 真跑写 phylogeny/mafft.aln.fasta。但 work-dir 模式 / clean 已产出时,
+        # run_stage_align 会**直接沿用 provided 而不落盘**该文件 (实测 PSTVd 活副本
+        # 根目录只有 pstvd_mafft.aln.fasta, phylogeny/ 下无 mafft.aln.fasta)
+        # → 依次回退到 clean 产物, 这正是下游 stage 实际吃的那份。
+        fp = (_reg("alignment", ph_dir('phylogeny'), "mafft.aln.fasta", fasta=True)
+              or _reg("alignment", ph_dir('data'), "clean", "clean.fasta", fasta=True)
+              or _reg("alignment", ph_dir('phylogeny'), "qc", "clean.fasta", fasta=True))
+        if fp:
+            extra["aln_file"] = fp
+
+    elif stage == "rdp5":
+        fp = (_reg("masked_alignment", ph_dir('recomb'), "rdp5",
+                   "rdp5_dropped.realn.fasta", fasta=True)
+              or _reg("masked_alignment", ph_dir('recomb'), "rdp5", "masked",
+                      "masked_N.fasta", fasta=True))
+        if fp:
+            extra["aln_file"] = fp
+        _reg("rdp5_report", ph_dir('recomb'), "rdp5", "recombination_report.md")
+
+    elif stage == "tree":
+        fp = (_reg("tree", ph_dir('phylogeny'), "iqtree.treefile")
+              or _reg("tree", ph_dir('phylogeny'), "tree.nwk"))
+        if fp:
+            extra["tree_file"] = fp
+
+    elif stage == "popgen":
+        _reg("popgen_report", ph_dir('popgen'), "popgen_report.txt")
+        _reg("popgen_plot", ph_dir('popgen'), "popgen_metrics.png")
+
+    elif stage == "capheine":
+        _reg("capheine_sites", ph_dir('select'), "capheine", "drhip", "combined_sites.csv")
+
+    elif stage == "host":
+        _reg("host_diff_plot", ph_dir('popgen'), "host_analysis", "host_diff.png")
+
+    elif stage == "clock":
+        t = ph_dir('time')
+        # ① clock_summary.tsv —— β/R²/P 与 drt_passed 的权威落盘 (clock_analysis 写)
+        cs = _reg("clock_summary", t, "clock_summary.tsv")
+        if cs:
+            extra["clock_summary"] = cs
+            g = next((r for r in _rd_read_tsv(cs)
+                      if (r.get("level") or "").strip() == "genome"), None)
+            if g:
+                for k in ("beta", "r_squared", "p_value"):
+                    v = _rd_num(g.get(k))
+                    if v is not None:
+                        mets[k] = v
+                b = _rd_bool(g.get("drt_passed"))
+                if b is not None:
+                    mets["drt_passed"] = b
+        # ② PIC 严格钟 (clock_analysis 写 robust_report.json 的 pic_strict_clock)
+        rr = _reg("robust_report", t, "treetime_rtt", "robust", "robust_report.json")
+        if rr:
+            pic = _rd_read_json(rr).get("pic_strict_clock")
+            if isinstance(pic, dict):
+                for src, dst in (("rate", "pic_rate"), ("r_pic", "pic_r")):
+                    v = _rd_num(pic.get(src))
+                    if v is not None:
+                        mets[dst] = v
+        # ③ DRT 结论串 (与 metrics['temporal_signal'] 同一字段)
+        drt = _reg("drt_results", t, "temporal_signal", "drt_results.json")
+        if drt:
+            d = _rd_read_json(drt)
+            if d.get("conclusion"):
+                mets["temporal_signal"] = d["conclusion"]
+            v = _rd_num(d.get("r2_percentile"))
+            if v is not None:
+                mets["drt_r2_percentile"] = v
+        # ④ treedater 四功能 (2026-10-11 起 virphy_bridge 落盘 metrics.json;
+        #    旧数据没有该文件 → 留空, 不追认)
+        td = _reg("treedater_metrics", t, "treedater_ltt", "metrics.json")
+        if td:
+            d = _rd_read_json(td)
+            for src, dst in (("cov_rate", "td_cov_rate"),
+                             ("relaxed_clock_p", "td_relaxed_clock_p"),
+                             ("tmrca", "td_tmrca"),
+                             ("mean_rate", "td_mean_rate"),
+                             ("n_outlier_tips", "td_n_outlier_tips")):
+                v = _rd_num(d.get(src))
+                if v is not None:
+                    mets[dst] = v
+        # ⑤ 图件 (报告靠扫盘收集, 这里只登记便于下游引用)
+        _reg("dated_phylo", t, "treedater_ltt", "Phylogeny_dated.pdf")
+        _reg("ltt_plot", t, "treedater_ltt", "LTT.pdf")
+        _reg("treedater_outlier_tips", t, "treedater_ltt", "outlier_tips.tsv")
+        _reg("rtt_plot", t, "treetime_rtt", "RootToTip_regression.pdf")
+        _reg("timetree", t, "treetime_rtt", "timetree_inferred.nwk")
+        _reg("robust_rtt_plot", t, "treetime_rtt", "robust", "robust_rtt_compare.png")
+
+    elif stage == "beast":
+        bd = os.path.join(virus_dir, ph_dir('time'), "beast")
+        _reg("beast_xml", ph_dir('time'), "beast", "beast1.xml")
+        _reg("beast_mcc_tree", ph_dir('time'), "beast", "merged", "mcc.tree")
+        _reg("beast_parameter_summary", ph_dir('time'), "beast", "merged",
+             "parameter_summary.json")
+        _reg("beast_ess", ph_dir('time'), "beast", "postprocess", "ess_results.csv")
+        # TMRCA: 复用 parse_beast_log (与真跑、与 skip 分支同一入口同一口径)
+        log_path = None
+        for cand in (os.path.join(bd, "merged", "merged.log"),
+                     os.path.join(bd, "beast1.log"),
+                     os.path.join(bd, "beast11.log")):
+            if _usable_file(cand):
+                log_path = cand
+                break
+        if log_path:
+            try:
+                parsed = parse_beast_log(log_path,
+                                         burnin_pct=_rd_beast_burnin_pct(virus_dir),
+                                         log=LogCollector())
+                kp = parsed.get("key_params") if isinstance(parsed, dict) else None
+                rh = (kp or {}).get("treeModel.rootHeight") if isinstance(kp, dict) else None
+                if isinstance(rh, dict) and _rd_num(rh.get("median")) is not None:
+                    mets["beast_tmrca"] = rh["median"]
+                    mets["beast_tmrca_hpd"] = (f"{rh['hpd_95_lower']:.1f}"
+                                               f"–{rh['hpd_95_upper']:.1f}")
+                    mets["beast_tmrca_ess"] = rh["ess"]
+                if isinstance(kp, dict):
+                    for k, dst in (("ucld.mean", "beast_ucld_mean"),
+                                   ("ucld.stdev", "beast_ucld_stdev")):
+                        v = kp.get(k)
+                        if isinstance(v, dict) and _rd_num(v.get("mean")) is not None:
+                            mets[dst] = v["mean"]
+            except Exception:      # noqa: BLE001 —— 重建失败不得影响主流程
+                pass
+
+    elif stage == "gene_dating":
+        _reg("gene_dating_dir", ph_dir('time'), "gene_dating")
+
+    elif stage == "treetime":
+        # 2026-10-12 (TreeTime 路线, STAGE_REFERENCE §19): checkpoint 标志物 = timetree.nexus
+        tt = _reg("treetime_nexus", ph_dir('time'), "treetime", "timetree.nexus")
+        if tt:
+            extra["treetime_nexus"] = tt
+
+    elif stage == "phymapr":
+        # 2026-10-12 (STAGE_REFERENCE §20): 标志物 = phymapr_summary.json (桥落盘)
+        pj = _reg("phymapr_summary", ph_dir('geography'), "phymapr", "phymapr_summary.json")
+        if pj:
+            d = _rd_read_json(pj)
+            _m = d.get("metrics") or {}
+            for k in ("n_pathways", "n_episodes", "n_locations",
+                      "n_tips_used", "n_tips_total", "n_tips_dropped"):
+                v = _rd_num(_m.get(k))
+                if v is not None:
+                    mets[f"phymapr_{k}"] = v
+            for k, v in (_m.get("transmission_counts") or {}).items():
+                mets[f"phymapr_conf_{k}"] = v
+        for _k, _rel in (("tree_plot", "tree_plot.png"),
+                         ("gif", "transmission_map.gif"),
+                         ("static_map", "transmission_map_static.png"),
+                         ("episodes_csv", "episodes.csv"),
+                         ("pathways_csv", "pathways.csv")):
+            _reg(_k, ph_dir('geography'), "phymapr", _rel)
+
+    elif stage == "phylogeo":
+        _reg("phylogeo_xml", ph_dir('geography'), "phylogeography", "merged", "mcc.tree")
+
+    elif stage == "geo":
+        _reg("mantel_plot", ph_dir('geography'), "geo_analysis", "mantel_test.pdf")
+        _reg("geo_tree", ph_dir('geography'), "geo_analysis", "tree_geography.pdf")
+
+    elif stage == "geo_paths":
+        g = ph_dir('geography')
+        _reg("pathway_qc", g, "geo_analysis", "pathways", "pathway_qc.json")
+        _reg("pathways_csv", g, "geo_analysis", "pathways", "pathways.csv")
+        _reg("dispersion_summary", g, "geo_analysis", "dispersion", "dispersion_summary.json")
+        _reg("timescale_consistency", g, "geo_analysis", "timescale_consistency.json")
+        _reg("markov_jumps", g, "geo_analysis", "markov_jumps.json")
+
+    elif stage == "splitstree":
+        _reg("splitstree_nexus", ph_dir('phylogeny'), "splitstree", "splits.nex")
+        _reg("splitstree_pdf", ph_dir('phylogeny'), "splitstree", "neighbornet.pdf")
+        _reg("splitstree_png", ph_dir('phylogeny'), "splitstree", "neighbornet.png")
+
+    elif stage == "online":
+        _reg("ncbi_fasta", ph_dir('data'), "ncbi_ref", "ncbi_ref.fasta")
+
+    if not (outs or mets or extra):
+        return {}
+    return {"outputs": outs, "metrics": mets, "extra": extra}
+
 
 # config.yaml section → argparse dest 映射
 CONFIG_SECTION_ARG = {
@@ -377,6 +1082,16 @@ CONFIG_SECTION_ARG = {
     'gene_dating': {'enabled': 'gene_dating', 'genes_dir': 'genes_dir',
                     'chain': 'gene_chain', 'chain_big': 'gene_chain_big',
                     'big_genes': 'big_genes'},
+    # 2026-10-12 新增 (TreeTime 路线; STAGE_REFERENCE §19/§20)。键必须与
+    # argparse 的 --treetime_*/--phymapr_* 同步登记 —— (chains 键静默丢失的教训)。
+    'treetime': {'enabled': 'treetime', 'clock_filter': 'treetime_clock_filter',
+                 'coalescent': 'treetime_coalescent', 'clock_rate': 'treetime_clock_rate'},
+    'phymapr': {'enabled': 'phymapr', 'map_style': 'phymapr_map_style',
+                'n_prune_early': 'phymapr_n_prune_early',
+                'direct_snp': 'phymapr_direct_snp',
+                'indirect_snp': 'phymapr_indirect_snp',
+                'distant_style': 'phymapr_distant_style',
+                'pace': 'phymapr_pace'},
     # 2026-09-22 新增: clean 段此前**整段未登记** ——
     # datasets.yaml 的 fasta 是**已比对文件**(含 '-' gap), 而 clean 默认把 gap 当
     # 非法字符整条剔除 → 全部 REMOVE → clean.fasta 为空 → 下游无输入 (PSTVd 实测
@@ -415,6 +1130,9 @@ CONFIG_SECTION_ARG = {
     'temporal': {"check": "check_temporal", "drt_randomizations": "drt_randomizations",
                  'bets': 'bets', 'bets_steps': 'bets_steps', 'bets_chain': 'bets_chain'},
     'saturation': {'replicates': 'sat_replicates'},
+    # 2026-10-12: splitstree 段登记 (group_col 控制外圈分组弧线, RUN_GUIDE 已承诺)
+    'splitstree': {'max_taxa': 'splitstree_max_taxa',
+                   'group_col': 'splitstree_group_col'},
     'report': {'enabled': 'report_enabled'},
 }
 
@@ -652,6 +1370,12 @@ def run_mafft(input_fasta, output_aln, threads=8, logger=None) -> bool:
 IQTREE_BOOT_DEFAULT = 1000      # UFBoot 重复数 (IQ-TREE 硬性要求 >=1000)
 IQTREE_ALRT_DEFAULT = 1000      # SH-aLRT 重复数 (同样要求 >=1000)
 IQTREE_TIMEOUT_DEFAULT = 3600   # **单次尝试**超时(秒); 带 UFBoot 后需按数据规模上调
+
+# RDP5 窗口方法的最小比对长度 (bp)。低于此值 RDP5 无足够位点, 静默跑不出 CSV
+# —— 类病毒 (PSTVd 379 bp) 就属于这种情形, 必须记"不适用"而非"失败"。
+# 2026-10-11: 原先这个 500 是 run_stage_rdp5 里的魔法数字, 现提为常量并写进
+# skip_reason, 便于报告与日志引用同一口径。
+RDP5_MIN_ALN_LEN = 500
 IQTREE_SUPPORT_META = "iqtree.support.json"   # 支持值元数据 sidecar (供下游/报告取证)
 
 
@@ -994,34 +1718,34 @@ def run_stage_metadata(prep, args, logger) -> Dict:
 
     s = res["stats"]
     lines = [
-        f"metadata 治理报告 — {vname}",
-        f"源文件: {src}",
-        f"行数: {s['n_total']}  保留: {s['kept']}",
-        f"识别列: date={s['date_col']!r}  loc={s['loc_col']!r}  name={s['name_col']!r}",
-        f"坐标列: {s['coord_cols']}",
-        f"日期口径 mode: {mode}  ({'月中/年中' if mode == 'mid' else '月初/年初 (VirPhyKit)'})",
+        f"metadata governance report — {vname}",
+        f"source file: {src}",
+        f"rows: {s['n_total']}  kept: {s['kept']}",
+        f"detected columns: date={s['date_col']!r}  loc={s['loc_col']!r}  name={s['name_col']!r}",
+        f"coordinate columns: {s['coord_cols']}",
+        f"date convention mode: {mode}  ({'mid-month/mid-year' if mode == 'mid' else 'start of month/year (VirPhyKit)'})",
         "",
-        "日期精度分布:",
+        "date precision distribution:",
     ]
     for k, v in s["date"].items():
         lines.append(f"  {k:<8} {v}")
     if s["date_issues"]:
-        lines.append(f"日期问题: {s['date_issues']}")
+        lines.append(f"date issues: {s['date_issues']}")
     if s["geo_issues"]:
-        lines.append(f"地理问题: {s['geo_issues']}")
-    lines.append(f"已删除 Unknown 层级: {s['geo_drop_unknown']} 行 / {s['geo_dropped_levels']} 级")
+        lines.append(f"geo issues: {s['geo_issues']}")
+    lines.append(f"dropped Unknown levels: {s['geo_drop_unknown']} rows / {s['geo_dropped_levels']} levels")
     if s["coords_derived"]:
-        lines.append(f"坐标补算成功: {s['coords_derived']}  来源={s['coords_derived_by_source']}")
+        lines.append(f"coordinates derived: {s['coords_derived']}  source={s['coords_derived_by_source']}")
     if s["coords_unrecoverable"]:
-        lines.append(f"坐标补算不出 (已清空): {s['coords_unrecoverable']}")
+        lines.append(f"coordinates not recoverable (blanked): {s['coords_unrecoverable']}")
     if s["coord_placeholder_fields"]:
-        lines.append(f"坐标列占位符 (补算后仍为空): {s['coord_placeholder_fields']}")
+        lines.append(f"coordinate-column placeholders (still empty after deriving): {s['coord_placeholder_fields']}")
     if s["blanked_fields"]:
-        lines.append(f"字段清空统计 (占位符 → 空): {s['blanked_fields']}")
-        lines.append(f"  含占位符字段的行: {s['n_rows_with_placeholder']}")
-    lines.append(f"列内已是小数年(未重复转换): {s['already_decimal_in_col']} 条")
-    lines.append(f"剔除: 占位符行 {s['dropped_placeholder']};  "
-                 f"无日期 {s['dropped_no_date']};  无地理 {s['dropped_no_location']}")
+        lines.append(f"blanked fields (placeholder → empty): {s['blanked_fields']}")
+        lines.append(f"  rows with placeholder fields: {s['n_rows_with_placeholder']}")
+    lines.append(f"already decimal years in column (not re-converted): {s['already_decimal_in_col']}")
+    lines.append(f"dropped: placeholder rows {s['dropped_placeholder']};  "
+                 f"no date {s['dropped_no_date']};  no location {s['dropped_no_location']}")
     with open(summary, "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
 
@@ -1220,16 +1944,34 @@ def run_stage_align(prep, tools, args, logger, force=False) -> Dict:
     # 产物已存在: 直接复用 (work-dir 提供的比对或上次成功产物)
     # 2026-09-15 (P1-1): 加 force 判断 —— 旧版即使 --force 也复用已存在产物,
     # 用户以为强制重跑, 实际什么都没变。
-    if not force and os.path.exists(aln_file) and os.path.getsize(aln_file) > 0:
+    # 2026-10-11 (P0): 复用条件由 `size > 0` 收紧为 `_usable_alignment`
+    # (存在 + 非空 + 含 FASTA 记录符)。0 字节/半截文件不得被当成"已有比对"。
+    if not force and _usable_alignment(aln_file):
         log.info(f"  [align] {vname}: MAFFT alignment exists, use")
         return {"success": True, "alignment": aln_file}
     if force and os.path.exists(aln_file):
         log.info(f"  [align] {vname}: --force, 重新计算比对 (忽略已有 {Path(aln_file).name})")
 
     provided = prep.get("combined_fasta", "")
-    if provided and os.path.exists(provided) and provided != aln_file:
+    # 2026-10-11 修 (P0): 原判定只有 `os.path.exists(provided)` —— **0 字节的
+    # "provided alignment" 会被当作成功返回**, 于是下游 rdp5/tree/clock 全部吃
+    # 空文件。PSTVd 工作副本的 pstvd_mafft.aln.fasta 被截成 0 字节后, 整条链
+    # 就是这样一路"成功"到各个 stage 各自失败, 真正的原因从未被喊出来。
+    # 2026-10-13 修 (P0, AUDIT-1009 P0-1): 「provided 早退」只允许 prep 显式声明
+    # provided_alignment=True 的模式 (work-dir 的 --alignment)。batch/datasets
+    # 模式的 combined_fasta 已被 clean 就地改写成**未比对** clean.fasta —— 它非空
+    # 且是合法 FASTA, 旧判定恒命中早退 → MAFFT 从不执行, rdp5/tree/clock/beast/
+    # gene_dating/splitstree 全链吃未比对输入。
+    if (provided and prep.get("provided_alignment")
+            and provided != aln_file and _usable_alignment(provided)):
         log.info(f"  [align] {vname}: using provided alignment: {Path(provided).name}")
         return {"success": True, "alignment": provided}
+    if (provided and prep.get("provided_alignment")
+            and provided != aln_file and os.path.exists(provided)):
+        # 存在但不可用 → 明确报错, 不要静默降级
+        log.error(f"  [align] {vname}: provided alignment 不可用 (0 字节/非 FASTA): {provided}")
+        return {"success": False,
+                "error": f"provided alignment unusable (empty or not FASTA): {provided}"}
 
     if args.skip_msa:
         log.warning(f"  [align] {vname}: --skip_msa but no alignment available, skip")
@@ -1252,18 +1994,35 @@ def run_stage_align(prep, tools, args, logger, force=False) -> Dict:
     return {"success": True, "alignment": aln_file}
 
 
-def run_stage_rdp5(aln_file, prep, tools, args, logger) -> Optional[str]:
+def run_stage_rdp5(aln_file, prep, tools, args, logger) -> Dict:
     """rdp5: RDP5 重组检测 → 删除重组子 (默认) 或 mask 区间 (--rdp5_mask)
 
     默认策略 (2026-08-27 改): drop_recombinants 删整条重组序列
       → 对剩余序列重新 MAFFT → 后续 tree/clock/beast 等全部吃重比对
     保留策略: --rdp5_mask 时走旧 mask 区间置 N (不重比对, 保样本量)
-    返回: 后续 stage 应使用的比对路径"""
+
+    ── 返回值 (2026-10-11 改为结构化) ──
+    旧签名 `-> Optional[str]` 只有"真值/None"两态, 调用方 `if masked:` 无法区分
+    「产出了干净比对」与「方法不适用, 原样返回输入」—— 于是 PSTVd 的短序列 skip
+    被记成了 rdp5 **done**(写下 rdp5.done + 把原比对登记为 masked_alignment)。
+    现返回三态:
+        {"status": "ok",      "alignment": <干净比对路径>, "metrics": {...}}
+        {"status": "skipped", "skip_reason": <原因>}
+        {"status": "failed",  "error": <原因>}
+    调用方据此分别 _mark / _mark_skipped / _fail。
+    """
     vname = prep["virus_name"]
     out_dir = prep["output_dir"]
     log = logger
     rdp5_dir = os.path.join(out_dir, ph_dir('recomb'), "rdp5")
     os.makedirs(rdp5_dir, exist_ok=True)
+
+    # ── 输入合法性: 空/损坏比对必须显式失败 ──
+    # 2026-10-11 修 (P0): 原实现里 _aln_len==0 时 `0 < _aln_len < 500` 为假 →
+    # 会**带着空文件去跑 RDP5**, 结果只是"CSV not found"这种误导性报错。
+    if not _usable_alignment(aln_file):
+        return {"status": "failed",
+                "error": f"输入比对不可用 (缺失/0 字节/非 FASTA): {aln_file}"}
 
     # 短序列防御 (2026-09-02): 类病毒 (如 PSTVd ~359nt) 太短, RDP5 窗口方法无足够位点,
     # wine 下静默跑不出 CSV → 记 skip 而非 fail
@@ -1276,16 +2035,31 @@ def run_stage_rdp5(aln_file, prep, tools, args, logger) -> Optional[str]:
                         break
                 else:
                     _first_seq.append(_line.strip())
-        _aln_len = max((len(s) for s in _first_seq), default=0)
-    except OSError:
-        _aln_len = 0
-    if 0 < _aln_len < 500:
-        log.info(f"  [rdp5] 比对仅 {_aln_len} bp (<500, 类病毒/超短序列), RDP5 窗口方法不适用, 记 skip")
-        return aln_file
+        # 2026-10-11 修 (P1): 原为 `max(len(s) for s in _first_seq)` —— 那是**最大行宽**,
+        # 只在"一条序列一行"(MAFFT/iqtree 输出) 时等于序列长。若比对被换行(如 60 列),
+        # 500 bp 的序列会被算成 60 → 误判为"类病毒超短序列"而 skip 整个 RDP5。
+        # 改为**求和**, 对未换行文件结果不变, 对换行文件才正确。
+        _aln_len = sum(len(s) for s in _first_seq)
+    except OSError as e:
+        return {"status": "failed", "error": f"读取比对失败: {e}"}
+    if _aln_len == 0:
+        return {"status": "failed", "error": "比对序列长度为 0 (空记录)"}
+    if _aln_len < RDP5_MIN_ALN_LEN:
+        reason = (f"alignment only {_aln_len} bp (<{RDP5_MIN_ALN_LEN}, viroid/very short sequence), "
+                  f"RDP5 window methods lack enough sites, not applicable")
+        log.info(f"  [rdp5] {reason}")
+        return {"status": "skipped", "skip_reason": reason,
+                "metrics": {"rdp5_aln_len": _aln_len, "rdp5_skipped": True}}
 
     log.info(f"  [rdp5] {vname}: RDP5 recombination detection (stage={args.rdp5_stage})...")
 
     rdp5_script = os.path.expanduser(args.rdp5_script)
+    # 2026-10-12 (test E): 脚本缺失守卫 (直调也生效) —— 环境无 RDP5 时**明确报错并
+    # 返回 None**, 绝不启动子进程把误导性的子进程报错当成本 stage 的结论。
+    # 调用方 (process_virus) 预检后仍会归一化为 _skip('rdp5', 'na')。
+    if not os.path.exists(rdp5_script):
+        log.warning(f"  [rdp5] RDP5 脚本不存在: {rdp5_script} —— 环境无 RDP5, 跳过")
+        return None
     rec_cmd = [sys.executable, "-m", "recombination_analysis",
                "--fasta", aln_file, "--prefix", vname, "--outdir", rdp5_dir,
                "--rdp5-script", rdp5_script, "--stage", args.rdp5_stage,
@@ -1294,13 +2068,15 @@ def run_stage_rdp5(aln_file, prep, tools, args, logger) -> Optional[str]:
         rec_cmd += ["--genes", args.rdp5_genes]
     rr = subprocess.run(rec_cmd, capture_output=True, text=True, encoding='utf-8', errors='replace', cwd=str(SCRIPT_DIR))
     if rr.returncode != 0:
-        log.warning(f"  [rdp5] RDP5 failed (exit={rr.returncode}): {(rr.stderr or rr.stdout)[-400:]}")
-        return None
+        msg = f"RDP5 failed (exit={rr.returncode}): {(rr.stderr or rr.stdout)[-400:]}"
+        log.warning(f"  [rdp5] {msg}")
+        return {"status": "failed", "error": msg}
 
     rdp5_csv = os.path.join(rdp5_dir, f"{vname}.csv")
     if not os.path.exists(rdp5_csv):
-        log.warning(f"  [rdp5] RDP5 CSV not found: {rdp5_csv}")
-        return None
+        msg = f"RDP5 CSV not found: {rdp5_csv}"
+        log.warning(f"  [rdp5] {msg}")
+        return {"status": "failed", "error": msg}
     log.info(f"  [rdp5] RDP5 events CSV: {rdp5_csv}")
 
     # ── 策略 A (默认): 删重组子 → 重新 MAFFT ──
@@ -1314,20 +2090,28 @@ def run_stage_rdp5(aln_file, prep, tools, args, logger) -> Optional[str]:
             drop_cmd += ["--genes", args.rdp5_genes]
         dr = subprocess.run(drop_cmd, capture_output=True, text=True, encoding='utf-8', errors='replace', cwd=str(SCRIPT_DIR))
         if dr.returncode != 0:
-            log.warning(f"  [rdp5] drop_recombinants failed: {(dr.stderr or dr.stdout)[-300:]}")
-            return None
+            msg = f"drop_recombinants failed: {(dr.stderr or dr.stdout)[-300:]}"
+            log.warning(f"  [rdp5] {msg}")
+            return {"status": "failed", "error": msg}
         dropped_fa = os.path.join(drop_dir, "dropped_recombinants.fasta")
-        if not os.path.exists(dropped_fa):
-            log.warning(f"  [rdp5] drop output not found: {dropped_fa}")
-            return None
+        if not _usable_alignment(dropped_fa):
+            msg = f"drop 产物缺失或为空: {dropped_fa}"
+            log.warning(f"  [rdp5] {msg}")
+            return {"status": "failed", "error": msg}
         # 删除后为纯序列 (含旧 gap 列), 重新 MAFFT 建立新比对坐标
         realn = os.path.join(rdp5_dir, "rdp5_dropped.realn.fasta")
         log.info(f"  [rdp5] realigning {Path(dropped_fa).name} (MAFFT) → {Path(realn).name}...")
-        if not run_mafft(dropped_fa, realn, threads=args.threads, logger=log):
-            log.warning("  [rdp5] realign failed, fallback to masked-strategy alignment")
-            return None
+        if not run_mafft(dropped_fa, realn, threads=args.threads, logger=log) \
+                or not _usable_alignment(realn):
+            msg = "realign 失败或产出为空 (fallback 到 masked 策略亦不可用)"
+            log.warning(f"  [rdp5] {msg}")
+            return {"status": "failed", "error": msg}
         log.info(f"  [rdp5] recombinant-dropped + realigned: {realn}")
-        return realn
+        n_events = _count_rdp5_events(rdp5_csv)
+        return {"status": "ok", "alignment": realn,
+                "metrics": {"rdp5_events": n_events,
+                            "rdp5_aln_len": _aln_len,
+                            "rdp5_strategy": "drop_realign"}}
 
     # ── 策略 B (--rdp5_mask): 旧 mask 区间置 N (不重比对) ──
     mask_cmd = [sys.executable, "-m", "mask_recombination",
@@ -1339,14 +2123,29 @@ def run_stage_rdp5(aln_file, prep, tools, args, logger) -> Optional[str]:
         mask_cmd += ["--genes", args.rdp5_genes]
     mr = subprocess.run(mask_cmd, capture_output=True, text=True, encoding='utf-8', errors='replace', cwd=str(SCRIPT_DIR))
     if mr.returncode != 0:
-        log.warning(f"  [rdp5] mask_recombination failed: {(mr.stderr or mr.stdout)[-300:]}")
-        return None
+        msg = f"mask_recombination failed: {(mr.stderr or mr.stdout)[-300:]}"
+        log.warning(f"  [rdp5] {msg}")
+        return {"status": "failed", "error": msg}
     masked_fa = os.path.join(rdp5_dir, "masked", "masked_N.fasta")
-    if os.path.exists(masked_fa):
+    if _usable_alignment(masked_fa):
         log.info(f"  [rdp5] masked alignment: {masked_fa}")
-        return masked_fa
-    log.warning(f"  [rdp5] mask output not found: {masked_fa}")
-    return None
+        return {"status": "ok", "alignment": masked_fa,
+                "metrics": {"rdp5_events": _count_rdp5_events(rdp5_csv),
+                            "rdp5_aln_len": _aln_len,
+                            "rdp5_strategy": "mask"}}
+    msg = f"mask 产物缺失或为空: {masked_fa}"
+    log.warning(f"  [rdp5] {msg}")
+    return {"status": "failed", "error": msg}
+
+
+def _count_rdp5_events(csv_path) -> int:
+    """统计 RDP5 事件 CSV 的数据行数 (去掉表头); 解析失败返回 0。"""
+    try:
+        with open(csv_path, encoding="utf-8-sig", errors="replace") as f:
+            lines = [ln for ln in f.read().splitlines() if ln.strip()]
+        return max(0, len(lines) - 1)
+    except OSError:
+        return 0
 
 
 def _iqtree_params_from_args(args) -> Dict:
@@ -1562,6 +2361,78 @@ def run_stage_saturation(prep, aln_file, args, logger) -> Dict:
     return results
 
 
+def _trimal_trim(aln_file, out_fasta, logger, mode="gt", value=0.1):
+    """用 trimAl 修剪比对 (剔除高 gap 列 / 低质量区), 供 NeighborNet 建网。
+
+    ⚠ 为什么要做 (2026-10-12 第 11 轮) —— 喂给 Splitstree 的是**未修剪**的 mafft 输出,
+      145x16310 里有 **9.5%** 的列 gap 率 >10% (421 个碎片段, 含末端残缺/引物区)。
+      这些列的 P-distance 噪声会把 NeighborNet 的冲突信号堆在中心 → 出一团解不开
+      的乱网。修剪后 (保留 90.9% 列) 网络明显收敛, 且 **aspect 从随机二选一
+      稳定为 1.63** (不再出现 449/514 两种实现) —— 因为高变列正是 `EqualAngle` 的
+      `isCircular` 判定翻转的来源。
+
+    参数:
+      mode='gt'   → `-gt <value>`  (gap 阈值; value=0.1 保留 gap<=10% 的列)
+      mode='auto' → `-automated1`  (启发式; 本数据实测**过度修剪**, 退化成三叉星芒, 勿用)
+      mode='nogaps' → `-nogaps`    (剪得最狠, 也偏退化)
+
+    实测对照 (145x16310, P-distance + NeighborNet):
+      | 参数        | 保留列 | 节点 | 边   | aspect |
+      | 原始        | 16310  |449/514|625/829|1.00/1.62|
+      | -gt 0.1     | 14829  | 516  | 835  | 1.63  |  ← 采用
+      | -gt 0.2     | 14813  | 508  | 820  | 1.63  |
+      | -automated1 | 14812  | 437  | 603  | 0.74  |  ← 退化
+      | -nogaps     | 13596  | 460  | 650  | 1.03  |  ← 退化
+
+    返回修剪后的 fasta 路径; 失败 (无 trimAl / 报错 / 结果为空) 返回 None (调用方回退原比对)。
+    """
+    try:
+        trimal = find_tool("trimal")
+    except Exception:                        # noqa: BLE001
+        trimal = None
+    if not trimal:
+        import shutil as _sh
+        trimal = _sh.which("trimal")
+    if not trimal:
+        logger.warning("  [splitstree] trimAl 不可用, 用未修剪比对建网")
+        return None
+    if mode == "auto":
+        opt = ["-automated1"]
+    elif mode == "nogaps":
+        opt = ["-nogaps"]
+    else:
+        opt = ["-gt", str(value)]
+    os.makedirs(os.path.dirname(os.path.abspath(out_fasta)), exist_ok=True)
+    cmd = [trimal, "-in", aln_file] + opt + ["-fasta", "-out", out_fasta]
+    try:
+        env = dict(os.environ)
+        # trimAl 动态链接 libgomp 等; 服务器上需 mambaforge/lib (见 MEMORY.md 环境节)
+        _ml = os.path.expanduser("~/mambaforge/lib")
+        if os.path.isdir(_ml):
+            env["LD_LIBRARY_PATH"] = _ml + ":" + env.get("LD_LIBRARY_PATH", "")
+        r = subprocess.run(cmd, capture_output=True, timeout=1800, env=env)
+        if r.returncode != 0 or not os.path.exists(out_fasta):
+            logger.warning("  [splitstree] trimAl 失败 (rc=%s): %s"
+                           % (r.returncode, r.stderr.decode(errors="replace")[:200]))
+            return None
+        if os.path.getsize(out_fasta) < 100:
+            logger.warning("  [splitstree] trimAl 输出为空, 回退原比对")
+            return None
+        # 记一行修剪摘要 (列数变化)
+        try:
+            def _ncol(p):
+                _L = [l for l in open(p, errors="ignore") if not l.startswith(">")]
+                return len(_L[0].strip()) if _L else 0
+            logger.info("  [splitstree] trimAl %s: %d -> %d 列"
+                        % (" ".join(opt), _ncol(aln_file), _ncol(out_fasta)))
+        except Exception:                     # noqa: BLE001
+            pass
+        return out_fasta
+    except Exception as e:                    # noqa: BLE001
+        logger.warning("  [splitstree] trimAl 异常: %s" % e)
+        return None
+
+
 def run_stage_splitstree(prep, aln_file, args, logger) -> Dict:
     """splitstree: SplitsTree6 NeighborNet 分裂网络 (检验树状信号/网状进化)"""
     vname = prep["virus_name"]
@@ -1576,10 +2447,22 @@ def run_stage_splitstree(prep, aln_file, args, logger) -> Dict:
     except ImportError:
         logger.warning("  [splitstree] splitstree_bridge 不可用, 跳过")
         return results
+    # ── trimAl 修剪 (第 11 轮新增): 未修剪比对的高 gap 列会让 NeighborNet 中心
+    #    堆成一团乱网, 且 aspect 在 449/514 两种实现间随机跳。修剪后收敛。
+    #    `--splitstree-trim {gt,auto,nogaps,none}` 控制, 默认 gt=0.1。
+    _tm = str(getattr(args, "splitstree_trim", "gt") or "gt").lower()
+    _aln_use = aln_file
+    if _tm != "none":
+        _tf = os.path.join(outdir, "neighbornet_trimmed.aln.fasta")
+        _r = _trimal_trim(aln_file, _tf, logger, mode=_tm,
+                          value=float(getattr(args, "splitstree_trim_gap", 0.1)))
+        if _r:
+            _aln_use = _r
+            results["outputs"]["splitstree_trimmed_aln"] = _r
     logger.info(f"  [splitstree] {vname}: NeighborNet 分裂网络...")
     import contextlib, io as _io
     argv_backup = sys.argv
-    sys.argv = ['splitstree_bridge.py', '-i', aln_file, '-o', outdir,
+    sys.argv = ['splitstree_bridge.py', '-i', _aln_use, '-o', outdir,
                 '--network', 'neighbornet', '--max-taxa', str(getattr(args, 'splitstree_max_taxa', 200))]
     try:
         with contextlib.redirect_stdout(_io.StringIO()):
@@ -1595,6 +2478,115 @@ def run_stage_splitstree(prep, aln_file, args, logger) -> Dict:
     if rc == 0 and os.path.exists(nexus) and os.path.getsize(nexus) > 100:
         results["success"] = True
         results["outputs"]["splitstree_nexus"] = nexus
+        # ── 出版级渲染 (2026-10-12 第 8 轮重做, 第 9 轮加分组弧线): 用 **SplitsTree6
+        #    自己的 SplitNetworkLayout** 出图。旧版是 Python 自绘 equal-angle, 用户实测
+        #    "根本不是 splitstree 的结果图" (自绘出星芒扇, SplitsTree 出宽扁网状)。
+        #    坐标走 webserver /draw_distances (见 splitstree_bridge.native_coords;
+        #    同一请求会随机返回两种实现, 第 9 轮起按 `select='radial'` 取**辐射版**)。
+        #    外圈分组弧线 + 组名由 splitstree_native_viz.draw_group_arcs() 自绘 ——
+        #    SplitsTree6 本体**没有**这个功能 (第 9 轮源码审查, 见 FIX_REPORT §⑬)。
+        #    取不到坐标时回退自绘版。渲染失败不影响 nexus 产物。
+        try:
+            from utils.splitstree_viz import load_group_map
+            _gc = str(getattr(args, "splitstree_group_col", "auto") or "auto")
+            _groups, _gnote = (None, None)
+            if _gc != "none":
+                # ⚠ 2026-10-13: 分组列可由 metadata_std（只有 location）之外的
+                #   **第二张表**提供（host.csv 只有 host）。`load_group_map` 是
+                #   单表接口 → 这里按候选表逐个试，取第一个命中的。
+                _metas = [prep.get("metadata_std") or prep.get("meta_csv") or ""]
+                _droot = os.path.dirname(os.path.abspath(outdir))
+                for _rel in ("data/host.csv", "data/sample_metadata.csv"):
+                    _p = os.path.join(_droot, _rel)
+                    if os.path.exists(_p) and _p not in _metas:
+                        _metas.append(_p)
+                for _m in _metas:
+                    if _m and os.path.exists(_m):
+                        _groups, _gnote = load_group_map(_m, _gc)
+                        if _groups:
+                            break
+            _pdf = os.path.join(outdir, "neighbornet.pdf")
+            _png = os.path.join(outdir, "neighbornet.png")
+            _coords = os.path.join(outdir, "_st6_native", "nnet_radial.coords")
+            _done = False
+            if str(getattr(args, "splitstree_layout", "native") or "native") != "equal_angle":
+                try:
+                    from splitstree_bridge import native_coords
+                    os.makedirs(os.path.dirname(_coords), exist_ok=True)
+                    native_coords(os.path.join(outdir, "neighbornet.stree6"),
+                                  _coords, width=2886, height=1496)
+                    # ── 等长 (unweighted) 几何: 把每条边权重当 1 重放 DFS ──────
+                    # 用户 2026-10-12: "取消枝长, 等长" —— 参考图 (SplitsTree GUI
+                    # 截图) 是等长的规则网格, 而加权布局边长跨 344 倍 (放射长枝)。
+                    # 转换器 `_unweight.py` 自检 = "原权重重放 == 原坐标" (残差 < 0.5)。
+                    _unw = str(getattr(args, "splitstree_unweight", "on") or "on")
+                    if _unw in ("on", "auto"):
+                        try:
+                            # 用 `splitstree_native_viz` 自己的 `unweight_coords()`
+                            # (2026-10-13 起该能力已内联进脚本, 这里不再重复实现)。
+                            from utils.splitstree_native_viz import (
+                                unweight_coords as _uw_fn)
+                            _coords_unw = _coords.replace(
+                                ".coords", "_unweighted.coords")
+                            _ok_uw, _new_uw = _uw_fn(_coords, _coords_unw)
+                            if _ok_uw:
+                                _coords = _new_uw
+                                logger.info("  [splitstree] 等长布局 (unweighted) OK")
+                            else:
+                                logger.warning("  [splitstree] unweight 自检未通过, "
+                                               "沿用加权布局")
+                        except Exception as _ue:  # noqa: BLE001
+                            logger.warning(f"  [splitstree] unweight 失败, 沿用加权: {_ue}")
+                    from utils.splitstree_native_viz import render as _native_render
+                    # show_legend=False: 组名已在图内 (分组弧线), 不再叠图例
+                    # label_mode='ring': 145 个 tip 标签在中心密集区**必然**互压 ——
+                    #   旧 'tip' 模式实测 **478 对重叠** (不可交付)。'ring' 把标签推到
+                    #   网络外圈多层环上 + 细引线连回, 并做**环间避让**, 实测 **0 对**。
+                    #   (第 11 轮定型: 每字符宽系数 0.8656 + 逐对精确间距 + 环间消解。)
+                    _native_render(_coords, _pdf, _png, nexus=nexus,
+                                   title=vname, groups=_groups or None,
+                                   group_note=_gnote, label_mode="ring",
+                                   label_rings=int(getattr(args, "splitstree_label_rings", 9) or 9),
+                                   show_legend=False, lw_preset="auto")
+                    # 面板版: 半栏 4.58 in, 无标题/图例/题注/标签 (Fig3 面板 D)
+                    #   —— 符合「面板宽必须匹配源画布宽」, 否则字号打 5 折不可读。
+                    #   保留分组弧线 + 组名 (这是第 9 轮新增的图内信息), 字号压到 6.5。
+                    #   ⚠ lw_preset="auto": 等长坐标 → 自动切 flat (等粗)。用户口径
+                    #     「useWeights = false」= 等长 + 等粗, 两者必须同时生效。
+                    #   ⚠ canvas_aspect=1.0: 面板 D 与同排面板 C
+                    #     (`phylogeny/tree_circular.pdf`, 4.580 x 4.580, aspect 1.0)
+                    #     并排 → 画布比必须一致, 否则 D 比 C 矮 → 字母 D 错位
+                    #     (实测等长版 D 的自然比 0.9105, 字母低 0.41 in)。
+                    _panel = os.path.join(outdir, "neighbornet_panel.pdf")
+                    _native_render(_coords, _panel, None, groups=_groups or None,
+                                   label_mode="none", show_legend=False,
+                                   fit_text=False, width_in=4.58,
+                                   group_arcs=True, arc_label_fontsize=6.5,
+                                   lw_preset="auto", canvas_aspect=1.0)
+                    _done = True
+                    results["outputs"]["splitstree_coords"] = _coords
+                    logger.info("  [splitstree] 原生布局渲染 (SplitsTree6 SplitNetworkLayout)")
+                except Exception as _e:  # noqa: BLE001
+                    logger.warning(f"  [splitstree] 原生布局渲染失败, 回退自绘: {_e}")
+            if not _done:
+                from utils.splitstree_viz import render as _ss_render
+                _ss_render(nexus, _pdf, _png,
+                           groups=_groups or None, group_note=_gnote)
+                # 面板版兜底: Fig3 面板 D 指向 neighbornet_panel.pdf,
+                # 原生路径失败时退化为整页图副本 (不阻断 Fig3)
+                _panel = os.path.join(outdir, "neighbornet_panel.pdf")
+                if not os.path.exists(_panel) and os.path.exists(_pdf):
+                    import shutil as _sh
+                    _sh.copyfile(_pdf, _panel)
+            if os.path.exists(_pdf):
+                results["outputs"]["splitstree_pdf"] = _pdf
+            if os.path.exists(_png):
+                results["outputs"]["splitstree_png"] = _png
+            if _groups:
+                logger.info(f"  [splitstree] 分组着色 ({_gnote}): "
+                            f"{len(set(_groups.values()))} 组")
+        except Exception as _e:  # noqa: BLE001 — 渲染失败不拖垮网络产物
+            logger.warning(f"  [splitstree] 出版级渲染失败 (nexus 保留): {_e}")
         # 从 nexus 提取 splits 数作指标
         try:
             with open(nexus, errors='ignore') as f:
@@ -1629,7 +2621,9 @@ def run_stage_popgen(prep, aln_file, args, logger) -> Dict:
            "--fasta", aln_file,
            "--group", args.popgen_group,
            "--min-n", str(args.popgen_min_n),
-           "--perm", str(args.popgen_perm)]
+           "--perm", str(args.popgen_perm),
+           # 2026-10-12: 结构化统计 JSON (全局+按群体+Fst 矩阵), 供多面板统计图渲染
+           "--stats-json", os.path.join(popgen_dir, "popgen_stats.json")]
     if getattr(args, "popgen_exclude_reference", False):
         cmd.append("--exclude-reference")
     if getattr(args, "popgen_exclude_ids", None):
@@ -1657,6 +2651,32 @@ def run_stage_popgen(prep, aln_file, args, logger) -> Dict:
         m = re.search(r"Tajima's D = ([0-9.\-]+)", r.stdout)
         if m:
             results["metrics"] = {"popgen_tajima_d": float(m.group(1))}
+        # ── 统计可视化 (2026-10-12): 结构化 JSON → 多面板统计图 ──
+        # π/θ/Hd/Tajima's D/Fu's Fs/Fst 此前只有纯文本报告没有图; pypopart 的
+        # visualization 模块只画网络 (static_plot) 不画统计, 故自研渲染。
+        # 渲染失败只降级 (报告文本与 checkpoint 不受影响)。
+        try:
+            stats_json = os.path.join(popgen_dir, "popgen_stats.json")
+            if not os.path.exists(stats_json):
+                logger.warning("  [popgen] popgen_stats.json 未产出, 跳过统计绘图")
+            else:
+                from utils.popgen_plots import render_popgen_stats
+                pdf_p = os.path.join(popgen_dir, "popgen_stats.pdf")
+                png_p = os.path.join(popgen_dir, "popgen_stats.png")
+                with open(stats_json, encoding="utf-8") as _sj:
+                    _stats = json.load(_sj)
+                render_popgen_stats(_stats, pdf_p, png_p, title=vname)
+                if os.path.exists(png_p):
+                    results["outputs"]["popgen_stats_pdf"] = pdf_p
+                    results["outputs"]["popgen_stats_png"] = png_p
+                    n_pops = len(_stats.get("populations") or [])
+                    _fp = (_stats.get("fst_pairwise") or {}).get("pops") or []
+                    results["metrics"]["popgen_n_pops_plotted"] = n_pops
+                    results["metrics"]["popgen_n_fst_pairs"] = len(_fp) * (len(_fp) - 1) // 2
+                    logger.info(f"  [popgen] 统计图 → {os.path.basename(png_p)} "
+                                f"({n_pops} 个群体)")
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"  [popgen] 统计可视化失败 (报告不受影响): {e}")
     else:
         logger.warning(f"  [popgen] 失败: {(r.stderr or r.stdout)[-300:]}")
     return results
@@ -1679,8 +2699,10 @@ def run_stage_capheine(prep, args, logger) -> Dict:
     if not ref:
         gbks = sorted(Path(out_dir).glob("*.gbk")) + sorted(Path(out_dir).glob("*.gb"))
         if not gbks:
-            gbks = sorted(Path(out_dir, "data", "ncbi_ref").glob("*.gbk")) + \
-                   sorted(Path(out_dir, "data", "ncbi_ref").glob("*.gb"))  # online 产物
+            # 2026-10-13 修 (P1): 硬编码 "data"/"ncbi_ref" 在 standard 布局下失配
+            # (online 写的是 ph_dir('data')/ncbi_ref) → capheine 找不到 GBK 参考。
+            gbks = sorted(Path(out_dir, ph_dir('data'), "ncbi_ref").glob("*.gbk")) + \
+                   sorted(Path(out_dir, ph_dir('data'), "ncbi_ref").glob("*.gb"))  # online 产物
         if gbks:
             ref = os.path.join(capheine_dir, "ref_cds.fasta")
             gx = subprocess.run(
@@ -1696,7 +2718,7 @@ def run_stage_capheine(prep, args, logger) -> Dict:
                 except OSError:
                     pass
                 if not _has_cds:
-                    results["skip_reason"] = "viroid/no-CDS reference: 正选择 (密码子方法) 不适用"
+                    results["skip_reason"] = "viroid/no-CDS reference: positive selection (codon methods) not applicable"
                     logger.info(f"  [capheine] 参考 GBK 无 CDS (类病毒?), 记 skip: {gbks[0]}")
                 else:
                     logger.warning(f"  [capheine] gbk_extractor 未产出 CDS 参考: {ref}")
@@ -1737,7 +2759,7 @@ def run_stage_capheine(prep, args, logger) -> Dict:
                 _gb_head = _gf.read(4000)
             _has_cds = " CDS " in _gb_head or "CDS\u0009" in _gb_head or "codon" in _gb_head.lower()
             if not _has_cds:
-                results["skip_reason"] = "viroid/no-CDS reference: 正选择 (密码子方法) 不适用"
+                results["skip_reason"] = "viroid/no-CDS reference: positive selection (codon methods) not applicable"
                 logger.info(f"  [capheine] 参考 GBK 无 CDS (类病毒?), 记 skip: {ref}")
             else:
                 logger.warning(f"  [capheine] 提取 CDS 失败: {ref}")
@@ -1943,12 +2965,131 @@ def run_stage_gene_dating(prep, results, args, logger) -> None:
     except subprocess.TimeoutExpired:
         logger.warning("  [gene_dating] 部署超时 (>900s)")
         return
+    if gdr.returncode == 3:
+        # 2026-10-13 修 (P1): 子进程约定退出码 3 = BEAST 工具不可用 (旧版 exit 0
+        # 假成功 → checkpoint 被永久跳过)。
+        logger.warning("  [gene_dating] BEAST 不可用, 部署未提交 (装好 BEAST 后重跑本 stage)")
+        return
     if gdr.returncode == 0:
+        # 成功判据加产物验证 (2026-10-13): 退出码 0 但目录空 = 部署脚本异常, 不写
+        # checkpoint (否则下轮 _done('gene_dating') 恒真、永久跳过)。
+        _gd_products = ([f for f in os.listdir(gene_dating_dir)
+                         if f.endswith((".sh", ".xml", ".tsv"))]
+                        if os.path.isdir(gene_dating_dir) else [])
+        if not _gd_products:
+            logger.warning("  [gene_dating] 部署退出码 0 但目录无产物, 不写 checkpoint")
+            return
         results["outputs"]["gene_dating_dir"] = gene_dating_dir
         results["metrics"]["gene_dating_genes_dir"] = genes_dir
         logger.info(f"  [gene_dating] 部署完成 → {gene_dating_dir} (后台 BEAST 逐基因运行)")
     else:
         logger.warning(f"  [gene_dating] 失败: {(gdr.stderr or gdr.stdout)[-400:]}")
+
+
+def run_stage_treetime(prep, aln_file, tree_file, args, logger, results) -> None:
+    """treetime: TreeTime CLI 完整时间树 (timetree.nexus) — phymapr 路线前置。
+
+    2026-10-12 新增 (STAGE_REFERENCE §19; utils/treetime_bridge.py)。
+    与 clock 阶段的关系: clock 的 run_treetime_rtt 走 **Python API** 只做 RTT 回归口径
+    (无注解 newick); 本 stage 走 **`python -m treetime` CLI**: clock-filter(IQD) +
+    coalescent(skyline) + --confidence + 固定种子 → 带 `[&date=...]` 注解的
+    timetree.nexus (phymapr `treeio::read.beast` 的硬性输入)。
+
+    外部工具缺失 (phylo-treetime 未装/日期不足/CLI 失败) → **只告警不抛异常**:
+    由调用方按 outputs 判定为"优雅 skip"(default 关闭的 stage, 缺失不阻断主线)。
+    """
+    out_dir = prep["output_dir"]
+    out = os.path.join(out_dir, ph_dir('time'), "treetime")
+    from utils.treetime_bridge import run_treetime_full
+    logger.info(f"  [treetime] {prep['virus_name']}: TreeTime CLI 完整时间树 "
+                f"(clock-filter={getattr(args, 'treetime_clock_filter', 4.0)}, "
+                f"coalescent={getattr(args, 'treetime_coalescent', 'skyline')})...")
+    tt = run_treetime_full(
+        tree_file=tree_file, aln_file=aln_file,
+        dates_csv=prep.get("dates_csv", ""), output_dir=out,
+        clock_filter=getattr(args, "treetime_clock_filter", 4.0),
+        coalescent=getattr(args, "treetime_coalescent", "skyline"),
+        clock_rate=getattr(args, "treetime_clock_rate", None),
+        log=LogCollector(logger))
+    if not tt.get("success"):
+        logger.warning(f"  [treetime] 未产出 (treetime 未装/日期不足/CLI 失败), "
+                       f"skipped: {tt.get('error')}")
+        return
+    results["outputs"]["treetime_nexus"] = tt["timetree_nexus"]
+    _m = tt.get("metrics") or {}
+    for _k, _dst in (("clock_rate", "treetime_clock_rate"),
+                     ("r_squared", "treetime_r_squared"),
+                     ("n_tips_total", "treetime_n_tips_total"),
+                     ("n_tips_used", "treetime_n_tips_used"),
+                     ("n_tips_pruned_undated", "treetime_n_tips_pruned_undated"),
+                     ("clock_filter_iqd", "treetime_clock_filter_iqd"),
+                     ("coalescent", "treetime_coalescent"),
+                     ("rng_seed", "treetime_rng_seed")):
+        if _m.get(_k) is not None:
+            results["metrics"][_dst] = _m[_k]
+    # DRT 未通过 → 时间树仅供探索, 不进论文定年结论 (与 clock 阶段同一纪律:
+    # "PSTVd 不报 TMRCA" 同源)
+    if results["metrics"].get("drt_passed") is False:
+        results["metrics"]["treetime_temporal_caveat"] = (
+            "clock 阶段 DRT 未通过: 时间树仅供探索, 不做定年结论")
+    logger.info(f"  [treetime] timetree.nexus → {tt['timetree_nexus']}")
+
+
+def run_stage_phymapr(prep, results, args, tools, logger) -> None:
+    """phymapr: 系统地理 TreeTime 路线 (BM-ASR 祖先重建 + 传播地图)。
+
+    2026-10-12 新增 (STAGE_REFERENCE §20; utils/phymapr_bridge.py)。
+    吃 treetime stage 的 timetree.nexus + 管线三通道元数据 (name/date/location),
+    **不依赖 BEAST** —— 与本管线 BEAST 路线 (phylogeo→geo_paths) 方法不同源。
+    外部依赖: Rscript + phymapr R 包 (缺 → 只告警, 由调用方判 skip, 不抛异常)。
+    """
+    out_dir = prep["output_dir"]
+    timetree = (results.get("outputs", {}).get("treetime_nexus")
+                or os.path.join(out_dir, ph_dir('time'), "treetime", "timetree.nexus"))
+    meta = prep.get("metadata_std") or prep.get("meta_csv") or ""
+    if not _usable_file(timetree):
+        logger.warning(f"  [phymapr] 缺 timetree.nexus (先跑 treetime 阶段): {timetree} → skipped")
+        return
+    if not _usable_file(meta):
+        logger.warning(f"  [phymapr] 缺元数据 (name/date/location): {meta} → skipped")
+        return
+
+    phy_dir = os.path.join(out_dir, ph_dir('geography'), "phymapr")
+    rscript = (tools or {}).get("Rscript") or "Rscript"
+    from utils.phymapr_bridge import build_phymapr_metadata, run_phymapr
+    logger.info(f"  [phymapr] {prep['virus_name']}: phymapr BM-ASR 系统地理 "
+                f"(map_style={getattr(args, 'phymapr_map_style', 'polygon')})...")
+    bridge = build_phymapr_metadata(
+        meta, os.path.join(phy_dir, "phymapr_metadata.tsv"), log=LogCollector(logger))
+    if not bridge.get("success"):
+        logger.warning(f"  [phymapr] 元数据桥失败 → skipped: {bridge.get('error')}")
+        return
+    pr = run_phymapr(
+        timetree_nexus=timetree, meta_tsv=bridge["out_tsv"], output_dir=phy_dir,
+        rscript_path=rscript,
+        map_style=getattr(args, "phymapr_map_style", "polygon"),
+        n_prune_early=getattr(args, "phymapr_n_prune_early", 4),
+        direct_snp=getattr(args, "phymapr_direct_snp", 2.0),
+        indirect_snp=getattr(args, "phymapr_indirect_snp", 5.0),
+        distant_style=getattr(args, "phymapr_distant_style", "import_arrow"),
+        pace=getattr(args, "phymapr_pace", 0.5),
+        log=LogCollector(logger))
+    if not pr.get("success"):
+        logger.warning(f"  [phymapr] 未产出 (R 依赖缺失/计算失败) → skipped: "
+                       f"{pr.get('error')}")
+        return
+    results["outputs"].update(pr.get("outputs") or {})
+    if pr.get("summary_json"):
+        results["outputs"]["phymapr_summary"] = pr["summary_json"]
+    _m = pr.get("metrics") or {}
+    for _k in ("n_pathways", "n_episodes", "n_locations",
+               "n_tips_used", "n_tips_total", "n_tips_dropped"):
+        if _m.get(_k) is not None:
+            results["metrics"][f"phymapr_{_k}"] = _m[_k]
+    for _k, _v in (_m.get("transmission_counts") or {}).items():
+        results["metrics"][f"phymapr_conf_{_k}"] = _v
+    logger.info(f"  [phymapr] 完成 → {phy_dir} "
+                f"(pathways={_m.get('n_pathways')}, episodes={_m.get('n_episodes')})")
 
 
 def _find_phylogeo_mcc(out_dir: str) -> Optional[str]:
@@ -1959,8 +3100,47 @@ def _find_phylogeo_mcc(out_dir: str) -> Optional[str]:
     """
     phylogeo_dir = os.path.join(out_dir, ph_dir('geography'), "phylogeography")
     cands = list(Path(phylogeo_dir).glob("merged/mcc.tree")) \
-        + list(Path(phylogeo_dir).glob("*mcc*.tree"))
+        + sorted(Path(phylogeo_dir).glob("*mcc*.tree"))
     return str(cands[0]) if cands else None
+
+
+def _phylogeo_log_candidates(phylogeo_dir: str) -> List[str]:
+    """phylogeo 的 BEAST log 候选, **按可信度排序** (最佳在前)。
+
+    2026-10-12 修 (P1): 旧版直接
+        list(Path(d).glob("merged/merged.log"))
+        + list(Path(d).glob("phylogeo_sky*.log"))
+        + list(Path(d).glob("phylogeo_beast1*.log"))
+    然后取 `[0]`。问题: `phylogeo_sky*.log` 会同时命中 BEAST **控制台输出**
+    `phylogeo_sky1_run.log` —— 它只有 1 列、**0 个** `location.indicators` 列。
+    文件系统枚举顺序下它常排在最前, 于是**没有** merged/merged.log 时 (实测 GCVA
+    快照正是这种形态):
+      · generate_spread3_json → "log 中未解析到任何 BSSVS 迁移路线" → spread3.json 不生成
+      · extract_migration_bf  → migration_bf.csv 不生成 → 多面板图 Panel B 缺失
+    实测同目录三份 log 的 indicator 列数: phylogeo_sky1.log=30,
+    phylogeo_sky1.location.rates.log=30, phylogeo_sky1_run.log=**0**。
+
+    现口径: ① 优先 merged/merged.log (burnin 已处理, 样本最全);
+            ② 主链 log `<prefix><N>.log` (正则精确匹配, 排除任何二级后缀);
+            ③ 其余候选 (仍排除 *_run.log);
+    且**全部排序** —— 文件系统枚举顺序不可靠, 会导致同一目录两次跑出不同结果。
+    """
+    out: List[str] = []
+    merged = os.path.join(phylogeo_dir, "merged", "merged.log")
+    if os.path.exists(merged) and os.path.getsize(merged) > 0:
+        out.append(merged)
+    cands = []
+    for pat in ("phylogeo_sky", "phylogeo_beast1"):
+        for p in Path(phylogeo_dir).glob(f"{pat}*.log"):
+            if p.name.endswith("_run.log"):
+                continue            # BEAST 控制台输出, 不是主 log
+            cands.append(p)
+    main = sorted(p for p in cands
+                  if re.fullmatch(r"phylogeo_(?:sky|beast1)\d+\.log", p.name))
+    main_set = set(main)
+    rest = sorted(p for p in cands if p not in main_set)
+    out += [str(p) for p in main] + [str(p) for p in rest]
+    return out
 
 
 def run_stage_geo(prep, results, aln_file, tree_file, args, logger) -> None:
@@ -1999,9 +3179,6 @@ def run_stage_geo(prep, results, aln_file, tree_file, args, logger) -> None:
         if mantel["success"]:
             results["outputs"]["mantel_plot"] = mantel["plot"]
             results["metrics"]["mantel_r"] = mantel["mantel_r"]
-            # 方法标注 (2026-10-03, S3-⑥): 置换口径 = 标签置换 (2026-10-03 前的
-            # "向量元素打乱" p 值不可比)。新增键, 既有读取 (HTML/CSV) 不受影响。
-            results["metrics"]["mantel_permutation"] = mantel.get("mantel_permutation", "")
     if tree and os.path.exists(tree) and geo_aln and os.path.exists(geo_aln):
         geo_tree = run_tree_geography(tree, meta_csv, geo_aln, geo_dir, log=LogCollector(logger))
         if geo_tree["success"]:
@@ -2374,7 +3551,7 @@ def _wait_chains_and_merge(work_dir, logger, label="beast", merge_fn=None,
     if not st:
         logger.warning(f"  [{label}] 无 run_status.json, 无法等待 (视为后台模式)")
         return False
-    merge_fn = merge_fn or (lambda wd, s: _default_merge(wd, s, background=False))
+    merge_fn = merge_fn or (lambda wd, s: _default_merge(wd, s))
     prefixes = st.get("prefixes", [])
     chain_len = st.get("chain_length", 0) or 1
     logger.info(f"  [{label}] 前台等待 {len(prefixes)} 链完成 (chain_length={chain_len/1e6:.0f}M, "
@@ -2534,6 +3711,10 @@ def run_stage_phylogeo(prep, results, aln_file, args, logger) -> bool:
                 fasta_file=aln_file, metadata_csv=meta_csv,
                 output_dir=phylogeo_dir,
                 chain_length=args.phylogeo_chain,
+                # 2026-10-13: 原先不传 log_every → 吃 bridge 默认 5000。
+                # 10M 链只落 2000 样本/链 (GCVA 实测 merged n=5403), ucld.mean
+                # 合并 ESS 仅 48。改为按目标样本数反算 (10M → 1000)。
+                log_every=beast_log_every(args.phylogeo_chain),
                 clock_model=args.phylogeo_clock,
                 tree_prior=tree_prior,
                 log=LogCollector(logger))
@@ -2583,12 +3764,13 @@ def run_stage_phylogeo(prep, results, aln_file, args, logger) -> bool:
                 logger.info("  [phylogeo] 合并产物已存在, 复用")
             else:
                 logger.info("  [phylogeo] 全部链完成, 合并 (logcombiner + treeannotator)...")
-                merge_chains(phylogeo_dir, st, background=False)
+                # 2026-10-12: merge() 的 background 形参已删 (恒同步), 不再传。
+                merge_chains(phylogeo_dir, st)
         elif st:
             # 前台等待闭环 (2026-09-02): 轮询到链完成再合并, 不再 pending 等二次重跑
             ok = _wait_chains_and_merge(
                 phylogeo_dir, logger, label="phylogeo",
-                merge_fn=lambda wd, s: merge_chains(wd, s, background=False))
+                merge_fn=lambda wd, s: merge_chains(wd, s))
             if not ok:
                 pending = True
     except Exception as e:
@@ -2611,9 +3793,10 @@ def run_stage_phylogeo(prep, results, aln_file, args, logger) -> bool:
     # 2026-08-30 审计修复 (viz 门控): 旧版只 glob 链原始 log，链后台跑完 → 重跑本 stage
     # 时若 checkpoint 已 done 直接 skip，viz 块从未执行。加入 merged/merged.log 候选，
     # 且优先用合并链 (burnin 已处理、样本更完整)。
-    log_files = list(Path(phylogeo_dir).glob("merged/merged.log")) \
-        + list(Path(phylogeo_dir).glob("phylogeo_sky*.log")) \
-        + list(Path(phylogeo_dir).glob("phylogeo_beast1*.log"))
+    # 2026-10-12 修 (P1): 候选改由 _phylogeo_log_candidates 给出 —— 旧版裸 glob
+    # 会把控制台输出 phylogeo_sky1_run.log 排在首位 (0 个 indicator 列) → 迁移矩阵
+    # 解析成 0 条 → spread3.json / migration_bf.csv 双双不生成。
+    log_files = _phylogeo_log_candidates(phylogeo_dir)
     locations = geo_xml.get("locations", []) if geo_xml else []
     if log_files and locations:
         viz_dir = os.path.join(out_dir, ph_dir('geography'), "visualization")
@@ -2647,7 +3830,7 @@ def run_stage_phylogeo(prep, results, aln_file, args, logger) -> bool:
         # 发表级系统地理多面板图 (trees 优先用合并后的 merged.trees)
         merged_trees = os.path.join(phylogeo_dir, "merged", "merged.trees")
         trees_files = ([merged_trees] if os.path.exists(merged_trees) else [])\
-            + list(Path(phylogeo_dir).glob("phylogeo_sky*.trees"))
+            + sorted(Path(phylogeo_dir).glob("phylogeo_sky*.trees"))
         if trees_files:
             loc_str = ",".join(locations)
             run_postprocess("phylogeo_figures", logger,
@@ -2682,6 +3865,31 @@ def run_stage_phylogeo(prep, results, aln_file, args, logger) -> bool:
 # Phase 5: BEAST (full-length)
 # ═══════════════════════════════════════════════════════════════════
 
+def beast_log_every(chain_length: int, target_samples: int = 10_000) -> int:
+    """BEAST logEvery: 按「每链目标样本数」反算采样间隔。
+
+    ⚠ 历史缺陷 (2026-10-13 修): 原调用处写的是
+        log_every = max(1000, args.beast_chain // 100)
+    即 **无论链多长都只取 ~100 个样本**。GCVA 实测 chain_length=5,000,000
+    → logEvery=50,000 → 每链仅 101 个样本 (烧 10% burnin 后 91), 三链合并 273。
+    后果:
+      · **无法诊断收敛**: 合并序列 ACF 在 lag 30 仍 >0.7, ACT 被估到 7e6 世代
+        (比链长还大), ess_results.csv 全线 4–10 —— 粗采样把「采样间隔」当成了
+        「自相关时间」;
+      · **MCC 树只有 273 棵**, treeannotator 的 height_95%_HPD 宽度退化到 ~1e-14;
+      · **skyline 只有 273 点**, BSP 阶梯图剧烈锯齿。
+    现按 target_samples (默认 10,000) 反算, 使链长与样本数解耦:
+      5M → 500;  20M → 2,000;  50M → 5,000;  200M → 20,000。
+    下限 100 防 chain_length 过小产生 0 间隔。
+
+    注: 严格说 ESS ≈ chain_length / ACT_generations, **与 logEvery 无关** ——
+    本修复不直接抬 ESS, 但它是「能否测量 ESS」「MCC/HPD 是否可用」的前提。
+    """
+    cl = int(chain_length or 0)
+    ts = max(1, int(target_samples))
+    return max(100, cl // ts)
+
+
 def run_phase_beast(prep, phase_results, args, tools, logger) -> Dict:
     vname = prep["virus_name"]
     out_dir = prep["output_dir"]
@@ -2714,7 +3922,7 @@ def run_phase_beast(prep, phase_results, args, tools, logger) -> Dict:
         log.info(f"  Generating BEAST1 XML (UCLN + skyline, clock-only dating)...")
         xml_r = generate_beast1_phylogeo_xml(
             fasta_file=aln_file, metadata_csv=dates_csv, output_dir=beast_dir,
-            chain_length=args.beast_chain, log_every=max(1000, args.beast_chain // 100),
+            chain_length=args.beast_chain, log_every=beast_log_every(args.beast_chain),
             clock_model="ucln", tree_prior="skyline",
             discretize_locations=False,   # 全长分子定年: 纯分子钟 (无 location CTMC/BSSVS)
             substitution_model="auto", gamma_categories=4,
@@ -2791,7 +3999,9 @@ def run_phase_beast(prep, phase_results, args, tools, logger) -> Dict:
                         log.info(f"  [beast] 合并产物已存在, 复用 merged.log")
                     else:
                         log.info(f"  [beast] 全部链完成, 合并 (logcombiner + treeannotator)...")
-                        merge_chains(beast_dir, st, background=True)
+                        # 2026-10-12: 原先传 background=True —— 而 merge() 从未使用该参数
+                        # (恒同步), 名字却暗示"已转后台可退出", 是误导。参数已删。
+                        merge_chains(beast_dir, st)
                     if os.path.exists(merged_log):
                         results["outputs"]["beast_log"] = merged_log
                         results["outputs"]["beast_trees"] = os.path.join(beast_dir, "merged", "mcc.tree")
@@ -2802,7 +4012,7 @@ def run_phase_beast(prep, phase_results, args, tools, logger) -> Dict:
                     if st:
                         ok = _wait_chains_and_merge(
                             beast_dir, log, label="beast",
-                            merge_fn=lambda wd, s: merge_chains(wd, s, background=True))
+                            merge_fn=lambda wd, s: merge_chains(wd, s))
                         if ok and os.path.exists(merged_log):
                             results["outputs"]["beast_log"] = merged_log
                             results["outputs"]["beast_trees"] = os.path.join(beast_dir, "merged", "mcc.tree")
@@ -2811,6 +4021,24 @@ def run_phase_beast(prep, phase_results, args, tools, logger) -> Dict:
                             if os.path.exists(chain1_log):
                                 results["outputs"]["beast_log"] = chain1_log
                                 results["outputs"]["beast_trees"] = os.path.join(beast_dir, "beast11.trees")
+                # 收敛门禁: 把 merged/convergence_gate.json 的结论带入 metrics,
+                # 供报告层据实标注 (未收敛 → 数值仅供探索)。⚠ 门禁只判"MCMC 混合",
+                # 与"数据有无时间信号"独立 (后者由 DRT/R² 管)。
+                _gate = os.path.join(beast_dir, "merged", "convergence_gate.json")
+                if os.path.exists(_gate):
+                    try:
+                        with open(_gate, encoding="utf-8") as _gf:
+                            _g = json.load(_gf)
+                        results["metrics"]["beast_convergence_verdict"] = _g.get("verdict")
+                        results["metrics"]["beast_worst_ess"] = _g.get("worst_ess")
+                        if _g.get("verdict") != "converged":
+                            results["metrics"]["beast_convergence_caveat"] = (
+                                "MCMC 未收敛 (关键参数最小 ESS "
+                                f"{_g.get('worst_ess')} < 200, 最差: {_g.get('worst_param')}): "
+                                "参数估计仅供探索, 不做定量结论")
+                            log.warning(f"  [beast] ⚠ 收敛门禁: {results['metrics']['beast_convergence_caveat']}")
+                    except Exception as _ge:
+                        log.warning(f"  [beast] 读取 convergence_gate.json 失败: {_ge}")
             except Exception as e:
                 log.warning(f"  [beast] 多链合并步骤异常: {e}")
                 if os.path.exists(chain1_log):
@@ -2820,22 +4048,6 @@ def run_phase_beast(prep, phase_results, args, tools, logger) -> Dict:
     pp_dir = os.path.join(beast_dir, "postprocess")
     log_file = results["outputs"].get("beast_log")
     trees_file = results["outputs"].get("beast_trees")
-    # 日志行数闸门 (2026-10-03): 退化日志(链未跑完/合并 burnin 超界)会让 ESS 走
-    # "样本数" 兜底 → 假 ESS=1 + 空白 BSP 图; 在此显式记录并告警 (下游 postprocess
-    # 的 ESS/BSP 自身也已设 <10 行拒出闸门)
-    if log_file and os.path.exists(log_file):
-        try:
-            with open(log_file, encoding="utf-8", errors="replace") as _f:
-                _rows = sum(1 for _L in _f
-                            if _L.strip() and not _L.startswith("#")
-                            and not _L.startswith("state"))
-            results["metrics"]["beast_log_rows"] = _rows
-            if _rows < 10:
-                log.warning(f"  ⚠ [beast] 日志仅 {_rows} 行数据 ({log_file}) — "
-                            f"链条未跑完或合并失败? 本跑 BSP/ESS/TMRCA 一律不可用; "
-                            f"请查 {beast_dir}/merged 与 beast1*.log 行数")
-        except Exception as _e:  # noqa: BLE001
-            log.warning(f"  [beast] 日志行数检查失败: {_e}")
     if log_file or trees_file:
         log.info(f"  Post-processing BEAST output...")
         rscript = tools.get("Rscript") or "Rscript"
@@ -3038,13 +4250,49 @@ def _governed_meta(prep, fallback_dates: str = "",
     return {"dates": d, "meta": g, "host": h}
 
 
+def count_beast_log_rows(path: str) -> int:
+    """BEAST .log 的**数据行数** (跳过 '#' 注释与 'state' 表头行)。
+
+    2026-10-03 引入: 退化日志闸门共用 (链未跑完 / logcombiner burnin 超界 →
+    近空 merged.log; 该日志会让 ESS 走"样本数"兜底、BSP 画空白图)。
+    2026-10-13 恢复: 随记账机制一并丢失。
+    返回 0 = 空/仅表头/不可读。
+    """
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            return sum(1 for L in f
+                       if L.strip() and not L.startswith("#")
+                       and not L.startswith("state"))
+    except OSError:
+        return 0
+
+
+def pipeline_exit_code(all_results) -> tuple:
+    """退出码约定 (2026-10-03, P1-1): failed→1; blocked/pending→2; 干净→0。
+
+    旧版 main 无论如何退出 0 → 自动化/`&&` 链/per-virus driver 一律"成功"。
+    2026-10-13 恢复: 该函数在 10-12 工作区重写中丢失 (RUN_GUIDE:298-301 仍按本
+    约定验收)。返回 (code, 说明)。工作目录模式与批量模式共用 (两处出口都要调)。
+    """
+    n_fail = sum(len(r.get("stages_failed", [])) for r in all_results)
+    n_blocked = sum(len(r.get("stages_blocked", [])) for r in all_results)
+    n_pending = sum(1 for r in all_results
+                    if r.get("incomplete") and not r.get("stages_blocked"))
+    if n_fail:
+        return 1, f"{n_fail} 个 stage 失败 — 见 Stages_failed"
+    if n_blocked or n_pending:
+        extra = f", 另有 {n_pending} 个病毒有 pending 链" if n_pending else ""
+        return 2, f"结果不完整 (受阻 stage {n_blocked} 个{extra}) — 修好前置后重跑"
+    return 0, "全部 stage 干净"
+
+
 def process_virus(prep, stages: List[str], args, tools, logger) -> Dict:
     """单个病毒按 stage 清单顺序执行, 返回汇总 results (含 stage 状态追踪)"""
     vname = prep["virus_name"]
     out_dir = prep["output_dir"]
     log = logger
     # blocked = 真受阻 (前置缺失/本 stage 未产出/降级继续); skip_reasons 记录每个跳过原因
-    # (2026-10-03: 区分「正常跳过」与「受阻」, 见 _skip docstring)
+    # (2026-10-13 恢复: 五态记账在 10-12 重写中丢失 → stages_blocked/Incomplete/退出码全失效)
     st = {"done": [], "skipped": [], "failed": [], "blocked": [], "skip_reasons": {}}
     results = {"virus": vname, "success": False, "outputs": {}, "metrics": {},
                "stages_done": [], "stages_skipped": [], "stages_failed": [],
@@ -3053,6 +4301,18 @@ def process_virus(prep, stages: List[str], args, tools, logger) -> Dict:
     log.info(f"\n{'='*60}")
     log.info(f"Processing {vname} | stages: {','.join(stages)}")
     log.info(f"{'='*60}")
+
+    # 2026-10-11: 布局与既有结果树不一致的**静默**陷阱。默认布局是 standard, 而存量
+    # 结果树可能是 legacy —— 按默认跑不会报错, 只是把产物写到另一套目录 (01_data/
+    # 08_report), 老目录一个字节都不变, 用户以为"跑了但什么都没变"。
+    # 实测同一天就踩到: 不带 --io-layout 跑 PSTVd report → 新建 01_data/ 与 08_report/。
+    _lay_hit = detect_layout_from_tree(out_dir)
+    _lay_active = os.environ.get("MMPV_IO_LAYOUT") or "standard"
+    if _lay_hit and _lay_hit != _lay_active:
+        log.error(f"  [layout] ⚠ 工作目录的既有产物是 **{_lay_hit}** 布局, 但本次生效的是 "
+                  f"**{_lay_active}** —— 产物会写到另一套目录里, 既有结果不会被更新。"
+                  f"请改用 `--io-layout {_lay_hit}` 或 `export MMPV_IO_LAYOUT={_lay_hit}` 重跑。"
+                  f" (目录: {out_dir})")
 
     force = getattr(args, 'force', False)
     aln_file = None
@@ -3080,16 +4340,59 @@ def process_virus(prep, stages: List[str], args, tools, logger) -> Dict:
     def _done(stage):
         return stage_done(out_dir, stage, force, inputs=_inputs_of(stage))
 
-    def _mark(stage, meta=None):
+    def _mark(stage, meta=None, state=None):
         fp = _inputs_of(stage)
         if fp is not None:
             meta = dict(meta or {})
             meta.setdefault('inputs', fp)
         mark_stage_done(out_dir, stage, meta)
+        # 2026-10-11: 同步落盘该 stage 的 outputs/metrics 快照, 供 skip 分支回填。
+        # state 形如 {"outputs": {...}, "metrics": {...}, "extra": {...}}
+        if state:
+            save_stage_state(out_dir, stage,
+                             outputs=state.get("outputs"),
+                             metrics=state.get("metrics"),
+                             extra=state.get("extra"))
         st["done"].append(stage)
 
+    def _restore(stage):
+        """把 <stage>.state.json 里的 outputs/metrics 并回 results, 返回 extra。
+
+        2026-10-11 新增 (修 P0 "重跑即空汇总")。所有 checkpoint-skip 分支都调它,
+        使"跳过"与"真跑"对下游**完全等价** —— 汇总表 Beta/R²/P/TMRCA 不再为空。
+        返回 extra dict, 供调用方恢复 stage 间局部变量 (aln_file/tree_file/...)。
+        """
+        data = load_stage_state(out_dir, stage)
+        if not data:
+            # 2026-10-11: 快照缺失 (旧代码跑出的老数据 / 结果树被 cp -a / 手工删过)
+            # → 从磁盘产物重建, 并**顺手落盘快照**实现自愈 (下次直接读快照)。
+            # 不这么做的话, 存量结果永远补不出指标 —— 而重建用的都是当次真跑写下的
+            # 同一份权威产物 (见 rediscover_stage_state 的 docstring)。
+            data = rediscover_stage_state(out_dir, stage)
+            if data:
+                log.info(f"  [{stage}] 无状态快照 → 已从磁盘产物重建 "
+                         f"({len(data.get('metrics') or {})} 项指标, "
+                         f"{len(data.get('outputs') or {})} 项产物), 并落盘快照")
+                save_stage_state(out_dir, stage, outputs=data.get("outputs"),
+                                 metrics=data.get("metrics"), extra=data.get("extra"))
+        if not data:
+            log.warning(f"  [{stage}] ⚠ checkpoint 已跳过但无状态快照 "
+                        f"(.checkpoints/{stage}{STAGE_STATE_SUFFIX} 缺失), "
+                        f"且磁盘产物不足以重建 —— "
+                        f"本次运行的汇总表将缺少该 stage 的指标。"
+                        f"如需补全: 删除 .checkpoints/{stage}.done 后重跑该 stage。")
+            return {}
+        for k, v in (data.get("outputs") or {}).items():
+            results["outputs"].setdefault(k, v)
+        for k, v in (data.get("metrics") or {}).items():
+            # 与 summary_metrics._pick 一致: None/"" 视为缺
+            if results["metrics"].get(k) in (None, ""):
+                results["metrics"][k] = v
+        return data.get("extra") or {}
+
     def _skip(stage, reason="checkpoint", detail=""):
-        """stage 未执行/未产出。reason 取值 (2026-10-03 引入, 区分「正常跳过」与「真受阻」):
+        """stage 未执行/未产出。reason 取值 (2026-10-03 引入, 区分「正常跳过」与「真受阻」;
+        2026-10-13 恢复: 该五态语义在 10-12 工作区重写中丢失 → blocked 不再记账):
 
         · checkpoint — 已完成, 本轮跳过 (正常)
         · na         — 数据/配置不适用 (如 viroid 无 CDS、无宿主通道; 正常)
@@ -3104,6 +4407,8 @@ def process_virus(prep, stages: List[str], args, tools, logger) -> Dict:
         st["skip_reasons"][stage] = reason
         if detail:
             log.info(f"  [{stage}] skip({reason}): {detail}")
+        elif reason and reason != "checkpoint":
+            log.info(f"  [{stage}] 跳过 ({reason})")
         if reason in ("degraded", "blocked"):
             st["blocked"].append(f"{stage}({reason})")
 
@@ -3111,6 +4416,63 @@ def process_virus(prep, stages: List[str], args, tools, logger) -> Dict:
         st["failed"].append(stage)
         if msg:
             log.warning(f"  [{stage}] {msg}")
+
+    def _snap():
+        """记录当前 outputs/metrics 快照, 供 _delta 求增量。"""
+        return (dict(results.get("outputs") or {}),
+                dict(results.get("metrics") or {}))
+
+    def _delta(before):
+        """相对 _snap() 的增量 {outputs, metrics}。
+
+        2026-10-11: host / geo / geo_paths / phylogeo / gene_dating 这些 stage 是
+        **直接往 results 里写** (签名吃 results 参数), 不返回 dict —— 无法像
+        align/tree 那样拿到"本次产出"。用增量快照把它们也纳入状态持久化,
+        否则这些 stage 一被 checkpoint 跳过, 其指标就从汇总里消失。
+        """
+        bo, bm = before
+        no = {k: v for k, v in (results.get("outputs") or {}).items()
+              if k not in bo}
+        nm = {k: v for k, v in (results.get("metrics") or {}).items()
+              if k not in bm or bm.get(k) in (None, "")}
+        return {"outputs": no, "metrics": nm}
+
+    def _mark_skipped(stage, reason="", state=None):
+        """记录「不适用而跳过」—— 写 <stage>.skipped 让跳过也具备幂等性。
+
+        2026-10-11 新增。此前 capheine 的"类病毒无 CDS"分支只调 _skip(),
+        **不写任何标记** → 每次重跑都要重新跑一遍 gbk_extractor 才能再次得出
+        "不适用"的结论 (慢且日志噪音大); 而 rdp5 的短序列分支更糟 —— 它直接
+        return 原比对被当成成功, 写下了 rdp5.done (见 run_stage_rdp5 的修复)。
+        """
+        try:
+            cp_dir = os.path.join(out_dir, CHECKPOINT_DIR)
+            os.makedirs(cp_dir, exist_ok=True)
+            with open(os.path.join(cp_dir, f"{stage}.skipped"), "w",
+                      encoding="utf-8") as f:
+                json.dump({"stage": stage, "status": "skipped",
+                           "reason": reason,
+                           "time": datetime.now().isoformat(timespec="seconds")},
+                          f, ensure_ascii=False, indent=1)
+        except OSError as e:
+            log.warning(f"  [{stage}] 跳过标记写入失败 (非阻断): {e}")
+        if state:
+            save_stage_state(out_dir, stage,
+                             outputs=state.get("outputs"),
+                             metrics=state.get("metrics"),
+                             extra=state.get("extra"))
+        _skip(stage, 'na', reason)
+
+    def _skipped_marker(stage) -> str:
+        """读 <stage>.skipped 的 reason; 不存在返回 ""。"""
+        p = os.path.join(out_dir, CHECKPOINT_DIR, f"{stage}.skipped")
+        if not os.path.exists(p):
+            return ""
+        try:
+            with open(p, encoding="utf-8") as f:
+                return json.load(f).get("reason", "") or ""
+        except Exception:
+            return ""
 
     # ── metadata: 入口治理 (时间 + 地理 的检查与矫正) ──
     # 2026-09-16 新增 (老师拍板)。必须在 online 之前: 先把已有 metadata 归一化,
@@ -3125,6 +4487,11 @@ def process_virus(prep, stages: List[str], args, tools, logger) -> Dict:
                 prep["_metadata_original"] = getattr(args, "metadata", None)
                 args.metadata = sc          # 下游一律消费标准化产物
                 results["outputs"]["metadata_std"] = sc
+            # 2026-10-11: 回填 outputs/metrics 快照 (修 P0 "重跑即空汇总")
+            _ex = _restore('metadata')
+            if not prep.get("metadata_std") and _ex.get("metadata_std"):
+                prep["metadata_std"] = _ex["metadata_std"]
+                args.metadata = _ex["metadata_std"]
         else:
             mr = run_stage_metadata(prep, args, log)
             results["outputs"].update(mr.get("outputs", {}))
@@ -3134,10 +4501,13 @@ def process_virus(prep, stages: List[str], args, tools, logger) -> Dict:
                 prep["metadata_std"] = mr["std_csv"]
                 prep["_metadata_original"] = getattr(args, "metadata", None)
                 args.metadata = mr["std_csv"]
-                _mark('metadata')
+                _mark('metadata', state={"outputs": mr.get("outputs"),
+                                         "metrics": {"metadata": mr.get("metrics", {})},
+                                         "extra": {"metadata_std": mr["std_csv"]}})
             else:
-                    # 治理失败不阻断流程, 显式告警 (降级为直接用原 metadata)
-                    _skip('metadata', 'degraded', f"治理失败, 降级使用原 metadata: {mr.get('error')}")
+                # 治理失败不阻断流程, 显式告警 (降级为直接用原 metadata)
+                _skip('metadata', 'degraded',
+                      f"治理失败, 降级使用原 metadata: {mr.get('error')}")
 
     # ── metadata 三通道拆分 (2026-09-16): 治理产物 → 时间表 / 地理表 / 宿主表 ──
     # 位置很关键: 必须在 clean 之前 (clean 的 --clean_drop_no_date/-location 要吃它),
@@ -3158,14 +4528,15 @@ def process_virus(prep, stages: List[str], args, tools, logger) -> Dict:
     if 'online' in stages:
         if _done('online'):
             log.info("  [online] checkpoint OK, skip"); _skip('online')
+            _restore('online')            # 2026-10-11: 回填 outputs/metrics 快照
         else:
             r = run_stage_online(prep, args, log)
             if r.get("ncbi_fasta"):
                 results["outputs"]["ncbi_fasta"] = r["ncbi_fasta"]
-                _mark('online')
+                _mark('online', state={"outputs": {"ncbi_fasta": r["ncbi_fasta"]}})
             else:
-                    # 在线参考补充是可选项 (work_dir 模式无 accession 时必然无产物)
-                    _skip('online', 'na', '可选项无产物 (work_dir 模式/无 accession)')
+                # 在线参考补充是可选项 (work_dir 模式无 accession 时必然无产物)
+                _skip('online')
 
     # ── clean: 第一道过滤 (比对前, 序列本体清洗) ──
     # 2026-09-16 新增。必须在 align 之前: 空格/星号/小写会让 MAFFT 出错或错位比对,
@@ -3174,10 +4545,18 @@ def process_virus(prep, stages: List[str], args, tools, logger) -> Dict:
         if _done('clean'):
             log.info("  [clean] checkpoint OK, skip"); _skip('clean')
             cf = os.path.join(out_dir, ph_dir('data'), "clean", "clean.fasta")
-            if os.path.exists(cf):
-                prep["combined_fasta"] = cf
+            if os.path.exists(cf) and os.path.getsize(cf) > 0:
                 prep["_raw_combined_fasta"] = prep.get("combined_fasta")
+                prep["combined_fasta"] = cf
                 results["outputs"]["clean_fasta"] = cf
+            else:
+                # 2026-10-11: 产物缺失/空 → 不能静默沿用上游原序列, 必须喊出来。
+                log.error(f"  [clean] ⚠ checkpoint 标记完成但产物缺失或为空: {cf} —— "
+                          f"下游将退回未清洗序列 (可能含空格/小写/非法字符)。"
+                          f"请删除 .checkpoints/clean.done 后重跑 clean。")
+            _ex = _restore('clean')       # 2026-10-11: 回填 outputs/metrics 快照
+            if _ex.get("clean_fasta") and os.path.exists(_ex["clean_fasta"]):
+                prep["combined_fasta"] = _ex["clean_fasta"]
         else:
             cr = run_stage_clean(prep, args, log)
             results["outputs"].update(cr.get("outputs", {}))
@@ -3186,38 +4565,64 @@ def process_virus(prep, stages: List[str], args, tools, logger) -> Dict:
                 # 关键: 把比对输入换成清洗后的序列
                 prep["_raw_combined_fasta"] = prep.get("combined_fasta")
                 prep["combined_fasta"] = cr["clean_fasta"]
-                _mark('clean')
+                _mark('clean', state={"outputs": cr.get("outputs"),
+                                      "metrics": {"clean": cr.get("metrics", {})},
+                                      "extra": {"clean_fasta": cr["clean_fasta"]}})
             else:
-                    # 清洗失败不阻断流程, 但要显式告警 (降级为直接用原序列)
-                    _skip('clean', 'degraded', f"清洗失败, 降级使用原始序列: {cr.get('error')}")
+                # 清洗失败不阻断流程, 但要显式告警 (降级为直接用原序列)
+                _skip('clean', 'degraded',
+                      f"清洗失败, 降级使用原始序列: {cr.get('error')}")
 
     # ── align: MAFFT 比对 + 内联 saturation (纯Python秒级, 合并运行) ──
     if 'align' in stages:
         if _done('align'):
             log.info("  [align] checkpoint OK, skip"); _skip('align')
             aln_file = os.path.join(out_dir, ph_dir('phylogeny'), "mafft.aln.fasta")
-            if not os.path.exists(aln_file):
-                aln_file = prep.get("combined_fasta")
+            # 2026-10-11 修 (P0): 原判定只有 `os.path.exists` —— 0 字节文件被当成
+            # 合法比对沿用。PSTVd 实测: 工作副本 pstvd_mafft.aln.fasta 被截成
+            # 0 字节, 该分支照样 `results["outputs"]["alignment"]=…` 并让
+            # rdp5/tree/clock 全部吃空文件 → 下游一串莫名其妙的失败。
+            # 现要求"存在且非空", 且回退候选也必须非空。
+            if not _usable_alignment(aln_file):
+                _ex0 = _restore('align')
+                cand = _ex0.get("aln_file")
+                aln_file = cand if _usable_alignment(cand) else None
+                if aln_file:
+                    log.warning(f"  [align] 主比对 {Path(aln_file).name} 缺失/为空, "
+                                f"按状态快照回退到: {aln_file}")
+            if aln_file is None:
+                _pf = prep.get("combined_fasta")
+                if _usable_alignment(_pf):
+                    aln_file = _pf
+                else:
+                    log.error("  [align] ⚠ checkpoint 标记完成但比对缺失或为空 "
+                              f"(主路径与 combined_fasta={_pf} 均不可用) —— "
+                              "比对是全部下游 stage 的唯一输入, 拒绝以空输入继续。"
+                              "请恢复比对文件后删除 .checkpoints/align.done 重跑。")
             results["outputs"]["alignment"] = aln_file
+            _restore('align')             # 2026-10-11: 回填 outputs/metrics 快照
             # saturation 随 align 产出; 老数据补跑
             if not _done('saturation') and aln_file and os.path.exists(aln_file):
                 sr = run_stage_saturation(prep, aln_file, args, log)
                 results["outputs"].update(sr.get("outputs", {}))
                 results["metrics"].update(sr.get("metrics", {}))
                 if sr.get("success"):
-                    _mark('saturation')
+                    _mark('saturation', state={"outputs": sr.get("outputs"),
+                                               "metrics": sr.get("metrics")})
         else:
             r = run_stage_align(prep, tools, args, log, force=force)
             if r.get("success") and r.get("alignment"):
                 aln_file = r["alignment"]
                 results["outputs"]["alignment"] = aln_file
-                _mark('align')
+                _mark('align', state={"outputs": {"alignment": aln_file},
+                                      "extra": {"aln_file": aln_file}})
                 # 内联 saturation: 比对一旦产出立即验饱和 (闸门逻辑)
                 sr = run_stage_saturation(prep, aln_file, args, log)
                 results["outputs"].update(sr.get("outputs", {}))
                 results["metrics"].update(sr.get("metrics", {}))
                 if sr.get("success"):
-                    _mark('saturation')
+                    _mark('saturation', state={"outputs": sr.get("outputs"),
+                                               "metrics": sr.get("metrics")})
                 # 后处理: 比对 QC 报告 (长度/gap%/N%/identity, 不覆盖原比对)
                 if aln_file and os.path.exists(aln_file):
                     run_postprocess("align_qc", log,
@@ -3239,56 +4644,108 @@ def process_virus(prep, stages: List[str], args, tools, logger) -> Dict:
     if 'splitstree' in stages and aln_file:
         if _done('splitstree'):
             log.info("  [splitstree] checkpoint OK, skip"); _skip('splitstree')
+            _restore('splitstree')        # 2026-10-11: 回填 outputs/metrics 快照
         else:
             ssr = run_stage_splitstree(prep, aln_file, args, log)
             results["outputs"].update(ssr.get("outputs", {}))
             results["metrics"].update(ssr.get("metrics", {}))
             if ssr.get("success"):
-                _mark('splitstree')
+                _mark('splitstree', state={"outputs": ssr.get("outputs"),
+                                           "metrics": ssr.get("metrics")})
             else:
                 _fail('splitstree', '分裂网络未产出')
 
     # ── rdp5: 重组检测 → 删重组子+重比对 (默认) / mask (可选) ──
+    # 2026-10-11 修 (P0): run_stage_rdp5 改为返回**结构化状态**, 以区分三态:
+    #   ok(产出干净比对) / skipped(方法不适用, 如类病毒 379bp) / failed(真失败)。
+    # 旧版把"短序列不适用"也 return 原比对 → 调用方 `if masked:` 为真 →
+    # 写下了 rdp5.done 并把**原始比对**登记成 masked_alignment —— 于是
+    #   · 汇总表 Stages_done 里出现 rdp5 (实际没做)
+    #   · 下游以为重组已被处理, 拿到的是未处理比对
+    #   · 下次重跑走 skip 分支去找 rdp5_dropped.realn.fasta (不存在) → 前后矛盾
+    # PSTVd 实测正是如此 (rdp5.done 落于 2026-09-02 20:52, 而 recomb/rdp5/ 里
+    # 只有一次 09-01 的失败残留, 没有任何 CSV)。
     if 'rdp5' in stages and aln_file:
-        if _done('rdp5'):
+        _rdp_skip_reason = _skipped_marker('rdp5')
+        if _rdp_skip_reason:
+            log.info(f"  [rdp5] 已记录不适用, skip: {_rdp_skip_reason}")
+            _skip('rdp5')
+            _restore('rdp5')
+        elif _done('rdp5'):
             log.info("  [rdp5] checkpoint OK, skip"); _skip('rdp5')
             # 恢复比对: 优先新策略产物, 回退旧 masked (老数据兼容)
             r_aln = os.path.join(out_dir, ph_dir('recomb'), "rdp5", "rdp5_dropped.realn.fasta")
-            if not os.path.exists(r_aln):
+            if not _usable_alignment(r_aln):
                 r_aln = os.path.join(out_dir, ph_dir('recomb'), "rdp5", "masked", "masked_N.fasta")
-            if os.path.exists(r_aln):
+            if _usable_alignment(r_aln):
                 aln_file = r_aln
                 results["outputs"]["masked_alignment"] = r_aln
-        else:
-            masked = run_stage_rdp5(aln_file, prep, tools, args, log)
-            if masked:
-                aln_file = masked
-                results["outputs"]["masked_alignment"] = masked
-                _mark('rdp5')
-                # 后处理: 重组事件验证层 (validate_recombinants, 生成验证任务 + 汇总表)
-                rdp5_csv = os.path.join(out_dir, ph_dir('recomb'), "rdp5", f"{prep['virus_name']}.csv")
-                if os.path.exists(rdp5_csv):
-                    run_postprocess("validate_recombinants", log,
-                                    "--events", rdp5_csv,
-                                    "--alignment", aln_file,
-                                    "--outdir", os.path.join(out_dir, ph_dir('recomb'), "rdp5", "validation"))
             else:
-                _fail('rdp5', 'RDP5/mask 未产出干净比对')
+                # checkpoint 说做过了, 但产物不在 —— 不能静默沿用未处理比对
+                log.error("  [rdp5] ⚠ checkpoint 标记完成但既无 rdp5_dropped.realn.fasta "
+                          "也无 masked/masked_N.fasta —— 本次将沿用**未去重组**的比对。"
+                          "如需重建请删除 .checkpoints/rdp5.done 后重跑 rdp5。")
+            _restore('rdp5')
+        else:
+            # 2026-10-12 (test E): 环境无 RDP5 (服务器未装 / wine 缺失) → **预检脚本**,
+            # 缺失即优雅跳过: _skip('rdp5', 'na') —— 不 fail (非数据问题)、不写
+            # checkpoint (装好 RDP5 后重跑该 stage 即生效)。旧实现要跑到
+            # recombination_analysis 里才失败, 报出的是 "RDP5 failed (exit=...)"
+            # 这种误导信息。
+            rdp5_script = os.path.expanduser(getattr(args, "rdp5_script", "") or "")
+            if not os.path.exists(rdp5_script):
+                log.warning(f"  [rdp5] RDP5 脚本不存在 ({rdp5_script}) —— 本环境无 RDP5, "
+                            f"跳过该 stage (不 fail)")
+                _skip('rdp5', 'na')
+            else:
+                rr = run_stage_rdp5(aln_file, prep, tools, args, log)
+                if rr is None:
+                    # 直调守卫同款: 脚本缺失 (预检与调用之间被删) → 同判 skip
+                    _skip('rdp5', 'na')
+                    rr = {}
+                _st = rr.get("status")
+                if _st == "ok":
+                    masked = rr.get("alignment")
+                    aln_file = masked
+                    results["outputs"]["masked_alignment"] = masked
+                    _mark('rdp5', state={"outputs": {"masked_alignment": masked},
+                                         "metrics": rr.get("metrics"),
+                                         "extra": {"aln_file": masked}})
+                    # 后处理: 重组事件验证层 (validate_recombinants, 生成验证任务 + 汇总表)
+                    rdp5_csv = os.path.join(out_dir, ph_dir('recomb'), "rdp5", f"{prep['virus_name']}.csv")
+                    if os.path.exists(rdp5_csv):
+                        run_postprocess("validate_recombinants", log,
+                                        "--events", rdp5_csv,
+                                        "--alignment", aln_file,
+                                        "--outdir", os.path.join(out_dir, ph_dir('recomb'), "rdp5", "validation"))
+                elif _st == "skipped":
+                    # 方法不适用 (短序列/类病毒): 记 skip 且**写 .skipped 标记**保证幂等,
+                    # 绝不写 .done、绝不把原比对冒充成去重组产物。
+                    log.info(f"  [rdp5] 不适用, 记 skip: {rr.get('skip_reason', '')}")
+                    _mark_skipped('rdp5', rr.get('skip_reason', ''),
+                                  state={"metrics": rr.get("metrics")})
+                else:
+                    _fail('rdp5', rr.get("error") or 'RDP5/mask 未产出干净比对')
 
     # ── tree: IQ-TREE 建树 ──
     if 'tree' in stages and aln_file:
         if _done('tree'):
             log.info("  [tree] checkpoint OK, skip"); _skip('tree')
             tree_file = os.path.join(out_dir, ph_dir('phylogeny'), "iqtree.treefile")
-            if not os.path.exists(tree_file):
+            if not _usable_file(tree_file):
                 tree_file = prep.get("tree_file")
             results["outputs"]["tree"] = tree_file
+            if not _usable_file(tree_file):
+                log.error("  [tree] ⚠ checkpoint 标记完成但主树缺失或为空 "
+                          f"({tree_file}) —— 分子钟/定年/地理全部依赖它。")
+            _restore('tree')              # 2026-10-11: 回填 outputs/metrics 快照
         else:
             r = run_stage_tree(prep, aln_file, tools, args, log, force=force)
             if r.get("success") and r.get("tree"):
                 tree_file = r["tree"]
                 results["outputs"]["tree"] = tree_file
-                _mark('tree')
+                _mark('tree', state={"outputs": {"tree": tree_file},
+                                     "extra": {"tree_file": tree_file}})
                 # 后处理: ML 树环形可视化 (纯 matplotlib, 无 ETE 依赖)
                 try:
                     from utils.stage_plots import plot_tree_circular
@@ -3313,12 +4770,14 @@ def process_virus(prep, stages: List[str], args, tools, logger) -> Dict:
     if 'popgen' in stages:
         if _done('popgen'):
             log.info("  [popgen] checkpoint OK, skip"); _skip('popgen')
+            _restore('popgen')            # 2026-10-11: 回填 outputs/metrics 快照
         else:
             pr = run_stage_popgen(prep, aln_file, args, log)
             results["outputs"].update(pr.get("outputs", {}))
             results["metrics"].update(pr.get("metrics", {}))
             if pr.get("success"):
-                _mark('popgen')
+                _mark('popgen', state={"outputs": pr.get("outputs"),
+                                       "metrics": pr.get("metrics")})
                 # 后处理: popgen 指标柱状图 (π/θ/Tajima's D/Fst, SCI 风格)
                 try:
                     from utils.stage_plots import plot_popgen
@@ -3383,10 +4842,12 @@ def process_virus(prep, stages: List[str], args, tools, logger) -> Dict:
     if 'host' in stages:
         if _done('host'):
             log.info("  [host] checkpoint OK, skip"); _skip('host')
+            _restore('host')              # 2026-10-11: 回填 outputs/metrics 快照
         else:
+            _b = _snap()
             run_stage_host(prep, results, aln_file, tree_file, args, log)
             if results.get("outputs", {}).get("host_tree") or results.get("outputs", {}).get("host_diff_plot"):
-                _mark('host')
+                _mark('host', state=_delta(_b))
             else:
                 _hc = prep.get("host_csv") or ""
                 if not (_hc and os.path.exists(_hc)):
@@ -3396,14 +4857,23 @@ def process_virus(prep, stages: List[str], args, tools, logger) -> Dict:
 
     # ── capheine: 正选择分析 (Phase S) ──
     if 'capheine' in stages:
-        if _done('capheine'):
+        _cap_skip = _skipped_marker('capheine')
+        if _cap_skip:
+            # 2026-10-11: "不适用"也具备幂等性 —— 类病毒无 CDS 时不必每次重跑
+            # gbk_extractor 才能再次得出同一结论。
+            log.info(f"  [capheine] 已记录不适用, skip: {_cap_skip}")
+            _skip('capheine')
+            _restore('capheine')
+        elif _done('capheine'):
             log.info("  [capheine] checkpoint OK, skip"); _skip('capheine')
+            _restore('capheine')          # 2026-10-11: 回填 outputs/metrics 快照
         else:
             cr = run_stage_capheine(prep, args, log)
             results["outputs"].update(cr.get("outputs", {}))
             results["metrics"].update(cr.get("metrics", {}))
             if cr.get("success"):
-                _mark('capheine')
+                _mark('capheine', state={"outputs": cr.get("outputs"),
+                                         "metrics": cr.get("metrics")})
                 # 后处理: 密码子位点可视化 (visual_codon_miner, drhip 产物驱动)
                 drhip_csv = os.path.join(out_dir, ph_dir('select'), "capheine", "drhip", "combined_sites.csv")
                 cln_dir = os.path.join(out_dir, ph_dir('select'), "capheine", "hyphy", "CLN")
@@ -3435,8 +4905,12 @@ def process_virus(prep, stages: List[str], args, tools, logger) -> Dict:
                 # codeml 子命令也已移除。如后续需复活, 先取回归档实现再重新接线。
             else:
                 if cr.get("skip_reason"):
-                    # 内层已定性不适用 (viroid 无 CDS 等), 记 na 不记 fail (2026-09-02)
-                    _skip('capheine', 'na', cr['skip_reason'])
+                    # 内层已定性不适用 (viroid 无 CDS 等), 记 skip 不记 fail (2026-09-02)
+                    # 2026-10-11: 同时写 <stage>.skipped 标记 → 跳过具备幂等性,
+                    # 且原因落盘 (此前只在日志里出现过一次, 报告里看不到"为什么没有")。
+                    log.info(f"  [capheine] skip: {cr['skip_reason']}")
+                    _mark_skipped('capheine', cr['skip_reason'],
+                                  state={"metrics": cr.get("metrics")})
                 else:
                     _fail('capheine', 'capheine 未产出 (缺 GBK/参考 CDS 或计算失败)')
 
@@ -3444,6 +4918,14 @@ def process_virus(prep, stages: List[str], args, tools, logger) -> Dict:
     if 'clock' in stages and aln_file and tree_file:
         if _done('clock'):
             log.info("  [clock] checkpoint OK, skip"); _skip('clock')
+            # 2026-10-11 修 (P0): 原分支**只打日志**。clock 是 headline_metrics
+            # 的首选来源 (td_mean_rate / td_relaxed_clock_p / td_tmrca 来自
+            # treedater; pic_rate / pic_r 来自 PIC; beta/r_squared/p_value 来自
+            # TreeTime RTT), 一旦被 checkpoint 跳过, 汇总表 Beta/R²/P/TMRCA
+            # 立刻全空 —— 这正是"重跑一次 report 就得到空汇总"的直接原因。
+            _ex = _restore('clock')
+            if _ex.get("clock_summary") and os.path.exists(_ex["clock_summary"]):
+                results["outputs"].setdefault("clock_summary", _ex["clock_summary"])
         else:
             prep["_cp"] = lambda name: _done(name)
             cr = run_stage_clock(prep, aln_file, tree_file, tools, args, log,
@@ -3451,7 +4933,10 @@ def process_virus(prep, stages: List[str], args, tools, logger) -> Dict:
             results["outputs"].update(cr.get("outputs", {}))
             results["metrics"].update(cr.get("metrics", {}))
             if cr.get("outputs") or results.get("gene_results"):
-                _mark('clock')
+                _mark('clock', state={"outputs": cr.get("outputs"),
+                                      "metrics": cr.get("metrics"),
+                                      "extra": {"clock_summary":
+                                                (cr.get("outputs") or {}).get("clock_summary")}})
             else:
                 _fail('clock', 'RTT/LTT/DRT 无输出')
 
@@ -3466,7 +4951,11 @@ def process_virus(prep, stages: List[str], args, tools, logger) -> Dict:
                 os.path.join(bd, "beast11.log")]
 
     def _beast_ran() -> bool:
-        """是否真跑过后验 (链日志/合并产物非空)。--skip_beast_run 只出 XML → False。"""
+        """是否真跑过后验 (链日志/合并产物非空)。--skip_beast_run 只出 XML → False。
+
+        2026-10-13 恢复 (P1): 该闸门在 10-12 工作区重写中丢失 → --skip_beast_run
+        写下 .done 后正式跑被 checkpoint 静默跳过, 形成"已跑过"假象。
+        """
         _cands = _beast_log_candidates() + [os.path.join(
             out_dir, ph_dir('time'), "beast", "merged", "mcc.tree")]
         return any(os.path.exists(c) and os.path.getsize(c) > 0 for c in _cands)
@@ -3474,27 +4963,35 @@ def process_virus(prep, stages: List[str], args, tools, logger) -> Dict:
     if 'beast' in stages:
         _beast_done = _done('beast')
         if _beast_done and not _beast_ran():
-            # 2026-10-03 (P1-2): 旧 checkpoint 标志物 = beast1.xml, 而 --skip_beast_run
-            # (只出 XML 的用法) 也会写出该文件 → 正式跑被整段跳过、形成"已跑过"假象。
+            # 2026-10-03 (P1-2): 旧 checkpoint 标志物只看 .done, 而 --skip_beast_run
+            # (只出 XML 的用法) 也会写下它 → 正式跑被整段跳过、形成"已跑过"假象。
             log.warning("  [beast] checkpoint 命中但无任何后验日志/合并产物 "
                         "(只出过 XML 或产物被清理?) → 视为未跑, 重新执行")
             _beast_done = False
         if _beast_done:
-            log.info("  [beast] checkpoint OK, skip"); _skip('beast', 'checkpoint')
+            log.info("  [beast] checkpoint OK, skip"); _skip('beast')
             beast_xml = os.path.join(out_dir, ph_dir('time'), "beast", "beast1.xml")
             if os.path.exists(beast_xml):
                 results["outputs"]["beast_xml"] = beast_xml
             # skip 时也恢复 TMRCA → metrics (供 gene_dating --full-tmrca)
-            # 2026-10-03 (P2-8): 日志路径按 merged→beast1→beast11 优先探测,
-            # 旧的写死 beast1.log 在现场(beast11.log)会静默拿不到 TMRCA。
-            for beast_log in _beast_log_candidates():
-                if not os.path.exists(beast_log):
+            # 2026-10-11: 日志路径改为**多链感知** —— 原来硬编码 beast1.log,
+            # 而多链模式 (beast_chains>1) 下只有 beast11/12/13.log, 该文件不存在
+            # → TMRCA 在 skip 分支静默恢复失败 (PSTVd/GCVA 实测双双如此)。
+            _bd = os.path.join(out_dir, ph_dir('time'), "beast")
+            beast_log = None
+            for _c in _beast_log_candidates():
+                if not _usable_file(_c):
                     continue
-                _n_rows = count_beast_log_rows(beast_log)
+                # 2026-10-03 (P1-4, 2026-10-13 恢复): 近空日志 (<10 行) 会被解析出
+                # 不可信的 TMRCA 进汇总 —— 拒绝复用。
+                _n_rows = count_beast_log_rows(_c)
                 if _n_rows < 10:
-                    log.warning(f"  [beast] 复用分支: {os.path.basename(beast_log)} 仅 "
+                    log.warning(f"  [beast] 复用分支: {os.path.basename(_c)} 仅 "
                                 f"{_n_rows} 行数据 → 跳过 TMRCA 复用 (不可用)")
-                    break
+                    continue
+                beast_log = _c
+                break
+            if beast_log:
                 try:
                     parsed = parse_beast_log(beast_log, burnin_pct=getattr(args, 'beast_burnin', 10),
                                               log=LogCollector(log))
@@ -3503,12 +5000,15 @@ def process_virus(prep, stages: List[str], args, tools, logger) -> Dict:
                         results["metrics"]["beast_tmrca"] = rh["median"]
                         results["metrics"]["beast_tmrca_hpd"] = f"{rh['hpd_95_lower']:.1f}–{rh['hpd_95_upper']:.1f}"
                         results["metrics"]["beast_tmrca_ess"] = rh["ess"]
-                        log.info(f"  [beast] 全长 TMRCA (复用 {os.path.basename(beast_log)}): "
+                        log.info(f"  [beast] 全长 TMRCA (复用 {Path(beast_log).name}): "
                                  f"{rh['median']:.1f} yr "
                                  f"[{rh['hpd_95_lower']:.1f}–{rh['hpd_95_upper']:.1f}] ESS={rh['ess']:.0f}")
                 except Exception as e:
                     log.warning(f"  [beast] skip 分支 TMRCA 解析失败: {e}")
-                break
+            else:
+                log.warning(f"  [beast] skip 分支未找到可用 BEAST log (查过 merged/merged.log, "
+                            f"beast1.log, beast11.log) → TMRCA 无法复用")
+            _restore('beast')             # 2026-10-11: 回填 outputs/metrics 快照
         else:
             beast_results = run_phase_beast(prep, results, args, tools, log)
             # 2026-09-15 修复: run_phase_beast 返回的 dict 含同名 "outputs"/"metrics" 键,
@@ -3523,7 +5023,8 @@ def process_virus(prep, stages: List[str], args, tools, logger) -> Dict:
                 if _k in beast_results:
                     results[_k] = beast_results[_k]
             if beast_results.get("success"):
-                _mark('beast')
+                _mark('beast', state={"outputs": beast_results.get("outputs"),
+                                      "metrics": beast_results.get("metrics")})
             elif beast_results.get("beast_pending"):
                 # 多链后台运行中: 不写 checkpoint, 下次跑检查合并
                 _skip('beast', 'pending', '多链后台运行中, 下次跑检查合并')
@@ -3534,26 +5035,48 @@ def process_virus(prep, stages: List[str], args, tools, logger) -> Dict:
     if 'gene_dating' in stages:
         if _done('gene_dating'):
             log.info("  [gene_dating] checkpoint OK, skip"); _skip('gene_dating')
+            _restore('gene_dating')       # 2026-10-11: 回填 outputs/metrics 快照
         else:
+            _b = _snap()
             run_stage_gene_dating(prep, results, args, log)
             if results.get("outputs", {}).get("gene_dating_dir"):
-                _mark('gene_dating')
+                _mark('gene_dating', state=_delta(_b))
             else:
                 _skip('gene_dating', 'blocked',
                       '无 capheine 前置产物 (先跑 select/capheine 或传 --genes_dir)')
+
+    # ── treetime: TreeTime CLI 完整时间树 (phymapr 路线前置; 2026-10-12 新增) ──
+    #    位置关键: 依赖 tree (与 clock 后的 gene_dating 同层), 必须在 phymapr 之前。
+    if 'treetime' in stages:
+        if not (aln_file and tree_file):
+            _fail('treetime', '缺比对/树输入 (需 align/tree 产物)')
+        elif _done('treetime'):
+            log.info("  [treetime] checkpoint OK, skip"); _skip('treetime')
+            _restore('treetime')          # 回填 outputs/metrics 快照
+        else:
+            _b = _snap()
+            run_stage_treetime(prep, aln_file, tree_file, args, log, results)
+            if results.get("outputs", {}).get("treetime_nexus"):
+                _mark('treetime', state=_delta(_b))
+            else:
+                # 工具缺失 (phylo-treetime 未装) / 日期不足 / CLI 失败 → 优雅 skip:
+                # 本 stage 默认关闭, 缺失不阻断主线 (装好后重跑即生效)。
+                _skip('treetime', 'na')
 
     # ── phylogeo: 系统地理 ──
     if 'phylogeo' in stages:
         if _done('phylogeo'):
             log.info("  [phylogeo] checkpoint OK, skip"); _skip('phylogeo')
+            _restore('phylogeo')          # 2026-10-11: 回填 outputs/metrics 快照
         else:
+            _b = _snap()
             geo_pending = run_stage_phylogeo(prep, results, aln_file, args, log)
             if results.get("outputs", {}).get("phylogeo_xml"):
                 if geo_pending:
                     # 链后台运行中: 不写 checkpoint, 下次跑检查合并 (同 beast pending 逻辑)
                     _skip('phylogeo', 'pending', '链后台运行中, 下次跑检查合并')
                 else:
-                    _mark('phylogeo')
+                    _mark('phylogeo', state=_delta(_b))
             else:
                 _fail('phylogeo', '未生成 XML (可能缺数据)')
     # ── geo: 地理分析 (Mantel / 树地理)。位置关键：必须排在 phylogeo 之后 ——
@@ -3561,10 +5084,12 @@ def process_virus(prep, stages: List[str], args, tools, logger) -> Dict:
     if 'geo' in stages:
         if _done('geo'):
             log.info("  [geo] checkpoint OK, skip"); _skip('geo')
+            _restore('geo')               # 2026-10-11: 回填 outputs/metrics 快照
         else:
+            _b = _snap()
             run_stage_geo(prep, results, aln_file, tree_file, args, log)
             if results.get("outputs", {}).get("mantel_plot") or results.get("outputs", {}).get("geo_tree"):
-                _mark('geo')
+                _mark('geo', state=_delta(_b))
             else:
                 _skip('geo', 'blocked', 'Mantel/树地理均未产出')
 
@@ -3574,16 +5099,34 @@ def process_virus(prep, stages: List[str], args, tools, logger) -> Dict:
     if 'geo_paths' in stages:
         if _done('geo_paths'):
             log.info("  [geo_paths] checkpoint OK, skip"); _skip('geo_paths')
+            _restore('geo_paths')         # 2026-10-11: 回填 outputs/metrics 快照
         else:
+            _b = _snap()
             run_stage_geo_paths(prep, results, aln_file, tree_file, args, log)
             if results.get("outputs", {}).get("pathway_qc"):
-                _mark('geo_paths')
+                _mark('geo_paths', state=_delta(_b))
             else:
                 _skip('geo_paths', 'blocked',
                       'pathway_qc 未产出 (常见: 缺 phylogeo merged/mcc.tree)')
 
+    # ── phymapr: 系统地理 TreeTime 路线 (BM-ASR + 传播地图; 2026-10-12 新增) ──
+    #    位置关键: 吃 treetime 的 timetree.nexus, **不依赖 BEAST/phylogeo** ——
+    #    与 geo_paths (BEAST 路线) 并列; 排在 geo_paths 之后保持与 STAGE_ORDER 一致。
+    if 'phymapr' in stages:
+        if _done('phymapr'):
+            log.info("  [phymapr] checkpoint OK, skip"); _skip('phymapr')
+            _restore('phymapr')           # 回填 outputs/metrics 快照
+        else:
+            _b = _snap()
+            run_stage_phymapr(prep, results, args, tools, log)
+            if results.get("outputs", {}).get("phymapr_summary"):
+                _mark('phymapr', state=_delta(_b))
+            else:
+                # R/依赖缺失 或 timetree 未产出 → 优雅 skip (不 fail)
+                _skip('phymapr', 'na')
 
-    # 2026-10-03 (P1-1): 未被任何块记账的 stage 兜底记 blocked。
+
+    # 2026-10-13 恢复 (P0-1): 未被任何块记账的 stage 兜底记 blocked。
     # 触发场景: `if 'splitstree' in stages and aln_file:` —— align 未产出时整块不执行,
     # 旧版既不 done 也不 skipped/failed, 在三个清单里全部消失 (静默)。
     # 注: 'report' 由 main 末尾统一执行 (不按病毒), 不参与单病毒记账。
@@ -3614,6 +5157,9 @@ def process_virus(prep, stages: List[str], args, tools, logger) -> Dict:
                     f"修好前置后重跑")
     if any(r == 'pending' for r in st["skip_reasons"].values()):
         log.warning(f"  ⏳ [{vname}] 有后台链条运行中 (pending) — 结果未定, 下次重跑自动合并")
+    # 2026-10-11: 落盘整份 results —— 供 main() 在"只跑部分 stage"时重建完整汇总
+    # (修 P0 "重跑一次 report 就得到空汇总")。
+    save_stage_results(out_dir, results)
     return results
 
 
@@ -3645,7 +5191,8 @@ def generate_summary(all_results, output_dir, logger) -> None:
             "Phase": r.get("phase", ""),
             "Success": r.get("success", False),
             # 2026-10-03 (P1-1): 结果完整性 —— Incomplete=True 表示有受阻 stage 或链仍在
-            # 后台 (Success 只代表"无硬失败", 不再等价于"结果完整")
+            # 后台 (Success 只代表"无硬失败", 不再等价于"结果完整")。
+            # 2026-10-13 恢复: 两列在 10-12 工作区重写中随记账机制一并丢失。
             "Incomplete": r.get("incomplete", False),
             "Stages_done": ";".join(r.get("stages_done", [])),
             "Stages_skipped": ";".join(r.get("stages_skipped", [])),
@@ -3654,7 +5201,6 @@ def generate_summary(all_results, output_dir, logger) -> None:
         }
         row.update(headline_columns(metrics))
         row.update({
-            "BEAST_log_rows": metrics.get("beast_log_rows", ""),
             "Geo_n_pathways": metrics.get("n_pathways", ""),
             "Geo_n_episodes": metrics.get("n_episodes", ""),
             "Geo_conf_direct": metrics.get("pathway_conf_direct", ""),
@@ -3727,9 +5273,8 @@ Stages: """ + ", ".join(f"{k}({v})" for k, v in STAGE_DESC.items()),
     g_input = parser.add_argument_group("Input")
     g_input.add_argument("--extract_dir", default=None, help="06_extraction 目录 (批量模式; standard 布局为 04_Analysis/06_Extraction)")
     g_input.add_argument("--io-layout", choices=["legacy", "standard"], default=None,
-                         help="I/O 目录布局: standard=管线独立根 (默认; "
-                              "05_Phylo 内模块编号 01_data..08_report, 见 doc/IO_LAYOUT_DESIGN.md); "
-                              "legacy=v3.0 现行名 (存量项目/checkpoint 兼容); "
+                         help="I/O 目录布局: legacy=v3.0 现行名 (默认); standard=管线独立根"
+                              "(05_Phylo 内模块编号 01_data..08_report, 见 doc/IO_LAYOUT_DESIGN.md); "
                               "亦可 MMPV_IO_LAYOUT 环境变量")
     g_input.add_argument("--metadata", default=None, help="Global_Unified_Metadata_Core14.tsv 路径")
     g_input.add_argument("--info_dir", default=None, help="public_metadata_pipeline 的 info/ 输出目录")
@@ -3867,6 +5412,52 @@ Stages: """ + ", ".join(f"{k}({v})" for k, v in STAGE_DESC.items()),
                         help="重组处理改用 mask 区间置N (不删序列不重比对); 默认删重组子+重新MAFFT")
     g_rdp5.add_argument("--rdp5_stage", default=defaults.get("rdp5_stage", "run"), choices=["run", "all"])
 
+    # ── 分裂网络 (SplitsTree6; 2026-10-12 补登记 —— RUN_GUIDE/STAGE_REFERENCE 已承诺) ──
+    g_ss = parser.add_argument_group("Split network (SplitsTree6)")
+    g_ss.add_argument("--splitstree_max_taxa", type=int,
+                      default=defaults.get("splitstree_max_taxa", 200),
+                      help="NeighborNet 最多取样 tip 数 (默认 200)")
+    g_ss.add_argument("--splitstree_group_col",
+                      # ⚠ 2026-10-13 默认由 "auto" 改为 "host"：用户指定
+                      #   「改成宿主着色」（与 ML 树口径统一，见 stage_plots
+                      #   ::plot_tree_circular 的 color_by 默认值）。
+                      #   ⚠ "auto" 是依次试 location → host，本数据两张元数据表
+                      #   各缺一列，auto 会命中 location → 仍是地区着色。
+                      default=defaults.get("splitstree_group_col", "host"),
+                      choices=["auto", "location", "host", "none"],
+                      help="NeighborNet 分组列 (默认 host=宿主着色; auto=location→host 回退; "
+                           "none=只画网络); 用于 tip 着色 + 外圈分组弧线 + 组名")
+    g_ss.add_argument("--splitstree_layout",
+                      default=defaults.get("splitstree_layout", "native"),
+                      choices=["native", "equal_angle"],
+                      help="neighbornet.pdf/png 的布局来源: native=SplitsTree6 自己的 "
+                           "SplitNetworkLayout (默认, 需 splitstree6-tools); "
+                           "equal_angle=旧版 Python 自绘 equal-angle (回退用)")
+    g_ss.add_argument("--splitstree_unweight",
+                      default=defaults.get("splitstree_unweight", "on"),
+                      choices=["on", "off"],
+                      help="native 布局是否用**等长**几何 (on=默认). on 时把每条边的"
+                           "权重当 1 重放 DFS (源码 EqualAngle), 得到所有边长一致的"
+                           "规则网格 —— 与用户参考图 (SplitsTree GUI 截图) 一致; "
+                           "线宽同时自动切等粗 (flat), 避免用粗细重复表达枝长. "
+                           "off=旧加权布局 (边长跨 344 倍, 放射状长枝).")
+    g_ss.add_argument("--splitstree_trim",
+                      default=defaults.get("splitstree_trim", "gt"),
+                      choices=["gt", "auto", "nogaps", "none"],
+                      help="建网前用 trimAl 修剪比对 (默认 gt=按 gap 阈值剪). "
+                           "gt=保留 gap<=阈值 的列; auto=-automated1; nogaps=-nogaps; "
+                           "none=用未修剪比对. ⚠ 未修剪时高 gap 列会让 NeighborNet "
+                           "中心堆成一团乱网 (实测), 且布局在 449/514 两种实现间随机跳。")
+    g_ss.add_argument("--splitstree_trim_gap", type=float,
+                      default=defaults.get("splitstree_trim_gap", 0.1),
+                      help="--splitstree_trim gt 时的 gap 阈值 (0-1, 默认 0.1). "
+                           "实测 0.1 保留 90.9%% 列、aspect 稳定 1.63; "
+                           "0.2 接近; auto/nogaps 会过度修剪退化成三叉星芒。")
+    g_ss.add_argument("--splitstree_label_rings", type=int,
+                      default=defaults.get("splitstree_label_rings", 9),
+                      help="tip 标签的外围环数 (默认 9). 145 个标签在中心密集区会互压, "
+                           "推到外围环上 + 引线; 实测 9 环 + 环间避让 = 0 对重叠。")
+
     # ── BEAST (Phase 5) ──
     g_beast = parser.add_argument_group("BEAST (Phase 5)")
     g_beast.add_argument("--beast", action="store_true", default=defaults.get("beast", False),
@@ -3888,6 +5479,44 @@ Stages: """ + ", ".join(f"{k}({v})" for k, v in STAGE_DESC.items()),
     g_gene.add_argument("--gene_chain", type=int, default=defaults.get("gene_chain", 15_000_000))
     g_gene.add_argument("--gene_chain_big", type=int, default=defaults.get("gene_chain_big", 10_000_000))
     g_gene.add_argument("--big_genes", default=defaults.get("big_genes", "L"))
+
+    # ── TreeTime 路线 (2026-10-12 新增; STAGE_REFERENCE §19/§20) ──
+    # 与 BEAST 路线并列的第二条时间-地理方法: treetime (CLI 完整时间树) →
+    # phymapr (R BM-ASR 祖先重建 + 传播地图)。两条默认关闭 (config enabled: false),
+    # 开启方式: config 改 true / 命令行开关 / --stage 点名 (点名豁免门控)。
+    g_tt = parser.add_argument_group("TreeTime route (Phase 6T)")
+    g_tt.add_argument("--treetime", action="store_true", default=defaults.get("treetime", False),
+                      help="运行 TreeTime CLI 完整时间树 → time/treetime/timetree.nexus")
+    g_tt.add_argument("--treetime_clock_filter", type=float,
+                      default=defaults.get("treetime_clock_filter", 4.0),
+                      help="IQD 离群 tip 剔除阈值 (0=关; 默认 4.0)")
+    g_tt.add_argument("--treetime_coalescent", default=defaults.get("treetime_coalescent", "skyline"),
+                      choices=["const", "skyline", "optimal", "0.0"],
+                      help="coalescent 先验 (默认 skyline)")
+    g_tt.add_argument("--treetime_clock_rate", type=float,
+                      default=defaults.get("treetime_clock_rate", None),
+                      help="手动钟速率 (慢进化病原用; 默认 None=TreeTime 回归自估)")
+    g_tt.add_argument("--phymapr", action="store_true", default=defaults.get("phymapr", False),
+                      help="运行 phymapr R 系统地理 (吃 treetime 的 timetree.nexus, 不依赖 BEAST)")
+    g_tt.add_argument("--phymapr_map_style", default=defaults.get("phymapr_map_style", "polygon"),
+                      choices=["polygon", "tile"],
+                      help="地图样式 (polygon=离线矢量, 默认; tile=暗色瓦片需联网)")
+    g_tt.add_argument("--phymapr_n_prune_early", type=int,
+                      default=defaults.get("phymapr_n_prune_early", 4),
+                      help="动画丢弃最早 N 条 pathway (默认 4)")
+    g_tt.add_argument("--phymapr_direct_snp", type=float,
+                      default=defaults.get("phymapr_direct_snp", 2.0),
+                      help="Direct 置信阈值 (phymapr 内部 snp_distance 语义; 默认 2.0)")
+    g_tt.add_argument("--phymapr_indirect_snp", type=float,
+                      default=defaults.get("phymapr_indirect_snp", 5.0),
+                      help="Indirect 置信阈值 (默认 5.0)")
+    g_tt.add_argument("--phymapr_distant_style",
+                      default=defaults.get("phymapr_distant_style", "import_arrow"),
+                      choices=["import_arrow", "pulse", "curve", "hide"],
+                      help="distant 路径渲染样式 (默认 import_arrow)")
+    g_tt.add_argument("--phymapr_pace", type=float,
+                      default=defaults.get("phymapr_pace", 0.5),
+                      help="动画节奏: 1=纯日历时间 0=事件均速 (默认 0.5)")
 
     # ── Saturation (数据质量) ──
     g_sat = parser.add_argument_group("Saturation (替换饱和)")
@@ -3971,12 +5600,7 @@ Stages: """ + ", ".join(f"{k}({v})" for k, v in STAGE_DESC.items()),
                        help="geo_paths 附带发表级静态传播图 (PNG+PDF+SVG, 默认纯矢量合规底图)")
     g_geo.add_argument("--geo_gif", action="store_true",
                        default=defaults.get("geo_gif", False),
-                       help="geo_paths 附带事件级时间揭示动画 GIF (需 --geo_map); "
-                            "2026-10-03 起 config 默认开启, 用 --no-geo_gif 关闭")
-    # 否定旗标 (2026-10-03): GIF 改默认开后必须给单次关闭手段 (仿 --no-report 先例)。
-    # 实测 36 帧渲染 ~6s, 默认成本可忽略。
-    g_geo.add_argument("--no-geo_gif", dest="geo_gif", action="store_false",
-                       help="本次 run 关闭传播动画 GIF (config geo_paths.gif 仍为 true)")
+                       help="geo_paths 附带事件级时间揭示动画 GIF (需 --geo_map)")
     g_geo.add_argument("--geo_gif_frames", type=int,
                        default=defaults.get("geo_gif_frames", 36),
                        help="动画 GIF 帧数 (默认 36)")
@@ -4006,7 +5630,7 @@ Stages: """ + ", ".join(f"{k}({v})" for k, v in STAGE_DESC.items()),
 
     args = parser.parse_args()
 
-    # 布局解析 (CLI > MMPV_IO_LAYOUT > standard) 并写回环境供子进程继承
+    # 布局解析 (CLI > MMPV_IO_LAYOUT > legacy) 并写回环境供子进程继承
     normalize_layout_env(getattr(args, "io_layout", None))
     if not getattr(args, "output_dir", None):
         args.output_dir = dir_name("p_root")   # legacy=phylo_results / standard=05_Phylo
@@ -4041,7 +5665,10 @@ Stages: """ + ", ".join(f"{k}({v})" for k, v in STAGE_DESC.items()),
     # 该 stage 会被移出执行清单 (并打印被移除的项, 不静默)。
     # ⚠️ 配套改动: config.yaml 里这四项的 enabled 已同步改为 true, 以保持
     #    `--stage all` 的实际行为与本次改动前完全一致。
-    _enable_dests = ('rdp5', 'beast', 'gene_dating', 'phylogeo')
+    # 2026-10-12: treetime/phymapr (TreeTime 路线) 并入门控 —— config 里两者
+    # enabled: false, 同 rdp5/beast/gene_dating/phylogeo 一套门控语义。
+    _enable_dests = ('rdp5', 'beast', 'gene_dating', 'phylogeo',
+                     'treetime', 'phymapr')
 
     # 用户通过 --stage 点名的 stage (展开大模块名), 用于豁免 enabled 门控
     _user_stages = set()
@@ -4103,10 +5730,28 @@ Stages: """ + ", ".join(f"{k}({v})" for k, v in STAGE_DESC.items()),
             continue                       # --stage 里点名要求
         _cfg_off.append(_mod)
     if _cfg_off:
-        stages = [s for s in stages if s not in _cfg_off]
-        print(f"[stage] config 里 {', '.join(_cfg_off)}.enabled=false -> 已移出执行清单。"
-              f"如需运行: 把 config 改为 enabled: true, 或在 --stage 中显式点名, "
-              f"或加对应的命令行开关。")
+        # ── 依赖保护 (2026-10-12) ──
+        # 门控不得把**被保留 stage 的依赖**删掉: 例 `--stage geography` 点名
+        # phymapr (豁免门控), 而 treetime 的 config enabled=false 会被移出清单 ——
+        # 于是 phymapr 跑起来却拿不到 timetree.nexus, 整条 TreeTime 路线形同虚设。
+        # 被保留 stage 的依赖闭包一律保留 (只是"随依赖被带上", 不算用户点名)。
+        _kept_deps = set()
+        _stack = [s for s in stages if s not in _cfg_off]
+        while _stack:
+            _cur = _stack.pop()
+            for _d in STAGE_DEPS.get(_cur, ()):
+                if _d in _cfg_off and _d not in _kept_deps:
+                    _kept_deps.add(_d)
+                    _stack.append(_d)
+        _removed = [s for s in _cfg_off if s not in _kept_deps]
+        if _kept_deps:
+            print(f"[stage] 依赖保护: {', '.join(sorted(_kept_deps))} 虽 enabled=false, "
+                  f"但被保留 stage 依赖 → 随依赖保留")
+        stages = [s for s in stages if s not in _removed]
+        if _removed:
+            print(f"[stage] config 里 {', '.join(_removed)}.enabled=false -> 已移出执行清单。"
+                  f"如需运行: 把 config 改为 enabled: true, 或在 --stage 中显式点名, "
+                  f"或加对应的命令行开关。")
 
     # ── Setup ──
     output_dir = Path(args.output_dir).resolve()
@@ -4159,7 +5804,7 @@ Stages: """ + ", ".join(f"{k}({v})" for k, v in STAGE_DESC.items()),
         if not os.path.exists(metadata):
             logger.error(f"元数据不存在: {metadata}")
             sys.exit(1)
-        virus_name = os.path.basename(os.path.dirname(data_dir.rstrip('/\\')))
+        virus_name = _derive_virus_name(data_dir, ds)
         tree_file = None
         for cand in [os.path.join(data_dir, ph_dir('phylogeny'), "iqtree.treefile"),
                      os.path.join(data_dir, "iqtree.treefile")]:
@@ -4212,6 +5857,12 @@ Stages: """ + ", ".join(f"{k}({v})" for k, v in STAGE_DESC.items()),
 
         report_dir = os.path.join(data_dir, ph_dir('report'))
         os.makedirs(report_dir, exist_ok=True)
+        # 2026-10-11 修 (P0): 「只跑 report」时 process_virus 的 results 只含本次
+        # 请求的 stage → 汇总表/HTML 退化成空壳 (实测 PSTVd 2026-09-03 00:44 与
+        # 2026-09-22 23:13 两次 report-only 重跑: Beta/R²/P/TMRCA 全空)。
+        # 这里把磁盘上的 stage_results.json + .checkpoints/*.state.json 回填进来,
+        # 使"重跑一次 report"与"全量跑"产出等价。
+        results = merge_persisted_results(results, data_dir)
         # 2026-09-15 (P1-7): report 由 main() 收尾统一产出, 不是 process_virus 里的
         # stage 分支 —— 故它是"总是产出"而非门控。这里接上 config 的 report.enabled
         # (--report_enabled / --no-report), 让该配置项真正生效。
@@ -4236,18 +5887,33 @@ Stages: """ + ", ".join(f"{k}({v})" for k, v in STAGE_DESC.items()),
         # 后处理 metadata 一律走「治理产物优先」(2026-09-16): 此前直接用治理前
         # 捕获的 `metadata`, 等于 TempEst 日期 / 采样地图仍吃脏值。
         _pp = _governed_meta(prep, metadata)
-        _pf_cmd = ["--rtt_fasta", fasta,
+        # 2026-10-13 修 (P0-3 同类): datasets.yaml 的 fasta 是未比对原料, AlignIO.read
+        # 对长度不齐输入直接抛 ValueError → 优先用已产出的 MAFFT 比对。
+        _aln_r = os.path.join(data_dir, ph_dir('phylogeny'), "mafft.aln.fasta")
+        _rtt_fa = (_aln_r if (os.path.exists(_aln_r) and os.path.getsize(_aln_r) > 0)
+                   else fasta)
+        _pf_cmd = ["--rtt_fasta", _rtt_fa,
                         "--rtt_dates", _pp["dates"],
                         "--rtt_tree", tree_file or ""]
         if _beast_log:
             _pf_cmd += ["--beast_log", _beast_log]
         if os.path.exists(_mcc_tree):
             _pf_cmd += ["--mcc_tree", _mcc_tree]
-        _pf_cmd += ["--output_dir", os.path.join(report_dir, "publication")]
+        # 2026-10-11: 把病毒名传给 publication_figures —— 其 Fig1/Fig2 标题原先
+        # **硬编码 "GCVA"**, 跑 PSTVd 时两张发表级图的标题都写成 GCVA。
+        # 优先用 datasets.yaml 的 species (可读名, 如 "Potato spindle tuber viroid");
+        # 没有则退化为规范名 (目录名, 如 Potato_spindle_tuber_viroid_NC_002030.1)。
+        _pf_cmd += ["--virus_name", (prep.get("species") or prep.get("virus_name", "")),
+                    "--output_dir", os.path.join(report_dir, "publication")]
         run_postprocess("publication_figures", logger, *_pf_cmd)
         # 后处理: 采样分布图 (时间线 + 地理地图)
-        run_postprocess("sample_plot", logger,
-                        "--metadata", _pp["meta"],
+        # 2026-10-13: 追加宿主表 → 时间分布图的气泡内切宿主饼 (用户「图 B 把物种
+        #   也加上」)。`_governed_meta` 已带 host 通道 (无 host.csv 时为空串,
+        #   sample_plot 会自动退回纯地点着色圆)。
+        _sp_cmd = ["--metadata", _pp["meta"]]
+        if _pp.get("host"):
+            _sp_cmd += ["--host-metadata", _pp["host"]]
+        run_postprocess("sample_plot", logger, *_sp_cmd,
                         "--outdir", os.path.join(report_dir, "sample_plot"))
         logger.info(f"\nDone. Results: {data_dir}")
         return
@@ -4264,6 +5930,8 @@ Stages: """ + ", ".join(f"{k}({v})" for k, v in STAGE_DESC.items()),
         prep = {
             "virus_name": work_dir.name,
             "combined_fasta": _resolve(args.alignment),
+            # --alignment 是用户给的**比对文件**: 允许 align 早退复用 (2026-10-13 P0)
+            "provided_alignment": True,
             "dates_csv": _resolve(args.meta),
             "meta_csv": _resolve(args.host_meta) if args.host_meta else _resolve(args.meta),
             # 宿主通道: `--host_meta` 若已给出, 它天然含 host 列 → 正好当宿主骨架;
@@ -4278,8 +5946,10 @@ Stages: """ + ", ".join(f"{k}({v})" for k, v in STAGE_DESC.items()),
         }
         results = process_virus(prep, stages, args, tools, logger)
 
-        report_dir = os.path.join(str(work_dir), "report")
+        report_dir = os.path.join(str(work_dir), ph_dir('report'))
         os.makedirs(report_dir, exist_ok=True)
+        # 2026-10-11 修 (P0): 同 --virus 分支 —— 回填磁盘状态, 避免 report-only 空壳
+        results = merge_persisted_results(results, str(work_dir))
         if getattr(args, "report_enabled", True):
             generate_summary([results], report_dir, logger)
             if results:
@@ -4288,7 +5958,9 @@ Stages: """ + ", ".join(f"{k}({v})" for k, v in STAGE_DESC.items()),
         else:
             logger.info("  [report] report.enabled=false, 跳过 phylo_summary.csv / HTML")
         # 后处理: 发表级三件套 (同单病毒模式修复: beast_log 多链探测 + 补 mcc_tree)
-        _beast_dir_w = os.path.join(str(work_dir), "time", "beast")
+        # 2026-10-13 修 (P1): 硬编码 "time" 与 batch 分支 ph_dir('time') 口径不一致,
+        # standard 布局下探测不到 beast 日志/MCC → Table S1/Fig2/3 面板静默缺失。
+        _beast_dir_w = os.path.join(str(work_dir), ph_dir('time'), "beast")
         _beast_log_w = None
         for _cand in (os.path.join(_beast_dir_w, "merged", "merged.log"),
                       os.path.join(_beast_dir_w, "beast1.log"),
@@ -4305,18 +5977,24 @@ Stages: """ + ", ".join(f"{k}({v})" for k, v in STAGE_DESC.items()),
             _pf_cmd_w += ["--beast_log", _beast_log_w]
         if os.path.exists(_mcc_tree_w):
             _pf_cmd_w += ["--mcc_tree", _mcc_tree_w]
-        _pf_cmd_w += ["--output_dir", os.path.join(report_dir, "publication")]
+        # 2026-10-11: 同 --virus 分支 —— 传病毒名, 避免图题硬编码 GCVA。
+        _pf_cmd_w += ["--virus_name", (prep.get("species") or prep.get("virus_name", "")),
+                      "--output_dir", os.path.join(report_dir, "publication")]
         run_postprocess("publication_figures", logger, *_pf_cmd_w)
         # 后处理: 采样分布图
-        run_postprocess("sample_plot", logger,
-                        "--metadata", _pp_w["meta"],
+        _sp_cmd_w = ["--metadata", _pp_w["meta"]]
+        if _pp_w.get("host"):
+            _sp_cmd_w += ["--host-metadata", _pp_w["host"]]
+        run_postprocess("sample_plot", logger, *_sp_cmd_w,
                         "--outdir", os.path.join(report_dir, "sample_plot"))
         logger.info(f"\nDone. Results: {work_dir}")
-        # 退出码 (2026-10-03): work-dir 分支有独立出口, 同样要按记账结果定退出码
+        # 退出码 (2026-10-03, 2026-10-13 恢复): work-dir 分支有独立出口,
+        # 同样要按记账结果定退出码 (failed→1 / blocked·pending→2 / 干净→0)
         _wcode, _wwhy = pipeline_exit_code([results])
         if _wcode:
             logger.warning(f"EXIT {_wcode}: {_wwhy}")
         raise SystemExit(_wcode)
+        return
 
     # ── Batch mode ──
     if not args.extract_dir:
@@ -4377,8 +6055,14 @@ Stages: """ + ", ".join(f"{k}({v})" for k, v in STAGE_DESC.items()),
     # 无条件产出 —— 也就是 report 从来不是一个"阶段分支", 只做收尾。
     # 之所以不能改成 `if 'report' in stages`, 是因为 --stage clock 这类局部重跑
     # 也必须刷新汇总表。开关用 config 的 report.enabled, 而不是 stage 清单。
-    report_dir = os.path.join(str(output_dir), "report")
+    # 2026-10-12 修 (P2-13): 目录名原先写死 "report", 与单病毒/work-dir 分支的
+    # ph_dir('report') 口径不一致 —— standard 布局下汇总会落到 05_Phylo/report,
+    # 而 per-virus 产物在 08_report/, 报告与产物分家。统一走 ph_dir()。
+    report_dir = os.path.join(str(output_dir), ph_dir('report'))
     os.makedirs(report_dir, exist_ok=True)
+    # 2026-10-11 修 (P0): 局部重跑时用磁盘状态回填, 避免汇总退化成"只有本次 stage"
+    all_results = [merge_persisted_results(r, r.get("virus_dir", ""))
+                   for r in all_results]
     if getattr(args, "report_enabled", True):
         generate_summary(all_results, report_dir, logger)
         if all_results:
@@ -4390,15 +6074,25 @@ Stages: """ + ", ".join(f"{k}({v})" for k, v in STAGE_DESC.items()),
     # ── 每病毒后处理: 采样分布图 + 发表级三件套 ──
     # 历史坑: sample_plot / publication_figures 曾只挂在单病毒与 work-dir 模式,
     # batch 模式 (主路径) 从未调用 → 采样时间线/地图与 MCC 树图静默缺失
+    # 2026-10-13 修 (P0): publication_figures 必须吃 **比对后序列与树** ——
+    # prep.combined_fasta 已被 clean 就地改写成未比对 clean.fasta (AlignIO.read
+    # 对长度不齐输入直接抛 ValueError, Fig2/Fig3/TableS1 全灭), 且 prep 没有
+    # tree_file 键 (恒 "")。现按病毒名取记账结果里 align/tree 的真实产物。
+    _res_by_virus = {r.get("virus"): r for r in all_results}
     for vq in virus_queue:
         vname = vq["virus_name"]
         vdir = os.path.join(str(output_dir), vname)
         v_meta = vq.get("meta_csv") or vq.get("dates_csv", "")
         v_report = os.path.join(vdir, ph_dir('report'))
+        _vout = (_res_by_virus.get(vname) or {}).get("outputs", {})
         # 采样分布图 (时间线 + 地理地图)
         if v_meta and os.path.exists(v_meta):
-            run_postprocess("sample_plot", logger,
-                            "--metadata", v_meta,
+            # 2026-10-13: 同单病毒分支 —— 有宿主表就传给 sample_plot 画宿主饼。
+            _sp_cmd_b = ["--metadata", v_meta]
+            _vhost = vq.get("host_csv") or ""
+            if _vhost and os.path.exists(_vhost):
+                _sp_cmd_b += ["--host-metadata", _vhost]
+            run_postprocess("sample_plot", logger, *_sp_cmd_b,
                             "--outdir", os.path.join(v_report, "sample_plot"))
         # 分基因 tMRCA 汇总 (森林图 + TSV; gene_dating 后台 BEAST 完成后才有数据)
         _gd_dir = os.path.join(vdir, ph_dir('time'), "gene_dating")
@@ -4419,14 +6113,17 @@ Stages: """ + ", ".join(f"{k}({v})" for k, v in STAGE_DESC.items()),
             if os.path.exists(_cand):
                 _bl = _cand; break
         _mcc = os.path.join(_bd, "merged", "mcc.tree")
-        _cmd = ["--rtt_fasta", vq.get("combined_fasta", ""),
+        _cmd = ["--rtt_fasta", _vout.get("alignment") or vq.get("combined_fasta", ""),
                 "--rtt_dates", v_meta,
-                "--rtt_tree", vq.get("tree_file", "")]
+                "--rtt_tree", _vout.get("tree") or vq.get("tree_file", "")]
         if _bl:
             _cmd += ["--beast_log", _bl]
         if os.path.exists(_mcc):
             _cmd += ["--mcc_tree", _mcc]
-        _cmd += ["--output_dir", os.path.join(v_report, "publication")]
+        # 2026-10-11: batch 模式同样传病毒名, 避免图题硬编码 GCVA
+        # (优先 species, 与单病毒分支口径一致)。
+        _cmd += ["--virus_name", (vq.get("species") or vname),
+                 "--output_dir", os.path.join(v_report, "publication")]
         run_postprocess("publication_figures", logger, *_cmd)
 
     logger.info(f"\n{'='*60}")
@@ -4434,9 +6131,9 @@ Stages: """ + ", ".join(f"{k}({v})" for k, v in STAGE_DESC.items()),
     logger.info(f"Output: {output_dir}")
     logger.info(f"{'='*60}")
 
-    # 退出码 (2026-10-03, P1-1): 旧版无论有无失败都退出 0 → 自动化/&&链/per-virus
-    # driver 一律"成功"。现: 有 failed → 1; 无失败但有 blocked/pending (结果不完整/
-    # 未定) → 2; 全部干净 → 0。
+    # 退出码 (2026-10-03, P1-1; 2026-10-13 恢复): 旧版无论有无失败都退出 0 →
+    # 自动化/&&链/per-virus driver 一律"成功"。现: 有 failed → 1; 无失败但有
+    # blocked/pending (结果不完整/未定) → 2; 全部干净 → 0。
     _n_fail = sum(len(r.get("stages_failed", [])) for r in all_results)
     _n_blocked = sum(len(r.get("stages_blocked", [])) for r in all_results)
     _n_pending = sum(1 for r in all_results if r.get("incomplete") and

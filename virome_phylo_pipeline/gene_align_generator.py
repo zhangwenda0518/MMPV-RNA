@@ -100,6 +100,17 @@ def extract_cds_from_gbk(gbk_path: Path, out_path: Path) -> bool:
 
 # ------------------------------------------------------------- core flow ---
 
+def _ph_dir(name: str) -> str:
+    """布局感知目录名 (2026-10-13 修 P1): 此前硬编码 "time"/"select"/"data" 旧名,
+    standard 布局 (默认) 下 gene_split/参考 CDS 查找全部失配。被 phylo_pipeline
+    导入时 PROJECT_ROOT 已在 sys.path; 单独运行导入失败则回退 legacy 旧名。"""
+    try:
+        from mmpv_common.io_layout import ph_dir as _p
+        return _p(name)
+    except Exception:
+        return {"data": "data", "select": "select", "time": "time"}.get(name, name)
+
+
 def find_reference_cds(work_dir: Path, explicit: Optional[str] = None,
                        accession: Optional[str] = None) -> Optional[Path]:
     """定位参考 CDS fasta, 优先级:
@@ -112,16 +123,16 @@ def find_reference_cds(work_dir: Path, explicit: Optional[str] = None,
     if explicit and Path(explicit).exists():
         ex = Path(explicit)
         if ex.suffix.lower() in (".gb", ".gbk", ".gbff"):
-            out = work_dir / "time" / "gene_split" / "_ref_cds" / "ref_cds_from_gbk.fasta"
+            out = work_dir / _ph_dir('time') / "gene_split" / "_ref_cds" / "ref_cds_from_gbk.fasta"
             out.parent.mkdir(parents=True, exist_ok=True)
             if extract_cds_from_gbk(ex, out):
                 return out
             return None
         return ex
     for cand in [
-        work_dir / "select" / "capheine" / "ref_cds.fasta",
-        work_dir / "select" / "capheine" / "ref_cds-noStopCodons.fasta",
-        work_dir / "select" / "capheine" / "removeterminalstopcodon",
+        work_dir / _ph_dir('select') / "capheine" / "ref_cds.fasta",
+        work_dir / _ph_dir('select') / "capheine" / "ref_cds-noStopCodons.fasta",
+        work_dir / _ph_dir('select') / "capheine" / "removeterminalstopcodon",
     ]:
         if cand.is_file():
             return cand
@@ -130,13 +141,13 @@ def find_reference_cds(work_dir: Path, explicit: Optional[str] = None,
                 return f
     # gbk 提取 (含 .gb: virus-annotations 产物是 .gb)
     gbk_dirs = [
-        work_dir / "data" / "ncbi_ref",
+        work_dir / _ph_dir('data') / "ncbi_ref",
         work_dir,
     ]
     for d in gbk_dirs:
         for gbk in sorted(d.glob("*.gbk")) + sorted(d.glob("*.gbff")) + sorted(d.glob("*.gb")):
             # 输出到子目录 _ref_cds, 避免被 gene_split 当成基因比对 (glob *.fasta 不递归)
-            out = work_dir / "time" / "gene_split" / "_ref_cds" / "ref_cds_from_gbk.fasta"
+            out = work_dir / _ph_dir('time') / "gene_split" / "_ref_cds" / "ref_cds_from_gbk.fasta"
             out.parent.mkdir(parents=True, exist_ok=True)
             if extract_cds_from_gbk(gbk, out):
                 return out
@@ -144,8 +155,8 @@ def find_reference_cds(work_dir: Path, explicit: Optional[str] = None,
     if accession:
         try:
             from utils.gb_fetch import get_or_fetch_cds_fasta
-            out = work_dir / "time" / "gene_split" / "_ref_cds" / "ref_cds_from_gbk.fasta"
-            cache = work_dir / "data" / "ncbi_ref"
+            out = work_dir / _ph_dir('time') / "gene_split" / "_ref_cds" / "ref_cds_from_gbk.fasta"
+            cache = work_dir / _ph_dir('data') / "ncbi_ref"
             got = get_or_fetch_cds_fasta(accession, cache, out)
             if got:
                 return Path(got)
@@ -255,7 +266,7 @@ def main():
 
     logging.basicConfig(level=logging.INFO, format="[%(name)s] %(message)s")
     work_dir = Path(args.work_dir)
-    out_dir = Path(args.out) if args.out else work_dir / "time" / "gene_split"
+    out_dir = Path(args.out) if args.out else work_dir / _ph_dir('time') / "gene_split"
 
     ref = find_reference_cds(work_dir, args.ref_cds)
     if not ref:

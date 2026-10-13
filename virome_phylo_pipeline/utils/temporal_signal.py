@@ -278,6 +278,45 @@ def date_randomization_test(
             log.warning(f"  {n_randomizations - len(valid_r2)}/{n_randomizations} "
                         f"次随机化失败 (TreeTime 报错), 零分布实际只有 {len(valid_r2)} 个点")
         real_r2 = result.get("real_r2")
+
+        # ── Step 3b: clock rate 是否可与零分布区分 (审查 P2-8) ────────────
+        # ⚠⚠ 2026-10-13 重排: rate_overlap 必须在判定 passed 之前算出。
+        # 原实现把 passed 定义在 rate_overlap 之前, 判定只用了 r2_percentile,
+        # 导致 GCVA 出现「success:false + passed:true + rate_overlap:false」
+        # 三者并存的自相矛盾产物 (真实 rate 1.589e-04 落在随机化 95% CI
+        # [4.11e-06, 1.318e-04] 之外, 却仍判 "Sufficient temporal signal")。
+        # 定义 (与 R² 百分位同构, 不依赖 TreeTime 未暴露的 rate CI):
+        #   把 n 次随机化得到的 clock rate 当零分布, 取其中央 95% 区间
+        #   [2.5%, 97.5%]; 真实 rate 落在这个区间内 → rate_overlap=True,
+        #   即"真实速率与随机化速率不可区分"。
+        # 需要 >=5 个有效随机化 rate, 否则写 None (样本不足, 不给结论)。
+        _valid_rates = [float(v) for v in rate_values if v is not None]
+        result["n_valid_randomized_rates"] = len(_valid_rates)
+        rate_overlap = None
+        if result.get("real_clock_rate") is not None and len(_valid_rates) >= 5:
+            _lo = float(np.percentile(_valid_rates, 2.5))
+            _hi = float(np.percentile(_valid_rates, 97.5))
+            _real_rate = float(result["real_clock_rate"])
+            result["randomized_rate_ci95"] = [_lo, _hi]
+            rate_overlap = bool(_lo <= _real_rate <= _hi)
+            result["rate_overlap"] = rate_overlap
+            log.emit(f"  Clock rate: real={_real_rate:.3e}, "
+                     f"randomized 95% CI=[{_lo:.3e}, {_hi:.3e}] "
+                     f"→ overlap={rate_overlap}")
+        else:
+            log.warning(f"  rate_overlap 未计算 (real_clock_rate="
+                        f"{result.get('real_clock_rate')}, "
+                        f"有效随机化 rate 数={len(_valid_rates)}, 需 >=5)")
+
+        # ── Step 3c: 综合判定 (2026-10-13 修复) ──────────────────────────
+        # DRT 判「有时间信号」须同时满足两个条件:
+        #   ① r2_percentile >= 95   —— 真实日期的 R² 显著优于随机日期
+        #   ② rate_overlap is True  —— 真实速率与随机化速率不可区分
+        # 原实现只用 ①。问题: ① 是**分布内相对位置**, 只看"真实是否比随机好",
+        # **不看 R² 绝对值**。一个零信号数据集 (绝对 R²≈0.05) 只要随机化后掉得更低,
+        # 同样能拿 100 百分位 → 误判 PASSED (GCVA 实测即为此例)。
+        # ② 补上了"速率可识别性"这一必要条件。两者缺一不可 (conjunction)。
+        # 若 ② 无法计算 (有效随机化 rate < 5) → 保守取 False, 不给"通过"结论。
         if valid_r2 and real_r2 is not None:
             percentile = stats.percentileofscore(valid_r2, real_r2)
             result["r2_percentile"] = float(percentile)
@@ -287,49 +326,52 @@ def date_randomization_test(
             # 而 np.bool_ 不是 Python bool 的子类, 会被写 drt_results.json 时的
             # isinstance(v, (str, int, float, bool, ...)) 过滤器静默剔除。
             # 实测 8/8 个历史 drt_results.json 里都没有 passed 字段。
-            passed = bool(percentile >= 95.0)
+            r2_ok = bool(percentile >= 95.0)
+            rate_ok = bool(rate_overlap) if rate_overlap is not None else False
+            passed = bool(r2_ok and rate_ok)
             result["passed"] = passed
+            result["r2_criterion_met"] = r2_ok
+            result["rate_criterion_met"] = rate_ok
+
+            # 交叉核查: 旧实现 (仅凭 R²) 的判定结果。两者不一致时显式告警,
+            # 避免"静默改变历史结论"。
+            result["passed_r2_only"] = r2_ok
+            if r2_ok and not rate_ok:
+                log.warning(
+                    f"  ⚠ DRT 判定被推翻: R² 百分位 {percentile:.0f}% ≥95 (旧判据 PASSED), "
+                    f"但 rate_overlap={rate_overlap} → 新判据 FAILED。"
+                    f"真实速率落在随机化速率分布之外, 时钟不可识别。")
 
             if passed:
                 result["conclusion"] = (
                     f"✓ PASSED: Real R² ({real_r2:.4f}) exceeds "
                     f"{percentile:.0f}% of {len(valid_r2)} randomized values "
-                    f"(threshold: 95%). "
+                    f"(threshold: 95%), AND clock rate is indistinguishable from "
+                    f"the randomized-date null (rate_overlap=True). "
                     f"Sufficient temporal signal for molecular dating."
+                )
+            elif r2_ok and not rate_ok:
+                result["conclusion"] = (
+                    f"✗ FAILED: Real R² ({real_r2:.4f}) reaches the "
+                    f"{percentile:.0f}th percentile (≥95%), BUT the clock rate "
+                    f"does not overlap the randomized-date null "
+                    f"(rate_overlap={rate_overlap}). Rate is unidentified → "
+                    f"temporal signal insufficient for molecular dating."
                 )
             else:
                 result["conclusion"] = (
                     f"✗ FAILED: Real R² ({real_r2:.4f}) is only at "
                     f"{percentile:.0f}th percentile of {len(valid_r2)} randomized "
-                    f"values. Insufficient temporal signal — molecular clock may "
+                    f"values (r2_criterion_met={r2_ok}, "
+                    f"rate_criterion_met={rate_ok}). "
+                    f"Insufficient temporal signal — molecular clock may "
                     f"be unreliable."
                 )
             log.emit(f"\n  {result['conclusion']}")
         else:
             result["conclusion"] = "DRT inconclusive: insufficient data"
             real_r2 = None
-
-        # ── Step 3b: clock rate 是否可与零分布区分 (审查 P2-8) ────────────
-        # 定义 (与 R² 百分位同构, 不依赖 TreeTime 未暴露的 rate CI):
-        #   把 n 次随机化得到的 clock rate 当零分布, 取其中央 95% 区间
-        #   [2.5%, 97.5%]; 真实 rate 落在这个区间内 → rate_overlap=True,
-        #   即"真实速率与随机化速率不可区分"。
-        # 需要 >=5 个有效随机化 rate, 否则写 None (样本不足, 不给结论)。
-        _valid_rates = [float(v) for v in rate_values if v is not None]
-        result["n_valid_randomized_rates"] = len(_valid_rates)
-        if result.get("real_clock_rate") is not None and len(_valid_rates) >= 5:
-            _lo = float(np.percentile(_valid_rates, 2.5))
-            _hi = float(np.percentile(_valid_rates, 97.5))
-            _real_rate = float(result["real_clock_rate"])
-            result["randomized_rate_ci95"] = [_lo, _hi]
-            result["rate_overlap"] = bool(_lo <= _real_rate <= _hi)
-            log.emit(f"  Clock rate: real={_real_rate:.3e}, "
-                     f"randomized 95% CI=[{_lo:.3e}, {_hi:.3e}] "
-                     f"→ overlap={result['rate_overlap']}")
-        else:
-            log.warning(f"  rate_overlap 未计算 (real_clock_rate="
-                        f"{result.get('real_clock_rate')}, "
-                        f"有效随机化 rate 数={len(_valid_rates)}, 需 >=5)")
+            result.setdefault("passed", False)
 
         # ── Step 4: Save summary ──
         summary_csv = os.path.join(output_dir, "drt_summary.csv")
@@ -358,35 +400,66 @@ def date_randomization_test(
                 import matplotlib
                 matplotlib.use('Agg')
                 import matplotlib.pyplot as plt
+                # 2026-10-12: 配色统一 OKABE（原 #E9522E / #00A0E9 / #b0b0b0
+                # 均不在项目调色板内）；dpi 150 → 300；补 y 轴网格。
+                try:
+                    from utils.sci_palette import (
+                        apply_sci_style, OKABE_ITO, despine)
+                except ImportError:
+                    from sci_palette import (
+                        apply_sci_style, OKABE_ITO, despine)
+                apply_sci_style(base_size=11)
 
                 fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
 
                 # R² distribution
                 ax1.hist(valid_r2, bins=max(10, n_randomizations // 2),
-                         color='#b0b0b0', edgecolor='#666', alpha=0.7, label='Randomized')
-                ax1.axvline(real_r2, color='#E9522E', linewidth=3, linestyle='--',
-                            label=f'Real (R²={real_r2:.4f})')
-                ax1.axvline(np.percentile(valid_r2, 95), color='#00A0E9', linewidth=2,
+                         color=OKABE_ITO[8], edgecolor='#666666', linewidth=0.4,
+                         alpha=0.75, label='Randomized dates')
+                ax1.axvline(real_r2, color=OKABE_ITO[5], linewidth=2.4, linestyle='--',
+                            label=f'Observed ($R^2$ = {real_r2:.4f})')
+                ax1.axvline(np.percentile(valid_r2, 95), color=OKABE_ITO[4], linewidth=1.6,
                             linestyle=':', label='95th percentile')
-                ax1.set_xlabel('R²', fontsize=13)
+                ax1.set_xlabel('$R^2$', fontsize=13)
                 ax1.set_ylabel('Frequency', fontsize=13)
-                ax1.set_title('Date-Randomization Test: R²', fontsize=14)
+                # 2026-10-12（审稿人视角）：标题写明随机化次数 —— DRT 的检验强度
+                # 完全取决于置换次数，读者必须能一眼看到 n。
+                ax1.set_title(f'Date-randomization test: $R^2$'
+                              f'  (n = {n_randomizations} randomizations)',
+                              fontsize=13)
+                ax1.grid(alpha=0.3, axis='y')
                 ax1.legend(fontsize=10)
+                despine(ax1)
 
                 # Beta distribution
                 valid_beta = [v for v in beta_values if v is not None]
                 if valid_beta and result["real_beta"] is not None:
                     ax2.hist(valid_beta, bins=max(10, n_randomizations // 2),
-                             color='#b0b0b0', edgecolor='#666', alpha=0.7, label='Randomized')
-                    ax2.axvline(result["real_beta"], color='#E9522E', linewidth=3,
-                                linestyle='--', label=f'Real (β={result["real_beta"]:.2e})')
-                    ax2.set_xlabel('β (subs/site/yr)', fontsize=13)
+                             color=OKABE_ITO[8], edgecolor='#666666', linewidth=0.4,
+                             alpha=0.75, label='Randomized dates')
+                    ax2.axvline(result["real_beta"], color=OKABE_ITO[5], linewidth=2.4,
+                                linestyle='--',
+                                label=f'Observed ($\\beta$ = {result["real_beta"]:.2e})')
+                    ax2.set_xlabel('$\\beta$  (subs/site/yr)', fontsize=13)
                     ax2.set_ylabel('Frequency', fontsize=13)
-                    ax2.set_title('Date-Randomization Test: Rate', fontsize=14)
+                    ax2.set_title(f'Date-randomization test: rate'
+                                  f'  (n = {n_randomizations} randomizations)',
+                                  fontsize=13)
+                    # 2026-10-12（审稿人视角）：β ~ 1e-4 量级，旧版 7 个刻度全部
+                    # 写成 0.000000/0.000250/… 挤成一串无法辨认。
+                    # 改用科学计数法刻度（轴外统一 ×10⁻⁴ 偏移量），刻度只留 4 个。
+                    from matplotlib.ticker import MaxNLocator, ScalarFormatter
+                    ax2.xaxis.set_major_locator(MaxNLocator(nbins=4))
+                    _sf = ScalarFormatter(useMathText=True)
+                    _sf.set_powerlimits((0, 0))
+                    ax2.xaxis.set_major_formatter(_sf)
+                    ax2.ticklabel_format(axis='x', style='sci', scilimits=(0, 0))
+                    ax2.grid(alpha=0.3, axis='y')
                     ax2.legend(fontsize=10)
+                    despine(ax2)
 
                 drt_plot = os.path.join(output_dir, "drt_results.pdf")
-                fig.savefig(drt_plot, bbox_inches='tight', dpi=150, format='pdf')
+                fig.savefig(drt_plot, bbox_inches='tight', dpi=300, format='pdf')
                 plt.close(fig)
                 result["drt_plot"] = drt_plot
                 log.emit(f"  DRT plot: {drt_plot}")

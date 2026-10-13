@@ -176,11 +176,15 @@ def plot_saturation(p_values, ti_tv_ratios, out_path):
     import matplotlib
     matplotlib.use('Agg')
     import matplotlib.pyplot as plt
-    fig, ax = plt.subplots(figsize=(7, 5))
-    ax.scatter(p_values, ti_tv_ratios, s=12, alpha=0.55, color='#0F4D92', edgecolors='none')
-    ax.set_xlabel('p-distance (observed differences)')
-    ax.set_ylabel('Ti/Tv ratio')
-    ax.set_title('Substitution Saturation (p vs Ti/Tv)')
+    from utils.sci_palette import (apply_sci_style, COL_W_2, OKABE_ITO,
+                                   sci_legend, despine)
+    apply_sci_style(base_size=7)
+    fig, ax = plt.subplots(figsize=(COL_W_2, COL_W_2 * 0.74))
+    ax.scatter(p_values, ti_tv_ratios, s=3.2, alpha=0.45,
+               color=OKABE_ITO[4], edgecolors='none', zorder=2)
+    ax.set_xlabel('p-distance')
+    ax.set_ylabel('Ti/Tv ratio  (transitions / transversions)')
+    ax.set_title('Substitution saturation', fontsize=8, fontweight='bold')
     if len(p_values) > 1:
         # 平滑趋势线
         order = np.argsort(p_values)
@@ -189,12 +193,29 @@ def plot_saturation(p_values, ti_tv_ratios, out_path):
         try:
             z = np.polyfit(xs, ys, 3)
             xx = np.linspace(xs.min(), xs.max(), 100)
-            ax.plot(xx, np.polyval(z, xx), 'r--', linewidth=1.2, label='trend')
-            ax.legend()
+            yy = np.polyval(z, xx)
+            # 2026-10-12（审稿人视角）：饱和图的核心结论是"趋势到底掉不掉"，
+            # 旧图只画一条线、既不给拟合优度也不给端点变化量，读者无从判断。
+            resid = ys - np.polyval(z, xs)
+            ss_res = float(np.sum(resid ** 2))
+            ss_tot = float(np.sum((ys - ys.mean()) ** 2))
+            r2 = (1.0 - ss_res / ss_tot) if ss_tot > 0 else float('nan')
+            ax.plot(xx, yy, '--', color=OKABE_ITO[5],
+                    linewidth=1.3, label=f'cubic trend  ($R^2$ = {r2:.3f})',
+                    zorder=3)
+            ax.text(0.015, 0.035,
+                    f'fitted Ti/Tv  {yy[0]:.2f} → {yy[-1]:.2f}  '
+                    f'across the observed range',
+                    transform=ax.transAxes, ha='left', va='bottom',
+                    fontsize=6.0, color=OKABE_ITO[5],
+                    bbox=dict(facecolor='white', edgecolor='none',
+                              alpha=0.85, pad=1.2))
+            sci_legend(ax, loc='upper right', fontsize=6.5)
         except Exception:
             pass
-    fig.tight_layout()
-    fig.savefig(out_path, dpi=200, bbox_inches='tight')
+    despine(ax)
+    fig.tight_layout(pad=0.4)
+    fig.savefig(out_path, dpi=300, bbox_inches='tight')
     plt.close(fig)
     return out_path
 
@@ -232,13 +253,13 @@ def run_saturation(fasta_path, outdir='saturation_out', gap_treatment='pairwise'
     # 综合: C 值法为主 (YR-MPE 参考), Iss 为辅 (Iss>0.8 或 C<5 都提示饱和)
     saturated = c_saturated or iss_saturated
     if c_saturated and not iss_saturated:
-        verdict = '饱和 (C 值低, Iss 未达阈值; 建议看散点图)'
+        verdict = 'saturated (low C value, Iss below threshold; inspect the scatter plot)'
     elif not c_saturated and iss_saturated:
-        verdict = '偏高 (Iss>0.8; C 值未触发)'
+        verdict = 'borderline (Iss>0.8; C value did not trigger)'
     elif saturated:
-        verdict = '饱和'
+        verdict = 'saturated'
     else:
-        verdict = '未饱和'
+        verdict = 'not saturated'
     emit(f"[saturation] C={m['c_value']:.4f}, Iss={xia['iss']:.4f}, p={mean_p:.4f} → {verdict}")
 
     # 报告 CSV
@@ -248,9 +269,9 @@ def run_saturation(fasta_path, outdir='saturation_out', gap_treatment='pairwise'
         w.writerow(['metric', 'value', 'criterion'])
         w.writerow(['n_sequences', len(sequences), ''])
         w.writerow(['n_pairs', m['n_pairs'], ''])
-        w.writerow(['C_value', f"{m['c_value']:.4f}", 'C < 5 → 高饱和; C > 20 → 未饱和'])
-        w.writerow(['Iss', f"{xia['iss']:.4f}", 'Iss = p_obs/p_sat; >0.8 接近饱和'])
-        w.writerow(['saturated', saturated, '综合判定 (C 值法为主 + Iss 辅)'])
+        w.writerow(['C_value', f"{m['c_value']:.4f}", 'C < 5 → high saturation; C > 20 → no saturation'])
+        w.writerow(['Iss', f"{xia['iss']:.4f}", 'Iss = p_obs/p_sat; >0.8 approaching saturation'])
+        w.writerow(['saturated', saturated, 'combined verdict (C value primary + Iss secondary)'])
         w.writerow(['mean_p_distance', f"{mean_p:.4f}", ''])
         w.writerow(['verdict', verdict, ''])
     emit(f'[saturation] 报告 → {report}')

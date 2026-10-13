@@ -19,6 +19,16 @@ import argparse
 import os
 import sys
 
+# ── 同目录兄弟模块导入 (2026-10-12 修 P0-3) ────────────────────────────
+# 文档用法是 `python codon_usage/codon_usage_plots.py ...` —— 脚本模式下
+# sys.path[0] 是**脚本所在目录**, 而旧代码写的是
+#     from codon_usage.codon_usage import _AAS
+# 它要求父目录在 sys.path 且 codon_usage/ 是包 (该目录没有 __init__.py) ——
+# 实测必然 `ModuleNotFoundError: 'codon_usage' is not a package`,
+# RSCU 热图 (4 张图里的第 4 张) 永远出不来。这里把本文件目录显式插进 sys.path,
+# 按同目录导入兄弟模块; 包内导入 (from codon_usage import codon_usage_plots) 作为兜底。
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
 import numpy as np
 import pandas as pd
 import matplotlib
@@ -162,7 +172,10 @@ _AA_ORDER = []  # filled in _build
 
 
 def _build_aa_order(rscu_cols):
-    from codon_usage.codon_usage import _AAS
+    try:                          # 脚本模式: 同目录 codon_usage.py (sys.path 已含本目录)
+        from codon_usage import _AAS
+    except ImportError:           # 包模式: from codon_usage import codon_usage_plots
+        from .codon_usage import _AAS
     order, seen = [], set()
     aa_of = {}
     for aa, codons in _AAS.items():

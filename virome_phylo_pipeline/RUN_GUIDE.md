@@ -1,4 +1,4 @@
-# phylo_pipeline.py 运行指南（v3 · 三入口 + 17 stage）
+# phylo_pipeline.py 运行指南（v3 · 三入口 + 20 stage）
 
 > **📌 文档定位：本文件是「怎么跑」的权威** —— CLI 参数、config 分区、输出目录布局、
 > checkpoint 机制一律以本文件为准。stage 的逐项内部细节见 `STAGE_REFERENCE.md`；
@@ -15,7 +15,7 @@
 
 ```
 virome_phylo_pipeline/
-├── phylo_pipeline.py           # 主编排器（stage 流程化，96 个 CLI 参数）
+├── phylo_pipeline.py           # 主编排器（stage 流程化，114 个 CLI 参数）
 ├── config.yaml                 # 默认运行参数（优先级：CLI 显式 > config.yaml > 代码默认）
 ├── datasets.yaml               # 数据集注册表（--virus 模式用：每病毒路径/配色/基因坐标）
 ├── capheine_pipeline.py        # 正选择分析（stage `capheine` 的实现）
@@ -49,7 +49,7 @@ virome_phylo_pipeline/
 
 ## 三、Stage 体系
 
-### 3.1 18 个 stage（`--stage` 子步骤名，与 `STAGE_ORDER` 逐字对应）
+### 3.1 20 个 stage（`--stage` 子步骤名，与 `STAGE_ORDER` 逐字对应）
 
 | # | stage | 依赖（自动补齐） | 输出（`<virus>/` 内） | checkpoint 标志产物 |
 |---|---|---|---|---|
@@ -58,19 +58,21 @@ virome_phylo_pipeline/
 | 3 | `online` | prep, metadata | `data/ncbi_ref/`、`data/ncbi_harvest/` | `data/ncbi_ref` |
 | 4 | `clean` | prep | `data/clean/clean.fasta`（+`removed.fasta`/`clean_report.tsv`） | `.checkpoints/clean.done`（仅标记） |
 | 5 | `align` | prep, clean | `phylogeny/mafft.aln.fasta` + `phylogeny/saturation_out/` | `phylogeny/mafft.aln.fasta` + **输入指纹** |
-| 6 | `splitstree` | align | `phylogeny/splitstree/neighbornet.nexus` | `phylogeny/splitstree/neighbornet.nexus` |
+| 6 | `splitstree` | align | `phylogeny/splitstree/neighbornet.nexus` + 出版级渲染 `neighbornet.pdf/png`（外圈彩色分组弧线，`--splitstree_group_col` 控制） | `phylogeny/splitstree/neighbornet.nexus` |
 | 7 | `rdp5` | align | `recomb/rdp5/`（事件 CSV + 干净比对 + `validation/`） | `recomb/rdp5/rdp5_dropped.realn.fasta`（`--rdp5_mask` 时 `masked/masked_N.fasta`） |
 | 8 | `tree` | align | `phylogeny/iqtree.treefile` + `iqtree.support.json` | `phylogeny/iqtree.treefile` + **输入指纹（含 IQ-TREE 参数）** |
-| 9 | `popgen` | align | `popgen/popgen_report.txt`（+ 图/网络/HTML） | `popgen/popgen_report.txt` |
+| 9 | `popgen` | align | `popgen/popgen_report.txt` + 多面板统计图 `popgen_stats.pdf/png`（π/θ-W、Hd、Tajima's D、Fu's Fs 按群体 + pairwise Fst 热图）+ `popgen_stats.json` | `popgen/popgen_report.txt` |
 | 10 | `host` | tree | `popgen/host_analysis/tree_host.pdf` | `popgen/host_analysis/tree_host.pdf` |
 | 11 | `capheine` | prep | `select/capheine/`（cawlign/drhip/multiqc） | `select/capheine/drhip` |
 | 12 | `clock` | tree | `time/treetime_rtt/`、`time/treedater_ltt/`、`time/temporal_signal/` | `time/treedater_ltt/Phylogeny_dated.pdf` |
 | 13 | `beast` | tree | `time/beast/beast1.xml` + `.log`/`.trees`/`postprocess/` | `time/beast/beast1.xml` |
 | 14 | `gene_dating` | clock, capheine | `time/gene_dating/`（+`time/gene_split/`） | `time/gene_dating/gcva_watch_parse.sh` |
-| 15 | `phylogeo` | tree | `geography/phylogeography/`（XML + `merged/mcc.tree` + `visualization/`） | `geography/phylogeography/merged/mcc.tree` |
-| 16 | `geo` | tree | `geography/geo_analysis/mantel_test.pdf`（+`extended/`） | `geography/geo_analysis/mantel_test.pdf` |
-| 17 | `geo_paths` | phylogeo | `geography/geo_analysis/pathways/`（+`dispersion/`，可选 `visualization/transmission_map.*`） | `geography/geo_analysis/pathways/pathway_qc.json` |
-| 18 | `report` | — | `report/phylo_summary.csv` + `report/phylo_report.html` | `report/phylo_summary.csv` |
+| 15 | `treetime` | tree | `time/treetime/timetree.nexus`（+`dates_filtered.tsv`/`molecular_clock.txt`） | `time/treetime/timetree.nexus` |
+| 16 | `phylogeo` | tree | `geography/phylogeography/`（XML + `merged/mcc.tree` + `visualization/`） | `geography/phylogeography/merged/mcc.tree` |
+| 17 | `geo` | tree | `geography/geo_analysis/mantel_test.pdf`（+`extended/`） | `geography/geo_analysis/mantel_test.pdf` |
+| 18 | `geo_paths` | phylogeo | `geography/geo_analysis/pathways/`（+`dispersion/`，可选 `visualization/transmission_map.*`） | `geography/geo_analysis/pathways/pathway_qc.json` |
+| 19 | `phymapr` | treetime | `geography/phymapr/`（`tree_plot.png`、`transmission_map.gif`、`transmission_map_static.png`、`episodes.csv`、`pathways.csv`、`phymapr_summary.json`） | `geography/phymapr/phymapr_summary.json` |
+| 20 | `report` | — | `report/phylo_summary.csv` + `report/phylo_report.html` | `report/phylo_summary.csv` |
 
 > ⚠️ **`beast` 恒为 BEAST 1.x**（产物名固定 `beast1.xml`）。`--beast_version` 只影响
 > `phylogeo` 走 BEAST1 还是 BEAST2 路径，**不影响 `beast` stage**。
@@ -84,8 +86,8 @@ virome_phylo_pipeline/
 | `recomb` | rdp5 |
 | `select` | capheine |
 | `phylogeny` | align, splitstree, tree |
-| `time` | clock, beast, gene_dating |
-| `geography` | phylogeo, geo, geo_paths |
+| `time` | clock, beast, gene_dating, treetime |
+| `geography` | phylogeo, geo, geo_paths, phymapr |
 | `report` | report |
 
 > `metadata` **不在任何别名里**（由 `--metadata` 入口参数驱动、在 `prep` 之后自动执行）；
@@ -112,7 +114,7 @@ python phylo_pipeline.py --stage all --disable beast,rdp5
 
 ---
 
-## 四、CLI 参数（96 个，按 help 分组）
+## 四、CLI 参数（114 个，按 help 分组）
 
 ### Config / Input / Output
 
@@ -175,12 +177,14 @@ python phylo_pipeline.py --stage all --disable beast,rdp5
 | 模块 | 参数 |
 |---|---|
 | rdp5 | `--rdp5`、`--rdp5_script`、`--rdp5_genes`、`--mask_min_methods`、`--rdp5_mask`、`--rdp5_stage {run,all}` |
+| splitstree | `--splitstree_group_col {auto,location,host,none}`(NeighborNet 外圈分组弧线的分组列, auto=location→host 回退) |
 | beast | `--beast`、`--beast_bin`、`--beast_chain`、`--beast_burnin`、`--beast_timeout`、`--beast_chains`、`--skip_beast_run` |
 | gene_dating | `--gene_dating`、`--genes_dir`、`--gene_chain`、`--gene_chain_big`、`--big_genes` |
 | saturation | `--sat_replicates` |
 | popgen | `--popgen_group`、`--popgen_min_n`、`--popgen_perm`、`--popgen_exclude_reference`、`--popgen_exclude_ids` |
 | capheine | `--capheine_ref`、`--capheine_unaligned`、`--capheine_code`、`--capheine_workers`、`--capheine_cpus_iqtree`、`--capheine_cpus_hyphy`、`--capheine_mpi/--no-capheine_mpi` |
-| phylogeo | `--phylogeo`、`--phylogeo_clock {strict,ucln}`、`--phylogeo_prior {constant,skyline,bdsky,auto}`、`--phylogeo_chain`、`--phylogeo_bf`、`--phylogeo_chains`、`--skip_phylogeo_run`、`--geo_subsample`、`--treeannotator_bin`、`--beast_version {1,2}`、`--rrt_randomized_dir`、geo_paths(2026-09-16): `--no_pathways`、`--direct_snp`、`--indirect_snp`、`--censor_years`、`--n_perm`、`--geo_map`、`--geo_gif`、`--geo_gif_frames`、`--geo_tree_map`、`--calibrate {auto,manual}` |
+| phylogeo | `--phylogeo`、`--phylogeo_clock {strict,ucln}`、`--phylogeo_prior {constant,skyline,bdsky,auto}`、`--phylogeo_chain`、`--phylogeo_bf`、`--phylogeo_chains`、`--skip_phylogeo_run`、`--geo_subsample`、`--treeannotator_bin`、`--beast_version {1,2}`、`--rrt_randomized_dir`、geo_paths(2026-09-16): `--no_pathways`、`--direct_snp`、`--indirect_snp`、`--censor_years`、`--n_perm`、`--geo_map` / `--no-geo_map`、`--geo_gif` / `--no-geo_gif`、`--geo_gif_frames`、`--geo_tree_map`、`--calibrate {auto,manual}` |
+| treetime/phymapr (2026-10-12, TreeTime 路线) | `--treetime`、`--treetime_clock_filter`(4.0)、`--treetime_coalescent {const,skyline,optimal,0.0}`、`--treetime_clock_rate`、`--phymapr`、`--phymapr_map_style {polygon,tile}`、`--phymapr_n_prune_early`(4)、`--phymapr_direct_snp`(2)、`--phymapr_indirect_snp`(5)、`--phymapr_distant_style {import_arrow,pulse,curve,hide}`、`--phymapr_pace`(0.5) |
 | clock | `--check_temporal`、`--drt_randomizations`、`--bets`、`--bets_steps`、`--bets_chain` |
 | report | `--report_enabled`、`--no-report` |
 
@@ -202,6 +206,8 @@ python phylo_pipeline.py --stage all --disable beast,rdp5
 | `capheine` | `ref`, `unaligned`, `code`, `workers`, `cpus_iqtree`, `cpus_hyphy`, `use_mpi` |
 | `phylogeo` | `enabled`(=--phylogeo), `clock`, `prior`, `chain`, `bf`, `treeannotator_bin`, **`chains`**, `rrt_randomized_dir` |
 | `geo_paths` | `direct_snp`, `indirect_snp`, `censor_years`, `n_perm`, `map`(=--geo_map), `gif`(=--geo_gif), `gif_frames`(=--geo_gif_frames), `tree_map`(=--geo_tree_map), `calibrate`(=--calibrate) |
+| `treetime` (2026-10-12) | `enabled`(=--treetime), `clock_filter`(=--treetime_clock_filter), `coalescent`(=--treetime_coalescent), `clock_rate`(=--treetime_clock_rate) |
+| `phymapr` (2026-10-12) | `enabled`(=--phymapr), `map_style`, `n_prune_early`, `direct_snp`, `indirect_snp`, `distant_style`, `pace` |
 | `temporal` | `check`(=--check_temporal), `drt_randomizations`, `bets`, `bets_steps`, `bets_chain` |
 | `report` | `enabled` |
 
@@ -231,6 +237,7 @@ python phylo_pipeline.py --stage all --disable beast,rdp5
 │   ├── mafft.aln.fasta            # align
 │   ├── saturation_out/            # align 内联的替换饱和分析 (Iss)
 │   ├── splitstree/neighbornet.nexus
+│   │   └── neighbornet.pdf / .png  # 出版级渲染 (equal-angle + location/host 分组弧线)
 │   ├── qc/                        # 比对后 QC 图 (align_qc)
 │   ├── iqtree.treefile            # tree
 │   ├── iqtree.iqtree / .log / .ckp.gz
@@ -251,12 +258,16 @@ python phylo_pipeline.py --stage all --disable beast,rdp5
 │   ├── temporal_signal/           # clock: drt_results.pdf
 │   ├── beast/                     # beast: beast1.xml + beast1.log + beast1.trees + postprocess/ + beauti/
 │   ├── gene_split/                # gene_dating: 切出的分基因比对
-│   └── gene_dating/               # gene_dating: 每基因 XML + watchdog 脚本
+│   ├── gene_dating/               # gene_dating: 每基因 XML + watchdog 脚本
+│   └── treetime/                  # treetime (2026-10-12): timetree.nexus + dates_filtered.tsv
+│                                  #   + molecular_clock.txt + [timetree_input_dated.nwk]
 ├── geography/                     # 模块 geography
 │   ├── phylogeography/            # phylogeo: phylogeo_beast1.xml + merged/mcc.tree
 │   ├── geo_analysis/              # geo: mantel_test.pdf (+ extended/)
 │   ├── prior_comparison/          # phylogeo: 模型/先验比较
 │   ├── tempmig/                   # TempMig 时序迁移追踪
+│   ├── phymapr/                   # phymapr (2026-10-12): tree_plot.png + transmission_map.gif
+│   │                              #   + _static.png + episodes.csv + pathways.csv + phymapr_summary.json
 │   └── visualization/             # SpreaD3 / skyline HTML
 ├── report/                        # 模块 report
 │   ├── phylo_summary.csv
@@ -288,6 +299,9 @@ python phylo_pipeline.py --stage all --disable beast,rdp5
 未产出）。后两类汇总进 **`Stages_blocked`** 列并置 **`Incomplete=True`**，HTML 总表相应降为
 `PARTIAL`；`main` 退出码：有 failed→**1**，有 blocked/pending→**2**，干净→**0**（旧版恒 0）。
 即：`Success=True` 只代表"无硬失败"，**不再代表结果完整** —— 判完整性看 `Incomplete`。
+`na` 的典型用例（2026-10-12）：**环境没有 RDP5**（`rdp5.script` 指向的 `run_rdp5.sh` 不存在）时
+`rdp5` 记 skip(na) 用原比对继续，不 fail 也不写 checkpoint——装上 RDP5 重跑会自动补检；
+但脚本存在却执行失败仍记 fail（真工具故障要暴露）。
 
 ```bash
 # 中断后继续（已完成的 stage 自动跳过）
@@ -336,6 +350,13 @@ python phylo_pipeline.py --work_dir gcva_results/ --alignment mafft.aln.fasta \
 # 9. 关掉某个 stage（覆盖 --stage all 的展开）
 python phylo_pipeline.py --extract_dir 06_extraction/ --metadata metadata.tsv \
     --stage all --disable rdp5,beast
+
+# 10. TreeTime 路线时间-地理（与 BEAST 路线并列的第二种方法; 2026-10-12）
+#     treetime 产 timetree.nexus → phymapr 做祖先重建 + 传播地图; 依赖闭包自动带前置
+python phylo_pipeline.py --virus GCVA --stage treetime,phymapr -t 20
+python phylo_pipeline.py --virus GCVA --stage geography   # 双路线一起跑 (含 BEAST 路线)
+#     phymapr 需一批 R 包, 缺失时 stage 记 blocked 并打印安装清单;
+#     服务器离线时可 clone phymapr 后: export PHYMAPR_SRC=/path/to/phymapr (含 R/ 子目录)
 ```
 
 ---
@@ -370,7 +391,7 @@ python -m utils.merge_results --virus GCVA
 
 | 断言 | 对拍对象 |
 |---|---|
-| stage 清单 / 数量（17） | `STAGE_ORDER` |
+| stage 清单 / 数量（20） | `STAGE_ORDER` |
 | 分组别名 | `STAGE_GROUPS` |
 | 依赖关系 | `STAGE_DEPS` |
 | checkpoint 标志产物 | `STAGE_CHECKPOINT_FILES` |

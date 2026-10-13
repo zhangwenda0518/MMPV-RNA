@@ -602,7 +602,9 @@ def main():
     if not beast or not os.path.exists(beast):
         log.emit(f"BEAST 二进制不可用 (解析结果: {beast or '<未找到>'}), 分基因定年无法提交")
         log.emit("  提示: 用 PHYLO_BEAST_BIN=/path/to/beast 或 datasets.yaml env.beast_bin 指定")
-        return
+        # 2026-10-13 修 (P1): 旧版仅日志后 return (进程 exit 0) → 外层按 returncode==0
+        # 判成功写 checkpoint → 装好 BEAST 后重跑也被永久跳过。约定退出码 3 = 工具不可用。
+        sys.exit(3)
     # 确定性种子基准 (2026-09-15 修复): 旧版 os.system 起 BEAST 不传 -seed
     # → 每次 chain 结果不同, 分基因 tMRCA 不可复现。
     try:

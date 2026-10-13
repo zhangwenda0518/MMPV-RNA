@@ -22,6 +22,13 @@
 MIN_MCMC_SAMPLES = 10
 MIN_PARAM_SUMMARY_SAMPLES = 100
 
+# MCMC 收敛判据 (Tracer 惯例)。ESS 是"有效样本数", 衡量链自身混合是否充分;
+# 与"数据有无时间信号"**互相独立** (见 reports/_gcva_time_review_20261013/
+# WHY_GENE_OK_GENOME_NOT.md) —— ESS 达标不等于数据可定年, 只说明 MCMC 混合够。
+# 2026-10-13 登记: 原散落在 beast_parser.py 形参默认值里, 无中心来源, 且下游
+# merge_results **不据此设门禁** —— 未达标链会被静默采信。
+MIN_ESS = 200.0
+
 
 def require_min_samples(n, what, floor=MIN_MCMC_SAMPLES, log=None):
     """检查样本数是否达到下限。

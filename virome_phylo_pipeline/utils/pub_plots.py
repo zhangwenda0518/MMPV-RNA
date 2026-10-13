@@ -3,6 +3,11 @@
 依赖: biosoft/PhyloSuite/PhyloSuite 内嵌的 phytreeviz 与 marsilea 源码
       (本地直接 sys.path 引用, 不复制不安装; 服务器侧需将两库目录随包部署)。
 
+⚠ 手工依赖 (2026-10-12 标注, 不随 pip 环境自动解决): 本模块 import 失败时
+  `_ensure_ps_path()` 直接抛 ImportError —— 无 biosoft/PhyloSuite 时请
+  `pip install marsilea phytreeviz` 或改用 publication_figures 的 matplotlib 版
+  (plot_mcc_tree_publication); 两者产物等价, 本模块仅为排版备选。
+
 两个入口:
     plot_mcc_tree(mcc_tree, out_pdf, ...)  — matplotlib 原生 MCC 树 (SCI 白底)
     plot_upset(sets_df, out_pdf, ...)      — marsilea 出版级静态 UpSet
@@ -57,9 +62,14 @@ def parse_tip_locations(tree):
     return loc_map
 
 
-# SCI 友好色板 (Okabe-Ito, 色盲安全)
-OKABE_ITO = ["#0072B2", "#D55E00", "#009E73", "#CC79A7", "#E69F00",
-             "#56B4E9", "#F0E442", "#000000"]
+# SCI 友好色板 —— 2026-10-12 修 (P2-11): 本地自建表顺序与项目真源
+# (utils.sci_palette.OKABE_ITO, 约定"顺序固定不得重排") 不一致, 同一地点在不同
+# 图里颜色不同。改为统一从 sci_palette 导入 (sci_palette 只依赖 matplotlib,
+# 本模块已 import, 无循环依赖)。
+try:                                       # 包内导入 (管线内运行)
+    from utils.sci_palette import OKABE_ITO
+except ImportError:                        # utils/ 目录内直接运行
+    from sci_palette import OKABE_ITO
 
 
 def plot_mcc_tree(mcc_tree, out_pdf, tip_location_map=None, title="",

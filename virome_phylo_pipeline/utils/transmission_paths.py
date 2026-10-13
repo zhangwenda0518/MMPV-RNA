@@ -419,8 +419,8 @@ def classify_pathways(
                        "requested_indirect_snp": indirect_snp},
         "calibration": {"mode": mode, "note": calib_note},
         "dims_used": used,
-        "note": "SNP 维度=期望替换数(rate×duration×seq_len)，非实测；阈值无论手动或 auto，"
-                "进论文都必须在 METHODS.md 写明取值与依据",
+        "note": "the SNP dimension is the expected number of substitutions (rate×duration×seq_len), not measured; "
+                "whether thresholds are manual or auto, the values and their basis must be stated in METHODS.md before publication",
     }
     return out, qc
 
