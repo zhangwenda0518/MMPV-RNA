@@ -56,9 +56,16 @@ submission_gui/samples/_test_roundtrip_out.*
 .impeccable/
 .publication_metadata_plots/
 .tmp_demo_funnel/
+.tmp_probe/
 .zcode/
 .pytest_cache/
 .ruff_cache/
+
+# 本地构建/草稿/审查产物 (2026-10-13 收口, 消 git status 噪音)
+_build/
+_trash_*/
+.tmp_*/
+Rplots.pdf
 
 # ① 管线本地产物
 public_metadata_pipeline/stat_prescreen_output/

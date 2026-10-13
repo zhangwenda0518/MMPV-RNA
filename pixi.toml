@@ -1,5 +1,5 @@
 # ==============================================================================
-# MMPV-RNA v2.3 — pixi 环境配置
+# MMPV-RNA v3.1 — pixi 环境配置
 # ==============================================================================
 # 安装: pixi install
 # 激活: pixi shell
@@ -10,7 +10,7 @@
 
 [project]
 name = "MMPV-RNA"
-version = "2.3.0"
+version = "3.1.0"
 description = "Macro-metagenomic Plant Virome RNA pipeline — discovery + analysis + public data"
 authors = ["zhangwenda"]
 channels = ["conda-forge", "bioconda", "nodefaults"]
@@ -38,6 +38,7 @@ plotly = ">=5.14,<6"
 python-kaleido = ">=0.2,<0.3"                      # plotly 静态导出 (conda-forge 包名 python-kaleido)
 scipy = ">=1.10"
 scikit-learn = ">=1.3"                        # PCA/KMeans (variants/SnpGenie)
+scikit-allel = ">=1.3.13"                     # 群体遗传统计 (2026-10-13: ⑤ Tajima's D/位点法 Fst、④ Pi 全部改调 scikit-allel, 不再手写公式)
 requests = ">=2.28"
 tqdm = ">=4.65"
 psutil = ">=5.9"
@@ -50,9 +51,10 @@ venn = ">=0.1"                                # 韦恩图 (virus_identification)
 networkx = ">=3.0"                            # 单倍型网络 (haplotype/build_haplo)
 openpyxl = ">=3.1"                            # 读 xlsx (元数据/VMR 表)
 pyhmmer = ">=0.10"                            # HMMER 蛋白域搜索
-pydeseq2 = ">=0.4"                            # ⑧ 宿主表达可选模块 (host_expression_pipeline/run_deseq2.py) — 不跑该模块无影响
+pydeseq2 = ">=0.4"                            # ⑧ 宿主表达可选模块 (已归档 2026-10-11 → archive/20261011_host_expression_pipeline; 依赖暂保留以免动 lock, 恢复模块时仍需)
+jinja2 = ">=3.1"                              # 报告模板引擎 (mmpv_common/report_template.py, 报告层/过程面板)
 
-# --- GUI (metadata_gui / submission_gui / virome_submission_pipeline/submission_gui.py) ---
+# --- GUI (virome_submission_pipeline/submission_gui.py 管线内 GUI; 桌面 GUI 已移交外部平台) ---
 pyside6 = ">=6.5"
 
 # --- 系统发育辅助 (virome_phylo_pipeline Python 侧) ---
@@ -304,10 +306,11 @@ public-search = { cmd = "python public_metadata_pipeline/public_data_pipeline.py
 build-hostdb = { cmd = "python public_metadata_pipeline/build_host_pipeline.py --stage hostdb", description = "Build Kraken2/Bowtie2/HISAT2/Minimap2 host DB" }
 
 # 内源性病毒 (EVE) 三阶段筛查 (宿主基因组 FASTA 输入)
-eve-screen = { cmd = "python endogenous_virus_pipeline/eve_screen.py", description = "EVE screening: discover→verdict→annotate→merge on host genomes" }
+# 【⑥ 已归档 2026-10-11 → archive/20261011_endogenous_virus_pipeline (方法不成熟); 任务停用, 恢复时取消注释并核对路径】
+# eve-screen = { cmd = "python endogenous_virus_pipeline/eve_screen.py", description = "EVE screening: discover→verdict→annotate→merge on host genomes" }
 
 # EVE 核心逻辑单元测试 (本地无 diamond/seqkit 也可跑)
-eve-test = { cmd = "python -m unittest discover -s endogenous_virus_pipeline/tests -v", description = "Run EVE core unit tests" }
+# eve-test = { cmd = "python -m unittest discover -s endogenous_virus_pipeline/tests -v", description = "Run EVE core unit tests" }
 graph-test = { cmd = "python -m pytest virome_discovery_pipeline/tests/test_graph_propagation.py -q", description = "Run graph propagation unit tests" }
 
 # R 交互环境

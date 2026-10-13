@@ -13,8 +13,9 @@ from pathlib import Path
 R = Path(r"D:\桌面\延伸基因组\MMPV-RNA")
 CORE_DIRS = ["virome_discovery_pipeline", "virome_analysis_pipeline",
              "public_metadata_pipeline", "virome_submission_pipeline",
-             "virome_phylo_pipeline", "endogenous_virus_pipeline",
-             "metadata_gui", "submission_gui", "biosoft"]
+             "virome_phylo_pipeline",
+             # endogenous_virus_pipeline / host_expression_pipeline 已归档 (2026-10-11 → archive/)
+             "biosoft"]
 
 # 排除目录 (统一成 / 分隔再比较, 否则 Windows 反斜杠路径永远匹配不上)
 EXCLUDE = ("/archive", "__pycache__", ".bak", "_backup", "_scratch", "_archive",

@@ -22,6 +22,7 @@ standard 布局 (doc/IO_LAYOUT_DESIGN.md) 下上下游衔接断裂。
    归档为 archive/auto_known_virus.orphan_utils_20260915.py; archive/ 本身不扫描)
   virome_discovery_pipeline/integrated_summary.py     审计专用 (仅 scripts/audit 引用)
   endogenous_virus_pipeline/tests/      legacy fixture 测试
+  (⑥ 已随模块归档 2026-10-11 → archive/20261011_endogenous_virus_pipeline, 条目移除)
   virome_discovery_pipeline/tests/      测试 fixture 同理 (legacy 目录名是测试对象)
 
 用法:
@@ -49,16 +50,17 @@ LEGACY_DIRS = [
 SCOPES = [
     "data_preprocessing_pipeline", "virome_discovery_pipeline",
     "virome_analysis_pipeline", "public_metadata_pipeline",
-    "virome_phylo_pipeline", "endogenous_virus_pipeline",
-    "host_expression_pipeline",
-    "metadata_gui", "submission_gui", "mmpv_common",
+    "virome_phylo_pipeline",
+    # ⑥ endogenous_virus_pipeline 与 ⑧ host_expression_pipeline 已归档
+    # (2026-10-11 → archive/20261011_{endogenous_virus,host_expression}_pipeline)
+    "mmpv_common",
 ]
 WHITELIST = (
     "mmpv_common/io_layout.py", "mmpv_common/tests/",
     "phylo_results/", "_debug_stage1",
     "integrated_summary.py",
-    "endogenous_virus_pipeline/tests/", "virome_discovery_pipeline/tests/",
-    "host_expression_pipeline/tests/",
+    "virome_discovery_pipeline/tests/",
+    # ⑥/⑧ 的 tests/ 已随模块归档 (2026-10-11)
 )
 
 

@@ -2,8 +2,9 @@
 # MMPV = Massive Meta-mining of Plant Viruses — 管道配置文件
 # ==============================================================================
 # 【I/O 目录布局】(v3.1 新增; 不写 = standard 默认)
-#   io_layout: legacy | standard
-#   也可用环境变量 MMPV_IO_LAYOUT 或各编排器 --io-layout (优先级 CLI > 环境变量 > standard)
+#   ⚠ 本文件中的 io_layout 键是**说明性文档, 写入不生效** (2026-10-13 核实:
+#     无代码从 YAML 读该键)。实际切换用环境变量 MMPV_IO_LAYOUT=legacy 或
+#     各编排器 --io-layout legacy (优先级 CLI > 环境变量 > standard 默认)。
 #   standard = 管线独立根布局 (默认; 01_PublicData/02_Preprocessing/03_Discovery/
 #              04_Analysis/05_Phylo/06_EVE, 根内各自独立编号)
 #   legacy   = 现行目录名 (00a_CleanData/02a_Identification/09a_Virome_Analysis/...;
@@ -49,7 +50,9 @@ profiles:
       viralverify_hmm:   ${MMPV_VIRUS_DB:-${MMPV_DB_ROOT:-/home/zhangwenda/database}/virus-db}/viralverify_db/nbc_hmms.hmm
       metabuli_db:       ${MMPV_VIRUS_DB:-${MMPV_DB_ROOT:-/home/zhangwenda/database}/virus-db}/RVDB-v31/RVDB_viroids.metabuli_db
       viroids_db:        ${MMPV_VIRUS_DB:-${MMPV_DB_ROOT:-/home/zhangwenda/database}/virus-db}/viroids-db/viroids.fasta
-      # -- 内源性病毒 (EVE) 筛查数据库 (endogenous_virus_pipeline) --
+      # -- 内源性病毒 (EVE) 筛查数据库 --
+      # 【⑥ endogenous_virus_pipeline 已归档 2026-10-11 →
+      #   archive/20261011_endogenous_virus_pipeline; 配置保留, 恢复即用】
       eve_ref_db:        ${MMPV_EVE_REF_DB:-${MMPV_VIRUS_DB:-${MMPV_DB_ROOT:-/home/zhangwenda/database}/virus-db}/ncbi-virus_ref/ncbi-virus_ref.pep.dmnd}
       eve_pv_db:         ${MMPV_EVE_PV_DB:-${MMPV_DB_ROOT:-/home/zhangwenda/database}/uniport_db/hybrid/plant_virus_final.dmnd}
       eve_id2div:        ${MMPV_EVE_ID2DIV:-${MMPV_DB_ROOT:-/home/zhangwenda/database}/uniport_db/hybrid/id2div_final.tsv}
@@ -73,6 +76,8 @@ profiles:
       tax_jobs: 4
 
     deplete: &deplete_default
+      # ⚠ 未接线 (2026-10-13 核实): host_depletion.py 只认自身 CLI 参数, 本段的
+      #    kraken2_db/keep_taxids/vmtouch/confidence 改了不生效 —— 仅供文档参考。
       kraken2_db:   ${MMPV_KRAKEN2_DB:-/home/zhangwenda/database/kraken2/k2_pluspfp_20260226}   # 可选通用库; 默认流程=自建宿主库(host_db)
       keep_taxids:  10239    # 从 Kraken2 classified 池中救回病毒 reads; 设空字符串关闭
       vmtouch:      false    # 将 Kraken2 数据库锁定到 page cache 加速 I/O
@@ -114,8 +119,9 @@ profiles:
     # 思想源自 GMW (Chen et al. 2026, Sci China Life Sci 69:1910): 配对读段链接图 +
     # ensemble 种子 + Louvain 社区传播, 重估 contig 的 viral/non-viral 归属。
     graph:
-      enabled:          false   # 默认不运行 (2026-10-07 用户裁定); 需要时改 true 或
-                                # --stage graph 显式运行, filter/COBRA 自动回退纯过滤结果
+      enabled:          false   # 默认不运行 (2026-10-07 用户裁定); 开启方式: 改 true,
+                                # 或 CLI --graph-enabled (2026-10-13 新增; graph 是
+                                # filter 子步骤, 无独立 --stage graph), filter/COBRA 自动回退纯过滤结果
       min_link_pairs:   3       # 建边所需最少跨 contig 配对读段数
       gc_diff:          0.20    # 断边 GC 差阈值 (GMW 口径)
       depth_ratio:      20.0    # 断边深度比阈值 (GMW 口径)
@@ -133,7 +139,8 @@ profiles:
       map_min_len:      1000    # 映射参考只保留 >= 该长度的 contigs (0=全量);
                                 # 短 contig 无可执行判定, 1000 可省 30-60% 映射时间
 
-    # 内源性病毒 (EVE) 筛查参数 (endogenous_virus_pipeline/eve_screen.py; CLI 可覆盖)
+    # 内源性病毒 (EVE) 筛查参数 (⑥ 已归档 2026-10-11 →
+    # archive/20261011_endogenous_virus_pipeline; 参数保留, 恢复即用)
     eve:
       window:         50000   # Stage1 滑窗宽度 (nt)
       merge_distance: 300     # 位点合并间隔 (nt)
@@ -145,6 +152,9 @@ profiles:
   # ── 仅下游阶段 (已有 clusters, 跳过 00-03) ──
   downstream:
     <<: *default  # 继承 default 配置 (需 PyYAML merge, 也可直接复制)
+    # ⚠ 本 profile 的 cleanup/assembly.skip_assembly/identification.skip_identification
+    #   为**未接线的死配置** (2026-10-13 核实: _load_config 不消费这些键, --stage 由
+    #   CLI 决定) —— 显式传 --stage 才是有效的跳过方式。
 
     cleanup:
       skip_clean:    true

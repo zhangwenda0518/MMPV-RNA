@@ -99,12 +99,16 @@ _DIR_TABLE: Dict[str, Dict[str, str]] = {
         "ph_geography":   "geography",
         "ph_report":      "report",
         # ⑥ EVE (内部编号两布局一致)
+        #    【已归档 2026-10-11 → archive/20261011_endogenous_virus_pipeline;
+        #    键保留: 历史输出定位 + 恢复时零改动】
         "e_loci":         "01_Loci",
         "e_verdict":      "02_Verdict",
         "e_rvdb":         "03_RVDB",
         "e_summary":      "04_Summary",
         # ⑧ 宿主表达 (可选补充模块 host_expression_pipeline; 新模块无历史名,
         #    两布局同名, 根内独立编号 01→08; 05_Coexp=TEA-GCN 主分析)
+        #    【已归档 2026-10-11 → archive/20261011_host_expression_pipeline;
+        #    键保留: 历史输出定位 + 恢复时零改动】
         "he_root":        "08_HostExpression",
         "he_hostref":     "01_HostRef",
         "he_quant":       "02_Quant",
@@ -177,12 +181,14 @@ _DIR_TABLE: Dict[str, Dict[str, str]] = {
         "ph_time":        "06_time",
         "ph_geography":   "07_geography",
         "ph_report":      "08_report",
-        # ⑥ EVE (输出根约定 06_EVE; 内部编号两布局一致, 本就符合编号惯例)
+        # ⑥ EVE (输出根约定 06_EVE; 内部编号两布局一致, 本就符合编号惯例;
+        #   已归档 2026-10-11 → archive/20261011_endogenous_virus_pipeline, 键保留)
         "e_loci":         "01_Loci",
         "e_verdict":      "02_Verdict",
         "e_rvdb":         "03_RVDB",
         "e_summary":      "04_Summary",
-        # ⑧ 宿主表达 (可选补充模块; 输出根 08_HostExpression, 根内独立编号 01→08)
+        # ⑧ 宿主表达 (可选补充模块; 输出根 08_HostExpression, 根内独立编号 01→08;
+        #   已归档 2026-10-11 → archive/20261011_host_expression_pipeline, 键保留)
         "he_root":        "08_HostExpression",
         "he_hostref":     "01_HostRef",
         "he_quant":       "02_Quant",
@@ -211,13 +217,15 @@ CLEAN_READS_SUBDIRS = ("3.clumpify", "2.fasta")
 
 # 标准布局下各管线输出根名 (项目根第一层目录; 编排器 auto-locate 与文档共用)
 # 根号 = 管线号: 01→06 ↔ ①→⑥; 07 号空缺 (⑦ 提交管线消费 ④ 产物, 无独立
-# 输出根); 08 ↔ ⑧ 宿主表达可选模块 (host_expression_pipeline)。
+# 输出根); 08 ↔ ⑧ 宿主表达可选模块 (host_expression_pipeline; 已归档
+# 2026-10-11 → archive/20261011_host_expression_pipeline, 根名保留)。
 PIPELINE_ROOT_NAMES = {
     "publicdata":    "01_PublicData",
     "preprocessing": "02_Preprocessing",
     "discovery":     "03_Discovery",
     "analysis":      "04_Analysis",
     "phylo":         "05_Phylo",
+    # ⑥ EVE 已归档 2026-10-11 → archive/20261011_endogenous_virus_pipeline; 根名保留
     "eve":           "06_EVE",
     "hostexpr":      "08_HostExpression",
 }
@@ -229,7 +237,8 @@ _LEGACY_CENTROID_DIRS = ("04_CLUSTER/4_centroids",
 
 
 def resolve_layout(explicit: Optional[str] = None) -> str:
-    """布局名解析: 显式参数 > 环境变量 > legacy。非法值报错而非静默回退。"""
+    """布局名解析: 显式参数 > 环境变量 > standard (DEFAULT_LAYOUT)。
+    非法值报错而非静默回退。"""
     name = explicit or os.environ.get(LAYOUT_ENV) or DEFAULT_LAYOUT
     if name not in LAYOUTS:
         raise ValueError(
@@ -347,6 +356,83 @@ def build_analysis_dirs(out: Path, layout: Optional[str] = None) -> Dict[str, Pa
     }
 
 
+# ═══════════════════════════════════════════════════════════════════
+# ④ 分析产物目录定位 (跨布局 + 跨代)
+# ═══════════════════════════════════════════════════════════════════
+#
+# 历史沿革 (目录名随管道演进而变, 存量项目各有各的命名):
+#   ① 10 阶段 legacy : 01_detection … 07_capheine 08_similarity 09_dvg 10_report
+#                      (capheine 已迁出 -> virome_phylo_pipeline)
+#   ②  9 阶段 legacy : 01_detection … 06_extraction 07_similarity 08_dvg 09_report
+#   ③standard      : 01_Detection  … 06_Extraction 07_Similarity 08_DVG 09_Report
+#
+# 因此「逻辑键 → 磁盘目录名」不是一一映射, 必须按候选顺序探测磁盘。
+# 与本模块既有 locate_centroids() / locate_taxonomy() / locate_detection_summary()
+# 同一范式: 探测优先, 找不到再回落到布局默认名 (让调用方至少得到一个可创建的路径)。
+
+# ④ 逻辑键 → 历代候选目录名 (按「最新优先」排列; 探测顺序即此顺序)。
+_ANALYSIS_KEYS = {
+    "detect":     ["01_Detection",     "01_detection"],
+    "filter":     ["02_Filtering",     "02_filtering"],
+    "variants":   ["03_Variants",      "03_variants"],
+    "post":       ["04_PostAnalysis",  "04_post_analysis", "06_post_analysis"],
+    "assembly":   ["05_Assembly",      "05_assembly",      "04_assembly"],
+    "extract":    ["06_Extraction",    "06_extraction",    "05_extraction"],
+    "similarity": ["07_Similarity",    "07_similarity",    "08_similarity"],
+    "dvg":        ["08_DVG",           "08_dvg",           "09_dvg"],
+    "report":     ["09_Report",        "09_report",        "10_report"],
+}
+
+# 逻辑键 → _DIR_TABLE 里的目录键 (用于回落出布局默认名)
+_ANALYSIS_TABLE_KEY = {k: "a_" + k for k in _ANALYSIS_KEYS}
+
+
+def locate_analysis_dirs(root: Path, layout: Optional[str] = None,
+                         only_existing: bool = True) -> Dict[str, Path]:
+    """④ 定位分析管线的 9 个阶段目录 {逻辑键: Path}。
+
+    对每个逻辑键, 按 _ANALYSIS_KEYS 的候选顺序探测磁盘, 返回**实际存在**的那个;
+    若一个都不存在 (该阶段未跑), 按 only_existing 决定回落策略:
+
+      only_existing=True  -> 跳过该键 (调用方需容忍缺键)
+      only_existing=False -> 回落到指定布局的默认目录名 (可创建路径)
+
+    这样调用方不必知道产物是标准布局、9 阶段 legacy 还是 10 阶段旧命名,
+    也不必各自维护硬编码的目录名回退表。
+    """
+    root = Path(root)
+    try:
+        d = _DIR_TABLE[resolve_layout(layout)]
+    except ValueError:
+        d = _DIR_TABLE[DEFAULT_LAYOUT]
+
+    out: Dict[str, Path] = {}
+    for key, candidates in _ANALYSIS_KEYS.items():
+        hit = next((root / c for c in candidates if (root / c).is_dir()), None)
+        if hit is not None:
+            out[key] = hit
+        elif not only_existing:
+            out[key] = root / d[_ANALYSIS_TABLE_KEY[key]]
+    return out
+
+
+def locate_analysis_dir(root: Path, key: str, layout: Optional[str] = None,
+                        default_segment: Optional[str] = None) -> Path:
+    """④ 定位单个阶段目录。逻辑键非法时报错而非静默返回错误路径。"""
+    if key not in _ANALYSIS_KEYS:
+        raise KeyError(
+            f"io_layout: 未知分析阶段键 {key!r} "
+            f"(可选: {', '.join(_ANALYSIS_KEYS)})")
+    found = locate_analysis_dirs(root, layout=layout).get(key)
+    if found is not None:
+        return found
+    # 未跑该阶段: 回落到布局默认名, 必要时允许调用方指定显式候选
+    if default_segment is not None:
+        return Path(root) / default_segment
+    d = _DIR_TABLE[resolve_layout(layout)]
+    return Path(root) / d[_ANALYSIS_TABLE_KEY[key]]
+
+
 def build_meta_dirs(work_dir: Path, layout: Optional[str] = None) -> Dict[str, str]:
     """① public_data_pipeline.py 的 search/info/prescreen/plot/down 目录 (str 路径)。"""
     d = _DIR_TABLE[resolve_layout(layout)]
@@ -384,7 +470,8 @@ def build_phylo_dirs(work_dir: Path, layout: Optional[str] = None) -> Dict[str, 
 
 
 def build_eve_dirs(out_dir: Path, layout: Optional[str] = None) -> Dict[str, Path]:
-    """⑥ eve_screen.py 的四阶段输出目录 {阶段: Path} (两布局同名, 已编号)。"""
+    """⑥ eve_screen.py (已归档 2026-10-11 → archive/20261011_endogenous_virus_pipeline)
+    的四阶段输出目录 {阶段: Path} (两布局同名, 已编号; 函数保留供历史输出定位与恢复)。"""
     d = _DIR_TABLE[resolve_layout(layout)]
     return {k: Path(out_dir) / d['e_' + k]
             for k in ("loci", "verdict", "rvdb", "summary")}
@@ -392,12 +479,14 @@ def build_eve_dirs(out_dir: Path, layout: Optional[str] = None) -> Dict[str, Pat
 
 # ⑧ 宿主表达 (可选补充模块) 的阶段目录键 (编号顺序 = 管线内运行顺序;
 # 05_Coexp = TEA-GCN 差异共表达, 主分析; DE/LoadScan 为交叉参考与剂量验证)
+# 【⑧ 已归档 2026-10-11 → archive/20261011_host_expression_pipeline;
+#   函数保留: 归档模块仍 import, 历史输出定位亦需要】
 HOSTEXPR_STAGES = ("hostref", "quant", "qc", "labels",
                    "coexp", "de", "enrich", "loadscan", "report")
 
 
 def build_hostexpr_dirs(out_dir: Path, layout: Optional[str] = None) -> Dict[str, Path]:
-    """⑧ host_expression_pipeline 的 7 个阶段输出目录 {阶段: Path}。"""
+    """⑧ host_expression_pipeline (已归档 2026-10-11) 的 7 个阶段输出目录 {阶段: Path}。"""
     d = _DIR_TABLE[resolve_layout(layout)]
     return {k: Path(out_dir) / d['he_' + k] for k in HOSTEXPR_STAGES}
 
