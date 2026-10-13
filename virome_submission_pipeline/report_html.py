@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-report_html.py — 交互式全表编辑报告 v2.0
+report_html.py — 交互式全表编辑报告 v3.0
 ========================================
 
 从 unified_metadata.csv + miuvig.tsv + assembly.tsv 生成完整可编辑 HTML。
 所有表格均可双击编辑、批量填充、下载导出。
+
+v3.0: 页面标记迁移到 mmpv_common/templates/submission_report.html.j2
+(Jinja2 渲染, 表格走共享 data_table 宏, 元数据值经 autoescape); 交互 JS 仍在本文件
+(JS_EDITABLE)。顺带修复了历史无定义 class (工具栏/统计卡/分区/Toast 此前无样式)。
 
 用法:
   python report_html.py \
@@ -16,52 +20,26 @@ report_html.py — 交互式全表编辑报告 v2.0
       -o submission_metadata/report.html
 """
 
-import argparse, os, json
+import argparse, os
 from pathlib import Path
 from datetime import datetime
 import pandas as pd
 
-CSS = """*{margin:0;padding:0;box-sizing:border-box}
-body{font-family:-apple-system,Segoe UI,sans-serif;background:#f0f2f5;color:#1a1a2e}
-.header{background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;padding:22px 32px}
-.header h1{font-size:19px}.header .meta{font-size:11px;opacity:.7;margin-top:3px}
-.stats{display:flex;gap:20px;margin-top:12px}.stat{text-align:center}
-.stat .num{font-size:26px;font-weight:700}.stat .label{font-size:10px;opacity:.7}
-.stat.warn .num{color:#f9a825}.stat.ok .num{color:#4caf50}
-.container{max-width:1400px;margin:16px auto;padding:0 16px}
-.toolbar{background:#fff;border-radius:10px;padding:10px 16px;margin-bottom:12px;display:flex;gap:8px;align-items:center;box-shadow:0 1px 3px rgba(0,0,0,.05);flex-wrap:wrap}
-.toolbar .btn{padding:7px 14px;border-radius:5px;border:none;cursor:pointer;font-size:12px;font-weight:500}
-.btn:hover{opacity:.85}.btn.primary{background:#1a73e8;color:#fff}.btn.success{background:#2e7d32;color:#fff}.btn.warn{background:#e67e22;color:#fff}
-.section{background:#fff;border-radius:10px;margin-bottom:12px;box-shadow:0 1px 3px rgba(0,0,0,.05);overflow:hidden}
-.section-title{background:#f8f9fa;padding:10px 16px;font-weight:600;font-size:13px;border-bottom:1px solid #e0e0e0;display:flex;justify-content:space-between;align-items:center;cursor:pointer}
-.section-body{padding:10px 16px;overflow-x:auto;display:block}
-.section.collapsed .section-body{display:none}
-.section-title::after{content:'▾';font-size:11px;color:#999}
-.section.collapsed .section-title::after{content:'▸'}
-table{width:100%;border-collapse:collapse;font-size:11px}
-th{background:#f5f5f5;padding:6px 5px;text-align:left;border:1px solid #e0e0e0;font-size:10px;color:#666;white-space:nowrap;position:sticky;top:0}
-td{padding:4px 5px;border:1px solid #e8e8e8;max-width:180px;overflow:hidden;text-overflow:ellipsis}
-td .cell-content{cursor:pointer;padding:1px 0}
-td.editing .cell-content{display:none}
-td.editing input,td.editing select{width:100%;min-width:60px;border:1px solid #1a73e8;padding:2px 4px;font-size:11px;border-radius:3px;display:none}
-td.editing input{display:block}
-td.missing{background:#fff3e0}td.missing .cell-content{color:#e65100}
-td.filled{background:#e8f5e9}td.filled .cell-content{color:#2e7d32}
-.toast{position:fixed;top:20px;right:20px;background:#2e7d32;color:#fff;padding:10px 16px;border-radius:6px;opacity:0;transition:opacity .3s;z-index:9999}
-.toast.show{opacity:1}.toast.error{background:#c62828}
-.filter input{padding:5px 10px;border:1px solid #ddd;border-radius:5px;font-size:12px;width:180px}
-.progress{height:5px;background:#e0e0e0;border-radius:3px;margin-top:8px}
-.progress-bar{height:100%;border-radius:3px;transition:width .3s}
-.legend{display:flex;gap:14px;font-size:10px;margin:6px 0}
-.legend span{display:flex;align-items:center;gap:3px}
-.legend .dot{width:9px;height:9px;border-radius:2px}
-.dot.missing-dot{background:#fff3e0;border:1px solid #e65100}
-.dot.filled-dot{background:#e8f5e9;border:1px solid #2e7d32}
-.checklist li{padding:2px 0;font-size:11px}.checklist .done{color:#2e7d32}.checklist .todo{color:#e65100}
-.tabs{display:flex;gap:0;margin-bottom:16px}
-.tab{padding:8px 16px;background:#e0e0e0;cursor:pointer;font-size:12px;border-radius:8px 8px 0 0;margin-right:2px}
-.tab.active{background:#fff;font-weight:600}
-"""
+try:
+    from mmpv_common.report_template import render
+except ImportError:
+    import sys; sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parent.parent))
+    from mmpv_common.report_template import render  # type: ignore
+
+try:
+    from unified_metadata import REQUIRED_COLS  # 同目录: 必填列单一事实源
+except ImportError:
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    try:
+        from unified_metadata import REQUIRED_COLS  # type: ignore
+    except ImportError:  # pragma: no cover - 缺依赖时退化为无必填标记, 不崩
+        REQUIRED_COLS = []
 
 JS_EDITABLE = """
 const PLACEHOLDER = ['XXXX','YYYY','DD-Mmm','Country:Region','PRJNAXXXX','SAMNXXXX','XX.XX N','Author','not_provided'];
@@ -77,11 +55,13 @@ function makeEditableTable(tableId){
   if(!tbl)return;
   const ths=tbl.querySelectorAll('thead th');
   tbl.querySelectorAll('tbody td').forEach(td=>{
-    const val=td.textContent.trim();
+    const full=td.getAttribute('data-full');
+    const disp=td.textContent.trim();
+    const val=full||disp;   /* edit/export use the original value (data-full); display stays truncated */
     const row=td.parentElement.rowIndex-1;
     const col=td.cellIndex;
     td.innerHTML='';
-    const span=document.createElement('span');span.className='cell-content';span.textContent=val;
+    const span=document.createElement('span');span.className='cell-content';span.textContent=disp;
     const inp=document.createElement('input');inp.value=val;
     inp.setAttribute('data-row',row);inp.setAttribute('data-col',col);
     td.appendChild(span);td.appendChild(inp);
@@ -105,7 +85,8 @@ function collectTable(tableId){
   tbl.querySelectorAll('tbody tr').forEach(tr=>{
     const cols=[];tr.querySelectorAll('td').forEach(td=>{
       const inp=td.querySelector('input');
-      cols.push(inp?inp.value:(td.querySelector('.cell-content')?.textContent||td.textContent||''));
+      const full=td.getAttribute('data-full');  /* export prefers the original value, else fall back to displayed text */
+      cols.push(inp?inp.value:(full||td.querySelector('.cell-content')?.textContent||td.textContent||''));
     });rows.push(cols);
   });
   return{headers,rows};
@@ -132,7 +113,7 @@ function downloadCSV(tableId,filename){
 }
 
 function batchFill(tableId,colName,val){
-  if(!val)val=prompt('输入 '+colName+' 的值:');
+  if(!val)val=prompt('Enter value for '+colName+':');
   if(!val)return;
   const tbl=document.getElementById(tableId);
   const headers=[];tbl.querySelectorAll('thead th').forEach(th=>headers.push(th.textContent.trim()));
@@ -193,163 +174,76 @@ window.addEventListener('DOMContentLoaded',()=>{
 });
 """
 
-HTML = """<!DOCTYPE html><html lang="zh"><head><meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>{run_title} — GenBank Submission Report</title>
-<style>{css}</style></head><body>
-<div class="header">
-<h1>GenBank Submission Report — {run_title}</h1>
-<div class="meta">Generated: {timestamp} | Pipeline: {pipeline}</div>
-<div class="stats">
-<div class="stat"><div class="num">{n_seqs}</div><div class="label">Seq</div></div>
-<div class="stat"><div class="num">{n_viruses}</div><div class="label">Virus</div></div>
-<div class="stat ok"><div class="num" id="completeness">-</div><div class="label">Complete</div></div>
-<div class="stat warn"><div class="num" id="missingCount">-</div><div class="label">Missing</div></div>
-</div>
-<div class="progress"><div class="progress-bar" id="completeBar"></div></div>
-<div class="suvtk-summary" style="background:#f5f5f5;padding:10px 16px;border-radius:6px;font-size:13px;color:#555;margin-top:10px">{suvtk_summary}</div>
-</div>
-
-<div class="container">
-<div class="toolbar">
-<button class="btn primary" onclick="downloadTSV('srcTable','source.src')">⬇ source.src</button>
-<button class="btn success" onclick="downloadTSV('bsTable','biosample_template.tsv')">⬇ BioSample</button>
-<button class="btn success" onclick="downloadCSV('srcTable','unified_metadata_edited.csv')">💾 Save CSV</button>
-<button class="btn warn" onclick="batchFill('srcTable','Collection_date')">Fill Date</button>
-<button class="btn warn" onclick="batchFill('srcTable','geo_loc_name')">Fill Location</button>
-<button class="btn warn" onclick="batchFill('srcTable','Lat_Lon')">Fill LatLon</button>
-<button class="btn warn" onclick="batchFill('srcTable','Bioproject')">Fill BioProject</button>
-<div style="flex:1"></div>
-<div class="filter"><input type="text" placeholder="Filter sequences..." oninput="filterTable(this.value)"></div>
-</div>
-
-<div class="legend">
-<span><div class="dot missing-dot"></div> Missing</span>
-<span><div class="dot filled-dot"></div> Filled</span>
-<span style="color:#888">| Double-click to edit | Enter = confirm | Tab = next</span>
-</div>
-
-<div class="section" id="srcSection">
-<div class="section-title" onclick="toggleSection('srcSection')">
-source.src / Unified Metadata ({n_seqs} seqs)
-<span style="font-size:10px;color:#999">Double-click any cell to edit</span>
-</div>
-<div class="section-body">
-<table id="srcTable"><thead><tr>{src_header}</tr></thead><tbody>{src_body}</tbody></table>
-</div></div>
-
-<div class="section" id="cmtSection">
-<div class="section-title" onclick="toggleSection('cmtSection')">
-Structured Comment (.cmt) / 结构化注释参数
-<span style="font-size:10px;color:#999">Assembly, Coverage, Annotation</span>
-</div>
-<div class="section-body">
-<table id="cmtTable"><thead><tr>{cmt_header}</tr></thead><tbody>{cmt_body}</tbody></table>
-</div></div>
-
-<div class="section" id="bsSection">
-<div class="section-title" onclick="toggleSection('bsSection')">
-BioSample Template ({n_seqs} samples)
-<span style="font-size:10px;color:#999">Pathogen.cl.1.0 format for NCBI registration</span>
-</div>
-<div class="section-body">
-<table id="bsTable"><thead><tr>{bs_header}</tr></thead><tbody>{bs_body}</tbody></table>
-</div></div>
-
-<div class="section collapsed" id="miuvigSection">
-<div class="section-title" onclick="toggleSection('miuvigSection')">
-MIUVIG Parameters (miuvig.tsv) — Advanced
-<span style="font-size:10px;color:#999">25+ required fields, usually auto-generated</span>
-</div>
-<div class="section-body">
-<table id="miuvigTable"><thead><tr><th>Parameter</th><th>Value</th></tr></thead>
-<tbody>{miuvig_body}</tbody></table>
-</div></div>
-
-<div class="section" id="topoSection">
-<div class="section-title" onclick="toggleSection('topoSection')">
-Viral Topology (topology.tsv) — {topo_summary}
-<span style="font-size:10px;color:#999">Linear/Circular genome determination</span>
-</div>
-<div class="section-body">
-<table id="topoTable"><thead><tr>{topo_header}</tr></thead><tbody>{topo_body}</tbody></table>
-</div></div>
-
-<div class="section collapsed" id="asmSection">
-<div class="section-title" onclick="toggleSection('asmSection')">
-Assembly Parameters (assembly.tsv)
-<span style="font-size:10px;color:#999">Assembly method, sequencing tech</span>
-</div>
-<div class="section-body">
-<table id="asmTable"><thead><tr><th>Parameter</th><th>Value</th></tr></thead>
-<tbody>{asm_body}</tbody></table>
-</div></div>
-
-<div class="section">
-<div class="section-title">Submission Checklist</div>
-<div class="section-body">
-<ul class="checklist">{checklist}</ul>
-<div style="margin-top:10px;font-size:11px;color:#888">
-<b>Workflow:</b> Edit above → Download source.src → suvtk comments → suvtk table2asn → email gb-sub@ncbi.nlm.nih.gov
-</div></div></div>
-
-</div>
-<script>{js}</script>
-</body></html>"""
+def _cell(row, col):
+    return str(row.get(col, '')) if pd.notna(row.get(col, '')) else ''
 
 
 def safe_row(row, cols, max_len=80):
-    """Generate a row, truncating long values"""
+    """Generate a row, truncating long values (显示用; 原值见 full_row)"""
     cells = []
     for c in cols:
-        v = str(row.get(c, '')) if pd.notna(row.get(c, '')) else ''
+        v = _cell(row, c)
         if len(v) > max_len:
             v = v[:max_len-3] + '...'
         cells.append(v)
     return cells
 
 
-def table_html(headers, rows):
-    th = ''.join(f'<th>{h}</th>' for h in headers)
-    body = ''
-    for row in rows:
-        body += '<tr>' + ''.join(f'<td>{c}</td>' for c in row) + '</tr>\n'
-    return th, body
+def full_row(row, cols):
+    """未截断的行 (td data-full → CSV/TSV 导出保真, 不丢长字段)"""
+    return [_cell(row, c) for c in cols]
 
 
 def load_table(tsv_path):
+    """读 miuvig/assembly 参数表 → (列名, 行)。NaN 归一为 '' (此前会渲染成字面 nan)。"""
     if not tsv_path or not os.path.exists(tsv_path):
         return [], []
     df = pd.read_csv(tsv_path, sep='\t' if str(tsv_path).endswith('.tsv') else None,
                      engine='python')
-    return list(df.columns), [list(df.iloc[i]) for i in range(len(df))]
+    rows = [['' if pd.isna(v) else v for v in list(df.iloc[i])]
+            for i in range(len(df))]
+    return list(df.columns), rows
+
+
+def _kv_rows(rows):
+    """miuvig/assembly 行 → [参数, 值] 二列 (缺值补空)。"""
+    return [[str(r[0]), '' if len(r) < 2 or pd.isna(r[1]) else str(r[1])]
+            for r in rows]
 
 
 def generate_html(csv_path, run_title, output_path, miuvig_path=None, asm_path=None,
                    suvtk_tax_path=None, suvtk_feat_path=None, hypo_path=None,
                    topo_path=None, gb_dir=None, log=None):
-    """Generate the full interactive report"""
+    """Generate the full interactive report.
 
+    渲染: mmpv_common/templates/submission_report.html.j2 (表格走共享 data_table
+    宏 + autoescape, 元数据值里的 <>& 不再破坏标记)。
+    """
     df = pd.read_csv(csv_path)
     n_seqs = len(df)
     n_viruses = df['organism'].nunique() if 'organism' in df.columns else 0
 
     # ── suvtk summary stats ──
-    suvtk_summary_parts = []
+    suvtk_parts = []
     if suvtk_tax_path and os.path.isfile(suvtk_tax_path):
-        with open(suvtk_tax_path) as f:
+        # 读侧 encoding 必标: suvtk tsv 为 UTF-8, Windows cp936 下读中文即崩
+        with open(suvtk_tax_path, encoding='utf-8', errors='replace') as f:
             n_tax = sum(1 for _ in f) - 1
-        suvtk_summary_parts.append(f'suvtk taxonomy: {n_tax} sequences classified')
+        suvtk_parts.append(f'suvtk taxonomy: {n_tax} sequences classified')
     if suvtk_feat_path and os.path.isfile(suvtk_feat_path):
-        n_cds = sum(1 for l in open(suvtk_feat_path) if l.strip().split()[-1:] == ['CDS'])
-        suvtk_summary_parts.append(f'suvtk features: {n_cds} CDS annotated')
+        # .tbl CDS 行格式: <start>\t<end>\tCDS (负链为反转区间; suvtk features.py 原样写出)
+        with open(suvtk_feat_path, encoding='utf-8', errors='replace') as f:
+            n_cds = sum(1 for l in f if l.rstrip().endswith('CDS'))
+        suvtk_parts.append(f'suvtk features: {n_cds} CDS annotated')
     if hypo_path and os.path.isfile(hypo_path):
-        n_hypo = sum(1 for l in open(hypo_path) if 'hypothetical' in l.lower())
-        n_anno = sum(1 for l in open(hypo_path) if 'inference\talignment' in l)
-        suvtk_summary_parts.append(f'hypothetical proteins: {n_anno} annotated, {n_hypo} remaining')
+        n_hypo = sum(1 for l in open(hypo_path, encoding='utf-8', errors='replace')
+                     if 'hypothetical' in l.lower())
+        n_anno = sum(1 for l in open(hypo_path, encoding='utf-8', errors='replace')
+                     if 'inference\talignment' in l)
+        suvtk_parts.append(f'hypothetical proteins: {n_anno} annotated, {n_hypo} remaining')
     if topo_path and os.path.isfile(topo_path):
         rows = []
-        with open(topo_path) as f:
+        with open(topo_path, encoding='utf-8', errors='replace') as f:
             hdr = f.readline().strip().split('\t')
             for line in f:
                 cols = line.strip().split('\t')
@@ -357,101 +251,108 @@ def generate_html(csv_path, run_title, output_path, miuvig_path=None, asm_path=N
                     rows.append(dict(zip(hdr, cols)))
         n_linear = sum(1 for r in rows if 'linear' in r.get('final_topology', '').lower())
         n_circular = len(rows) - n_linear
-        suvtk_summary_parts.append(f'topology: {n_linear} linear / {n_circular} circular')
+        suvtk_parts.append(f'topology: {n_linear} linear / {n_circular} circular')
     if gb_dir and os.path.isdir(gb_dir):
         n_gb = len([f for f in os.listdir(gb_dir) if f.endswith('.gb')])
         if n_gb:
-            suvtk_summary_parts.append(f'GenBank files: {n_gb} .gb ready')
-    suvtk_summary = ' | '.join(suvtk_summary_parts) if suvtk_summary_parts else '<span style="color:#999">suvtk not run (optional)</span>'
+            suvtk_parts.append(f'GenBank files: {n_gb} .gb ready')
 
     # --- source.src table ---
     src_cols = [c for c in df.columns if not c.startswith('cmt-') and not c.startswith('bs-')]
-    src_header, src_body_str = table_html(src_cols, [safe_row(df.iloc[i], src_cols) for i in range(n_seqs)])
+    src_rows = [safe_row(df.iloc[i], src_cols) for i in range(n_seqs)]
+    src_full = [full_row(df.iloc[i], src_cols) for i in range(n_seqs)]
 
     # --- cmt table ---
     cmt_cols = [c for c in df.columns if c.startswith('cmt-')]
     if cmt_cols:
-        cmt_header, cmt_body_str = table_html(cmt_cols, [safe_row(df.iloc[i], cmt_cols) for i in range(n_seqs)])
+        cmt_headers = cmt_cols
+        cmt_rows = [safe_row(df.iloc[i], cmt_cols) for i in range(n_seqs)]
+        cmt_full = [full_row(df.iloc[i], cmt_cols) for i in range(n_seqs)]
     else:
-        cmt_header, cmt_body_str = '<th>Parameter</th><th>Value</th>', '<tr><td>Assembly_Method</td><td>MEGAHIT;1.2.9</td></tr>'
+        cmt_headers, cmt_rows = ['Parameter', 'Value'], [['Assembly_Method', 'MEGAHIT;1.2.9']]
+        cmt_full = None
 
     # --- bs table ---
     bs_cols = [c for c in df.columns if c.startswith('bs-')]
     if bs_cols:
-        bs_header, bs_body_str = table_html(bs_cols, [safe_row(df.iloc[i], bs_cols) for i in range(n_seqs)])
+        bs_headers = bs_cols
+        bs_rows = [safe_row(df.iloc[i], bs_cols) for i in range(n_seqs)]
+        bs_full = [full_row(df.iloc[i], bs_cols) for i in range(n_seqs)]
     else:
-        bs_header, bs_body_str = '<th>Parameter</th><th>Value</th>', ''
+        bs_headers, bs_rows = ['Parameter', 'Value'], []
+        bs_full = None
 
-    # --- miuvig table ---
-    miuvig_headers, miuvig_rows = load_table(miuvig_path)
-    miuvig_header = '<th>Parameter</th><th>Value</th>'
-    miuvig_body_str = '\n'.join(f'<tr><td>{r[0]}</td><td>{r[1] if len(r)>1 else ""}</td></tr>' for r in miuvig_rows)
-
-    # --- assembly table ---
-    asm_headers, asm_rows = load_table(asm_path)
-    asm_header = '<th>Parameter</th><th>Value</th>'
-    asm_body_str = '\n'.join(f'<tr><td>{r[0]}</td><td>{r[1] if len(r)>1 else ""}</td></tr>' for r in asm_rows)
+    # --- miuvig / assembly tables ---
+    _, miuvig_raw = load_table(miuvig_path)
+    _, asm_raw = load_table(asm_path)
+    miuvig_rows = _kv_rows(miuvig_raw)
+    asm_rows = _kv_rows(asm_raw)
 
     # --- topology table ---
-    topo_header = '<th>Contig</th><th>Taxonomy</th><th>Rule</th><th>Final</th><th>Length</th><th>DTR</th><th>Evidence</th>'
-    topo_body_str = '<tr><td colspan="7" style="color:#999;text-align:center">No topology data</td></tr>'
+    topo_rows = []
     topo_summary = 'No data'
     if topo_path and os.path.isfile(topo_path):
-        topo_rows = []
-        with open(topo_path) as f:
+        topo_raw = []
+        with open(topo_path, encoding='utf-8', errors='replace') as f:
             topo_hdr = f.readline().strip().split('\t')
             for line in f:
                 cols = line.strip().split('\t')
                 if len(cols) >= len(topo_hdr):
-                    topo_rows.append(dict(zip(topo_hdr, cols)))
-        if topo_rows:
-            n_linear = sum(1 for r in topo_rows if 'linear' in r.get('final_topology','').lower())
-            n_circular = sum(1 for r in topo_rows if 'circular' in r.get('final_topology','').lower())
-            topo_summary = f'{len(topo_rows)} seqs: {n_linear} linear / {n_circular} circular'
-            topo_body_str = ''
-            for row in topo_rows:
-                topo = row.get('final_topology','').lower()
+                    topo_raw.append(dict(zip(topo_hdr, cols)))
+        if topo_raw:
+            n_linear = sum(1 for r in topo_raw if 'linear' in r.get('final_topology', '').lower())
+            n_circular = sum(1 for r in topo_raw if 'circular' in r.get('final_topology', '').lower())
+            topo_summary = f'{len(topo_raw)} seqs: {n_linear} linear / {n_circular} circular'
+            for row in topo_raw:
+                topo = row.get('final_topology', '').lower()
                 cls = 'filled' if 'linear' in topo else ('missing' if 'circular' not in topo else '')
-                dtr_flag = '&#10003;' if row.get('dtr_detected','False').lower() == 'true' else ''
-                topo_body_str += (
-                    f'<tr>'
-                    f'<td>{row.get("contig","")}</td>'
-                    f'<td>{row.get("taxonomy","")}</td>'
-                    f'<td>{row.get("rule_topology","")}</td>'
-                    f'<td class="{cls}">{row.get("final_topology","")}</td>'
-                    f'<td style="text-align:right">{row.get("seq_length","")}</td>'
-                    f'<td style="text-align:center">{dtr_flag}</td>'
-                    f'<td style="font-size:10px;color:#888">{row.get("evidence","")}</td>'
-                    f'</tr>\n')
+                topo_rows.append({
+                    'contig': row.get('contig', ''),
+                    'taxonomy': row.get('taxonomy', ''),
+                    'rule_topology': row.get('rule_topology', ''),
+                    'final_topology': row.get('final_topology', ''),
+                    'cls': cls,
+                    'seq_length': row.get('seq_length', ''),
+                    'dtr': '✓' if row.get('dtr_detected', 'False').lower() == 'true' else '',
+                    'evidence': row.get('evidence', ''),
+                })
 
-    # --- checklist ---
-    chk = [
-        ('done', 'suvtk taxonomy — ICTV classification complete'),
-        ('done', 'suvtk features — ORF prediction + BFVD annotation'),
-        ('done', 'analyze_hypothetical — diamond + HMM annotation'),
+    # --- checklist (由实际输入推导, 不再恒 done) ---
+    _has_tax = bool(suvtk_tax_path) and os.path.isfile(suvtk_tax_path)
+    _has_feat = bool(suvtk_feat_path) and os.path.isfile(suvtk_feat_path)
+    _has_hypo = bool(hypo_path) and os.path.isfile(hypo_path)
+    checklist = [
+        ('done' if _has_tax else 'todo',
+         'suvtk taxonomy — ICTV classification complete' if _has_tax
+         else 'suvtk taxonomy — no input provided (--suvtk-tax)'),
+        ('done' if _has_feat else 'todo',
+         'suvtk features — ORF prediction + BFVD annotation' if _has_feat
+         else 'suvtk features — no input provided (--suvtk-feat)'),
+        ('done' if _has_hypo else 'todo',
+         'analyze_hypothetical — diamond + HMM annotation' if _has_hypo
+         else 'analyze_hypothetical — no input provided (--hypo)'),
         ('todo', 'Edit source.src above → download → save CSV'),
         ('todo', 'Register BioProject at https://submit.ncbi.nlm.nih.gov/'),
         ('todo', 'Register BioSamples using biosample_template.tsv'),
         ('todo', 'Run: suvtk comments -t miuvig_taxonomy -f miuvig_features -m miuvig.tsv -a assembly.tsv'),
         ('todo', 'Run: suvtk table2asn → email submission.sqn to gb-sub@ncbi.nlm.nih.gov'),
     ]
-    check_mark = '\u2713'; box = '\u2610'
-    chk_html = '\n'.join(f'<li class="{c}">{check_mark if c=="done" else box} {t}</li>' for c, t in chk)
 
-    html = HTML.format(
+    html = render(
+        "submission_report.html.j2",
         run_title=run_title,
         timestamp=datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
         pipeline='MMPV-RNA v2.3 + suvtk v0.1.1',
         n_seqs=n_seqs, n_viruses=n_viruses,
-        src_header=src_header, src_body=src_body_str,
-        cmt_header=cmt_header, cmt_body=cmt_body_str,
-        bs_header=bs_header, bs_body=bs_body_str,
-        miuvig_header=miuvig_header, miuvig_body=miuvig_body_str,
-        asm_header=asm_header, asm_body=asm_body_str,
-        topo_header=topo_header, topo_body=topo_body_str, topo_summary=topo_summary,
-        suvtk_summary=suvtk_summary,
-        checklist=chk_html,
-        css=CSS, js=JS_EDITABLE,
+        suvtk_parts=suvtk_parts,
+        src_headers=src_cols, src_rows=src_rows, src_full=src_full,
+        required_cols=REQUIRED_COLS,
+        cmt_headers=cmt_headers, cmt_rows=cmt_rows, cmt_full=cmt_full,
+        bs_headers=bs_headers, bs_rows=bs_rows, bs_full=bs_full,
+        miuvig_rows=miuvig_rows, asm_rows=asm_rows,
+        topo_rows=topo_rows, topo_summary=topo_summary,
+        checklist=checklist,
+        js=JS_EDITABLE,
     )
 
     with open(output_path, 'w', encoding='utf-8') as f:
@@ -466,7 +367,7 @@ def generate_html(csv_path, run_title, output_path, miuvig_path=None, asm_path=N
 
 
 def main():
-    parser = argparse.ArgumentParser(description="report_html.py v2.1 — Full interactive submission report")
+    parser = argparse.ArgumentParser(description="report_html.py v3.0 — Full interactive submission report")
     parser.add_argument('--csv', required=True, help='unified_metadata.csv')
     parser.add_argument('--miuvig', help='miuvig.tsv')
     parser.add_argument('--assembly', help='assembly.tsv')
@@ -482,6 +383,28 @@ def main():
                   args.miuvig, args.assembly,
                   args.suvtk_tax, args.suvtk_feat, args.hypo,
                   args.topology, args.gb_dir)
+
+    # AI 解读 section (可选, 纯增量: 离线/未配 key 时自动跳过, 不改动报告)
+    try:
+        from mmpv_common.ai import append_ai_section_to_html
+        n_seqs = 0
+        with open(args.csv, encoding="utf-8") as _f:
+            for _line in _f:
+                if _line.strip():
+                    n_seqs += 1
+        append_ai_section_to_html(Path(args.output), {
+            "pipeline": "submission", "run_title": args.run_title,
+            "n_seqs": max(n_seqs - 1, 0),
+        })
+    except Exception:
+        pass
+
+    # 过程面板 (确定性, 无需 AI): 项目 90_Handoff/state 在时嵌入全过程总览
+    try:
+        from mmpv_common.process_report import append_process_panel_to_html
+        append_process_panel_to_html(Path(args.output), Path(args.output))
+    except Exception:
+        pass
 
 
 if __name__ == '__main__':

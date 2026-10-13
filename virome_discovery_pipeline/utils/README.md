@@ -116,8 +116,8 @@ python virome_submission_pipeline/submission_pipeline.py \
     --suvtk-db ~/database/virus-db/suvtk_db/ \
     -t 40
 
-# 启动提交 GUI 桌面应用
-python submission_gui/submission_gui.py
+# 提交 GUI: 管线内独立版 python virome_submission_pipeline/submission_gui.py
+# (顶层桌面 GUI 已移交外部平台)
 ```
 
 ---
@@ -195,7 +195,7 @@ python submission_gui/submission_gui.py
 | 3 | `hypothetical` | analyze_hypothetical.py | 假定蛋白功能注释 (HHsuite/Diamond/DeepLoc/PSORTb/TMHMM 5工具) |
 | 4 | `sequin` | sequin_builder.py | Sequin .tbl 格式构建 (Cenote-Taker3 风格) |
 | 5 | `submit` | submission_pipeline.py | 端到端编排: suvtk tbl2asn / Sequin tbl2asn 双模式 → .sqn |
-| 6 | `gui` | submission_gui/submission_gui.py | PySide6 桌面 GUI: 交互式编辑/验证/导出提交文件 |
+| 6 | `gui` | submission_gui.py (管线内) | PySide6 桌面 GUI: 交互式编辑/验证/导出提交文件 |
 | 7 | `report` | report_html.py | 交互式HTML全表编辑报告 |
 
 ---
@@ -220,22 +220,10 @@ MMPV-RNA/
 │   ├── doc.md                      # 完整流程文档
 │   └── utils/                      # 共享工具模块
 │
-├── metadata_gui/                   # 元数据管理桌面应用 (PyQt6)
-│   ├── main.py                     # GUI 主入口
-│   ├── controllers/                # 搜索桥接 / AI补全 / 元数据控制
-│   ├── models/                     # 数据存储模型
-│   ├── views/                      # 主窗口 / 搜索视图 / 表格 / 可视化 / 详情面板
-│   └── utils/                      # 辅助工具
-│
 ├── virome_submission_pipeline/     # 提交管线 (GenBank/CNCB)
 │   ├── submission_pipeline.py      # 主编排器
 │   ├── sequin_builder.py           # Sequin 构建器
 │   └── ...                         # 元数据/报告/拓扑分析
-│
-├── submission_gui/                 # 提交桌面 GUI
-│   └── submission_gui.py           # PySide6 交互式编辑/验证/导出
-│
-├── metadata_gui/                   # 元数据管理 GUI
 │
 ├── biosoft/                        # 第三方工具 (脚本/JAR, 无需编译)
 │   ├── VirBot/VirBot.py

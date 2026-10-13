@@ -510,5 +510,9 @@ def main():
         print(f"   ⚠️ 失败清单已导出: {failed_txt} (可直接作为下次的 --list 使用)")
     print("="*60)
 
+    # 存在最终失败任务 → 非零退出码 (编排器/CI 据此判失败; 失败清单已写盘)
+    if final_failed:
+        sys.exit(1)
+
 if __name__ == "__main__":
     main()

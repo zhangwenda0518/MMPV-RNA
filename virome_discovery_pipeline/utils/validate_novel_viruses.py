@@ -92,10 +92,10 @@ def generate_html_report(stats, taxonomy_df, out_path):
     level_counts = stats.get("level_counts", {})
 
     html = f"""<!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>病毒新颖性验证报告</title>
+<title>Viral Novelty Validation Report</title>
 <script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
 <style>
 * {{ box-sizing: border-box; margin: 0; padding: 0; }}
@@ -119,29 +119,29 @@ table th {{ background: #f0f4f8; color: #1A5276; font-weight: 600; }}
 </head>
 <body>
 
-<h1>病毒新颖性验证报告</h1>
-<p class="subtitle">validate_novel_viruses.py v2.0 — 基于分类层级判断 | {time.strftime('%Y-%m-%d %H:%M:%S')}</p>
+<h1>Viral Novelty Validation Report</h1>
+<p class="subtitle">validate_novel_viruses.py v2.0 — taxonomy-level classification | {time.strftime('%Y-%m-%d %H:%M:%S')}</p>
 
 <div class="cards">
   <div class="card known">
     <div class="num">{counts.get("known", 0):,}</div>
-    <div class="label">★ 已知病毒 (Species ≠ NA)</div>
+    <div class="label">★ Known virus (Species ≠ NA)</div>
   </div>
   <div class="card novel">
     <div class="num">{counts.get("novel_species", 0) + counts.get("novel_genus", 0):,}</div>
-    <div class="label">★★ 新种/新属</div>
+    <div class="label">★★ Novel species/genus</div>
   </div>
   <div class="card truly">
     <div class="num">{counts.get("novel_family", 0) + counts.get("novel_order", 0) + counts.get("truly_novel", 0):,}</div>
-    <div class="label">★★★ 新科以上</div>
+    <div class="label">★★★ Novel family or above</div>
   </div>
   <div class="card">
     <div class="num" style="color:#2980B9">{total:,}</div>
-    <div class="label">总计 vOTU</div>
+    <div class="label">Total vOTUs</div>
   </div>
   <div class="card">
     <div class="num" style="color:#1ABC9C">{stats.get("total_samples", 0):,}</div>
-    <div class="label">样本数</div>
+    <div class="label">Samples</div>
   </div>
 </div>
 
@@ -158,13 +158,13 @@ table th {{ background: #f0f4f8; color: #1A5276; font-weight: 600; }}
 <script>
 Plotly.newPlot("pieChart", [{{
   type: "pie",
-  labels: ["★ 已知 (Species)", "★★ 新种 (Genus)", "★★ 新属 (Family)", "★★★ 新科+(Order/Class)", "★★★ 全新 (无分类)"],
+  labels: ["★ Known (Species)", "★★ Novel species (Genus)", "★★ Novel genus (Family)", "★★★ Novel family+ (Order/Class)", "★★★ Truly novel (unclassified)"],
   values: [{counts.get("known", 0)}, {counts.get("novel_species", 0)}, {counts.get("novel_genus", 0)}, {counts.get("novel_family", 0) + counts.get("novel_order", 0)}, {counts.get("truly_novel", 0)}],
   marker: {{ colors: ["#27AE60", "#2ECC71", "#F39C12", "#E67E22", "#E74C3C"] }},
   hole: 0.4,
   textinfo: "label+percent",
   textfont: {{ size: 12 }}
-}}, {{ title: "vOTU 分类层级分布", height: 450 }});
+}}, {{ title: "vOTU Novelty Level Distribution", height: 450 }});
 
 Plotly.newPlot("levelChart", [{{
   type: "bar",
@@ -172,9 +172,9 @@ Plotly.newPlot("levelChart", [{{
   y: {json.dumps(list(level_counts.values()))},
   marker: {{ color: "#3498DB" }}
 }}, {{
-  title: "各 {class_label} 的新颖性分布",
+  title: "Novelty Distribution by {class_label}",
   xaxis: {{ title: "{class_label}" }},
-  yaxis: {{ title: "vOTU 数量" }},
+  yaxis: {{ title: "No. of vOTUs" }},
   height: 450,
 }});
 
@@ -184,9 +184,9 @@ Plotly.newPlot("hostChart", [{{
   y: {json.dumps(list(host_counts.values()))},
   marker: {{ color: "#8E44AD" }}
 }}, {{
-  title: "宿主分布",
-  xaxis: {{ title: "宿主类别" }},
-  yaxis: {{ title: "vOTU 数量" }},
+  title: "Host Distribution",
+  xaxis: {{ title: "Host Category" }},
+  yaxis: {{ title: "No. of vOTUs" }},
   height: 400,
 }});
 
@@ -196,14 +196,14 @@ Plotly.newPlot("freqChart", [{{
   xbins: {{ start: 1, size: 1 }},
   marker: {{ color: "#1ABC9C", line: {{ color: "#fff", width: 1 }} }}
 }}, {{
-  title: "病毒频率分布 (检出样本数)",
-  xaxis: {{ title: "样本数", dtick: 1 }},
-  yaxis: {{ title: "vOTU 数量" }},
+  title: "Virus Frequency Distribution (samples detected)",
+  xaxis: {{ title: "No. of samples", dtick: 1 }},
+  yaxis: {{ title: "No. of vOTUs" }},
   height: 400,
 }});
 </script>
 
-<p class="footer">validate_novel_viruses.py v2.0 — 病毒宏基因组分析全流程框架</p>
+<p class="footer">validate_novel_viruses.py v2.0 — Virome analysis pipeline framework</p>
 </body>
 </html>"""
 

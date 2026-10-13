@@ -75,6 +75,19 @@ class VirusMetadataAnalyzer:
             first_col = df_virus.columns[0]
             print(f"  ⚠️ 病毒表未找到标准 'Run' 列，强制将第一列 '{first_col}' 设为主键 Run。")
             df_virus = df_virus.rename(columns={first_col: 'Run'})
+
+        # 【核心修复】病毒名列候选链: 本脚本后续统一按 'Taxonomy' 出图, 但编排器
+        # auto_known_virus.py 传入的是检测汇总表 (含 Adjusted_Species, 无 Taxonomy)。
+        # 不允许用 columns[-1] 兜底 (会拿 Rep_Length 之类的数值列当病毒名)。
+        _virus_col = next((c for c in ('Taxonomy', 'Adjusted_Species', 'Species_NCBI',
+                                       'Species', 'Accession') if c in df_virus.columns), None)
+        if _virus_col is None:
+            raise SystemExit(
+                "❌ 病毒表缺少病毒名列: 需含 Taxonomy / Adjusted_Species / Species_NCBI "
+                f"/ Species / Accession 之一; 实际列: {list(df_virus.columns)[:15]}")
+        if _virus_col != 'Taxonomy':
+            print(f"  ℹ️ 病毒名列按候选链解析: '{_virus_col}' -> 'Taxonomy'")
+            df_virus = df_virus.rename(columns={_virus_col: 'Taxonomy'})
             
         print(f"📥 读取 11维度大一统元数据: {self.meta_file}")
         df_meta = pd.read_csv(self.meta_file, sep=None, engine='python', skipinitialspace=True)

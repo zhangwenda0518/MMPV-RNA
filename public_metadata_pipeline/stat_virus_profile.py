@@ -274,8 +274,10 @@ def _setup_mpl():
     import matplotlib.pyplot as plt
     mpl.rcParams["pdf.fonttype"] = 42
     mpl.rcParams["ps.fonttype"] = 42
-    mpl.rcParams["font.sans-serif"] = ["Arial", "Helvetica", "DejaVu Sans", "sans-serif"]
+    # CJK 字体置前 (病毒名/类目可能含中文), 原西文字体保留作回退
+    mpl.rcParams["font.sans-serif"] = ["Microsoft YaHei", "SimHei", "Arial", "Helvetica", "DejaVu Sans", "sans-serif"]
     mpl.rcParams["font.family"] = "sans-serif"
+    mpl.rcParams["axes.unicode_minus"] = False
     mpl.rcParams["axes.spines.right"] = False
     mpl.rcParams["axes.spines.top"] = False
     mpl.rcParams["axes.edgecolor"] = "#5A6A7E"
@@ -283,7 +285,7 @@ def _setup_mpl():
     mpl.rcParams["text.color"] = "#1A2332"
     mpl.rcParams["xtick.color"] = "#5A6A7E"
     mpl.rcParams["ytick.color"] = "#5A6A7E"
-    mpl.rcParams["savefig.dpi"] = 200
+    mpl.rcParams["savefig.dpi"] = 300
     mpl.rcParams["figure.facecolor"] = "white"
     return plt
 

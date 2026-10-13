@@ -38,9 +38,12 @@ graph_propagation.py — 组装图标签传播 (③ discovery 的 graph 阶段)
   unknown        其余 (无链接/无种子/短 contig 未被工具检查过)
 
 消费点:
-  * filter 阶段末端 pass 读 {S}.graph_verdict.tsv (rescue/demote, 见 filter_virus.py)
-  * 编排器 _cobra_candidate_source 在 apply_to_cobra 开启时把 COBRA raw 候选源
-    切到 d_graph/candidates
+  * graph 自裁决 (adjudicate_sample, 本模块末端): 读 {S}.graph_verdict.tsv 对
+    filter 最终链做 rescue/demote, 写 {S}.virus.candidate.final.fasta 与审计表,
+    并把调整后候选更新到 COBRA 镜像 {d_filter}/candidates/{sv}/ — filter 阶段
+    末端不再有 verdict pass (旧 filter 消费点已移除)
+  * 编排器 _cobra_candidate_source: 优先消费 filter 镜像 (d_filter/candidates),
+    镜像缺失时兜底本目录派生候选 d_graph/candidates (apply_to_cobra 开启时)
 
 规模兜底: --max-reads 每端取前 N 条 (确定性前缀截取, 可复现); --jobs 跨样本并行。
 """
@@ -261,8 +264,9 @@ def compute_adjustments(kept_ids, candidate_ids, cdd_unclassified, blastx_hit_id
                         verdicts, do_demote=True, do_rescue=True):
     """filter 末端调整的纯函数 (放在本模块以便单测; filter_virus.py 调用)。
 
-    demote: 保留集中 cdd_call=='unclassified' 且无任何 blastx hit (零正面证据,
-            仅因全局 no-hit 规则放行) 且图判定 graph_nonviral → 移出。
+    demote: 保留集中 unclassified (cdd_call=='unclassified' 旧源; CDD 层移除后
+            为 uniprot unclassified 清单回退源, 语义相同) 且无任何 blastx hit
+            (零正面证据, 仅因全局 no-hit 规则放行) 且图判定 graph_nonviral → 移出。
     rescue: 被整链丢弃 (候选-保留) 且图判定 graph_viral → 加回。
     返回 (final_ids, demoted, rescued)。
     """
@@ -351,15 +355,44 @@ def _resolve_filter_chain(filter_dir, variants):
     return None, None
 
 
+def _read_filter_unclassified(filter_dir, sv):
+    """读 filter 单样本 unclassified 清单 → contig id 集合; 所有源均缺失返回 None。
+
+    P1-6 双源回退之现行源: CDD 层已于 2026-10-11 移除 → {sv}/cdd/cdd_calls.tsv
+    恒不存在, 由 filter 实际写出的 uniprot unclassified 清单顶上 (内容 contig id
+    每行一个, 语义等同 cdd_call=='unclassified')。两种落点形态:
+      {sv}/uniprot/uniprot.unclassified.id           (merged 拆分后, split_output 固定名)
+      {sv}/uniprot/{base}_uniprot.unclassified.id    (单样本直跑, run_uniprot 命名,
+                                                      base≈{sv}_virus.all.candidate)
+    """
+    udir = os.path.join(filter_dir, sv, "uniprot")
+    cands = ([os.path.join(udir, "uniprot.unclassified.id")]
+             + sorted(str(p) for p in Path(udir).glob("*_uniprot.unclassified.id"))
+             + sorted(str(p) for p in Path(udir).glob("*.unclassified.id")))
+    for p in cands:
+        if os.path.isfile(p):
+            ids = set()
+            with open(p, encoding="utf-8", errors="replace") as fh:
+                for line in fh:
+                    cid = line.strip()
+                    if cid and not cid.startswith('#'):
+                        ids.add(cid)
+            return ids
+    return None
+
+
 def adjudicate_sample(sample, out_root, filter_dir, ident_dir,
                       demote=True, rescue=True):
     """对 filter 输出做图裁决 (主链重排后 graph 的核心动作):
-      final = filter 链 − (cdd unclassified ∩ 无 blastx hit ∩ graph_nonviral)
+      final = filter 链 − (unclassified ∩ 无 blastx hit ∩ graph_nonviral)
               ∪ (被 filter 丢弃 ∩ graph_viral)
+    unclassified 双源: 优先 cdd_calls.tsv (旧数据兼容), 缺失回退 uniprot
+    unclassified 清单 (_read_filter_unclassified; CDD 层移除后的常态源)。
     写: ① {out_root}/{sample}/{sample}.virus.candidate.final.fasta
         ② {filter_dir}/candidates/{sv}/{sv}_virus.all.candidate.fasta (覆盖直通镜像,
            COBRA 主链输入)
-        ③ {out_root}/{sample}/{sample}.graph_adjust_calls.tsv (审计)
+        ③ {out_root}/{sample}/{sample}.graph_adjust_calls.tsv (审计; 列名沿用
+           cdd_call 保持下游消费兼容, 值语义 = 双源合并后的 unclassified 判定)
     返回 (n_final, n_demoted, n_rescued); filter 链缺失返回 None (graph 兜底镜像
     由调用方用 ident − graph_nonviral 处理)。"""
     vtsv = Path(out_root) / sample / f"{sample}.graph_verdict.tsv"
@@ -387,7 +420,11 @@ def adjudicate_sample(sample, out_root, filter_dir, ident_dir,
         return None
     chain_ids = [i for i in _fasta_ids(chain)]
 
+    # demote 数据源 (P1-6 双源回退):
+    #   ① {sv}/cdd/cdd_calls.tsv — 旧数据兼容 (CDD 层 2026-10-11 移除后恒不存在)
+    #   ② {sv}/uniprot unclassified 清单 — 现行源, 语义等同 call=='unclassified'
     cdd_call = {}
+    demote_source = "none"
     cdd_tsv = os.path.join(filter_dir, sv, "cdd", "cdd_calls.tsv")
     if os.path.isfile(cdd_tsv):
         with open(cdd_tsv) as fh:
@@ -397,6 +434,19 @@ def adjudicate_sample(sample, out_root, filter_dir, ident_dir,
                 f = line.rstrip("\n").split("\t")
                 if len(f) >= 2:
                     cdd_call[f[0]] = f[1]
+        demote_source = "cdd"
+    else:
+        uncl_ids = _read_filter_unclassified(filter_dir, sv)
+        if uncl_ids is not None:
+            for cid in uncl_ids:
+                cdd_call[cid] = "unclassified"
+            demote_source = "uniprot"
+    if demote_source == "uniprot":
+        print(f"[graph] {sample}: demote 源 = uniprot unclassified 清单 "
+              f"({len(cdd_call)} 条 unclassified)", flush=True)
+    elif demote_source == "none":
+        print(f"[graph] {sample}: WARN 无 demote 数据源 (cdd_calls.tsv 与 uniprot "
+              f"unclassified 清单均缺失), 降级集为空", file=sys.stderr, flush=True)
     blastx_hits = set()
     blast_tsv = os.path.join(filter_dir, sv, "uniprot", "diamond_uniprot", "blastx.tsv")
     if os.path.isfile(blast_tsv):

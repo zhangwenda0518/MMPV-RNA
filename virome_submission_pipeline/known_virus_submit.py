@@ -24,13 +24,24 @@ def _setup_logger(out_dir):
     logger.addHandler(ch)
     return logger
 
+BASH = shutil.which('bash') or '/bin/bash'
+# 注意: 统一 [BASH, '-c', cmd] 列表式调用 — Windows 下 Git 常装在带空格路径,
+# shell=True+executable 会在空格处断裂 (实测 exit 127)。
+
+
 def _run(cmd, log, step, check=False):
+    """返回 True 仅当 exit code == 0 (check=False 时也读 returncode, 不吞失败)"""
     log.info("[%s] %s", step, cmd[:160])
     try:
-        subprocess.run(cmd, shell=True, check=check, executable='/bin/bash')
-        log.info("[%s] OK", step); return True
+        p = subprocess.run([BASH, '-c', cmd], check=check)
     except subprocess.CalledProcessError as e:
         log.error("[%s] FAIL (%d)", step, e.returncode); return False
+    except FileNotFoundError as e:
+        log.error("[%s] FAIL (shell/bash 未找到: %s)", step, e); return False
+    if p.returncode != 0:
+        log.error("[%s] FAIL (%d)", step, p.returncode); return False
+    log.info("[%s] OK", step)
+    return True
 
 
 def _ncbi_email(log=None):
@@ -117,24 +128,25 @@ def fetch_ncbi_cds(accessions, cache_dir, log):
 def gen_taxonomy(viruses, ref_info, out_dir, log):
     td = Path(out_dir) / "1_taxonomy"; td.mkdir(parents=True, exist_ok=True)
     tr, mr = [], []
+    # suvtk comments 对 miuvig_taxonomy.tsv 的列契约 (suvtk/virus_info.py 同款):
+    #   contig, pred_genome_type, pred_genome_struc
+    # pred_genome_type 必须取 suvtk 受控词表, 否则 comments 直接 ClickException
+    _GT_ALLOWED = {"DNA", "dsDNA", "ssDNA", "RNA", "dsRNA", "ssRNA",
+                   "ssRNA(+)", "ssRNA(-)", "mixed", "uncharacterized"}
     for acc, vi in sorted(viruses.items()):
         ri = ref_info.get(acc, {})
         sp = ri.get("Species_NCBI", acc); fm = ri.get("VMR_Family","")
         gn = ri.get("VMR_Genus",""); tx = ri.get("Taxid","")
         tp = ri.get("Topology","linear"); ml = ri.get("Molecule_type","ssRNA(+)")
+        gt = ml if ml in _GT_ALLOWED else "uncharacterized"
+        gs = "segmented" if len(vi["fastas"]) > 1 else "non-segmented"
         for fa in vi["fastas"]:
             c = fa.stem
             tr.append([c, f"Viruses;{fm};{gn};{sp}", "species", fm, gn, sp, tx, tp, ml])
-            try:
-                recs = list(SeqIO.parse(fa, "fasta-pearson"))
-                if not recs: continue
-                mr.append([c, tx, sp, fm, gn, tp, ml, str(fa.stat().st_size),
-                           str(len(recs[0].seq))])
-            except Exception:
-                continue
+            mr.append([c, gt, gs])
     for fn, h, d in [
         ("taxonomy.tsv", ["contig","taxonomy","rank","family","genus","species","taxid","topology","molecule_type"], tr),
-        ("miuvig_taxonomy.tsv", ["sample_id","taxid","species","family","genus","topology","molecule_type","file_size","seq_length"], mr)
+        ("miuvig_taxonomy.tsv", ["contig","pred_genome_type","pred_genome_struc"], mr)
     ]:
         with open(td / fn, "w", newline='') as f:
             w = csv.writer(f, delimiter='\t'); w.writerow(h); w.writerows(d)
@@ -222,7 +234,7 @@ def gen_features(viruses, ref_genomes, ncbi_products, ref_info, out_dir, log):
                 return rec, fa_path, aln_out, True
             cmd = f"{CAWLIGN} -t nucleotide -r {ref_tmp} -f refmap -o {aln_out} {asm_tmp}"
             try:
-                subprocess.run(cmd, shell=True, capture_output=True, timeout=120)
+                subprocess.run([BASH, '-c', cmd], capture_output=True, timeout=120)
                 ok = aln_out.exists() and aln_out.stat().st_size > 100
             except Exception:
                 ok = False
@@ -261,11 +273,22 @@ def gen_features(viruses, ref_genomes, ncbi_products, ref_info, out_dir, log):
                 rem = len(cds_str) % 3
                 if rem:
                     n_trunc += 1
-                    log.info("  %s: CDS %d..%d 长度 %d 非 3 倍数, 截去 %d bp, asm 坐标同步收窄",
-                             rec.id, cds_start, cds_end, len(cds_str), rem)
-                    cds_str = cds_str[:len(cds_str) - rem]
+                    if strand == '-':
+                        # cds_str 为参考方向; 负链 CDS 自身 5'→3' 与其反向,
+                        # 串首端 = CDS 3' 端 (止密码子侧) — 截这里保住起始密码子
+                        cds_str = cds_str[rem:]
+                    else:
+                        cds_str = cds_str[:len(cds_str) - rem]
+                    log.info("  %s: CDS %d..%d 长度 %d 非 3 倍数, 截去 %d bp (CDS 3' 端), asm 坐标同步收窄",
+                             rec.id, cds_start, cds_end, len(cds_str) + rem, rem)
                 gi += 1; gn = f"gene_{gi:02d}"
-                asm_start, asm_end = _est_asm_coords(aln_seq, cds_start, cds_end, len(cds_str))
+                # 负链的截断发生在低坐标端: 先按原长取区间, 再右移起点;
+                # 正链截尾发生在高坐标端: 直接按截后长度收终点
+                asm_start, asm_end = _est_asm_coords(
+                    aln_seq, cds_start, cds_end,
+                    len(cds_str) + (rem if strand == '-' else 0))
+                if strand == '-' and rem:
+                    asm_start += rem
                 if strand == '-':
                     # 负链: 提取到的碱基是参考方向的互补链, 序列取反向互补;
                     # 五列 feature table 规范用"反转区间"(列1>列2)表示互补链,
@@ -409,7 +432,8 @@ def run_suvtk_sqn(tax_dir, feat_dir, meta_dir, output_dir, log):
     cmt_dir = out / "4_comments"
     miuvig_tax = Path(tax_dir) / "miuvig_taxonomy.tsv"
     cmd = (f"suvtk comments --taxonomy {miuvig_tax} --features {mf} "
-           f"--miuvig {meta_dir_p/'miuvig.tsv'} --assembly {meta_dir_p/'assembly.tsv'} -o {cmt_dir}")
+           f"--miuvig {meta_dir_p/'miuvig.tsv'} --assembly {meta_dir_p/'assembly.tsv'} "
+           f"-o {cmt_dir / 'output'}")  # -o 是前缀, suvtk 自动追加 .cmt
     _run(cmd, log, "suvtk comments")
     
     # suvtk table2asn (uses full_assemblies.fna, not CDS)  
@@ -429,7 +453,8 @@ def run_suvtk_sqn(tax_dir, feat_dir, meta_dir, output_dir, log):
     cmt_file = cmt_dir / "output.cmt" if (cmt_dir / "output.cmt").exists() else out / "4_comments.cmt"
     if not cmt_file.exists():
         cmt_file = out / "4_comments.cmt"
-    cmd = (f"suvtk table2asn -i {fna} -f {tbl} -s {src} -t {sbt} -c {cmt_file} -o {sqn_dir}")
+    cmd = (f"suvtk table2asn -i {fna} -f {tbl} -s {src} -t {sbt} -c {cmt_file} "
+           f"-o {sqn_dir / 'submission'}")
     _run(cmd, log, "suvtk table2asn", check=False)
     
     sqn_files = list(sqn_dir.glob("*.sqn"))
@@ -507,8 +532,10 @@ def gen_metadata(viruses, tax_dir, out_dir, meta_file, log):
     with open(md / "miuvig.tsv", "w") as f:
         f.write("MIUVIG_parameter\tvalue\n")
         f.write("viral_enrichment\trRNA_depletion\nsequencing_platform\tIllumina_NovaSeq\n"
-                "sequencing_method\tmetatranscriptomic\nassembly_software\tMEGAHIT\n"
-                "assembly_method\treference_guided\nquality_check_software\tCheckV\n"
+                "sequencing_method\tmetatranscriptomic\n"
+                "assembly_software\tMEGAHIT;1.2.9;default parameters\n"
+                "assembly_method\treference_guided\n"
+                "quality_check_software\tCheckV\n"
                 "source_uvig\tmetatranscriptome (not viral targeted)\n")
     # assembly.tsv
     with open(md / "assembly.tsv", "w") as f:
@@ -516,7 +543,7 @@ def gen_metadata(viruses, tax_dir, out_dir, meta_file, log):
                 "Sequencing Technology\tIllumina NovaSeq\n"
                 "Assembly Method\treference guided\n"
                 "Assembly Name\tMMPV-RNA v3.0\n"
-                "Assembly Software\tMEGAHIT\n"
+                "Assembly Software\tMEGAHIT;1.2.9;default parameters\n"
                 "Coverage\tNOT_PROVIDED\n")
     return md
 
@@ -552,7 +579,9 @@ def main():
                 except Exception: continue
     run_tbl2gb(tbl, str(tax_dir), str(feat_dir), log)
     gen_metadata(viruses, str(tax_dir), str(out), args.metadata, log)
-    run_suvtk_sqn(str(tax_dir), str(feat_dir), str(out / "3_metadata"), str(out), log)
+    sqn_files = run_suvtk_sqn(str(tax_dir), str(feat_dir), str(out / "3_metadata"), str(out), log)
+    if not sqn_files:
+        log.warning("未生成任何 .sqn — 见上方 FAIL 日志, 提交包不完整")
     log.info("Done: %s", out)
 
 if __name__ == "__main__":

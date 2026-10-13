@@ -171,7 +171,9 @@ def test_validated_taxonomy_rejects_tiny_file(tmp_path):
 
 def test_build_cobra_mirror_passthrough_of_final_chain(tmp_path):
     """镜像 = filter 最终链原样搬运 (graph 对无证据结果的过滤已由
-    apply_graph_adjustments 的 demote 在最终链上完成; 镜像不做额外增删)"""
+    apply_graph_adjustments 的 demote 在最终链上完成; 镜像不做额外增删);
+    per-sample 形态 (P1-7): 镜像根上提到 filter 根, 统一落
+    <d_filter>/candidates/S1/ (旧嵌套落点 <d_filter>/S1/candidates 不再产生)"""
     import os
     import filter_virus as fv
     outdir = tmp_path / "d_filter" / "S1"
@@ -181,7 +183,35 @@ def test_build_cobra_mirror_passthrough_of_final_chain(tmp_path):
     os.symlink(outdir / "uniprot" / f"{base}_uniprot.fasta",
                outdir / f"{base}_filtered.fasta")
     fv.build_cobra_mirror(str(outdir), base, "filter", split_by_prefix=False)
-    m = outdir / "candidates" / "S1" / "S1_virus.all.candidate.fasta"
+    m = tmp_path / "d_filter" / "candidates" / "S1" / "S1_virus.all.candidate.fasta"
     text = m.read_text()
     assert ">a" in text and ">b" in text and ">c" in text
     assert m.name == "S1_virus.all.candidate.fasta"
+    assert not (outdir / "candidates").exists()   # 旧 per-sample 嵌套落点不再产生
+
+
+def test_build_cobra_mirror_merged_shape_stays_at_filter_root(tmp_path):
+    """merged 形态 (--split-by-prefix, outdir=filter 根): 镜像保持
+    <filter根>/candidates/<S>/ 不变 (P1-7 前已正确, 改造后不得回归)"""
+    import filter_virus as fv
+    root = tmp_path / "d_filter"
+    for s, cid in (("S1", "a"), ("S2", "b")):
+        (root / s).mkdir(parents=True)
+        (root / s / f"{s}.virus.candidate_filtered.fasta").write_text(
+            f">{cid}\nACGT\n")
+    fv.build_cobra_mirror(str(root), "all_candidates", "filter",
+                          split_by_prefix=True)
+    for s, cid in (("S1", "a"), ("S2", "b")):
+        m = root / "candidates" / s / f"{s}_virus.all.candidate.fasta"
+        assert f">{cid}" in m.read_text()
+
+
+def test_sample_of_longest_prefix_matching():
+    """P2-5: _sample_of 有 sample_names 时按最长前缀匹配 (样本名含 _ 不被首段
+    截断; SRR1 不误配 SRR10 的 contig), 缺省/无匹配时维持旧行为"""
+    import filter_virus as fv
+    assert fv._sample_of("SRR1_clean_k141_1") == "SRR1"   # 旧行为 (截断)
+    assert fv._sample_of("SRR1_clean_k141_1", ["SRR1_clean"]) == "SRR1_clean"
+    assert fv._sample_of("SRR10_k141_1", ["SRR1", "SRR10"]) == "SRR10"
+    assert fv._sample_of("OTHER_k141_1", ["SRR1"]) == "OTHER"   # 无匹配回退旧行为
+    assert fv._sample_of("SRR1", ["SRR1"]) == "SRR1"            # 恰好等于样本名

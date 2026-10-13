@@ -52,9 +52,15 @@ def get_longest_sequence(fasta_path):
     return "", 100.0
 
 
+# [P2-24b] 目录名尾部 accession 形态 (放宽单字母前缀 + 数字段前缀):
+#   NC_028268.1 / MW648525.1 / TA104.1 (旧形态) + U13908.2 / Y_U13908.2 / 1NC_028268.1 (新增)
+_ACC_RE = re.compile(
+    r'(\d+[A-Z]{2}\d{5,6}\.\d+|[A-Z]{1,2}_?\d{5,6}\.\d+|[A-Z]{1,2}_\d+\.\d+|[A-Z]{2}\d+\.\d+)$')
+
+
 def extract_accession(dir_name):
     """Extract NCBI accession from dir name like 'Taxonomy_sp_lycii_OR489165.1'."""
-    m = re.search(r'([A-Z]{1,2}_\d+\.\d+|[A-Z]{2}\d+\.\d+)$', dir_name)
+    m = _ACC_RE.search(dir_name)
     return m.group(1) if m else dir_name
 
 
@@ -212,6 +218,9 @@ def main():
         out_tax_dir.mkdir(parents=True, exist_ok=True)
 
         acc = extract_accession(tax_dir.name)
+        if acc == tax_dir.name:
+            # [P2-24b] accession 未识别: 分子类型判定与参考 N 填补都会失效, 显式告警 (不再静默)
+            print(f"⚠️ 目录名未解析出 accession: {tax_dir.name} (参考 N 填补将跳过)")
 
         for sample_dir in sorted(tax_dir.iterdir()):
             if not sample_dir.is_dir():
@@ -246,8 +255,17 @@ def main():
                     if is_RNA is None:
                         is_RNA = True
 
+                    # [P2-24a] fill 模式补齐 --min_len 校验 (原实现整段 fill 分支在末尾 continue,
+                    # 过滤模式的 min_len/max_n 检查被完全绕过)
+                    if seq_len < args.min_len:
+                        short_fail_count += 1
+                        _record(tax_dir.name, sample_dir.name, 'skipped_short',
+                                f'{seq_len}bp < min_len={args.min_len}', seq_len, n_ratio)
+                        print(f"⏭️ 太短 ({seq_len}bp < {args.min_len}): {tax_dir.name}/{out_name}")
+                        continue
+
                     if is_RNA:
-                        # RNA: fill only if N < max_n_genome
+                        # RNA: fill only if N < max_n_genome (原有 skip 语义保持不变)
                         if n_ratio >= args.max_n_genome:
                             n_fail_count += 1
                             _record(tax_dir.name, sample_dir.name, 'skipped_rna_n_over',
@@ -256,8 +274,28 @@ def main():
                             continue
                     else:
                         # DNA: always fill (unless --no_dna_fill)
+                        # [P2-24a] DNA 补 --max_n 校验 (原实现 DNA 分支无任何 N 上限检查)
+                        if n_ratio > args.max_n:
+                            n_fail_count += 1
+                            _record(tax_dir.name, sample_dir.name, 'skipped_n_over',
+                                    f'N={n_ratio:.1f}% > max_n={args.max_n}%', seq_len, n_ratio)
+                            print(f"⏭️ N超标 (N={n_ratio:.1f}% > {args.max_n}%): {tax_dir.name}/{out_name}")
+                            continue
                         if args.no_dna_fill:
-                            pass  # skip fill
+                            # [P2-24a] --no_dna_fill 落实: DNA 直接落盘原序列, 不做参考填补
+                            # (原实现此处为 pass 空语句, 仍照常进入下方 N-fill, 参数形同虚设)
+                            try:
+                                with open(out_path, 'w') as fout:
+                                    fout.write(f">{sample_accession}\n")
+                                    fout.write(f"{longest_seq}\n")
+                                success_count += 1
+                                _record(tax_dir.name, sample_dir.name, 'extracted',
+                                        'dna no_fill (--no_dna_fill)', seq_len, n_ratio)
+                                print(f"✅ (--no_dna_fill, DNA 不填补) {tax_dir.name}/{out_name}  ({seq_len} bp, N={n_ratio:.1f}%)")
+                            except Exception as e:
+                                _record(tax_dir.name, sample_dir.name, 'write_fail', str(e), seq_len, n_ratio)
+                                print(f"⚠️ 写入 {out_path} 时出错: {e}")
+                            continue
 
                     # Do N-fill
                     ref_fasta = ref_base / "virus-fasta" / f"ref_{acc}" / f"ref_{acc}.ref.fasta"
@@ -273,7 +311,13 @@ def main():
                         else:
                             print(f"✅ (无N或填补失败) {tax_dir.name}/{out_name}  ({seq_len} bp, N={n_ratio:.1f}%)")
                     else:
-                        print(f"✅ (无需填补) {tax_dir.name}/{out_name}  ({seq_len} bp, N={n_ratio:.1f}%)")
+                        if n_ratio > 0:
+                            # [P2-24b] 有 N 但参考 FASTA 缺失 (含 accession 未解析): 状态清单显式记 ref_not_found
+                            _record(tax_dir.name, sample_dir.name, 'ref_not_found',
+                                    f'N={n_ratio:.1f}% but ref FASTA missing: {ref_fasta}')
+                            print(f"⚠️ 参考缺失, 跳过填补 (N={n_ratio:.1f}%): {tax_dir.name}/{out_name}")
+                        else:
+                            print(f"✅ (无需填补) {tax_dir.name}/{out_name}  ({seq_len} bp, N={n_ratio:.1f}%)")
 
                     try:
                         with open(out_path, 'w') as fout:

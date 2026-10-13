@@ -36,6 +36,7 @@ import argparse
 import os
 import re
 import sys
+import shutil
 import subprocess
 import logging
 
@@ -50,6 +51,10 @@ from datetime import datetime
 from Bio import SeqIO
 
 SCRIPT_DIR = Path(__file__).resolve().parent
+
+# bash 解析: Linux= /bin/bash; Windows(Git Bash) 经 shutil.which 找到 bash.exe。
+# Git 常装在带空格路径, 故统一 [BASH, '-c', cmd] 列表式调用 (shell=True+executable 会断)。
+BASH = shutil.which('bash') or '/bin/bash'
 
 
 def _read_tsv_simple(path):
@@ -149,7 +154,7 @@ def run(cmd, log, step_name, check=False):
     """
     log.info("[%s] %s", step_name, cmd[:120])
     try:
-        p = subprocess.run(cmd, shell=True, check=check, executable='/bin/bash',
+        p = subprocess.run([BASH, '-c', cmd], check=check,
                            stderr=subprocess.PIPE, text=True)
     except subprocess.CalledProcessError as e:
         log.error("[%s] ✗ (exit=%d)", step_name, e.returncode)
@@ -169,6 +174,38 @@ def run(cmd, log, step_name, check=False):
         log.debug("[%s] stderr:\n%s", step_name, p.stderr[-2000:])
     log.info("[%s] ✓", step_name)
     return True
+
+
+def run_argv(argv, log, step_name):
+    """执行 argv 命令列表 (不经 shell): Windows 中文/空格/反斜杠路径安全。
+
+    与 run() 同语义 (返回 True 仅当 exit code == 0), 供 report_html 等
+    内部 python 步骤使用 (bash -c 会吃反斜杠路径 → 报告步骤静默失败)。
+    """
+    log.info("[%s] %s", step_name, " ".join(str(a) for a in argv[:6]))
+    try:
+        p = subprocess.run([str(a) for a in argv], stderr=subprocess.PIPE,
+                           text=True, errors='replace')
+    except OSError as e:
+        log.error("[%s] ✗ 无法执行: %s", step_name, e)
+        return False
+    if p.returncode != 0:
+        log.error("[%s] ✗ (exit=%d)", step_name, p.returncode)
+        for line in (p.stderr or '').strip().splitlines()[-10:]:
+            log.error("[%s]   %s", step_name, line)
+        return False
+    if p.stderr:
+        log.debug("[%s] stderr:\n%s", step_name, p.stderr[-2000:])
+    log.info("[%s] ✓", step_name)
+    return True
+
+
+def _first_existing(*paths):
+    """返回第一个存在的文件路径 (全部不存在/None 时返回 None)。"""
+    for p in paths:
+        if p is not None and Path(p).is_file():
+            return p
+    return None
 
 
 def _ncbi_email(log=None):
@@ -259,10 +296,14 @@ def _placeholder_pattern():
                 r'|XX\.[Xx0-9]{1,3}\s*N|XXX\.[Xx0-9]{1,3}\s*E|XX\.[Xx]{1,3}')
 
 
-def _gate_locate(workdir, explicit, names, rel_dirs):
-    """定位 gate 输入: 显式路径优先, 否则按常规目录 + 递归查找"""
-    if explicit:
-        p = Path(explicit)
+def _gate_locate(workdir, src_path, names, rel_dirs):
+    """定位 gate 输入: 显式路径优先, 否则按常规目录 + 递归查找
+
+    第二形参名与调用方 (validate_submission_gate 的 tbl_path/fna_path/src_path)
+    保持一致 —— 关键字调用 `src_path=` 可用, 不再只有位置传参一条路。
+    """
+    if src_path:
+        p = Path(src_path)
         return p if p.is_file() else None
     wd = Path(workdir)
     for rel in rel_dirs:
@@ -756,14 +797,72 @@ def build_taxonomy_from_summary(all_summary_path, fasta_dir=None, log=None):
     return str(tax_path), len(contig_tax)
 
 
+def build_inputs_from_extraction(extraction_dir, out_dir, log=None):
+    """从 ④ 的 06_Extraction/ 全长提取产物构建 known 模式输入 (推荐口径)。
+
+    布局 (B4 边界): <extraction_dir>/<病毒物种_登录号>/<样本>.<登录号>.full.fasta
+      例: 06_Extraction/Cytorhabdovirus_sp_lycii_OR489165.1/GS-3.OR489165.1.full.fasta
+          头: >GS-3_OR489165.1
+
+    taxonomy.tsv 的物种名由病毒目录名解析 (下划线名 → 空格名, `_sp_` → ` sp. `,
+    尾部登录号剥离); 后续 suvtk taxonomy 的 LCA 会再校准。
+
+    Returns:
+        (tax_tsv_path, combined_fasta_path, n_seqs, n_viruses)
+    """
+    edir = Path(extraction_dir)
+    if not edir.is_dir():
+        raise SystemExit(f'[!] extraction 目录不存在: {edir}')
+    fasta_files = sorted(edir.glob('*/*.full.fasta')) or sorted(edir.rglob('*.full.fasta'))
+    if not fasta_files:
+        raise SystemExit(f'[!] {edir} 下未找到 */*.full.fasta 全长产物')
+
+    # 目录名 → 物种名: 剥离尾部登录号 (NC_002030.1 / OR489165.1 等), _sp_ 还原为 sp.
+    _ACC_RE = re.compile(r'^(?P<species>.+)_(?P<acc>[A-Za-z]{1,2}_?\d+(?:\.\d+)?)$')
+
+    def dir_to_taxonomy(dirname):
+        m = _ACC_RE.match(dirname)
+        species = m.group('species') if m else dirname
+        species = species.replace('_sp_', ' sp. ')
+        return species.replace('_', ' ')
+
+    out = Path(out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    combined_fa = out / 'combined_known_viruses.fasta'
+    tax_path = out / 'taxonomy.tsv'
+
+    n_seqs = 0
+    virus_seen = set()
+    with open(combined_fa, 'w', encoding='utf-8') as cf, \
+            open(tax_path, 'w', encoding='utf-8') as tf:
+        tf.write('contig\ttaxonomy\n')
+        for fpath in fasta_files:
+            virus_tax = dir_to_taxonomy(fpath.parent.name)
+            virus_seen.add(fpath.parent.name)
+            with open(fpath, encoding='utf-8') as inf:
+                cf.write(inf.read())
+            for line in open(fpath, encoding='utf-8'):
+                if line.startswith('>'):
+                    contig = line[1:].strip().split()[0]
+                    tf.write(f'{contig}\t{virus_tax}\n')
+                    n_seqs += 1
+    if log:
+        log.info("  全长提取产物: %d 条序列 / %d 个病毒参考 → %s",
+                 n_seqs, len(virus_seen), combined_fa)
+    return str(tax_path), str(combined_fa), n_seqs, len(virus_seen)
+
+
 def prepare_known_viruses(all_summary_path, fasta_dir, metadata_dir, output_dir,
                           run_title, suvtk_db, threads, sequencer, assembler,
                           authors, pipeline, enrichment, source_uvig, metagenome_source,
-                          log):
+                          log, extraction_dir=None):
     """已知病毒全流程: INFO → suvtk taxonomy → suvtk features → unified_metadata → 导出。
 
     参数:
       all_summary_path : 2_Virus_variants_Results/summary/all_summary.tsv
+                         (与 extraction_dir 二选一; extraction 模式优先)
+      extraction_dir   : ④ 的 06_Extraction/ 全长提取产物 (<病毒>/<样本>.full.fasta);
+                         给出时序列直接取全长产物, 不需要 all_summary/fasta_dir
       fasta_dir        : 4_assemblies_clean/
       metadata_dir     : 6.Virus_variants_Results/summary/ (含 Full.tsv, runinfo.csv 等)
       output_dir       : 提交输出目录
@@ -779,25 +878,36 @@ def prepare_known_viruses(all_summary_path, fasta_dir, metadata_dir, output_dir,
     log.info("  output:      %s", out)
     log.info("=" * 60)
 
-    # ── Step 0: INFO — gather metadata ──
-    log.info("[0/4] INFO — 收集元数据 ...")
-    meta_lookup = gather_metadata_from_summary(
-        all_summary_path, str(out), metadata_dir, log)
+    if extraction_dir:
+        # ── 06_Extraction 全长模式: 序列取全长产物, 无 all_summary/Run 对照 ──
+        log.info("[0/4] INFO — extraction 模式: 无 all_summary, 元数据走占位符/后续人工补")
+        meta_lookup = {}
+        log.info("[1/4] 从 06_Extraction 构建 taxonomy + 合并全长 FASTA ...")
+        tax_path, combined_fa, n_contigs, n_viruses = build_inputs_from_extraction(
+            extraction_dir, str(out), log)
+        log.info("  合并全长 FASTA: %d 条序列 (%d 个病毒参考)", n_contigs, n_viruses)
+    else:
+        # ── all_summary 模式 (旧口径) ──
+        # ── Step 0: INFO — gather metadata ──
+        log.info("[0/4] INFO — 收集元数据 ...")
+        meta_lookup = gather_metadata_from_summary(
+            all_summary_path, str(out), metadata_dir, log)
 
-    # ── Step 1: Build taxonomy + combine FASTA ──
-    log.info("[1/4] 构建 taxonomy + 合并 FASTA ...")
-    tax_path, n_contigs = build_taxonomy_from_summary(all_summary_path, fasta_dir, log)
+        # ── Step 1: Build taxonomy + combine FASTA ──
+        log.info("[1/4] 构建 taxonomy + 合并 FASTA ...")
+        tax_path, n_contigs = build_taxonomy_from_summary(all_summary_path, fasta_dir, log)
 
-    # Combine FASTA
-    combined_fa = out / 'combined_known_viruses.fasta'
-    with open(combined_fa, 'w') as cf:
-        for fpath in Path(fasta_dir).rglob('*.fasta'):
-            with open(fpath) as inf:
-                cf.write(inf.read())
-    n_fa = sum(1 for _ in open(combined_fa) if _.startswith('>'))
-    log.info("  合并 FASTA: %d 条序列 → %s", n_fa, combined_fa)
+        # Combine FASTA
+        combined_fa = out / 'combined_known_viruses.fasta'
+        with open(combined_fa, 'w') as cf:
+            for fpath in Path(fasta_dir).rglob('*.fasta'):
+                with open(fpath) as inf:
+                    cf.write(inf.read())
+        n_fa = sum(1 for _ in open(combined_fa) if _.startswith('>'))
+        log.info("  合并 FASTA: %d 条序列 → %s", n_fa, combined_fa)
 
     # ── Step 2: suvtk taxonomy ──
+    tax_dir = feat_dir = None
     if suvtk_db:
         log.info("[2/4] suvtk taxonomy ...")
         tax_dir = out / '1_taxonomy'
@@ -868,18 +978,40 @@ def prepare_known_viruses(all_summary_path, fasta_dir, metadata_dir, output_dir,
 
         # Build abundance lookup from all_summary.tsv (contig → {MeanDepth, Covered%, ...})
         abu_lookup = {}
-        from_summary = pd.read_csv(all_summary_path, sep='\t')
-        for _, r2 in from_summary.iterrows():
-            s = str(r2.get('Sample', '')).strip()
-            a = str(r2.get('Accession', '')).strip()
-            if s and a:
-                contig_key = f'{s}_{a}'
-                abu_lookup[contig_key] = {
-                    'depth': str(r2.get('Rep_MeanDepth', '')).strip(),
-                    'covered': str(r2.get('Covered%', '')).strip(),
-                    'reads': str(r2.get('Reads', '')).strip(),
-                    'rel_abund': str(r2.get('Asm_Rel_Abund(%)', '')).strip(),
-                }
+        if all_summary_path and os.path.exists(all_summary_path):
+            from_summary = pd.read_csv(all_summary_path, sep='\t')
+            for _, r2 in from_summary.iterrows():
+                s = str(r2.get('Sample', '')).strip()
+                a = str(r2.get('Accession', '')).strip()
+                if s and a:
+                    contig_key = f'{s}_{a}'
+                    abu_lookup[contig_key] = {
+                        'depth': str(r2.get('Rep_MeanDepth', '')).strip(),
+                        'covered': str(r2.get('Covered%', '')).strip(),
+                        'reads': str(r2.get('Reads', '')).strip(),
+                        'rel_abund': str(r2.get('Asm_Rel_Abund(%)', '')).strip(),
+                    }
+        elif extraction_dir:
+            # extraction 模式: 丰度信息从 06_extraction 的 assembly_stats.csv 取 (若在)
+            _stats = Path(extraction_dir) / 'assembly_stats.csv'
+            if _stats.exists():
+                try:
+                    from_summary = pd.read_csv(_stats, sep=None, engine='python')
+                    log.info("  丰度参考: %s", _stats.name)
+                except Exception as _e:
+                    log.info("  assembly_stats.csv 读取失败 (%s), 跳过丰度回填", _e)
+                    from_summary = None
+                if from_summary is not None:
+                    for _, r2 in from_summary.iterrows():
+                        s = str(r2.get('Sample', '')).strip()
+                        a = str(r2.get('Accession', '')).strip()
+                        if s and a:
+                            abu_lookup[f'{s}_{a}'] = {
+                                'depth': str(r2.get('Rep_MeanDepth', r2.get('MeanDepth', ''))).strip(),
+                                'covered': str(r2.get('Covered%', '')).strip(),
+                                'reads': str(r2.get('Reads', '')).strip(),
+                                'rel_abund': str(r2.get('Asm_Rel_Abund(%)', '')).strip(),
+                            }
 
         for idx, row in df.iterrows():
             contig = str(row.get('sequence_name', '')).strip()
@@ -935,19 +1067,32 @@ def prepare_known_viruses(all_summary_path, fasta_dir, metadata_dir, output_dir,
         log.info("  充实 %d 个单元格", enriched)
 
     # ── Topology ──
-    fna = feat_dir / 'reoriented_nucleotide_sequences.fna'
-    if fna.exists():
+    # feat_dir 可缺 (未给 --suvtk-db): 显式 None 判定, 不再 NameError/TypeError
+    fna = (feat_dir / 'reoriented_nucleotide_sequences.fna') if feat_dir else None
+    if fna and fna.exists():
         topo_script = SCRIPT_DIR / 'viral_topology.py'
         topo_out = meta_dir / 'topology.tsv'
         run(f'python {topo_script} --taxonomy {summary_tax} --fasta {fna} -o {topo_out}',
             log, 'viral_topology')
 
-    # ── HTML report ──
+    # ── HTML report (argv 直连, 不经 shell; 存在的产物全部透传) ──
     if csv_path.exists():
         report_script = SCRIPT_DIR / 'report_html.py'
         report_out = meta_dir / 'report.html'
-        run(f'python {report_script} --csv {csv_path} --run-title {run_title} -o {report_out}',
-            log, 'report_html')
+        argv = [sys.executable, str(report_script), '--csv', str(csv_path),
+                '--run-title', run_title, '-o', str(report_out)]
+        suvtk_tax = _first_existing(
+            tax_dir / 'miuvig_taxonomy.tsv', tax_dir / 'taxonomy.tsv') if tax_dir else None
+        suvtk_feat = _first_existing(
+            feat_dir / 'featuretable.tbl', feat_dir / 'miuvig_features.tsv') if feat_dir else None
+        for flag, p in (('--miuvig', _first_existing(meta_dir / 'miuvig.tsv')),
+                        ('--assembly', _first_existing(meta_dir / 'assembly.tsv')),
+                        ('--topology', _first_existing(meta_dir / 'topology.tsv')),
+                        ('--suvtk-tax', suvtk_tax),
+                        ('--suvtk-feat', suvtk_feat)):
+            if p is not None:
+                argv += [flag, str(p)]
+        run_argv(argv, log, 'report_html')
 
     log.info("=" * 60)
     log.info("完成! 输出: %s", meta_dir)
@@ -971,7 +1116,14 @@ def main():
     # ── known 模式: 已知病毒 (INFO → suvtk) ──
     p_known = sub.add_parser('known', help='已知病毒提交 (INFO → suvtk)',
         epilog="""
-示例:
+示例 (06_Extraction 全长模式, 推荐 — 序列直接取 ④ 提取后的全长产物):
+  python submission_pipeline.py known \\
+      --extraction-dir $OUT/06_Extraction/ \\
+      --suvtk-db ~/database/virus-db/suvtk_db/ \\
+      -o genbank_submission/test_known/ \\
+      -t 40
+
+示例 (all_summary 模式, 旧口径):
   python submission_pipeline.py known \\
       --all-summary known_virus_pipeline/2_Virus_variants_Results/summary/all_summary.tsv \\
       --fasta-dir known_virus_pipeline/4_assemblies_clean/ \\
@@ -980,10 +1132,14 @@ def main():
       -o genbank_submission/test_known/ \\
       -t 40
 """)
-    p_known.add_argument('--all-summary', required=True,
-                         help='all_summary.tsv 路径 (2_Virus_variants_Results/summary/)')
-    p_known.add_argument('--fasta-dir', required=True,
-                         help='4_assemblies_clean/ 目录')
+    p_known.add_argument('--all-summary',
+                         help='all_summary.tsv 路径 (2_Virus_variants_Results/summary/); '
+                              '与 --extraction-dir 二选一')
+    p_known.add_argument('--extraction-dir',
+                         help='④ 的 06_Extraction/ 全长提取产物目录 (<病毒>/<样本>.full.fasta); '
+                              '给出时序列直接取全长产物, 不需要 --all-summary/--fasta-dir')
+    p_known.add_argument('--fasta-dir',
+                         help='4_assemblies_clean/ 目录 (all_summary 模式用; extraction 模式忽略)')
     p_known.add_argument('--metadata-dir',
                          help='元数据目录 (默认自动从 all_summary 推断: 同 data-* 父级下的 6.Virus_variants_Results/summary/)')
     p_known.add_argument('--suvtk-db', help='suvtk 数据库路径')
@@ -1036,9 +1192,13 @@ def main():
         out = Path(args.output)
         log = setup_logger(str(out))
 
-        # Auto-detect metadata_dir from all_summary path
+        if not args.all_summary and not args.extraction_dir:
+            parser.error("known 模式需要 --extraction-dir (④ 06_Extraction 全长产物) 或 "
+                         "--all-summary (2_Virus_variants_Results/summary/) 二选一")
+
+        # Auto-detect metadata_dir from all_summary path (extraction 模式无 Run 对照, 跳过)
         metadata_dir = args.metadata_dir
-        if not metadata_dir:
+        if metadata_dir is None and args.all_summary:
             summary_dir = Path(args.all_summary).resolve().parent  # .../2_Virus_variants_Results/summary
             # Go up 3 levels to data-{year}/sra_rna.dataN/
             for up_to in [summary_dir.parent.parent.parent,  # data-*/sra_rna.*
@@ -1054,6 +1214,7 @@ def main():
         prepare_known_viruses(
             all_summary_path=args.all_summary,
             fasta_dir=args.fasta_dir,
+            extraction_dir=args.extraction_dir,
             metadata_dir=metadata_dir or '',
             output_dir=str(out),
             run_title=args.run_title,
@@ -1201,10 +1362,12 @@ def main():
         if not srr_list.exists() or args.force_hypo:
             log.info("  提取 SRA/CRR 编号 ...")
             import subprocess as _sp
-            result = _sp.run(
-                f"grep -oP '[SC]RR\\d+' {tax_tsv} | sort -u > {srr_list}",
-                shell=True, executable='/bin/bash'
-            )
+            try:
+                result = _sp.run([BASH, '-c',
+                                  f"grep -oP '[SC]RR\\d+' {tax_tsv} | sort -u > {srr_list}"])
+            except OSError as _e:
+                # 非 POSIX 环境 (无 bash): 按失败处理, srr_list 缺失时下游已兜底
+                log.warning("  SRA/CRR 编号提取失败 (shell 不可用): %s", _e)
             n_sra = sum(1 for _ in open(srr_list)) if srr_list.exists() else 0
             log.info("  找到 %d 个唯一 SRA/CRR", n_sra)
 
@@ -1262,6 +1425,7 @@ def main():
     # 统一输出目录 (work_dir 平级，不污染分析目录)
     sub_out = work_dir.parent / f"submission_{args.run_title}"
     sub_out.mkdir(parents=True, exist_ok=True)
+    report_path = sub_out / "report.html"   # ⑦ 报告实际落点 (尾段判存在打印)
 
     if args.mode in ('suvtk', 'both'):
         log.info("─" * 40 + "\n  suvtk 模式: 生成 source.src + .cmt → table2asn\n" + "─" * 40)
@@ -1356,28 +1520,43 @@ def main():
                 cols = ["Sequence_ID","Organism","Isolate","Collection_date","geo_loc_name",
                         "Lat_Lon","Bioproject","Biosample","SRA","Segment","Metagenomic","Metagenome_source","Host"]
                 sf.write("\t".join(cols) + "\n")
-                # use suvtk taxonomy for Organism, generate unique Isolate per sequence
-                isolate_counter = 0
+                # Organism 用 suvtk taxonomy 结果; isolate 以 (物种, 样本) 为组:
+                # 同物种同样本的多条 contig (分段病毒各片段) 共享同一 isolate —
+                # NCBI/suvtk 按 Isolate 归组分段病毒 (旧版每序列一个 isolate,
+                # 分段无法归组); 组哈希与 FASTA 行序无关, 跨数据集合并也不重名
+                import hashlib
+
+                def _isolate_for(organism, cid):
+                    m = re.search(r'([SC]RR\d+)', cid)
+                    sample = m.group(1) if m else cid.split('_')[0]
+                    key = f'{organism}|{sample}'
+                    if key not in _isolate_for._seen:
+                        _isolate_for._seen[key] = 'NXGQ' + hashlib.md5(
+                            key.encode('utf-8')).hexdigest()[:5].upper()
+                    return _isolate_for._seen[key]
+
+                _isolate_for._seen = {}
+                n_rows = 0
                 for row in _read_tsv_simple(ref_info_path) if has_ref_info else []:
                     cid = row.get("Accession", row.get("contig_id", ""))
                     if not cid or cid not in fasta_ids: continue
-                    isolate_counter += 1
                     organism = row.get("suvtk_Species", row.get("Species", "unclassified plant virus"))
                     if organism in ("nan", "", "NA", None):
                         organism = "unclassified plant virus"
-                    isolate = f"NXGQ{isolate_counter:03d}"  # NingXia GouQi unique ID
+                    isolate = _isolate_for(organism, cid)
                     sf.write("\t".join([cid, organism, isolate,
                                         "", "", "", "", "", "", "", "TRUE",
                                         "plant virome", "Lycium chinense"]) + "\n")
+                    n_rows += 1
                 if not has_ref_info:
                     # fallback: generate from FASTA
                     for rec in SeqIO.parse(str(fasta), "fasta"):
-                        isolate_counter += 1
-                        isolate = f"NXGQ{isolate_counter:03d}"
+                        isolate = _isolate_for("unclassified plant virus", rec.id)
                         sf.write("\t".join([rec.id, "unclassified plant virus", isolate,
                                             "", "", "", "", "", "", "", "TRUE",
                                             "plant virome", "Lycium chinense"]) + "\n")
-            log.info("  生成 source.src (%d 条)", isolate_counter)
+                        n_rows += 1
+            log.info("  生成 source.src (%d 条)", n_rows)
 
         # source.src 必填列校验: Collection_date/Lat_Lon/Bioproject/Biosample/SRA 为空时显式告警
         _required_src_cols = ("Collection_date", "geo_loc_name", "Lat_Lon",
@@ -1529,21 +1708,35 @@ def main():
             elif not sbt_file.exists():
                 log.warning("  template.sbt 不存在, 跳过 suvtk table2asn")
             else:
-                sqn_cmd = (
-                    f"suvtk table2asn "
-                    f"-i {reoriented_fna} "
-                    f"-o {sv_dir}/submission "
-                    f"-s {src_file} "
-                    f"-f {updated_tbl} "
-                    f"-t {sbt_file} "
-                    f"-c {comments_file}"
-                )
-                if run(sqn_cmd, log, "suvtk table2asn"):
-                    sqn_output = sv_dir / "submission.sqn"
-                    if sqn_output.is_file() and sqn_output.stat().st_size > 0:
-                        log.info("  ✓ submission.sqn 已生成 (%d KB)", sqn_output.stat().st_size // 1024)
-                    else:
-                        log.warning("  submission.sqn 未生成, 请检查")
+                # 直连 NCBI table2asn (argv 列表, 不经 shell — Windows 中文路径安全);
+                # suvtk 0.1.x/0.2.x 不可用或直连失败时回退 suvtk 包装器
+                sqn_prefix = sv_dir / "submission"
+                produced = False
+                try:
+                    from virome_submission import _run_table2asn_chain as _t2chain
+                    produced = _t2chain(reoriented_fna, updated_tbl, str(src_file),
+                                        str(sbt_file), str(comments_file),
+                                        str(sqn_prefix), log)
+                except Exception as e:
+                    log.warning("  直连 table2asn 链异常 (%s), 回退 suvtk 包装器", e)
+                if not produced:
+                    sqn_cmd = (
+                        f"suvtk table2asn "
+                        f"-i {reoriented_fna} "
+                        f"-o {sv_dir}/submission "
+                        f"-s {src_file} "
+                        f"-f {updated_tbl} "
+                        f"-t {sbt_file} "
+                        f"-c {comments_file}"
+                    )
+                    if run(sqn_cmd, log, "suvtk table2asn"):
+                        produced = (sv_dir / "submission.sqn").is_file() and \
+                                   (sv_dir / "submission.sqn").stat().st_size > 0
+                if produced:
+                    log.info("  ✓ submission.sqn 已生成 (%d KB)",
+                             (sv_dir / "submission.sqn").stat().st_size // 1024)
+                else:
+                    log.warning("  submission.sqn 未生成, 请检查")
         else:
             missing = []
             if not reoriented_fna or not reoriented_fna.exists(): missing.append("reoriented.fna")
@@ -1618,31 +1811,40 @@ def main():
 
         # ── 病毒拓扑判断 (复用上方统一生成的 topology.tsv) ──
 
-        # ── 交互式 HTML 报告 ──
+        # ── 交互式 HTML 报告 (argv 直连, 不经 shell; 存在的产物全部透传) ──
         csv_path = sub_out / "unified_metadata.csv"
         miuvig_path = sub_out / "miuvig.tsv"
         asm_path = sub_out / "assembly.tsv"
-        report_path = sub_out / "report.html"
         report_script = SCRIPT_DIR / "report_html.py"
         if csv_path.exists():
-            cmd_report = (
-                f"python {report_script} --csv {csv_path} "
-                f"--run-title {args.run_title} -o {report_path}"
-            )
-            if miuvig_path.exists():
-                cmd_report += f" --miuvig {miuvig_path}"
-            if asm_path.exists():
-                cmd_report += f" --assembly {asm_path}"
-            if topo_out.exists():
-                cmd_report += f" --topology {topo_out}"
-            run(cmd_report, log, "report_html")
+            argv = [sys.executable, str(report_script), "--csv", str(csv_path),
+                    "--run-title", args.run_title, "-o", str(report_path)]
+            suvtk_tax = _first_existing(miuvig_tax, tax_tsv)
+            suvtk_feat = _first_existing(
+                (feat_dir / "featuretable.tbl") if feat_dir else None, miuvig_feat)
+            hypo_tbl = _first_existing(
+                (hypo_dir / "featuretable_updated.tbl") if hypo_dir else None)
+            for flag, p in (("--miuvig", _first_existing(miuvig_path)),
+                            ("--assembly", _first_existing(asm_path)),
+                            ("--topology", _first_existing(topo_out)),
+                            ("--suvtk-tax", suvtk_tax),
+                            ("--suvtk-feat", suvtk_feat),
+                            ("--hypo", hypo_tbl),
+                            ("--gb-dir", sub_out / "suvtk_submission" / "virus-annotations")):
+                if p is None:
+                    continue
+                if flag == "--gb-dir":
+                    if os.path.isdir(p):
+                        argv += [flag, str(p)]
+                elif Path(p).is_file():
+                    argv += [flag, str(p)]
+            run_argv(argv, log, "report_html")
 
     # ═══ 最终报告 ═══
     log.info("=" * 60)
     log.info("完成!")
     log.info("  分析目录: %s", work_dir)
     log.info("  提交输出: %s", sub_out)
-    report_path = work_dir / "submission_metadata" / "report.html"
     if report_path.exists():
         log.info("  📊 交互报告:  %s", report_path)
     if tax_dir:

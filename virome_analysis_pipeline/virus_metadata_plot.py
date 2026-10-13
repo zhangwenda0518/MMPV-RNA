@@ -21,7 +21,7 @@ v2 核心改进 (相对 v1 的 135 张原始计数交叉表):
       -m sra_rna.data4/global_metadata/Global_Unified_Metadata_Core14.tsv \
       -o metadata_association_pub
 
-兼容旧接口 (-v / -m / -o 不变)。旧行为用 --legacy 可复现。
+兼容旧接口 (-v / -m / -o 不变)。v1 旧行为在 utils/virus_metadata_plot.py 保留。
 """
 
 import os
@@ -202,7 +202,16 @@ class VirusMetadataAnalyzer:
                                    "srr", "run_accession"]})
         if "Run" not in inf.columns:
             inf = inf.rename(columns={inf.columns[0]: "Run"})
-        virus_col = "Taxonomy" if "Taxonomy" in inf.columns else inf.columns[-1]
+        # 【修复】病毒名列候选链: 不再用 columns[-1] 兜底 (编排器真实表头含
+        # Adjusted_Species 而无 Taxonomy; 末列可能是 Rep_Length 等数值列,
+        # 用它当病毒名会静默出错误标签)。找不到候选就明确报错退出。
+        virus_col = next((c for c in ("Taxonomy", "Adjusted_Species", "Species_NCBI",
+                                      "Species", "Accession") if c in inf.columns), None)
+        if virus_col is None:
+            raise SystemExit(
+                "❌ 病毒检出表缺少病毒名列: 需含 Taxonomy / Adjusted_Species / "
+                f"Species_NCBI / Species / Accession 之一; 实际列: {list(inf.columns)[:15]}")
+        print(f"  ℹ️ 病毒名列解析: '{virus_col}'")
         self.infect = inf[["Run", virus_col]].rename(columns={virus_col: "Virus"})
         self.infect["Run"] = self.infect["Run"].astype(str).str.strip()
         self.infect["Virus"] = self.infect["Virus"].map(clean_label)
@@ -572,20 +581,9 @@ def main():
     parser.add_argument("-o", "--outdir", default="./virus_metadata_pub", help="输出目录")
     parser.add_argument("--top-n", type=int, default=12, help="保留核心病毒数 (默认12)")
     parser.add_argument("--min-prev", type=float, default=0.02, help="最低整体流行率 (默认0.02)")
-    parser.add_argument("--legacy", action="store_true", help="保留 v1 行为 (原始计数交叉表, 已弃用)")
+    # [P2-24l] 删除 --legacy 开关: 其引用的 virus_metadata_plot_legacy.py 全仓不存在,
+    # 命中即 exit(1) 死路; v1 行为已由 utils/virus_metadata_plot.py 保留
     args = parser.parse_args()
-
-    if args.legacy:
-        print("⚠️ --legacy 指定的旧行为将在下个版本移除。推荐直接使用新增的发表级分析。")
-        from importlib import import_module
-        legacy = Path(__file__).with_name("virus_metadata_plot_legacy.py")
-        if legacy.exists():
-            rc = subprocess.call([sys.executable, str(legacy),
-                                  "-v", args.virus, "-m", args.meta, "-o", args.outdir])
-            sys.exit(rc)
-        else:
-            print("❌ 未找到 legacy 脚本。")
-            sys.exit(1)
 
     meta_file = args.meta
     if not meta_file or not os.path.exists(meta_file):

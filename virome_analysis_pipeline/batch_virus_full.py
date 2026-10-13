@@ -108,6 +108,25 @@ def _safe_under(path: Path, base: Path) -> Path:
     return p
 
 
+def _probe_origin(out_dir):
+    """[P1-11] 从 virus-full 产出的 13.Evolution_Stats.tsv 读取 Origin 列
+    (de_novo / fast_track / ref_fallback; 缺文件或旧版无该列时返回 None)。"""
+    try:
+        for stats_f in sorted(Path(out_dir).rglob("13.Evolution_Stats.tsv")):
+            with open(stats_f, encoding="utf-8") as fh:
+                header = fh.readline().rstrip("\n").split("\t")
+                if "Origin" not in header:
+                    continue
+                idx = header.index("Origin")
+                for line in fh:
+                    parts = line.rstrip("\n").split("\t")
+                    if len(parts) > idx and parts[idx].strip():
+                        return parts[idx].strip()
+    except Exception:
+        return None
+    return None
+
+
 def worker_run_virus_full(task):
     sample, virus, norm_tax, ref_fasta, ext_reads, raw_reads, out_dir, args = task
 
@@ -116,7 +135,7 @@ def worker_run_virus_full(task):
     log_file = _safe_under(out_dir.parent / f"{out_dir.name}_assembly.log", out_root)
     
     cmd = [
-        "python3", args.virus_full_script,
+        sys.executable, args.virus_full_script,
         "-r", str(ref_fasta),
         "-o", str(out_dir),
         "-t", str(args.threads),
@@ -137,18 +156,39 @@ def worker_run_virus_full(task):
         cmd.extend(args.extra_args.split())
 
     try:
-        with open(log_file, "w") as log:
+        with open(log_file, "w", encoding="utf-8") as log:
             log.write(f"CMD: {' '.join(cmd)}\n\n")
             # close_fds=True: prevent grandchildren from inheriting log file handle
-            # start_new_session: 独立进程组; timeout 到期终止子进程 (真超时, 原实现仅放弃等待)
-            proc = subprocess.run(cmd, stdout=log, stderr=subprocess.STDOUT,
-                                  text=True, close_fds=True,
-                                  timeout=TASK_TIMEOUT_SECONDS,
-                                  start_new_session=(os.name == "posix"))
-            if proc.returncode == 0:
-                return f"✅ [{sample}] {norm_tax} ({virus}) 组装完成"
-            elif proc.returncode < 0:
+            # start_new_session: 独立进程组; timeout 到期终止整个进程组 (真超时, 原实现仅放弃等待)
+            proc = subprocess.Popen(cmd, stdout=log, stderr=subprocess.STDOUT,
+                                    text=True, close_fds=True,
+                                    start_new_session=(os.name == "posix"))
+            try:
+                proc.wait(timeout=TASK_TIMEOUT_SECONDS)
+            except subprocess.TimeoutExpired:
+                # [P2-24f] 超时单独处理: 先杀子进程再回收, 不再落入通用 except 被误报为"系统级错误"
+                if os.name == "posix":
+                    try:
+                        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)  # 连带孙进程 (进程组)
+                    except (ProcessLookupError, PermissionError):
+                        proc.kill()
+                else:
+                    # Windows 无 killpg: 仅能终止直接子进程; 孙进程 (如 megahit) 需自行退出
+                    proc.kill()
+                try:
+                    proc.wait(timeout=30)
+                except subprocess.TimeoutExpired:
+                    pass
                 return f"⏰ [{sample}] {norm_tax} ({virus}) 组装超时被终止 (>{TASK_TIMEOUT_SECONDS}s, 查看日志: {log_file})"
+            if proc.returncode == 0:
+                # [P1-11] 透传 origin: de novo 失败参考顶替 (ref_fallback) 不算成功
+                origin = _probe_origin(out_dir)
+                if origin == "ref_fallback":
+                    return (f"⚠️ [{sample}] {norm_tax} ({virus}) 组装完成但 de novo 组装失败, "
+                            f"参考顶替兜底 (origin=ref_fallback, 查看日志: {log_file})")
+                return f"✅ [{sample}] {norm_tax} ({virus}) 组装完成" + (f" [origin={origin}]" if origin else "")
+            elif proc.returncode < 0:
+                return f"⏰ [{sample}] {norm_tax} ({virus}) 组装被信号终止 (rc={proc.returncode}, 查看日志: {log_file})"
             else:
                 return f"❌ [{sample}] {norm_tax} ({virus}) 组装失败 (查看日志: {log_file})"
     except Exception as e:

@@ -22,19 +22,52 @@ from datetime import datetime
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
-from mmpv_common.io_layout import layout_dirs as _layout_dirs
+from mmpv_common.io_layout import layout_dirs as _layout_dirs, locate_analysis_dir
 _D = _layout_dirs(os.environ.get("MMPV_IO_LAYOUT"))
 
 
 def _esc(v):
     """HTML-escape a value to prevent XSS injection."""
-    return str(v).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
+    return (str(v).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            .replace('"', "&quot;").replace("'", "&#39;"))
+
+
+def _fnum(v, default=0.0):
+    """容错 float: summary TSV 用 "-" 占位表示缺失, 直接 float() 会 ValueError 打断全报告。"""
+    try:
+        if v is None or (isinstance(v, str) and v.strip() in ("", "-", "NA", "N/A", "nan", ".")):
+            return default
+        return float(v)
+    except (TypeError, ValueError):
+        return default
+
+
+_SKIP_IMAGES = False   # --no_images: 跳过图片字节内嵌(卡片仅留文件名占位)
+
+# [P2-24b] 目录名尾部 accession 形态 (与 utils/extract_full_fasta.py 的 _ACC_RE 同步放宽):
+#   NC_028268.1 / MW648525.1 (旧形态) + TA104.1 / U13908.2 / Y_U13908.2 / 数字段前缀 (新增)
+_ACC_PAT = (r'(\d+[A-Z]{2}\d{5,6}\.\d+'
+            r'|[A-Z]{1,2}_?\d{5,6}\.\d+'
+            r'|[A-Z]{1,2}_\d+\.\d+'
+            r'|[A-Z]{2,4}_?\d{5,9}\.\d{1,2})')
+
+
+def _img_placeholder(title):
+    """--no_images / 图片超限时的文件名占位卡 (不内嵌字节)。"""
+    return (f'<div class="chart-card"><div class="chart-title">{_esc(title)}</div>'
+            f'<div style="padding:10px;color:#888;font-size:11px">[image omitted]</div></div>')
 
 try:
     import pandas as pd
     HAS_PANDAS = True
 except ImportError:
     HAS_PANDAS = False
+
+try:
+    import numpy as _np
+    _INT_TYPES = (int, _np.integer)   # Series.sum()/nunique() 返回 numpy.int64, isinstance(x, int) 为 False
+except ImportError:
+    _INT_TYPES = (int,)
 
 
 def safe_read_csv(fp, sep="\t"):
@@ -51,6 +84,8 @@ def safe_read_csv(fp, sep="\t"):
 def img_to_base64(path, max_kb=2000):
     """Convert image to base64 for embedding. Skip if > max_kb."""
     if not path or not Path(path).exists():
+        return None
+    if _SKIP_IMAGES:   # P3-19: --no_images 生效点 (所有内嵌都经此函数)
         return None
     size_kb = Path(path).stat().st_size / 1024
     if size_kb > max_kb:
@@ -74,53 +109,53 @@ def collect_charts(post_dir, virus_acc):
 
     chart_patterns = {
         'vcf_viz': [
-            ('Figure1A_All_Variants_Landscape.png', '全基因组变异景观'),
-            ('Figure1B_Top50_Variants_Landscape.png', 'Top50 变异景观'),
-            ('Figure2_TsTv_Pie.png', 'Ts/Tv 比率'),
-            ('Figure3_Functional_Pie.png', '功能分类饼图'),
-            ('Figure4_Clustermap.png', '变异聚类热图'),
-            ('Figure5_AFS.png', '等位频率谱'),
-            ('Figure6_Variant_Density.png', '变异密度图'),
-            ('Figure7_AF_Violin.png', 'AF 小提琴图'),
-            ('Figure8_PopGen_Dynamics.png', 'PopGen 滑动窗'),
-            ('Figure9_PCA_Lineages.png', 'PCA 2D 聚类'),
-            ('Figure9_PCA_Lineages_3D.png', 'PCA 3D 聚类'),
+            ('Figure1A_All_Variants_Landscape.png', 'Genome-wide Variant Landscape'),
+            ('Figure1B_Top50_Variants_Landscape.png', 'Top50 Variant Landscape'),
+            ('Figure2_TsTv_Pie.png', 'Ts/Tv Ratio'),
+            ('Figure3_Functional_Pie.png', 'Functional Classification Pie'),
+            ('Figure4_Clustermap.png', 'Variant Clustermap'),
+            ('Figure5_AFS.png', 'Allele Frequency Spectrum'),
+            ('Figure6_Variant_Density.png', 'Variant Density'),
+            ('Figure7_AF_Violin.png', 'AF Violin'),
+            ('Figure8_PopGen_Dynamics.png', 'PopGen Sliding Window'),
+            ('Figure9_PCA_Lineages.png', 'PCA 2D Clustering'),
+            ('Figure9_PCA_Lineages_3D.png', 'PCA 3D Clustering'),
         ],
         'snpeff_macro': [
-            ('Figure_1_Manhattan_Mut_Landscape.png', '突变曼哈顿图'),
-            ('Figure_2_Gene_Payload.png', '基因突变载荷'),
-            ('Figure_3_IntraHost_Diversity.png', '准种多样性'),
-            ('Figure_4_Lineage_Clustermap.png', '错义突变谱系聚类'),
-            ('Figure_5_Ultimate_Quasispecies_OncoPrint.png', '突变瀑布图'),
+            ('Figure_1_Manhattan_Mut_Landscape.png', 'Mutation Manhattan Plot'),
+            ('Figure_2_Gene_Payload.png', 'Gene Mutation Payload'),
+            ('Figure_3_IntraHost_Diversity.png', 'Quasispecies Diversity'),
+            ('Figure_4_Lineage_Clustermap.png', 'Missense Lineage Clustermap'),
+            ('Figure_5_Ultimate_Quasispecies_OncoPrint.png', 'Mutation OncoPrint'),
         ],
         'maftools': [
-            ('mafSummary_TCGA.png', 'MAF 突变类型'),
-            ('Oncoplot.png', '突变瀑布图'),
-            ('TiTv_Summary.png', 'Ti/Tv 汇总'),
-            ('03c_WholeGenome_Lollipop_Map.png', '全基因组棒棒糖总图'),
-            ('04_SomaticInteractions_Network.png', '突变互作网络'),
-            ('03b_Lollipop_All_Stitched.png', '基因棒棒糖拼接长图'),
+            ('mafSummary_TCGA.png', 'MAF Mutation Types'),
+            ('Oncoplot.png', 'Mutation OncoPrint'),
+            ('TiTv_Summary.png', 'Ti/Tv Summary'),
+            ('03c_WholeGenome_Lollipop_Map.png', 'Whole-Genome Lollipop Map'),
+            ('04_SomaticInteractions_Network.png', 'Somatic Interactions Network'),
+            ('03b_Lollipop_All_Stitched.png', 'Stitched Gene Lollipop Chart'),
         ],
         'snpgenie': [
-            ('Fig01_VAF_Spectrum.png', 'VAF 频谱'),
-            ('Fig02_Adjusted_iSNV_Density.png', '深度校正 iSNV 密度'),
-            ('Fig03_InterHost_dNdS.png', 'dN vs dS 联合分布'),
-            ('Fig04_IntraHost_pi.png', 'πN vs πS 联合分布'),
-            ('Fig05_Gene_dNdS_Stats.png', '每基因 dN/dS'),
-            ('Fig06_Bootstrapped_dNdS.png', 'Bootstrap 显著性'),
-            ('Fig07_Mutational_Spectrum.png', '突变频谱'),
-            ('Fig08_Top_Hotspots.png', 'Top 热点'),
-            ('Fig09_DualTrack_Window.png', '双轨道滑动窗'),
-            ('Fig10_Trinity_Landscape.png', 'Trinity 全景观'),
-            ('Fig11a_PCA_2D.png', '2D PCA 聚类'),
-            ('Fig11b_PCA_3D.png', '3D PCA 聚类'),
+            ('Fig01_VAF_Spectrum.png', 'VAF Spectrum'),
+            ('Fig02_Adjusted_iSNV_Density.png', 'Depth-adjusted iSNV Density'),
+            ('Fig03_InterHost_dNdS.png', 'dN vs dS Joint Distribution'),
+            ('Fig04_IntraHost_pi.png', 'πN vs πS Joint Distribution'),
+            ('Fig05_Gene_dNdS_Stats.png', 'Per-gene dN/dS'),
+            ('Fig06_Bootstrapped_dNdS.png', 'Bootstrap Significance'),
+            ('Fig07_Mutational_Spectrum.png', 'Mutational Spectrum'),
+            ('Fig08_Top_Hotspots.png', 'Top Hotspots'),
+            ('Fig09_DualTrack_Window.png', 'Dual-Track Sliding Window'),
+            ('Fig10_Trinity_Landscape.png', 'Trinity Landscape'),
+            ('Fig11a_PCA_2D.png', '2D PCA Clustering'),
+            ('Fig11b_PCA_3D.png', '3D PCA Clustering'),
         ],
         'vcf_merge/figs': [
-            ('pca.png', '群体 PCA'),
-            ('mantel_ibd.png', '距离隔离 Mantel 检验'),
-            ('distance_clustermap.png', '样本距离聚类热图'),
-            ('afs.png', '合并等位频率谱'),
-            ('dendrogram.png', '样本谱系树'),
+            ('pca.png', 'Population PCA'),
+            ('mantel_ibd.png', 'Isolation-by-Distance Mantel Test'),
+            ('distance_clustermap.png', 'Sample Distance Clustermap'),
+            ('afs.png', 'Merged Allele Frequency Spectrum'),
+            ('dendrogram.png', 'Sample Dendrogram'),
         ],
     }
 
@@ -156,7 +191,7 @@ def collect_charts(post_dir, virus_acc):
             gname = lf.stem.replace("maftools_03_Lollipop_", "")
             b64 = img_to_base64(lf, max_kb=3500)
             charts[f"maftools_lollipop_{gname}"] = {
-                "label": f"\u68d2\u68d2\u7cd6\u56fe {gname}",
+                "label": f"Lollipop {gname}",
                 "path": str(lf.relative_to(post_dir.parent)),
                 "base64": b64,
                 "ext": "png",
@@ -199,11 +234,11 @@ def collect_virus_data(out_dir, summary_in):
         if not acc: continue
         viruses[acc] = {
             "species": str(row.get(sp_col, acc)),
-            "cpm": float(row.get("Asm_CPM", 0)),
-            "coverage": float(row.get("Rep_Coverage(%)", 0)),
-            "depth": float(row.get("Rep_MeanDepth", 0)),
-            "poisson": float(row.get("Poisson_Ratio", 0)),
-            "reads": float(row.get("Asm_EM_Reads", 0)),
+            "cpm": _fnum(row.get("Asm_CPM")),
+            "coverage": _fnum(row.get("Rep_Coverage(%)")),
+            "depth": _fnum(row.get("Rep_MeanDepth")),
+            "poisson": _fnum(row.get("Poisson_Ratio")),
+            "reads": _fnum(row.get("Asm_EM_Reads")),
         }
 
     # Count per-virus samples
@@ -222,20 +257,38 @@ def _collect_variant_summary(out_dir):
     if df is None: return {}
     acc_col = next((c for c in ["Accession"] if c in df.columns), None)
     if not acc_col: return {}
+    # "-" 占位列以字符串 dtype 读入 -> .mean() 抛 TypeError; 先整体数值化 (P0-2 同类)
+    if HAS_PANDAS:
+        for _c in ("Covered%", "Rep_MeanDepth", "Pi_avr", "Shannon_avr"):
+            if _c in df.columns:
+                df[_c] = pd.to_numeric(df[_c], errors="coerce")
+
+    def _mean_or_none(grp, col):
+        if col not in grp.columns: return None
+        m = grp[col].mean()
+        return float(m) if pd.notna(m) else None   # 全 "-" -> None
+
     result = {}
     for acc, grp in df.groupby(acc_col):
         samples = grp["Sample"].nunique() if "Sample" in df.columns else len(grp)
-        cov = grp["Covered%"].mean() if "Covered%" in df.columns else None
-        depth = grp["Rep_MeanDepth"].mean() if "Rep_MeanDepth" in df.columns else None
-        pi = grp["Pi_avr"].mean() if "Pi_avr" in df.columns else None
-        shannon = grp["Shannon_avr"].mean() if "Shannon_avr" in df.columns else None
-        length = grp["Length"].iloc[0] if "Length" in df.columns else None
-        result[str(acc)] = {
+        cov = _mean_or_none(grp, "Covered%")
+        depth = _mean_or_none(grp, "Rep_MeanDepth")
+        pi = _mean_or_none(grp, "Pi_avr")
+        shannon = _mean_or_none(grp, "Shannon_avr")
+        try:
+            length = _fnum(grp["Length"].iloc[0]) if "Length" in df.columns else None
+        except Exception:
+            length = None
+        entry = {
             "samples": samples,
             "avg_cov": cov, "avg_depth": depth,
             "avg_pi": pi, "avg_shannon": shannon,
             "ref_length": length,
         }
+        # [P2-24c] 节段病毒 Accession 为逗号拼接 (batch_virus_variants.py: ",".join(...)),
+        # 报告侧按单 acc 查询必然 miss → 注册"拼接键 + 各单段键", 任一命中即取同一组统计
+        for key in {str(acc)} | {k.strip() for k in str(acc).split(",") if k.strip()}:
+            result[key] = entry
     return result
 
 
@@ -290,7 +343,7 @@ def _collect_assembly_summary(out_dir):
                 samples.append({"name": sdir.name})
         # Extract accession from dir name
         import re as _re
-        m = _re.search(r'[A-Z]{2,4}_?\d{5,9}\.\d{1,2}', vdir.name)
+        m = _re.search(_ACC_PAT, vdir.name)
         acc = m.group() if m else vdir.name
         result[acc] = {"dir_name": vdir.name, "samples": samples}
     return result
@@ -309,18 +362,29 @@ def _collect_detection_summary(out_dir):
     total_raw = len(raw_df) if raw_df is not None else None
     acc_col = next((c for c in ["Rep_Accession"] if c in df.columns), None)
     if not acc_col: return {}
+    # "-" 占位列会以字符串 dtype 读入 -> .mean() 直接 TypeError; 先整体数值化
+    if HAS_PANDAS:
+        for _c in ("Asm_CPM", "Asm_FPKM", "Rep_Coverage(%)", "Rep_MeanDepth", "Poisson_Ratio"):
+            if _c in df.columns:
+                df[_c] = pd.to_numeric(df[_c], errors="coerce")
     viruses = {}
     for acc, grp in df.groupby(acc_col):
         sp_col = next((c for c in ["Adjusted_Species", "Species_NCBI"] if c in df.columns), None)
         species = str(grp[sp_col].iloc[0]) if sp_col else str(acc)
+
+        def _gmean(col):
+            if col not in grp.columns: return None
+            m = grp[col].mean()
+            return float(m) if pd.notna(m) else None   # 全 "-" 组 -> None, 不再崩
+
         viruses[str(acc)] = {
             "species": species,
             "n_samples": len(grp),
-            "avg_cpm": float(grp["Asm_CPM"].mean()) if "Asm_CPM" in df.columns else None,
-            "avg_fpkm": float(grp["Asm_FPKM"].mean()) if "Asm_FPKM" in df.columns else None,
-            "avg_cov": float(grp["Rep_Coverage(%)"].mean()) if "Rep_Coverage(%)" in df.columns else None,
-            "avg_depth": float(grp["Rep_MeanDepth"].mean()) if "Rep_MeanDepth" in df.columns else None,
-            "avg_poisson": float(grp["Poisson_Ratio"].mean()) if "Poisson_Ratio" in df.columns else None,
+            "avg_cpm": _gmean("Asm_CPM"),
+            "avg_fpkm": _gmean("Asm_FPKM"),
+            "avg_cov": _gmean("Rep_Coverage(%)"),
+            "avg_depth": _gmean("Rep_MeanDepth"),
+            "avg_poisson": _gmean("Poisson_Ratio"),
         }
     return {"viruses": viruses, "total_best": len(df), "total_raw": total_raw}
 
@@ -328,6 +392,7 @@ def _collect_detection_summary(out_dir):
 def _collect_capheine_summary(out_dir, virus_acc):
     """Parse DRHIP combined_summary.csv for per-gene BUSTED selection results."""
     out = Path(out_dir)
+    # capheine 已迁 ⑤ virome_phylo_pipeline (select 模块); 07_capheine 仅作 legacy 产物候选
     vdir = _find_virus_dir(out / "07_capheine", virus_acc)
     if not vdir: return None
     cs = vdir / "drhip" / "combined_summary.csv"
@@ -339,12 +404,12 @@ def _collect_capheine_summary(out_dir, virus_acc):
         gene_name = gene_raw.split(".part_")[-1] if ".part_" in gene_raw else gene_raw
         genes.append({
             "gene": gene_name,
-            "omega3": float(row.get("BUSTED_omega3", 0)),
-            "pval": float(row.get("BUSTED_pval", 1)),
-            "positive": int(float(row.get("positive_sites", 0))),
-            "negative": int(float(row.get("negative_sites", 0))),
-            "total_sites": int(float(row.get("sites", 0))),
-            "n_seq": int(float(row.get("N", 0))),
+            "omega3": _fnum(row.get("BUSTED_omega3")),
+            "pval": _fnum(row.get("BUSTED_pval"), 1.0),
+            "positive": int(_fnum(row.get("positive_sites"))),
+            "negative": int(_fnum(row.get("negative_sites"))),
+            "total_sites": int(_fnum(row.get("sites"))),
+            "n_seq": int(_fnum(row.get("N"))),
         })
     sig_count = sum(1 for g in genes if g["pval"] < 0.05 and g["positive"] > 0)
     return {"genes": genes, "sig_count": sig_count, "total_genes": len(genes), "dir_name": vdir.name}
@@ -353,10 +418,23 @@ def _collect_capheine_summary(out_dir, virus_acc):
 def _collect_similarity_data(out_dir, virus_acc):
     """Find similarity heatmaps and pairwise stats for a virus."""
     out = Path(out_dir)
-    vdir = _find_virus_dir(out / "08_similarity", virus_acc)
+    # 布局感知: standard 07_Similarity / legacy 07_similarity / 旧 08_similarity 均兼容
+    vdir = _find_virus_dir(locate_analysis_dir(out, "similarity"), virus_acc)
     if not vdir: return {"available": False, "reason": "no similarity directory"}
-    mat_dir = vdir / "Mode_Filter" / "Full_Dataset" / "02_similarity_matrices"
-    if not mat_dir.is_dir():
+    # [P2-24d] 原实现硬编码 Mode_Filter → virus_auto_pipeline 以 --mode strict/fill/all 跑出的
+    # 结果永远取不到; 改为按优先级查找 Mode_* 候选目录, 存在即用 (最后 glob 兜底任意 Mode_*)
+    mat_dir = None
+    for _mode in ("Mode_Filter", "Mode_Strict", "Mode_Fill", "Mode_All"):
+        _cand = vdir / _mode / "Full_Dataset" / "02_similarity_matrices"
+        if _cand.is_dir():
+            mat_dir = _cand
+            break
+    if mat_dir is None:
+        for _cand in sorted(vdir.glob("Mode_*/Full_Dataset/02_similarity_matrices")):
+            if _cand.is_dir():
+                mat_dir = _cand
+                break
+    if mat_dir is None:
         return {"available": False, "reason": "empty (single sample?)"}
     heatmap_png = mat_dir / "overall_NT_only_heatmap.png"
     dist_png = mat_dir / "overall_NT_only_distribution.png"
@@ -414,7 +492,7 @@ def _collect_extract_stats(out_dir):
         if not lengths: continue
         # Extract accession from dir name
         import re as _re
-        m = _re.search(r'[A-Z]{2,4}_?\d{5,9}\.\d{1,2}', vdir.name)
+        m = _re.search(_ACC_PAT, vdir.name)
         acc = m.group() if m else vdir.name
         result[acc] = {
             "dir_name": vdir.name,
@@ -650,8 +728,10 @@ STAGE_METHODS = [
      "N-filled regions were resolved using reference-guided gap filling. Contigs with "
      ">10% ambiguous bases were excluded."),
 
-    (7, "Selection Analysis", "capheine_pipeline.py",
-     "Codon-level positive selection was detected using the CAPHEINE pipeline integrating "
+    (7, "Selection Analysis", "virome_phylo_pipeline (⑤ output; v3.0 migration)",
+     "Codon-level positive selection is produced by ⑤ virome_phylo_pipeline (select module) since "
+     "the v3.0 migration; the legacy capheine_pipeline.py / 07_capheine directory is retained only "
+     "as an artifact candidate. The analysis integrates "
      "CAWLIGN codon-aware alignment, HyPhy CLN duplicate removal, IQ-TREE maximum likelihood "
      "phylogeny (GTR+I+G), and six HyPhy methods: FEL (Fixed Effects Likelihood), "
      "MEME (Mixed Effects Model of Evolution), PRIME (Property-Informed Models of Evolution), "
@@ -671,7 +751,7 @@ STAGE_METHODS = [
      "were visualized via Circos plots showing junction networks. Viruses with "
      "≥80% genome coverage were included in DVG analysis."),
 
-    (10, "Report Generation", "generate_pipeline_report.py",
+    (9, "Report Generation", "generate_pipeline_report.py",
      "This interactive HTML report was auto-generated from pipeline outputs, embedding "
      "all figures, tables, and result files. Includes AI-assisted interpretation via "
      "LLM integration (OpenAI/DeepSeek/Ollama compatible)."),
@@ -697,7 +777,7 @@ def _build_methods_section(viruses, overview_metrics, total_records):
     <h3 id="paper-reference">Pipeline Methods</h3>
     <div class="paper-block">
         <p>The Known Virus Analysis Pipeline processed <strong>{n_viruses} virus species</strong> across
-        {overview_metrics.get("n_samples","?")} samples through 10 automated stages.</p>
+        {overview_metrics.get("n_samples","?")} samples through 9 automated stages.</p>
 
         <h4>Stage Overview</h4>
         <table>
@@ -755,6 +835,8 @@ def _build_funnel_section(out_dir):
             if b64:
                 charts += (f'<div class="chart-card"><div class="chart-title">{title}</div>'
                            f'<img src="data:image/png;base64,{b64}" loading="lazy" alt="{title}"></div>')
+            else:
+                charts += _img_placeholder(title)
     chart_html = f'<div class="chart-gallery">{charts}</div>' if charts else ""
 
     # 漏斗摘要表 (5 行, 静态)
@@ -800,7 +882,8 @@ def _build_funnel_section(out_dir):
             f'Five-stage retention from raw detection to usable full-length genomes: '
             f'raw detection (pre-Poisson) &rarr; best (Poisson-filtered, per-species representative) &rarr; '
             f'high-confidence filter &rarr; de novo full-length assembly &rarr; extracted full-length (length/N filtered). '
-            f'中文口径: 原始检出 &rarr; best 检出 &rarr; 过滤检出 &rarr; 全长组装 &rarr; 全长组装过滤(提取留存).</p>'
+            f'Stage names: raw detections &rarr; best detections &rarr; filtered detections &rarr; '
+            f'full-length assemblies &rarr; filtered full-length (extraction retained).</p>'
             f'<div class="card-row" style="margin-top:8px">{cards}</div>'
             f'<h3 style="color:var(--ink-secondary);font-size:14px;margin-top:12px">Funnel Summary</h3>'
             f'{summary_tbl}{chart_html}{matrix_tbl}{outdir_note}</section>')
@@ -816,8 +899,8 @@ def generate_html(out_dir, out_html, viruses, ai_html="", stage_summaries=None):
 
     post_dir = _resolve_dir(out, _D['a_post'])
 
-    total_records = sum(v.get("n_samples", 0) for v in viruses.values()) if isinstance(
-        next(iter(viruses.values()), {}).get("n_samples", 0), int) else "?"
+    total_records = sum(_fnum(v.get("n_samples")) for v in viruses.values()) if isinstance(
+        next(iter(viruses.values()), {}).get("n_samples", 0), _INT_TYPES) else "?"
 
     # Pre-compute global overview metrics
     overview_metrics = {}
@@ -833,8 +916,11 @@ def generate_html(out_dir, out_html, viruses, ai_html="", stage_summaries=None):
     hc_tsv_ov = out / os.path.join(_D['a_filter'], 'high_conf.summary.tsv')
     hc_ov = safe_read_csv(hc_tsv_ov)
     overview_metrics["filtered_records"] = len(hc_ov) if hc_ov is not None else "?"
-    # v21: metadata association coverage
-    meta_tsv_ov = out / os.path.join(_D['a_filter'], 'metadata_association/Viral_Infection_with_Metadata_Summary.tsv')
+    # v21: metadata association coverage (编排器现写 04_PostAnalysis/metadata_association;
+    #      02_Filtering 为 legacy 旧位置回退)
+    meta_tsv_ov = post_dir / 'metadata_association/Viral_Infection_with_Metadata_Summary.tsv'
+    if not meta_tsv_ov.is_file():
+        meta_tsv_ov = out / os.path.join(_D['a_filter'], 'metadata_association/Viral_Infection_with_Metadata_Summary.tsv')
     meta_ov = safe_read_csv(meta_tsv_ov)
     overview_metrics["meta_records"] = len(meta_ov) if meta_ov is not None else 0
     # Assembly counts
@@ -863,15 +949,23 @@ def generate_html(out_dir, out_html, viruses, ai_html="", stage_summaries=None):
                 6:_D['a_post'], 7:"07_capheine"}
         patterns = {1:["summary/all_viruses.best.summary.tsv","plots/virus_analysis/freq_multi_metrics_log10.png"],
                     2:["**/metadata_association/**/*"],
-                    4:["**/*final_coverage*"],
+                    4:["**/12.Coverage_Visualization/*_Coverage_*", "**/*final_coverage*"],
                     6:[],
                     7:["**/selection_per_gene.*"]}
         if sn not in dirs: return "", ""
         spath = outd / dirs[sn]
+        pats = patterns.get(sn, ["*.png"])
+        if sn == 2:
+            # metadata_association 写于 04_PostAnalysis (编排器); 02_Filtering 为 legacy 回退。
+            # spath 直接指向 metadata_association 目录时, 模式改为全量收集
+            ma_post = outd / _D['a_post'] / "metadata_association"
+            if ma_post.is_dir():
+                spath = ma_post
+                pats = ["*", "**/*"]
         if not spath.exists(): return "", ""
         html_tables = ""; html_charts = ""
         collected = []
-        for pat in patterns.get(sn,["*.png"]):
+        for pat in pats:
             for f in spath.rglob(pat) if "**" in pat else spath.glob(pat):
                 if f.is_file(): collected.append(f)
         # Dedup: skip PDF when PNG with same stem exists
@@ -907,14 +1001,18 @@ def generate_html(out_dir, out_html, viruses, ai_html="", stage_summaries=None):
             elif fn.endswith('.pdf'):
                 b64 = img_to_base64(str(f), 1000)
                 if b64:
-                    html_charts += f'<div class="chart-card"><div class="chart-title">{fn}</div><object data="data:application/pdf;base64,{b64}" type="application/pdf" width="100%" height="500px"><p>PDF</p></object></div>'
+                    html_charts += f'<div class="chart-card"><div class="chart-title">{_esc(fn)}</div><object data="data:application/pdf;base64,{b64}" type="application/pdf" width="100%" height="500px"><p>PDF</p></object></div>'
+                else:
+                    html_charts += _img_placeholder(fn)
             elif fn.endswith(('.png','.jpg','.jpeg','.svg')):
                 b64 = img_to_base64(str(f), 2000)
                 if b64:
                     mime = "image/png"
                     if fn.endswith('.jpg') or fn.endswith('.jpeg'): mime = "image/jpeg"
                     elif fn.endswith('.svg'): mime = "image/svg+xml"
-                    html_charts += f'<div class="chart-card"><div class="chart-title">{fn}</div><img src="data:{mime};base64,{b64}" loading="lazy" alt="{fn}"></div>'
+                    html_charts += f'<div class="chart-card"><div class="chart-title">{_esc(fn)}</div><img src="data:{mime};base64,{b64}" loading="lazy" alt="{_esc(fn)}"></div>'
+                else:
+                    html_charts += _img_placeholder(fn)
         return html_tables, html_charts
 
     # Build sidebar nav items + stage-per-virus body sections
@@ -1020,46 +1118,78 @@ def generate_html(out_dir, out_html, viruses, ai_html="", stage_summaries=None):
             ps_tsv = out / os.path.join(_D['a_filter'], 'filter_stats.per_sample.tsv')
             pv_tsv = out / os.path.join(_D['a_filter'], 'filter_stats.per_virus.tsv')
             ps_df = safe_read_csv(ps_tsv); pv_df = safe_read_csv(pv_tsv)
+            # [P2-23a] Post-Filter 列须取过滤后统计: filter_stats.*.tsv 是过滤前写出 (旧版语义),
+            # 过滤判定完成后追加的 .passed 表才是真 Post-Filter; 旧版无 .passed 时回退原表并注明
+            ps_passed_df = safe_read_csv(out / os.path.join(_D['a_filter'], 'filter_stats.per_sample.passed.tsv'))
+            post_map = None
+            if (ps_passed_df is not None and "Sample" in ps_passed_df.columns
+                    and "n_viruses" in ps_passed_df.columns):
+                post_map = {str(r["Sample"]): int(_fnum(r["n_viruses"])) for _, r in ps_passed_df.iterrows()}
             # Per-sample table
             if ps_df is not None:
+                post_hdr = "Post-Filter" if post_map is not None else "Post-Filter (pre-filter stats, legacy)"
                 stage_sections += '<h3 style="color:var(--ink-secondary);font-size:14px;margin-top:12px">Per-Sample Filtering</h3>'
-                stage_sections += '<div class="tb-scroll"><table style="font-size:12px"><tr><th>Sample</th><th>Pre-Filter</th><th>Post-Filter</th><th>Filtered</th><th>Retention</th><th>Total Reads</th><th>Mean Cov%</th></tr>'
+                stage_sections += f'<div class="tb-scroll"><table style="font-size:12px"><tr><th>Sample</th><th>Pre-Filter</th><th>{post_hdr}</th><th>Filtered</th><th>Retention</th><th>Total Reads</th><th>Mean Cov%</th></tr>'
                 for _, r in ps_df.iterrows():
                     s = str(r["Sample"]); pre = pre_sample.get(s, 0)
-                    post = int(r["n_viruses"]); flt = pre - post
+                    if post_map is not None:
+                        post = post_map.get(s, 0)   # .passed 表中无该样本 → 过滤后为 0 条
+                    else:
+                        post = int(r["n_viruses"])  # 回退: 原表实为过滤前统计 (表头已注明)
+                    flt = pre - post
                     rate = f"{post/max(pre,1)*100:.0f}%" if isinstance(pre, (int,float)) else "?"
                     stage_sections += f'<tr><td>{s}</td><td>{pre}</td><td>{post}</td><td>{flt}</td><td>{rate}</td><td>{r["total_EM_reads"]}</td><td>{r["mean_coverage"]}%</td></tr>'
                 stage_sections += '</table></div>'
             # Build per-virus max/avg/min from high_conf
             hc_tsv = out / os.path.join(_D['a_filter'], 'high_conf.summary.tsv')
             hc = safe_read_csv(hc_tsv)
+            if hc is not None:
+                # "-" 占位列字符串 dtype -> min()/max()/mean() 崩; 先数值化
+                for _c in ("Rep_Coverage(%)", "Rep_MeanDepth", "Asm_EM_Reads", "Asm_TPM"):
+                    if _c in hc.columns:
+                        hc[_c] = pd.to_numeric(hc[_c], errors="coerce")
             virus_stats = {}
             if hc is not None:
                 ac = next((c for c in ["Rep_Accession","Accession"] if c in hc.columns), None)
                 sc = next((c for c in ["Adjusted_Species","Species_NCBI","Species"] if c in hc.columns), None)
                 if ac:
+                    def _stat(grp, col, how):
+                        if col is None or col not in grp.columns: return 0
+                        v = getattr(grp[col], how)()
+                        return float(v) if pd.notna(v) else 0
                     for acc, grp in hc.groupby(ac):
                         sp = str(grp[sc].iloc[0])[:30] if sc else str(acc)
-                        cov = grp["Rep_Coverage(%)"] if "Rep_Coverage(%)" in hc.columns else None
-                        depth = grp["Rep_MeanDepth"] if "Rep_MeanDepth" in hc.columns else None
-                        reads = grp["Asm_EM_Reads"] if "Asm_EM_Reads" in hc.columns else None
-                        tpm = grp["Asm_TPM"] if "Asm_TPM" in hc.columns else None
+                        cov = "Rep_Coverage(%)" if "Rep_Coverage(%)" in hc.columns else None
+                        depth = "Rep_MeanDepth" if "Rep_MeanDepth" in hc.columns else None
+                        reads = "Asm_EM_Reads" if "Asm_EM_Reads" in hc.columns else None
+                        tpm = "Asm_TPM" if "Asm_TPM" in hc.columns else None
                         virus_stats[acc] = {"species": sp,
-                            "cov_min": cov.min() if cov is not None else 0, "cov_max": cov.max() if cov is not None else 0, "cov_avg": cov.mean() if cov is not None else 0,
-                            "depth_min": depth.min() if depth is not None else 0, "depth_max": depth.max() if depth is not None else 0, "depth_avg": depth.mean() if depth is not None else 0,
-                            "reads_min": reads.min() if reads is not None else 0, "reads_max": reads.max() if reads is not None else 0, "reads_avg": reads.mean() if reads is not None else 0,
-                            "tpm_min": tpm.min() if tpm is not None else 0, "tpm_max": tpm.max() if tpm is not None else 0, "tpm_avg": tpm.mean() if tpm is not None else 0}
+                            "cov_min": _stat(grp, cov, "min"), "cov_max": _stat(grp, cov, "max"), "cov_avg": _stat(grp, cov, "mean"),
+                            "depth_min": _stat(grp, depth, "min"), "depth_max": _stat(grp, depth, "max"), "depth_avg": _stat(grp, depth, "mean"),
+                            "reads_min": _stat(grp, reads, "min"), "reads_max": _stat(grp, reads, "max"), "reads_avg": _stat(grp, reads, "mean"),
+                            "tpm_min": _stat(grp, tpm, "min"), "tpm_max": _stat(grp, tpm, "max"), "tpm_avg": _stat(grp, tpm, "mean")}
             # Per-virus table
             if pv_df is not None:
+                # [P2-23a] 同 Per-Sample: Post 列改读过滤后 .passed 表 (旧版无该表 → 回退原表并注明)
+                pv_passed_df = safe_read_csv(out / os.path.join(_D['a_filter'], 'filter_stats.per_virus.passed.tsv'))
+                post_virus_map = None
+                if (pv_passed_df is not None and "Adjusted_Species" in pv_passed_df.columns
+                        and "n_samples" in pv_passed_df.columns):
+                    post_virus_map = {str(r["Adjusted_Species"]): int(_fnum(r["n_samples"])) for _, r in pv_passed_df.iterrows()}
+                post_hdr_v = "Post" if post_virus_map is not None else "Post(pre-filter, legacy)"
                 stage_sections += '<h3 style="color:var(--ink-secondary);font-size:14px;margin-top:16px">Per-Virus Filtering</h3>'
-                stage_sections += '<div class="tb-scroll"><table style="font-size:11px"><tr><th>Species</th><th>Pre</th><th>Post</th><th>Flt</th><th>Ret</th>'
+                stage_sections += f'<div class="tb-scroll"><table style="font-size:11px"><tr><th>Species</th><th>Pre</th><th>{post_hdr_v}</th><th>Flt</th><th>Ret</th>'
                 for m in ["min","avg","max"]:
                     stage_sections += f'<th>Cov% {m}</th><th>Depth {m}</th><th>Reads {m}</th><th>TPM {m}</th>'
                 stage_sections += '</tr>'
                 for _, r in pv_df.iterrows():
                     sp = str(r["Adjusted_Species"])[:25]; acc = sp2acc.get(str(r["Adjusted_Species"]), "")
                     pre = pre_virus.get(acc, 0) if acc else 0
-                    post = int(r["n_samples"]); flt = pre - post
+                    if post_virus_map is not None:
+                        post = post_virus_map.get(str(r["Adjusted_Species"]), 0)  # .passed 表无该物种 → 过滤后 0
+                    else:
+                        post = int(r["n_samples"])  # 回退: 原表实为过滤前统计 (表头已注明)
+                    flt = pre - post
                     rate = f"{post/max(pre,1)*100:.0f}%" if isinstance(pre,(int,float)) else "?"
                     vs = virus_stats.get(acc, {})
                     cells = f'<td>{sp}</td><td>{pre}</td><td>{post}</td><td>{flt}</td><td>{rate}</td>'
@@ -1105,17 +1235,22 @@ def generate_html(out_dir, out_html, viruses, ai_html="", stage_summaries=None):
                 except Exception: pass
         # Stage 1: Add batch_plot visuals (after cards/table/co-infection)
         if sn == 1:
-            plots_dir = out / os.path.join(_D['a_detect'], 'plots')
+            # viz 输出路径: 新编排器写 01_Detection/sample_distribution|coabundance,
+            # batch_virus_depth 写 01_Detection/plots/ 下 —— 两个候选根都要查
+            # [P1-12] 原实现只在"plots/ 存在时"二选一, 两处产物并存时会漏取顶层图; 改为逐图双根查找
+            detect_dir = out / _D['a_detect']
+            plots_roots = [detect_dir, detect_dir / 'plots']
             keep = {"sample_distribution": ["sample_virus_count_bar.png", "virus_occurrence_bar.png"], "coabundance": ["coabundance_cooccurrence_heatmap.png", "coabundance_spearman_heatmap.png"]}
             stage_sections += '<h3 style="color:var(--ink-secondary);font-size:14px;margin-top:12px">Sample Distribution &amp; Co-abundance</h3><div class="chart-gallery">'
             for bd, keep_files in keep.items():
-                bp = plots_dir / bd
-                if not bp.is_dir(): continue
                 for fn in keep_files:
-                    f = bp / fn
-                    if f.is_file():
+                    for root in plots_roots:   # 顶层优先, 命中即止 (防同一张图两处内嵌)
+                        f = root / bd / fn
+                        if not f.is_file(): continue
                         b64 = img_to_base64(str(f), 2000)
-                        if b64: stage_sections += f'<div class="chart-card"><div class="chart-title">{fn}</div><img src="data:image/png;base64,{b64}" loading="lazy" alt="{fn}"></div>'
+                        if b64: stage_sections += f'<div class="chart-card"><div class="chart-title">{_esc(fn)}</div><img src="data:image/png;base64,{b64}" loading="lazy" alt="{_esc(fn)}"></div>'
+                        else: stage_sections += _img_placeholder(fn)
+                        break
             stage_sections += '</div>'
         # Stage 9: DVG per-virus statistics table
         if sn == 9:
@@ -1243,6 +1378,8 @@ def generate_html(out_dir, out_html, viruses, ai_html="", stage_summaries=None):
                                         stage_sections += f'<div class="chart-card"><div class="chart-title">{ci.get("label","")}</div><object data="data:application/pdf;base64,{b64}" type="application/pdf" width="100%" height="500px"><p>PDF</p></object></div>'
                                     else:
                                         stage_sections += f'<div class="chart-card"><div class="chart-title">{ci.get("label","")}</div><img src="data:image/png;base64,{b64}" loading="lazy" alt="{ci.get("label","")}"></div>'
+                                else:
+                                    stage_sections += _img_placeholder(ci.get("label",""))
                             stage_sections += '</div></section>'
                     else:
                         stage_sections += '<p style="color:var(--ink-secondary);font-size:12px">Post-hoc charts not available for this virus.</p>'
@@ -1257,6 +1394,8 @@ def generate_html(out_dir, out_html, viruses, ai_html="", stage_summaries=None):
                                     stage_sections += f'<div class="chart-card"><div class="chart-title">{ci.get("label","")}</div><object data="data:application/pdf;base64,{b64}" type="application/pdf" width="100%" height="500px"><p>PDF</p></object></div>'
                                 else:
                                     stage_sections += f'<div class="chart-card"><div class="chart-title">{ci.get("label","")}</div><img src="data:image/png;base64,{b64}" loading="lazy" alt="{ci.get("label","")}"></div>'
+                            else:
+                                stage_sections += _img_placeholder(ci.get("label",""))
                         stage_sections += '</div>'
                     else:
                         stage_sections += '<p style="color:var(--ink-secondary);font-size:12px">DVG charts not available for this virus.</p>'
@@ -1362,7 +1501,10 @@ def generate_html(out_dir, out_html, viruses, ai_html="", stage_summaries=None):
                                 stage_sections += f'<tr><td><strong>{_esc(g["gene"])}</strong></td><td>{g["n_seq"]}</td><td{oc}>{g["omega3"]:.3f}</td><td{pc}>{pv}</td><td>{g["positive"]}</td><td>{g["negative"]}</td><td>{g["total_sites"]}</td></tr>'
                             stage_sections += '</table></div>'
                         else:
-                            stage_sections += '<p style="color:var(--ink-secondary);font-size:12px">No coding sequences available (non-coding RNA virus) or capheine not run.</p>'
+                            if (out / "07_capheine").is_dir():
+                                stage_sections += '<p style="color:var(--ink-secondary);font-size:12px">No coding sequences available (non-coding RNA virus) or capheine not run.</p>'
+                            else:
+                                stage_sections += '<p style="color:var(--ink-secondary);font-size:12px">CAPHEINE has moved to virome_phylo_pipeline (pipeline 5, select module); positive selection results are no longer included in this report.</p>'
                     elif sn == 8:
                         # Stage 8: Similarity - pairwise identity heatmaps
                         sim = _collect_similarity_data(out_dir, acc)
@@ -1827,7 +1969,7 @@ window.addEventListener('scroll',function(){{
             <div class="card"><div class="value">{overview_metrics.get("filtered_records","?")}</div><div class="label">Post-Filter Records</div></div>
             <div class="card"><div class="value">{overview_metrics.get("assemblies","?")}</div><div class="label">Assemblies</div></div>
             <div class="card"><div class="value">{overview_metrics.get("dvg_viruses","?")}</div><div class="label">Viruses with DVG</div></div>
-            <div class="card"><div class="value">10</div><div class="label">Pipeline Stages</div></div>
+            <div class="card"><div class="value">{len(stage_cfg)}</div><div class="label">Pipeline Stages</div></div>
         </div>
     </section>
 
@@ -1839,13 +1981,6 @@ window.addEventListener('scroll',function(){{
         <h2>Virus Summary</h2>
         {_build_virus_summary_table(viruses)}
         {_build_methods_section(viruses, overview_metrics, total_records)}
-    </section>
-                <li><strong>Detection overview</strong>: "Analysis of [N] samples identified [M] known virus species, with [high-conf species] passing stringent quality filters (coverage ≥50%, depth ≥5×)."</li>
-                <li><strong>Assembly performance</strong>: "De novo assembly successfully reconstructed [A/B] complete viral genomes ([P]% perfect rate)."</li>
-                <li><strong>Selection signature</strong>: "Cross-gene comparison revealed significant differences in selection pressure (Kruskal-Wallis H = [value], p = [value]), with [gene] showing the highest median dN/dS."</li>
-                <li><strong>Evolutionary clustering</strong>: "Unsupervised machine learning (PCA + K-Means with Silhouette Score optimization) identified [K] distinct evolutionary sub-lineages."</li>
-            </ul>
-        </div>
     </section>
 
     <div class="footer">Generated by known_virus_pipeline — {now}</div>
@@ -1938,7 +2073,7 @@ function sendChat(){{
     var ctx=JSON.stringify(stageData);
     fetch(url,{{method:'POST',headers:{{'Content-Type':'application/json','Authorization':'Bearer '+key}},
         body:JSON.stringify({{model:document.getElementById('ai-model').value,
-        messages:[{{role:'system',content:'You are a virology research assistant. Answer questions about this pipeline report concisely in Chinese. Use these data: '+ctx}},{{role:'user',content:q}}],
+        messages:[{{role:'system',content:'You are a virology research assistant. Answer questions about this pipeline report concisely in English. Use these data: '+ctx}},{{role:'user',content:q}}],
         temperature:0.3,max_tokens:300}})
     }}).then(r=>r.json()).then(d=>{{
         thinking.textContent=d.choices[0].message.content.trim();
@@ -1948,7 +2083,7 @@ function sendChat(){{
 // Close lightbox on Escape
 document.addEventListener('keydown',function(e){{if(e.key==='Escape')closeLightbox();}});
 // ── In-page AI ──
-var sysMsg='你是病毒学领域的研究科学家。撰写学术总结时严格遵循：1.仅基于提供的数据和图表描述，不得捏造任何数字或发现 2.引用具体数值时使用数据显示、检测到、观察到等客观措辞 3.引用图表时使用如XX图所示、XX表显示 4.不确定时使用提示、暗示、可能等学术谨慎用语 5.数据不支持时明确说明未检测到、无显著差异 6.中文输出，学术书面语';
+var sysMsg='You are a research scientist in virology. When writing academic summaries, strictly follow: 1. Base descriptions ONLY on the provided data and charts; never fabricate any numbers or findings. 2. When citing specific values, use objective wording such as the data show, detected, observed. 3. When citing a chart, use wording such as shown in Figure X, Table Y shows. 4. Use academic hedging such as suggest, imply, possibly when uncertain. 5. When the data do not support it, state clearly that nothing was detected or no significant difference was found. 6. Output in English, academic written style.';
 var stageData=JSON.parse(document.getElementById('stage-data').textContent);
 var saved=sessionStorage.getItem('ai_key');
 if(saved)document.getElementById('ai-api-key').value=saved;
@@ -1992,18 +2127,18 @@ function runStageAI(sn){{
     for(var i=0;i<vd.length;i++){{var v=vd[i];vdBrief.push(v.species+' ('+v.accession+'): '+v.samples+'samples, cov='+v.coverage+'%, depth='+v.depth+'x, CPM='+v.cpm+(v.pi!=null?', pi='+v.pi:'')+(v.assembly?', '+v.assembly:''));}}
     var vdStr=vdBrief.join('\\n');
     var prompts={{
-        1:'Stage 1 Salmon伪比对+Poisson过滤病毒定量检测。\\n每病毒：'+vdStr+'\\n嵌入图：freq_multi_metrics_log10、sample_virus_count_bar、virus_occurrence_bar、cooccurrence/spearman热图、Co-infection_Matrix。\\n\\n撰写2-3句中文学术总结，对每种病毒逐一简要评述检出样本数、丰度、覆盖度。引用具体数字。不捏造。',
-        2:'Stage 2 多维阈值过滤（覆盖率≥50%、深度≥5×、reads≥100）。\\n'+sd.s2.pre+'条→'+sd.s2.post+'条保留。\\n每病毒详情：'+vdStr+'\\n嵌入表：Per-Sample/Per-Virus Filtering。\\n\\n对每种病毒简要评述过滤后的覆盖度和深度。引用具体数字。不捏造。',
-        3:'Stage 3 FreeBayes+SnpEff+SNPGenie。\\n每病毒数据：'+JSON.stringify(sd.s3.per_virus)+'\\n\\n对每种病毒评述其核苷酸多样性(π)。高π=准种丰富，低π=保守。引用具体数值。不捏造。',
-        4:'Stage 4 12步从头组装。\\n每病毒数据：'+JSON.stringify(sd.s4.per_virus)+'\\n\\n对每种病毒评述组装完整性(N%、N50)。引用具体数值。不捏造。',
-        5:'Stage 5 提取+N填补。\\n每病毒数据：'+JSON.stringify(sd.s5.per_virus)+'\\n\\n评述contig完整度(N%=0完整)。引用具体数值。不捏造。',
-        6:'Stage 6 生成多维度变异可视化图表组，按分析类型分组展示。\\n图表内容（per-virus）：Variant Landscape（全基因组突变分布景观）、Ts/Tv Pie（转换/颠换比值饼图——比值>1提示随机突变主导）、Functional Pie（变异功能分类饼图）、Clustermap（跨样本变异聚类热图）、AFS（等位频率谱——低频为主提示稀有变异，高频为主提示固定差异）、dN/dS散点图及3D PCA（群体遗传参数三维聚类）。\\n共'+sd.viruses+'种病毒纳入分析（单样本病毒已跳过）。\\n\\n基于以上图表类型描述，撰写 2-3 句学术总结。可引用具体图表名称。不捏造未观测到的模式。',
-        7:'Stage 7 使用 HyPhy（FEL/MEME/BUSTED/PRIME）进行密码子水平自然选择检测。\\n数据：'+sd.s7.coding_viruses+'/'+sd.viruses+'种病毒具有编码序列，其余为非编码RNA（类病毒/卫星RNA，不编码蛋白因此不适用dN/dS分析）。\\n嵌入表：per-gene BUSTED选择分析表（基因名、ω3值、p值、正选择位点数、负选择位点数、总位点数）。\\n\\n基于以上数据，撰写 2-3 句学术总结。注意：ω3≈1且p>0.05表示无显著正选择信号；负选择位点占优提示纯化选择占主导。',
-        8:'Stage 8 使用 SDT 风格成对 NT 一致性分析。\\n比较了'+sd.viruses+'种病毒的样本间序列。\\n嵌入图：NT Identity Heatmap（成对一致性热图+系统聚类树）、Identity Distribution（一致性分布直方图）、pairwise statistics（均值/范围/比较对数）。\\n\\n基于以上数据，撰写 2-3 句学术总结。一致性>95%通常指示同一株系，85-95%为种内变异。仅陈述观测到的一致性范围。',
-        9:'Stage 9 使用 ViReMa 检测缺陷病毒基因组（DVG）和重组事件。\\n数据：'+sd.s9.viruses_with_dvg+'/'+sd.viruses+'种病毒检测到 DVG 事件。\\n嵌入图：Circos 4-track（突变密度/基因注释/缺失覆盖/重复覆盖四轨道环状图）、Arc Diagram（供体-受体连接网络弧线图）、Acceptor NT Frequency（受体断点核苷酸频率）、Top Events（最高频重组事件）。\\n嵌入表：DVG Events per Virus（每病毒DVG reads数、跳跃事件数、涉及样本数）。\\n\\n基于以上数据，撰写 2-3 句学术总结。引用图表和表格。仅当数据支持时才讨论DIP假说。'
+        1:'Stage 1 Salmon pseudo-alignment + Poisson-filtered viral quantification.\\nPer virus: '+vdStr+'\\nEmbedded charts: freq_multi_metrics_log10, sample_virus_count_bar, virus_occurrence_bar, cooccurrence/spearman heatmap, Co-infection_Matrix.\\n\\nWrite a 2-3 sentence academic summary in English, briefly reviewing for each virus the number of detected samples, abundance and coverage. Cite specific numbers. Do not fabricate.',
+        2:'Stage 2 Multi-dimensional threshold filtering (coverage >=50%, depth >=5x, reads >=100).\\n'+sd.s2.pre+' records -> '+sd.s2.post+' retained.\\nPer-virus detail: '+vdStr+'\\nEmbedded tables: Per-Sample/Per-Virus Filtering.\\n\\nBriefly review, for each virus, the post-filter coverage and depth. Cite specific numbers. Do not fabricate.',
+        3:'Stage 3 FreeBayes+SnpEff+SNPGenie.\\nPer-virus data: '+JSON.stringify(sd.s3.per_virus)+'\\n\\nFor each virus, review its nucleotide diversity (π). High π = rich quasispecies; low π = conserved. Cite specific values. Do not fabricate.',
+        4:'Stage 4 12-step de novo assembly.\\nPer-virus data: '+JSON.stringify(sd.s4.per_virus)+'\\n\\nFor each virus, review assembly completeness (N%, N50). Cite specific values. Do not fabricate.',
+        5:'Stage 5 Extraction + N gap filling.\\nPer-virus data: '+JSON.stringify(sd.s5.per_virus)+'\\n\\nReview contig completeness (N%=0 means complete). Cite specific values. Do not fabricate.',
+        6:'Stage 6 Multi-dimensional variant visualization chart set, grouped by analysis type.\\nChart content (per virus): Variant Landscape (genome-wide mutation distribution), Ts/Tv Pie (transition/transversion ratio pie -- a ratio >1 suggests random mutation dominance), Functional Pie (variant functional classification), Clustermap (cross-sample variant clustering), AFS (allele frequency spectrum -- low-frequency dominant suggests rare variants, high-frequency dominant suggests fixed differences), dN/dS scatter plots and 3D PCA (three-dimensional clustering of population-genetic parameters).\\n'+sd.viruses+' virus species are included in the analysis (single-sample viruses skipped).\\n\\nBased on the chart types above, write a 2-3 sentence academic summary. Chart names may be cited. Do not fabricate patterns that were not observed.',
+        7:'Stage 7 Codon-level natural selection testing with HyPhy (FEL/MEME/BUSTED/PRIME).\\nData: '+sd.s7.coding_viruses+'/'+sd.viruses+' virus species have coding sequences; the rest are non-coding RNA (viroids/satellite RNA, which do not encode proteins and therefore are not amenable to dN/dS analysis).\\nEmbedded table: per-gene BUSTED selection results (gene name, ω3 value, p-value, positive selection sites, negative selection sites, total sites).\\n\\nBased on the data above, write a 2-3 sentence academic summary. Note: ω3≈1 with p>0.05 indicates no significant positive selection signal; a prevalence of negative selection sites suggests purifying selection dominates.',
+        8:'Stage 8 SDT-style pairwise NT identity analysis.\\nInter-sample sequences of '+sd.viruses+' virus species were compared.\\nEmbedded charts: NT Identity Heatmap (pairwise identity heatmap + hierarchical clustering tree), Identity Distribution (identity histogram), pairwise statistics (mean/range/number of pairs).\\n\\nBased on the data above, write a 2-3 sentence academic summary. Identity >95% usually indicates the same strain; 85-95% is intra-species variation. State only the observed identity range.',
+        9:'Stage 9 DVG and recombination detection with ViReMa.\\nData: '+sd.s9.viruses_with_dvg+'/'+sd.viruses+' virus species have DVG events.\\nEmbedded charts: Circos 4-track (mutation density/gene annotation/deletion coverage/duplication coverage four-track circular plot), Arc Diagram (donor-acceptor junction network arcs), Acceptor NT Frequency (acceptor breakpoint nucleotide frequency), Top Events (most frequent recombination events).\\nEmbedded table: DVG Events per Virus (DVG reads, jump events, samples involved per virus).\\n\\nBased on the data above, write a 2-3 sentence academic summary. Cite charts and tables. Discuss the DIP hypothesis only when the data support it.'
     }};
     var prompt=prompts[sn]||('Pipeline overview: '+sd.samples+' samples, '+sd.viruses+' virus species, 10-stage analysis. Write 2-3 sentence academic summary based ONLY on provided data.');
-    prompt+='\\n\\n中文输出。学术书面语。引用图表名称。不捏造数据。不确定处用谨慎措辞。'
+    prompt+='\\n\\nOutput in English. Academic written style. Cite chart names. Do not fabricate data. Use cautious wording where uncertain.'
     var url=getAIURL();
     fetch(url,{{method:'POST',headers:{{'Content-Type':'application/json','Authorization':'Bearer '+key}},
         body:JSON.stringify({{model:document.getElementById('ai-model').value,
@@ -2036,9 +2171,9 @@ function runVirusAI(sn,acc){{
     var sd=stageData;var vd=sd._virus_detail||[];
     var vinfo='';for(var i=0;i<vd.length;i++){{if(vd[i].accession===acc){{vinfo=JSON.stringify(vd[i]);break;}}}}
     if(!vinfo)vinfo=acc+' (data not found)';
-    var stageFocus={{3:'该病毒位于Stage 3 Variants区域。嵌入图表：per-virus变异指标表(Samples/Cov/Depth/Pi/Shannon)。\\n\\n评述该病毒的核苷酸多样性(π)和Shannon指数。高π=准种多样性丰富(活跃复制的准种群)，低π=高度保守(强纯化选择或近期瓶颈)。结合覆盖度和深度评估变异检测可靠性。仅陈述数据支持的事实。',4:'该病毒位于Stage 4 Assembly区域。嵌入图表：每样本组装演进表(DeNovo→Ultimate长度/N50/N)、可折叠阶段细节(各步骤长度变化)。\\n\\n评述该病毒的组装完整性：组装数、最佳长度、N含量(N>0=存在gap未闭合)、vs参考基因组百分比(>100%提示多聚体/串联重复组装，100%=完整单体，<100%=部分组装)。结合阶段演进分析组装改善情况。',5:'该病毒位于Stage 5 Extract区域。嵌入表格：提取统计表(Numbers/Avg/Min/Max bp/N%)。\\n\\n评述该病毒的提取结果：contig数、平均/最小/最大长度、N%(0=完整无gap)。N%>0提示序列存在未填补区域。对比参考基因组评估提取完整度。',6:'该病毒位于Stage 6 Post-hoc区域。嵌入图表(分组)：Variant Landscape(全基因组突变分布)、Ts/Tv Pie(转换/颠换比>1=随机突变主导)、Functional Pie(功能分类)、Clustermap(跨样本变异谱系)、AFS(等位频率谱)、dN/dS散点图及3D PCA(群体遗传参数聚类)。\\n\\n结合图表评述：突变沿基因组的分布特征(是否存在热点)、Ts/Tv比反映的进化驱动力、dN/dS偏离中性的生物学含义(纯化选择vs正选择vs中性演化)、PCA聚类是否揭示不同进化谱系。',7:'该病毒位于Stage 7 Capheine区域。嵌入表格：per-gene BUSTED选择分析表(基因名/ω3/p值/正选择位点数/负选择位点数/总位点数)。\\n\\n评述该病毒基因的选择压力：ω3>1提示该基因可能经历正选择(需p<0.05支持)，ω3≈1且p>0.05提示无显著正选择信号。负选择位点占优提示纯化选择占主导(功能约束强)。如为非编码RNA病毒(类病毒/卫星RNA)，说明dN/dS分析不适用——其进化约束来自RNA二级结构而非蛋白编码。',8:'该病毒位于Stage 8 Similarity区域。嵌入图表：NT Identity Heatmap(成对一致性热图+系统聚类树)、Identity Distribution(一致性分布直方图)、pairwise statistics(均值/范围/比较对数)。\\n\\n评述该病毒样本间NT一致性：>95%通常指示同一株系(近期传播)，85-95%为种内变异，<85%为不同种。聚类树揭示的进化关系。高一致性提示近期共同祖先或单一引入事件，低一致性提示长期本地进化或多重引入。',9:'该病毒位于Stage 9 DVG区域。嵌入图表：Circos 4-track(突变密度/基因注释/缺失覆盖/重复覆盖)、Arc Diagram(供体-受体连接网络)、Acceptor NT Frequency(受体断点核苷酸偏好)、Top Events(最高频重组事件)。嵌入表格：DVG Events per Virus(DVG reads/跳跃事件/涉及样本数)。\\n\\n评述该病毒的DVG/重组事件：DVG reads数和跳跃事件数反映重组活跃度。DVG(缺陷病毒基因组)的生物学意义：缺陷干扰颗粒(DIP)可竞争性抑制标准病毒复制，影响感染进程和致病性。重组类型(缺失/重复)与病毒RNA聚合酶模板转换的错误倾向性有关。'}};
-    var focus=stageFocus[sn]||'评述该病毒的检测、覆盖度、丰度等关键指标。';
-    var prompt='你是病毒学研究员。基于以下病毒数据撰写1-2句中文学术总结。'+focus+'\\n\\n病毒数据：'+vinfo+'\\n\\n仅陈述数据支持的事实。引用具体数字。不捏造。中文。';
+    var stageFocus={{3:'This virus is in the Stage 3 Variants section. Embedded chart: per-virus variant metrics table (Samples/Cov/Depth/Pi/Shannon).\\n\\nReview the nucleotide diversity (π) and Shannon index of this virus. High π = rich quasispecies diversity (actively replicating quasispecies population); low π = highly conserved (strong purifying selection or a recent bottleneck). Assess variant-calling reliability in light of coverage and depth. State only facts supported by the data.',4:'This virus is in the Stage 4 Assembly section. Embedded charts: per-sample assembly evolution table (DeNovo->Ultimate length/N50/N) and collapsible stage details (length change per step).\\n\\nReview the assembly completeness of this virus: number of assemblies, best length, N content (N>0 = unclosed gaps), and percent of the reference genome (>100% suggests multimer/tandem-repeat assembly, 100% = complete monomer, <100% = partial assembly). Use the stage evolution to discuss how assembly improved.',5:'This virus is in the Stage 5 Extract section. Embedded table: extraction statistics (Numbers/Avg/Min/Max bp/N%).\\n\\nReview the extraction results of this virus: contig count, mean/min/max length, N% (0 = complete, no gaps). N%>0 indicates unfilled regions. Compare with the reference genome to assess extraction completeness.',6:'This virus is in the Stage 6 Post-hoc section. Embedded charts (grouped): Variant Landscape (genome-wide mutation distribution), Ts/Tv Pie (transition/transversion ratio >1 = random mutation dominance), Functional Pie (functional classification), Clustermap (cross-sample variant lineage), AFS (allele frequency spectrum), dN/dS scatter plots and 3D PCA (population-genetic parameter clustering).\\n\\nReview with the charts: the distribution of mutations along the genome (hotspots or not), the evolutionary driver reflected by the Ts/Tv ratio, the biological meaning of dN/dS departing from neutrality (purifying vs positive selection vs neutral evolution), and whether PCA clustering reveals distinct evolutionary lineages.',7:'This virus is in the Stage 7 Capheine section. Embedded table: per-gene BUSTED selection results (gene/ω3/p-value/positive sites/negative sites/total sites).\\n\\nReview the selection pressure on the genes of this virus: ω3>1 suggests the gene may be under positive selection (requires p<0.05), while ω3≈1 with p>0.05 indicates no significant positive selection signal. A prevalence of negative selection sites suggests purifying selection dominates (strong functional constraint). For non-coding RNA viruses (viroids/satellite RNA), note that dN/dS analysis is not applicable -- their evolutionary constraint comes from RNA secondary structure rather than protein coding.',8:'This virus is in the Stage 8 Similarity section. Embedded charts: NT Identity Heatmap (pairwise identity heatmap + hierarchical clustering tree), Identity Distribution (identity histogram), pairwise statistics (mean/range/number of pairs).\\n\\nReview the inter-sample NT identity of this virus: >95% usually indicates the same strain (recent transmission), 85-95% is intra-species variation, <85% is a different species. Discuss the evolutionary relationships revealed by the clustering tree. High identity suggests a recent common ancestor or a single introduction event; low identity suggests long-term local evolution or multiple introductions.',9:'This virus is in the Stage 9 DVG section. Embedded charts: Circos 4-track (mutation density/gene annotation/deletion coverage/duplication coverage), Arc Diagram (donor-acceptor junction network), Acceptor NT Frequency (acceptor breakpoint nucleotide preference), Top Events (most frequent recombination events). Embedded table: DVG Events per Virus (DVG reads/jump events/samples involved).\\n\\nReview the DVG/recombination events of this virus: DVG reads and jump events reflect recombination activity. Biological significance of DVGs (defective viral genomes): defective interfering particles (DIPs) can competitively suppress standard virus replication and affect infection progression and pathogenicity. The recombination type (deletion/duplication) relates to the error-prone template switching of the viral RNA polymerase.'}};
+    var focus=stageFocus[sn]||'Review the key metrics of this virus such as detection, coverage and abundance.';
+    var prompt='You are a virology researcher. Based on the following virus data, write a 1-2 sentence academic summary in English. '+focus+'\\n\\nVirus data: '+vinfo+'\\n\\nState only facts supported by the data. Cite specific numbers. Do not fabricate. In English.';
     fetch(getAIURL(),{{method:'POST',headers:{{'Content-Type':'application/json','Authorization':'Bearer '+key}},
         body:JSON.stringify({{model:document.getElementById('ai-model').value,
         messages:[{{role:'system',content:sysMsg}},{{role:'user',content:prompt}}],
@@ -2105,7 +2240,8 @@ def ensure_summary_plots(out_dir):
 def copy_results_to_report(out_dir, report_dir):
     """Copy key result files from each stage into the report directory.
 
-    Copies summary tables, key plots, and per-virus charts to 10_report/
+    Copies summary tables, key plots, and per-virus charts to the report
+    stage dir (layout-aware: 09_Report in standard, 10_report in legacy)
     so users can easily share the complete report package.
     """
     out = Path(out_dir); rep = Path(report_dir)
@@ -2138,8 +2274,12 @@ def copy_results_to_report(out_dir, report_dir):
     _cp(os.path.join(_D['a_filter'], 'high_conf.summary.tsv'), "S2_Filter/high_conf.summary.tsv")
     _cp(os.path.join(_D['a_filter'], 'filter_summary_plot.png'), "S2_Filter/filter_summary_plot.png")
     _cp(os.path.join(_D['a_filter'], 'filter_summary_plot.pdf'), "S2_Filter/filter_summary_plot.pdf")
-    # Stage 2b: Metadata association results ([2b] meta block output)
-    _cp(os.path.join(_D['a_filter'], 'metadata_association'), "S2_Filter/metadata_association")
+    # Stage 2b: Metadata association results ([2b] meta block output;
+    # 编排器写 04_PostAnalysis/metadata_association, 02_Filtering 为 legacy 回退)
+    _ma = _resolve_dir(out, _D['a_post']) / 'metadata_association'
+    if not _ma.is_dir():
+        _ma = out / _D['a_filter'] / 'metadata_association'
+    _cp(str(_ma), "S2_Filter/metadata_association")
 
     # Stage 3: Variants summary
     _cp(os.path.join(_D['a_variants'], 'summary/all_summary.tsv'), "S3_Variants/all_summary.tsv")
@@ -2161,15 +2301,15 @@ def copy_results_to_report(out_dir, report_dir):
                 if subd.is_dir():
                     _cp(str(subd.relative_to(out)), f"S6_Post_hoc/{vdir.name}/{subd.name}")
 
-    # Stage 7: Capheine
+    # Stage 7: Capheine (已迁 ⑤; 07_capheine 为 legacy 产物候选)
     cap_dir = out / "07_capheine"
     if cap_dir.is_dir():
         for vdir in cap_dir.iterdir():
             if vdir.is_dir() and not vdir.name.startswith("run_"):
                 _cp(str(vdir.relative_to(out)), f"S7_Capheine/{vdir.name}")
 
-    # Stage 8: Similarity (recursive: heatmaps are nested deep)
-    sim_dir = out / "08_similarity"
+    # Stage 8: Similarity (recursive: heatmaps are nested deep); 布局感知目录
+    sim_dir = locate_analysis_dir(out, "similarity")
     if sim_dir.is_dir():
         for vdir in sim_dir.iterdir():
             if vdir.is_dir():
@@ -2223,7 +2363,7 @@ def generate_ai_summary(viruses, variant_summary, assembly_summary, detection_su
         if es: line += f", {es.get('n_contigs','?')} contigs"
         virus_lines.append(line)
 
-    prompt = f"""You are a virology research scientist. Write a bilingual (Chinese) research summary for a Known Virus Analysis Pipeline report.
+    prompt = f"""You are a virology research scientist. Write an English research summary for a Known Virus Analysis Pipeline report.
 
 ## Pipeline Data
 - Samples: {n_samples}
@@ -2238,22 +2378,22 @@ def generate_ai_summary(viruses, variant_summary, assembly_summary, detection_su
 
 ## Output Format
 [BRIEF]
-150-200 word Chinese research highlight. Cover: study purpose, sample scale, key findings (viruses detected, assembly quality, selection evidence), main conclusions. Style: journal Highlights.
+150-200 word English research highlight. Cover: study purpose, sample scale, key findings (viruses detected, assembly quality, selection evidence), main conclusions. Style: journal Highlights.
 
 [DETAILED]
-IMRaD structure (300-400 words Chinese):
+IMRaD structure (300-400 words, English):
 [BACKGROUND] 1-2 sentences. Known virus surveillance context.
 [METHODS] 3-4 sentences. Summarize the 10-stage pipeline.
 [RESULTS] 4-5 sentences. Report quantitative findings with numbers.
 [DISCUSSION] 2-3 sentences. Significance, limitations, next steps.
 
-Requirements: Professional academic tone, cite exact numbers from data, Chinese output, only output the format requested."""
+Requirements: Professional academic tone, cite exact numbers from data, English output, only output the format requested."""
 
     try:
         url = base_url or "https://api.openai.com/v1/chat/completions"
         body = _json.dumps({
             "model": model, "messages": [
-                {"role": "system", "content": "You are a virology research scientist. Output in Chinese, objective, precise, cite data."},
+                {"role": "system", "content": "You are a virology research scientist. Output in English, objective, precise, cite data."},
                 {"role": "user", "content": prompt}
             ], "temperature": 0.3, "max_tokens": 2000
         }).encode()
@@ -2345,9 +2485,9 @@ def generate_stage_ai_summaries(viruses, variant_summary, assembly_summary, dete
     s7_info = f"{s7_coding}/{n_virus} viruses have coding sequences (capheine analysis)"
     s9_info = f"{overview_metrics.get('dvg_viruses','?')}/{n_virus} viruses with DVG events"
 
-    prompt = f"""You are a virology research scientist. For each pipeline stage below, write ONE concise sentence (Chinese) describing what was found. Be specific with numbers.
+    prompt = f"""You are a virology research scientist. For each pipeline stage below, write ONE concise sentence (English) describing what was found. Be specific with numbers.
 
-Pipeline: Known Virus Analysis (10 stages), {n_samples} samples, {n_virus} virus species.
+Pipeline: Known Virus Analysis (9 stages), {n_samples} samples, {n_virus} virus species.
 
 Stage 1 Detection: {s1_info}
 Stage 2 Filter: {s2_info}
@@ -2360,12 +2500,12 @@ Stage 8 Similarity: pairwise NT identity matrices
 Stage 9 DVG: {s9_info}
 
 Output format (EXACTLY):
-S1: <one Chinese sentence>
-S2: <one Chinese sentence>
+S1: <one English sentence>
+S2: <one English sentence>
 ...
-S9: <one Chinese sentence>
+S9: <one English sentence>
 
-Requirements: One sentence each. Cite numbers. Chinese. Professional tone. No extra text."""
+Requirements: One sentence each. Cite numbers. English. Professional tone. No extra text."""
 
     try:
         url = base_url or "https://api.openai.com/v1/chat/completions"
@@ -2396,12 +2536,17 @@ def main():
     parser.add_argument("-d", "--dir", required=True, help="Pipeline output root directory")
     parser.add_argument("-o", "--output", default=None, help="HTML report output path")
     parser.add_argument("--no_images", action="store_true", help="Skip image embedding (faster, smaller)")
-    parser.add_argument("--ai-key", default="", help="OpenAI/DeepSeek API key for AI summary")
+    # --ai-api-key: 编排器 auto_known_virus.py 传此名; --ai-key 为历史名, 两者等价
+    parser.add_argument("--ai-key", "--ai-api-key", dest="ai_key", default="",
+                        help="OpenAI/DeepSeek API key for AI summary")
     parser.add_argument("--ai-provider", default="openai", choices=["openai","ollama","deepseek","moonshot","custom"])
     parser.add_argument("--ai-model", default="gpt-4o-mini", help="LLM model name")
     parser.add_argument("--ai-base-url", default="", help="Custom API base URL")
 
     args = parser.parse_args()
+    # --no_images: 关闭所有图片字节内嵌 (卡片保留文件名占位)
+    global _SKIP_IMAGES
+    _SKIP_IMAGES = bool(args.no_images)
     # Configure AI summary
     if args.ai_key:
         generate_ai_summary._provider = args.ai_provider
@@ -2421,10 +2566,22 @@ def main():
     if not out.exists():
         sys.exit(f"Directory not found: {args.dir}")
 
+    # [P2-24i] legacy 存量项目: 分析根可能是 legacy 布局的 09a/09 两代分析目录
+    # (standard 布局时分析根 = --dir 本身) → 三代候选根都查; 阶段目录名由 locate_analysis_dir 探测。
+    # 2026-10-13: 候选名改由 io_layout 注册表解析 (原字面量会被 check_io_handoffs 判 FAIL)
+    candidate_roots = [out]
+    try:
+        from mmpv_common.io_layout import build_discovery_dirs as _bdd
+        candidate_roots += [d for d in _bdd(out, out, "legacy")['_analysis_dirs'] if d.is_dir()]
+    except Exception:
+        pass
     summary_in = None
     for p in ["high_conf.summary.tsv", "all_viruses.best.summary.tsv", "all_viruses.summary.tsv"]:
-        for loc in [out / _D['a_filter'] / p, out / _D['a_detect'] / "summary" / p]:
-            if loc.is_file(): summary_in = loc; break
+        for root in candidate_roots:
+            for loc in [locate_analysis_dir(root, "filter") / p,
+                        locate_analysis_dir(root, "detect") / "summary" / p]:
+                if loc.is_file(): summary_in = loc; break
+            if summary_in: break
         if summary_in: break
     if summary_in is None:
         sys.exit("No summary file found")
@@ -2472,7 +2629,7 @@ def main():
     print(f"  Report: {out_html} ({out_html.stat().st_size / 1024:.0f} KB)")
 
     # Copy result files to report directory
-    report_dir = out / "10_report"
+    report_dir = locate_analysis_dir(out, "report")
     print("Copying result files to report directory...")
     copied, skipped = copy_results_to_report(args.dir, report_dir)
     print(f"  Copied {len(copied)} files, skipped {len(skipped)} missing")

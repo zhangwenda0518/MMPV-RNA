@@ -238,14 +238,19 @@ def main():
         sys.exit(1)
 
     # 2. 覆盖两份 src 的元数据列
+    # CSV 按原始 sequence_name 键控; source_norm.src 的首列已被 norm_id 规范化
+    # (点/横线→下划线), 只按原键反查会 100% 失配静默跳过 — 同时按规范化键兜底
     n_upd = 0
+    n_miss = []
+    rows_by_norm = {norm_id(k): v for k, v in rows.items()}
     for fn in ('source_filled.src', 'source_norm.src'):
         p = idn / fn
         recs = load_src(p)
         for r in recs[1:]:
             key = r[0][5:] if r[0].startswith('lcl|') else r[0]
-            row = rows.get(key)
+            row = rows.get(key) or rows_by_norm.get(norm_id(key))
             if not row:
+                n_miss.append(f'{fn}:{r[0]}')
                 continue
             for col, idx in CSV_TO_SRC.items():
                 v = (row.get(col) or '').strip()
@@ -254,6 +259,10 @@ def main():
                         r[idx] = v
                         n_upd += 1
         save_src(p, recs)
+
+    if n_miss:
+        print(f'[WARN] {len(n_miss)} 行按原始 ID 与规范化 ID 均未命中 CSV, '
+              f'元数据未更新 (前 5): {", ".join(n_miss[:5])}')
 
     # 3. 重建 template.sbt
     authors, seen = [], set()

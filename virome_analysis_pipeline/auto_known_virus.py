@@ -264,7 +264,7 @@ def main():
 
     # ---- Stage 9: Report ----
     g = parser.add_argument_group("Stage 9: Report Generation (generate_pipeline_report)")
-    g.add_argument("--report_ai", action="store_true", help="Include AI interpretation prompts")
+    # [P2-24j] 删除死开关 --report_ai (全仓无消费方; AI 解读由 --ai_api_key 触发)
     g.add_argument("--ai_api_key", default=os.environ.get("DEEPSEEK_API_KEY") or os.environ.get("AI_API_KEY"),
                    help="DeepSeek/OpenAI API key for AI interpretation (default: $DEEPSEEK_API_KEY/$AI_API_KEY)")
     g.add_argument("--ai_model", default="deepseek-chat", help="LLM model")
@@ -380,7 +380,8 @@ def main():
         log.info("=== DRY-RUN ===")
         log.info("  Tool:    %s", args.tool)
         if s in ("all", "detect"):   log.info("  [1/9] Detect:   batch_virus_depth.py")
-        if args.filter or s == "filter": log.info("  [2/9] Filter:   filter_summary.py")
+        # [P2-23c] 与下方 Stage2 执行条件保持一致 (--filter 默认 True, 但仅 all/filter 阶段才跑)
+        if args.filter and s in ("all", "filter"): log.info("  [2/9] Filter:   filter_summary.py")
         if s in ("all", "variants"):  log.info("  [3/9] Variants: batch_virus_variants.py (caller=%s snpeff=%s snpgenie=%s)", args.variant_caller, args.snpeff, args.snpgenie)
         if s in ("all", "post"):      log.info("  [4/9] Post-hoc: VCF viz + SnpEff + MAF + SnpGenie")
         if s in ("all", "full"):      log.info("  [5/9] Full:     batch_virus_full.py")
@@ -420,9 +421,17 @@ def _run_pipeline_stages(args, out, reads, log, script_dir, _pipeline_tmp):
     best_summary = detect_dir / "summary" / "all_viruses.best.summary.tsv"
     high_conf = filter_dir / "high_conf.summary.tsv"
 
+    _summary_fallback_warned = [False]
+
     def get_summary():
         """动态获取当前最优 summary（filter 运行后自动切换到 high_conf）"""
-        return high_conf if high_conf.exists() else best_summary
+        if high_conf.exists():
+            return high_conf
+        # [P2-23b] 回落 best 层时显式告警 (原先静默回落 → 下游悄悄跑在 Poisson-best 层); 仅提示一次
+        if not _summary_fallback_warned[0]:
+            _summary_fallback_warned[0] = True
+            log.warning("  high_conf.summary.tsv 不存在 (Stage2 过滤未运行/无产出)，summary 回落 best 层: %s", best_summary)
+        return best_summary
 
     def add_stage_log(stage_dir, stage_name):
         """Attach a per-stage FileHandler so logs go to both console and stage dir."""
@@ -524,7 +533,9 @@ def _run_pipeline_stages(args, out, reads, log, script_dir, _pipeline_tmp):
     # ═══════════════════════════════════════════
     # Stage 2: Filter (optional auto-filter)
     # ═══════════════════════════════════════════
-    if args.filter or args.stage == "filter":
+    # [P2-23c] 原条件 `args.filter or args.stage == "filter"`: --filter 默认 True → 任何单阶段运行
+    # (如 --stage report) 都会附带跑 filter; 改为"开关打开 且 处于 all/filter 阶段"才执行
+    if args.filter and args.stage in ("all", "filter"):
         _sh2 = add_stage_log(filter_dir, "2_filter")
         if not args.force and _stage_ok(filter_dir):
             log.info("[2/9] Filter: checkpoint OK, skip")
@@ -835,6 +846,8 @@ def _run_pipeline_stages(args, out, reads, log, script_dir, _pipeline_tmp):
             else:
                 similarity_dir.mkdir(parents=True, exist_ok=True)
                 sim_ref = args.sim_ref
+                # [P2-24d] 记录失败病毒清单: 全失败不写 run.ok (阶段判失败, resume 可重跑); 部分失败汇总 warning 后仍 ok
+                sim_failed, sim_done = [], 0
 
                 for vdir in consensus_base.iterdir():
                     if not vdir.is_dir(): continue
@@ -869,12 +882,22 @@ def _run_pipeline_stages(args, out, reads, log, script_dir, _pipeline_tmp):
 
                     if run(" ".join(parts), log, f"similarity_{vname}"):
                         log.info("  %s: similarity OK", vname)
+                        sim_done += 1
                     else:
                         log.warning("  %s: similarity failed", vname)
+                        sim_failed.append(vname)
                     _shutil.rmtree(flat_dir, ignore_errors=True)
 
-                log.info("  Similarity complete -> %s", similarity_dir)
-                _mark_stage_ok(similarity_dir)
+                # [P2-24d] 全失败 → 不写 run.ok (避免 resume 永久跳过失败阶段); 部分失败 → 汇总 warning
+                if sim_failed and sim_done == 0:
+                    log.error("  [7/9] Similarity 全部 %d 个病毒任务失败，不写 run.ok (修复后可重跑): %s",
+                              len(sim_failed), ", ".join(sorted(sim_failed)))
+                else:
+                    if sim_failed:
+                        log.warning("  [7/9] Similarity 部分失败 (%d 失败 / %d 成功)，失败清单: %s",
+                                    len(sim_failed), sim_done, ", ".join(sorted(sim_failed)))
+                    log.info("  Similarity complete -> %s", similarity_dir)
+                    _mark_stage_ok(similarity_dir)
 
     # ═══════════════════════════════════════════
     # Stage 8: DVG & Recombination Analysis
@@ -921,14 +944,16 @@ def _run_pipeline_stages(args, out, reads, log, script_dir, _pipeline_tmp):
         _sh9 = add_stage_log(report_dir, "9_report")
         log.info("-" * 40)
         log.info("[9/9] Generate Pipeline Summary Report")
+        # 用 sys.executable (裸 "python" 在部分环境不可达) + 引号包裹所有路径
+        # (中文/空格/反斜杠路径经 shell=True 会被吞, 与 ⑦ 管线修复同因)
         parts = [
-            f"python {script_dir / 'generate_pipeline_report.py'}",
-            f"-d {out}",
-            f"-o {report_dir / 'Pipeline_Summary_Report.html'}",
+            f'"{sys.executable}" "{script_dir / "generate_pipeline_report.py"}"',
+            f'-d "{out}"',
+            f'-o "{report_dir / "Pipeline_Summary_Report.html"}"',
         ]
         if args.ai_api_key:
-            parts.append(f"--ai-api-key {args.ai_api_key}")
-            parts.append(f"--ai-model {args.ai_model}")
+            parts.append(f'--ai-api-key "{args.ai_api_key}"')
+            parts.append(f'--ai-model "{args.ai_model}"')
         if run(" ".join(parts), log, "generate_report"):
             log.info("  Report generated -> %s", report_dir / "Pipeline_Summary_Report.html")
         else:

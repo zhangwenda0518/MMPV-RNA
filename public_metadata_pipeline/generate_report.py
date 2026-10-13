@@ -34,6 +34,9 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if sys.platform == 'win32':
     sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 
+# 字段完整度判定: 这些"看着有值"的占位串一律不算已填 (astype(str) 的产物含 nan/None)
+NULL_TOKENS = {"", "nan", "none", "na", "n/a", "null"}
+
 def safe_read_csv(fp, sep=","):
     """Read CSV/TSV, auto-detect separator; 返回**全表**.
 
@@ -134,8 +137,10 @@ def collect_info_summary(out_dir):
     total = len(df)
     fields = {}
     for col in df.columns:
-        non_null = int(df[col].notna().sum())
-        non_empty = int((df[col].astype(str).str.strip() != "").sum())
+        non_null = df[col].notna()
+        # astype(str) 会把 NaN 变 "nan"、NaT 变 "NaT" —— 不算已填, 否则完整度虚高
+        vals = df[col].astype(str).str.strip().str.lower()
+        non_empty = int((non_null & ~vals.isin(NULL_TOKENS)).sum())
         pct = f"{non_empty/total*100:.0f}%" if total > 0 else "?"
         fields[col] = {"complete": non_empty, "pct": pct}
     # Top distributions
@@ -150,13 +155,17 @@ def collect_info_summary(out_dir):
             "path": str(csv_path.relative_to(out)) if csv_path else "?"}
 
 def collect_plot_images(out_dir):
-    """Find SCI landscape plot images."""
+    """Find SCI landscape plot images.
+
+    同一次运行 plot 阶段会对 search / info 两个数据源各出一套 (from_search/,
+    from_info/), 这里全部收集 (list), 不再只取首个匹配。
+    """
     out = Path(out_dir)
     images = {}
     for name, pat in [("landscape", "Combined_Landscape_Full.png"), ("landscape_pdf", "Combined_Landscape_Full.pdf")]:
-        for p in out.rglob(pat):
-            images[name] = str(p)
-            break
+        hits = sorted(out.rglob(pat))
+        if hits:
+            images[name] = [str(p) for p in hits]
     return images
 
 def collect_download_summary(out_dir):
@@ -334,7 +343,7 @@ def collect_prescreen_summary(out_dir, top_n=15):
     by_cra = Counter()
     for r in rows:
         if (r.get("status") or "").strip() != "OK":
-            by_cra[(r.get("cra") or "(未解析)").strip()] += 1
+            by_cra[(r.get("cra") or "(unresolved)").strip()] += 1
 
     meta = {}
     mp = dec_path.parent / "prescreen_meta.json"
@@ -439,34 +448,34 @@ def generate_ai_summary(search_data, info_data, plot_images):
 
     s = search_data or {}
     i = info_data or {}
-    prompt = f"""你是生物信息学研究员。基于以下公共数据检索管线结果撰写中文研究简报。
+    prompt = f"""You are a bioinformatics researcher. Write an English research brief based on the results of the public data search pipeline below.
 
-## 检索结果
-- 检索到 {s.get('total','?')} 条记录: SRA={s.get('sra','?')}, GSA={s.get('gsa','?')}
-- 涉及 {s.get('bioprojects','?')} 个 BioProject, {s.get('species','?')} 个物种
-- 时间跨度: {s.get('years','?')}
+## Search Results
+- Records found: {s.get('total','?')} (SRA={s.get('sra','?')}, GSA={s.get('gsa','?')})
+- BioProjects: {s.get('bioprojects','?')}, species: {s.get('species','?')}
+- Temporal range: {s.get('years','?')}
 
-## 元数据质量
-- Core14 统一元数据: {i.get('total','?')} 条记录
-- PMID 覆盖率: {i.get('pmid_coverage','?')} 条有文献链接
+## Metadata Quality
+- Core14 unified metadata: {i.get('total','?')} records
+- PMID coverage: {i.get('pmid_coverage','?')} records with literature links
 
-## 元数据字段完整度
+## Metadata Field Completeness
 {_json.dumps({k: v.get('pct','?') for k,v in (i.get('fields',{}) or {}).items()}, ensure_ascii=False)}
 
-输出格式:
+Output format:
 [BRIEF]
-150-200字中文简报: 研究目的、检索规模、关键发现（数据库分布、元数据质量、文献覆盖）
+150-200 word English brief: research objective, search scale, key findings (database distribution, metadata quality, literature coverage)
 
 [DETAILED]
-按 [BACKGROUND][METHODS][RESULTS][DISCUSSION] 格式输出 300-400 字中文详报。
+Output a 300-400 word English detailed report in [BACKGROUND][METHODS][RESULTS][DISCUSSION] format.
 
-仅陈述数据支持的事实。中文。学术书面语。不捏造。"""
+State only facts supported by the data. English. Academic prose. Do not fabricate."""
 
     try:
         url = base_url or "https://api.openai.com/v1/chat/completions"
         body = _json.dumps({
             "model": model, "messages": [
-                {"role": "system", "content": "你是生物信息学研究员。仅基于数据陈述。中文输出。"},
+                {"role": "system", "content": "You are a bioinformatics researcher. State only facts supported by the data. Output in English."},
                 {"role": "user", "content": prompt}
             ], "temperature": 0.3, "max_tokens": 1500
         }).encode()
@@ -542,7 +551,9 @@ def generate_html(out_dir, search_data, info_data, plot_images, ai_html="", out_
         "s6_handoff": {"runs": h.get("runs","?"), "ready": h.get("ready","?"),
                        "missing": h.get("missing","?"), "manifest": h.get("path","sample_handoff.csv")},
     }
-    stage_data_json = _json.dumps(sd, ensure_ascii=False)
+    # 数据里若含 "</script>" 会提前截断 <script> 脚本块 —— JSON 层把 "<" 转义为
+    # \u003c (json.loads / JSON.parse 均能还原, 语义不变; 全文件仅此一处注入点)
+    stage_data_json = _json.dumps(sd, ensure_ascii=False).replace("<", "\\u003c")
 
     # ── Sidebar ──
     nav_items = '<li class="nav-item"><a href="#overview" class="nav-link active">Overview</a></li>'
@@ -588,68 +599,68 @@ def generate_html(out_dir, search_data, info_data, plot_images, ai_html="", out_
         fields = i.get("fields", {})
         if fields:
             s2 += '<details style="margin-top:8px"><summary style="font-weight:600;color:var(--accent);cursor:pointer;font-size:13px">Field Completeness</summary>'
-            s2 += '<div class="tb-scroll"><table style="font-size:12px"><tr><th>Field</th><th>Complete</th><th>Rate</th></tr>'
+            s2 += '<div class="tb-scroll"><table style="font-size:12px"><thead><tr><th>Field</th><th>Complete</th><th>Rate</th></tr></thead><tbody>'
             for fn, fv in sorted(fields.items()):
                 s2 += f'<tr><td>{_esc(fn)}</td><td>{fv.get("complete","?")}</td><td>{fv.get("pct","?")}</td></tr>'
-            s2 += '</table></div></details>'
+            s2 += '</tbody></table></div></details>'
         # Distribution tables
         dists = i.get("distributions", {})
         for col, items in dists.items():
             if not items: continue
             s2 += f'<details style="margin-top:6px"><summary style="font-weight:600;color:var(--accent);cursor:pointer;font-size:12px">Top {_esc(col)}</summary>'
-            s2 += '<div class="tb-scroll"><table style="font-size:12px"><tr><th>Value</th><th>Count</th></tr>'
+            s2 += '<div class="tb-scroll"><table style="font-size:12px"><thead><tr><th>Value</th><th>Count</th></tr></thead><tbody>'
             for val, cnt in items[:10]:
                 s2 += f'<tr><td>{_esc(val[:50])}</td><td>{cnt}</td></tr>'
-            s2 += '</table></div></details>'
+            s2 += '</tbody></table></div></details>'
         s2 += f'<p style="font-size:12px;color:var(--ink-secondary);margin-top:4px">Source: {_esc(i.get("path","?"))}</p>'
     else:
         s2 += '<p style="color:var(--ink-secondary)">Info output not found. Run Stage 2 (info) first.</p>'
     s2 += '</section>'
 
     # ── Stage 3: Prescreen ──
-    s_ps = f'''<section id="stage-prescreen"><h2>S3: Prescreen 病毒预筛 &amp; 物种鉴定 <button onclick="runStageAI('s3_prescreen')" class="ai-stage-btn">AI</button></h2>
-    <p style="color:var(--ink-secondary);font-size:13px">基于 NCBI STAT / CNCB GSA 的<b>预计算分类结果</b> —— <b>不下载任何测序数据</b>即可回答两件事：
-    (1) <b>植物物种鉴定</b>：用实测主要物种对拍元信息 ScientificName，揪出记错的样本；
-    (2) <b>病毒预鉴定</b>：按病毒占比给出 decision，供下载阶段过滤，避免浪费资源。</p>'''
+    s_ps = f'''<section id="stage-prescreen"><h2>S3: Prescreen — Viral Pre-screening &amp; Species Identification <button onclick="runStageAI('s3_prescreen')" class="ai-stage-btn">AI</button></h2>
+    <p style="color:var(--ink-secondary);font-size:13px">Based on <b>pre-computed taxonomic profiles</b> from NCBI STAT / CNCB GSA — answers two questions <b>without downloading any sequencing data</b>:
+    (1) <b>Plant species identification</b>: cross-check the observed top organism against the metadata ScientificName to flag mislabeled samples;
+    (2) <b>Viral pre-screening</b>: assign a decision from the viral fraction to filter the download stage and avoid wasting resources.</p>'''
     if ps:
         dec = ps.get("decision", {})
         s_ps += '<div class="card-row">'
         s_ps += f'<div class="card"><div class="value">{ps.get("total","?")}</div><div class="label">Runs</div></div>'
-        s_ps += f'<div class="card"><div class="value">{ps.get("ok","?")}</div><div class="label">有分类数据</div></div>'
-        s_ps += f'<div class="card"><div class="value">{ps.get("with_virus","?")}</div><div class="label">检出病毒</div></div>'
-        for k, label, color in (("DOWNLOAD", "建议下载", "#16a34a"),
-                                ("REVIEW", "需复核", "#d97706"),
-                                ("SKIP", "可跳过", "#6b7280"),
-                                ("LOCAL_CHECK", "需本地比对", "#2563eb")):
+        s_ps += f'<div class="card"><div class="value">{ps.get("ok","?")}</div><div class="label">With Taxonomy</div></div>'
+        s_ps += f'<div class="card"><div class="value">{ps.get("with_virus","?")}</div><div class="label">Virus Detected</div></div>'
+        for k, label, color in (("DOWNLOAD", "Recommended", "#16a34a"),
+                                ("REVIEW", "Needs Review", "#d97706"),
+                                ("SKIP", "Skippable", "#6b7280"),
+                                ("LOCAL_CHECK", "Local Check", "#2563eb")):
             s_ps += (f'<div class="card"><div class="value" style="color:{color}">{dec.get(k, 0)}</div>'
                      f'<div class="label">{label}</div></div>')
         s_ps += '</div>'
 
         s_ps += ('<p style="font-size:12px;color:var(--ink-secondary);margin-top:6px">'
-                 'decision: <b>DOWNLOAD</b> 检出病毒且物种对拍一致 · '
-                 '<b>REVIEW</b> 检出病毒但主要物种与元信息不符（仍下载，人工复核）· '
-                 '<b>SKIP</b> 有分类数据但无病毒信号 · '
-                 '<b>LOCAL_CHECK</b> 拿不到预计算分类，只能下载 reads 本地比对</p>')
+                 'decision: <b>DOWNLOAD</b> virus detected and organism match consistent · '
+                 '<b>REVIEW</b> virus detected but top organism conflicts with metadata (still downloaded, for manual review) · '
+                 '<b>SKIP</b> taxonomy available but no viral signal · '
+                 '<b>LOCAL_CHECK</b> no pre-computed taxonomy available, reads must be downloaded for local alignment</p>')
 
         # ── 物种鉴定 ──
         om = ps.get("organism_match", {})
         if any(om.values()):
-            s_ps += '<details style="margin-top:8px" open><summary style="font-weight:600;color:var(--accent);cursor:pointer;font-size:13px">植物物种鉴定（元信息 vs 实测主要物种）</summary>'
-            s_ps += '<div class="tb-scroll"><table style="font-size:12px"><tr><th>判定</th><th>条数</th><th>含义</th></tr>'
-            for k, dsc in (("MATCH", "一致"), ("PARTIAL", "同属不同种（近缘 / 杂交）"),
-                           ("MISMATCH", "属名都不同且占比足够 —— 疑似元信息记错"),
-                           ("COARSE", "实测只到属以上阶元（分辨率不足）"),
-                           ("WEAK", "实测占比过低（证据不足）"),
-                           ("UNKNOWN", "一侧缺失，不下结论")):
+            s_ps += '<details style="margin-top:8px" open><summary style="font-weight:600;color:var(--accent);cursor:pointer;font-size:13px">Plant Species Identification (metadata vs observed top organism)</summary>'
+            s_ps += '<div class="tb-scroll"><table style="font-size:12px"><thead><tr><th>Call</th><th>Count</th><th>Meaning</th></tr></thead><tbody>'
+            for k, dsc in (("MATCH", "consistent"), ("PARTIAL", "same genus, different species (related / hybrid)"),
+                           ("MISMATCH", "different genus with sufficient fraction — metadata likely mislabeled"),
+                           ("COARSE", "observed only above genus rank (insufficient resolution)"),
+                           ("WEAK", "observed fraction too low (insufficient evidence)"),
+                           ("UNKNOWN", "one side missing, no conclusion")):
                 v = om.get(k, 0)
                 hl = ' style="color:#b91c1c;font-weight:700"' if (k == "MISMATCH" and v) else ''
                 s_ps += f'<tr><td{hl}>{k}</td><td{hl}>{v}</td><td>{dsc}</td></tr>'
-            s_ps += '</table></div>'
+            s_ps += '</tbody></table></div>'
             mism = ps.get("mismatch") or []
             if mism:
                 s_ps += ('<div class="tb-scroll" style="margin-top:6px"><table style="font-size:12px">'
-                         '<tr><th>Run</th><th>元信息记录</th><th>实测主要物种</th><th>实测%</th>'
-                         '<th>置信度</th><th>主要病毒</th></tr>')
+                         '<thead><tr><th>Run</th><th>Metadata Species</th><th>Observed Top Species</th><th>Observed %</th>'
+                         '<th>Confidence</th><th>Top Virus</th></tr></thead><tbody>')
                 for r in mism:
                     s_ps += (f'<tr><td>{_esc(r.get("acc",""))}</td>'
                              f'<td>{_esc(r.get("meta_species",""))}</td>'
@@ -657,63 +668,63 @@ def generate_html(out_dir, search_data, info_data, plot_images, ai_html="", out_
                              f'<td>{_esc(r.get("top_organism_pct",""))}</td>'
                              f'<td>{_esc(r.get("organism_conf",""))}</td>'
                              f'<td>{_esc(r.get("top_virus",""))}</td></tr>')
-                s_ps += '</table></div>'
+                s_ps += '</tbody></table></div>'
                 s_ps += (f'<p style="font-size:11px;color:var(--ink-secondary)">'
-                         f'列出前 {len(mism)} 条疑似元信息记录有误的样本'
-                         f'（完整清单见 sample_decision.tsv 中 organism_match=MISMATCH）</p>')
+                         f'Showing the top {len(mism)} samples with suspected metadata errors'
+                         f' (full list: organism_match=MISMATCH in sample_decision.tsv)</p>')
             s_ps += '</details>'
 
         # ── 病毒类群分布 ──
         vt = ps.get("virus_taxa") or []
         if vt:
-            s_ps += '<details style="margin-top:6px"><summary style="font-weight:600;color:var(--accent);cursor:pointer;font-size:12px">检出病毒类群 Top</summary>'
-            s_ps += '<div class="tb-scroll"><table style="font-size:12px"><tr><th>病毒类群（最特异节点）</th><th>样本数</th></tr>'
+            s_ps += '<details style="margin-top:6px"><summary style="font-weight:600;color:var(--accent);cursor:pointer;font-size:12px">Top Detected Viral Taxa</summary>'
+            s_ps += '<div class="tb-scroll"><table style="font-size:12px"><thead><tr><th>Viral Taxon (most specific node)</th><th>Samples</th></tr></thead><tbody>'
             for name, cnt in vt:
                 s_ps += f'<tr><td>{_esc(name)}</td><td>{cnt}</td></tr>'
-            s_ps += '</table></div></details>'
+            s_ps += '</tbody></table></div></details>'
 
         # ── 病毒占比 Top ──
         tr = ps.get("top_runs") or []
         if tr:
-            s_ps += '<details style="margin-top:6px"><summary style="font-weight:600;color:var(--accent);cursor:pointer;font-size:12px">病毒占比 Top 样本</summary>'
-            s_ps += ('<div class="tb-scroll"><table style="font-size:12px"><tr><th>Run</th><th>来源</th>'
-                     '<th>病毒%</th><th>病毒%(已鉴定口径)</th><th>主要病毒</th><th>测序量</th>'
-                     '<th>主要非病毒物种</th></tr>')
+            s_ps += '<details style="margin-top:6px"><summary style="font-weight:600;color:var(--accent);cursor:pointer;font-size:12px">Top Samples by Viral Fraction</summary>'
+            s_ps += ('<div class="tb-scroll"><table style="font-size:12px"><thead><tr><th>Run</th><th>Source</th>'
+                     '<th>Virus %</th><th>Virus % (identified)</th><th>Top Virus</th><th>Reads</th>'
+                     '<th>Top Non-Viral Organism</th></tr></thead><tbody>')
             for r in tr:
                 s_ps += (f'<tr><td>{_esc(r.get("acc",""))}</td><td>{_esc(r.get("source",""))}</td>'
                          f'<td>{_esc(r.get("virus_pct",""))}</td><td>{_esc(r.get("virus_pct_ident",""))}</td>'
                          f'<td>{_esc(r.get("top_virus",""))}</td><td>{_esc(r.get("analysed",""))}</td>'
                          f'<td>{_esc(r.get("top_organism",""))}</td></tr>')
-            s_ps += '</table></div></details>'
+            s_ps += '</tbody></table></div></details>'
 
         # ── 无分类数据 ──
         uc = ps.get("unresolved_by_cra") or []
         if uc:
             n_unres = sum(v for _, v in uc)
-            s_ps += '<details style="margin-top:6px"><summary style="font-weight:600;color:var(--accent);cursor:pointer;font-size:12px">无预计算分类的样本（需本地比对）</summary>'
-            s_ps += '<div class="tb-scroll"><table style="font-size:12px"><tr><th>项目 (CRA)</th><th>无数据 run 数</th></tr>'
+            s_ps += '<details style="margin-top:6px"><summary style="font-weight:600;color:var(--accent);cursor:pointer;font-size:12px">Samples without pre-computed taxonomy (need local alignment)</summary>'
+            s_ps += '<div class="tb-scroll"><table style="font-size:12px"><thead><tr><th>Project (CRA)</th><th>Runs without data</th></tr></thead><tbody>'
             for k, v in uc:
                 s_ps += f'<tr><td>{_esc(k)}</td><td>{v}</td></tr>'
-            s_ps += '</table></div>'
-            s_ps += (f'<p style="font-size:11px;color:var(--ink-secondary)">共 {n_unres} 条。'
-                     f'这<b>不是分析失败</b>，而是上游没有这份预计算数据 —— 要判断物种只能下载 reads 本地比对。</p>')
+            s_ps += '</tbody></table></div>'
+            s_ps += (f'<p style="font-size:11px;color:var(--ink-secondary)">Runs without pre-computed taxonomy: {n_unres}. '
+                     f'This is <b>not an analysis failure</b> — the upstream simply has no pre-computed data for these runs, so species can only be determined by downloading reads for local alignment.</p>')
             s_ps += '</details>'
 
         # ---- 病毒层面画像：病毒本身也是结果 ----
         vp = ps.get("virus_profile") or {}
         if vp:
             s_ps += ('<div style="margin-top:16px;padding-top:12px;border-top:1px dashed var(--border)">')
-            s_ps += ('<h3 style="font-size:14px;margin:0 0 8px">病毒层面画像 '
+            s_ps += ('<h3 style="font-size:14px;margin:0 0 8px">Virus Profile '
                      '<span style="font-weight:400;font-size:11px;color:var(--ink-secondary)">'
-                     '—— 有哪些病毒 / 各占多少 / 在多少样本里出现'
-                     f'（口径 {_esc(vp.get("scope",""))}）</span></h3>')
+                     '— which viruses / their share / in how many samples'
+                     f' (scope: {_esc(vp.get("scope",""))})</span></h3>')
             s_ps += '<div class="card-row">'
             s_ps += (f'<div class="card"><div class="value">{vp.get("n_taxa","?")}</div>'
-                     f'<div class="label">病毒分类单元</div></div>')
+                     f'<div class="label">Viral Taxa</div></div>')
             s_ps += (f'<div class="card"><div class="value">{vp.get("n_leaf","?")}</div>'
-                     f'<div class="label">末端节点（实际检出最细）</div></div>')
+                     f'<div class="label">Leaf Nodes (finest detected)</div></div>')
             s_ps += (f'<div class="card"><div class="value">{vp.get("n_viral","?")}</div>'
-                     f'<div class="label">检出病毒的样本</div></div>')
+                     f'<div class="label">Samples with Virus</div></div>')
             for c, n in sorted((vp.get("by_class") or {}).items(), key=lambda x: -x[1])[:3]:
                 s_ps += (f'<div class="card"><div class="value" style="font-size:20px">{n}</div>'
                          f'<div class="label">{_esc(c)}</div></div>')
@@ -725,30 +736,34 @@ def generate_html(out_dir, search_data, info_data, plot_images, ai_html="", out_
                     nm = Path(fp).name
                     s_ps += (f'<div class="chart-card"><div class="chart-title">{_esc(nm)}</div>'
                              f'<img src="data:image/png;base64,{b64}" loading="lazy" alt="{_esc(nm)}"></div>')
+                elif Path(fp).is_file():
+                    mb = Path(fp).stat().st_size / 1024 ** 2
+                    s_ps += (f'<div class="chart-card"><div class="chart-title">{_esc(Path(fp).name)}</div>'
+                             f'<p style="padding:12px;color:#d97706;font-size:13px">⚠ Image too large ({mb:.1f} MB) — not embedded, open the file directly: <code>{_esc(fp)}</code></p></div>')
 
             s_ps += ('<details style="margin-top:8px" open><summary style="font-weight:600;'
                      'color:var(--accent);cursor:pointer;font-size:13px">'
-                     f'跨样本检出率 Top（{_esc(vp.get("scope",""))} 口径）</summary>')
+                     f'Top Cross-Sample Prevalence (scope: {_esc(vp.get("scope",""))})</summary>')
             s_ps += ('<div class="tb-scroll"><table style="font-size:12px">'
-                     '<tr><th>病毒</th><th>大类</th><th>阶元</th><th>检出样本</th>'
-                     '<th>检出率%</th><th>平均丰度%</th><th>命中份额%</th></tr>')
+                     '<thead><tr><th>Virus</th><th>Class</th><th>Rank</th><th>Detected Samples</th>'
+                     '<th>Prevalence %</th><th>Mean Abundance %</th><th>Hit Share %</th></tr></thead><tbody>')
             for r in vp.get("rows", []):
                 s_ps += (f'<tr><td>{_esc(r.get("virus",""))}</td><td>{_esc(r.get("class",""))}</td>'
                          f'<td>{_esc(r.get("rank",""))}</td><td>{_esc(r.get("n",""))}</td>'
                          f'<td>{_esc(_fmt_pct(r.get("pct"), 1))}</td>'
                          f'<td>{_esc(_fmt_pct(r.get("mean_pct"), 3))}</td>'
                          f'<td>{_esc(_fmt_pct(r.get("share"), 2))}</td></tr>')
-            s_ps += '</table></div></details>'
+            s_ps += '</tbody></table></div></details>'
             s_ps += (f'<p style="font-size:11px;color:var(--ink-secondary);margin-top:4px">'
-                     f'Source: <code>{_esc(vp.get("dir",""))}</code> —— '
-                     f'k-mer 快速分类，定位是<b>预筛</b>：低丰度病毒会漏、'
-                     f'噬菌体/人类病毒（如 Human gammaherpesvirus 4）属常见背景。'
-                     f'结论请用下游比对复核。</p>')
+                     f'Source: <code>{_esc(vp.get("dir",""))}</code> — '
+                     f'fast k-mer classification, intended as <b>pre-screening</b>: low-abundance viruses may be missed, and '
+                     f'phages / human viruses (e.g. Human gammaherpesvirus 4) are common background. '
+                     f'Confirm conclusions with downstream alignment.</p>')
             s_ps += '</div>'
 
         s_ps += f'<p style="font-size:12px;color:var(--ink-secondary);margin-top:6px">Source: <code>{_esc(ps.get("path","?"))}</code></p>'
     else:
-        s_ps += '<p style="color:var(--ink-secondary)">Pre-screen output not found. Run Stage 3 (prescreen) first —— 该阶段不下载数据，只查上游预计算分类。</p>'
+        s_ps += '<p style="color:var(--ink-secondary)">Pre-screen output not found. Run Stage 3 (prescreen) first — this stage downloads no data, it only reads the upstream pre-computed taxonomy.</p>'
     s_ps += '</section>'
 
     # ── Stage 4: Download ──
@@ -775,16 +790,30 @@ def generate_html(out_dir, search_data, info_data, plot_images, ai_html="", out_
     # ── Stage 4: Plot ──
     s4 = f'''<section id="stage-plot"><h2>S5: Plot <button onclick="runStageAI('s4_plot')" class="ai-stage-btn">AI</button></h2>
     <p style="color:var(--ink-secondary);font-size:13px">SCI-grade 6-panel landscape figure: (A) Temporal Distribution, (B) Database Proportion, (C) Top Organizations, (D) Top Tissues, (E) Top Locations, (F) Top Growth Stages.</p>'''
-    if plot_images.get("landscape"):
-        b64 = img_to_base64(plot_images["landscape"], 5000)
-        if b64:
-            s4 += f'<div class="chart-card"><div class="chart-title">Combined Landscape (6-panel SCI Figure)</div><img src="data:image/png;base64,{b64}" loading="lazy" alt="SCI Landscape Figure"></div>'
+    if plot_images.get("landscape") or plot_images.get("landscape_pdf"):
+        for fp in plot_images.get("landscape") or []:
+            # 双数据源 (from_search/ from_info/) 各出一套图时全部嵌入, 子目录名作小标题
+            src = Path(fp).parent.name or "plot"
+            b64 = img_to_base64(fp, 5000)
+            if b64:
+                s4 += f'<div class="chart-card"><div class="chart-title">Combined Landscape (6-panel SCI Figure) — {_esc(src)}</div><img src="data:image/png;base64,{b64}" loading="lazy" alt="SCI Landscape Figure ({_esc(src)})"></div>'
+            else:
+                mb = Path(fp).stat().st_size / 1024 ** 2
+                s4 += (f'<div class="chart-card"><div class="chart-title">Combined Landscape (6-panel SCI Figure) — {_esc(src)}</div>'
+                       f'<p style="padding:12px;color:#d97706;font-size:13px">⚠ Image too large ({mb:.1f} MB) — not embedded, open the file directly: <code>{_esc(fp)}</code></p></div>')
+        for fp in plot_images.get("landscape_pdf") or []:
+            try:
+                href = str(Path(fp).relative_to(out)).replace("\\", "/")
+            except ValueError:
+                href = str(fp).replace("\\", "/")
+            s4 += (f'<p style="font-size:12px;margin-top:4px">PDF (vector): '
+                   f'<a href="{_esc(href)}">{_esc(fp)}</a></p>')
     else:
         s4 += '<p style="color:var(--ink-secondary)">Plot not found. Run Stage 5 (plot) to generate the 6-panel figure.</p>'
     s4 += '</section>'
 
     # ── Stage 5: HostRef ──
-    s_hr = f'''<section id="stage-hostref"><h2>S6: HostRef 宿主参考基因组</h2>
+    s_hr = f'''<section id="stage-hostref"><h2>S6: HostRef — Host Reference Genome</h2>
     <p style="color:var(--ink-secondary);font-size:13px">Host genome acquisition (datasets / ncbi-genome-download / FTP / gget, or user FASTA)
     and Kraken2 / Bowtie2 / HISAT2 / Minimap2 index building — consumed by the host-depletion stage downstream.</p>'''
     if hr:
@@ -805,14 +834,14 @@ def generate_html(out_dir, search_data, info_data, plot_images, ai_html="", out_
     s_hr += '</section>'
 
     # ── Stage 6: Handoff ──
-    s5 = f'''<section id="stage-handoff"><h2>S7: Handoff 交接清单</h2>
+    s5 = f'''<section id="stage-handoff"><h2>S7: Handoff Manifest</h2>
     <p style="color:var(--ink-secondary);font-size:13px">Downstream handoff manifest: Run → FASTQ absolute paths + Core14 metadata.
     Consumed by <code>data_preprocessing_pipeline/clean-data.py --input</code> as the file-level sample list.</p>'''
     if h:
         s5 += f'<div class="card-row"><div class="card"><div class="value">{h.get("runs","?")}</div><div class="label">Runs Total</div></div>'
         s5 += f'<div class="card"><div class="value" style="color:#16a34a">{h.get("ready","?")}</div><div class="label">Ready (files found)</div></div>'
         s5 += f'<div class="card"><div class="value" style="color:#d97706">{h.get("missing","?")}</div><div class="label">Missing (metadata only)</div></div></div>'
-        s5 += f'<p style="font-size:12px;color:var(--ink-secondary)">Manifest: <code>{_esc(h.get("path","sample_handoff.csv"))}</code> — 列: Run / Layout / R1_Path / R2_Path / SE_Path / Size_MB / ScientificName / Tissue / Location / BioProject / Status</p>'
+        s5 += f'<p style="font-size:12px;color:var(--ink-secondary)">Manifest: <code>{_esc(h.get("path","sample_handoff.csv"))}</code> — columns: Run / Layout / R1_Path / R2_Path / SE_Path / Size_MB / ScientificName / Tissue / Location / BioProject / Status</p>'
     else:
         s5 += '<p style="color:var(--ink-secondary)">Handoff manifest not generated (no down/ files and no Core14 metadata found).</p>'
     s5 += '</section>'
@@ -972,6 +1001,7 @@ function runStageAI(sn){{
   var secId='stage-'+sn.replace('s1_','').replace('s2_','').replace('s3_','').replace('s4_','');
   if(sn.startsWith('s1'))secId='stage-search';
   else if(sn.startsWith('s2'))secId='stage-info';
+  else if(sn.startsWith('s3_prescreen'))secId='stage-prescreen';
   else if(sn.startsWith('s3'))secId='stage-down';
   else if(sn.startsWith('s4'))secId='stage-plot';
   var target=document.querySelector('#'+secId+' .ai-stage-summary');
@@ -979,10 +1009,10 @@ function runStageAI(sn){{
   target.style.display='block';target.textContent='Generating...';
   var btn=document.querySelector('#'+secId+' .ai-stage-btn');if(btn)btn.disabled=true;
   var info=stageData[sn]||{{}};if(typeof info==='object')info=JSON.stringify(info);
-  var sysMsg='你是生物信息学研究员。仅基于数据陈述。中文输出。学术书面语。不捏造。';
+  var sysMsg='You are a bioinformatics researcher. State only facts supported by the data. Output in English. Academic prose. Do not fabricate.';
   fetch(getAIURL(),{{method:'POST',headers:{{'Content-Type':'application/json','Authorization':'Bearer '+key}},
     body:JSON.stringify({{model:document.getElementById('ai-model').value,
-    messages:[{{role:'system',content:sysMsg}},{{role:'user',content:'基于以下管线数据撰写1-2句中文学术总结: '+info}}],
+    messages:[{{role:'system',content:sysMsg}},{{role:'user',content:'Write a 1-2 sentence academic summary in English based on the following pipeline data: '+info}}],
     temperature:0.3,max_tokens:300}})
   }}).then(r=>r.json()).then(d=>{{target.textContent=d.choices[0].message.content.trim();if(btn)btn.disabled=false;}}).catch(e=>{{target.textContent='Error: '+e;if(btn)btn.disabled=false;}});
 }}
@@ -995,7 +1025,7 @@ function sendChat(){{
   var thinking=document.createElement('div');thinking.className='chat-msg ai';thinking.textContent='...';msgs.appendChild(thinking);
   fetch(getAIURL(),{{method:'POST',headers:{{'Content-Type':'application/json','Authorization':'Bearer '+key}},
     body:JSON.stringify({{model:document.getElementById('ai-model').value,
-    messages:[{{role:'system',content:'你是生物信息学助手。基于以下元数据管线数据回答。中文。仅陈述数据支持的事实: '+JSON.stringify(stageData)}},{{role:'user',content:q}}],
+    messages:[{{role:'system',content:'You are a bioinformatics assistant. Answer based on the metadata pipeline data below. English. State only facts supported by the data: '+JSON.stringify(stageData)}},{{role:'user',content:q}}],
     temperature:0.3,max_tokens:300}})
   }}).then(r=>r.json()).then(d=>{{thinking.textContent=d.choices[0].message.content.trim();msgs.scrollTop=msgs.scrollHeight;}}).catch(e=>{{thinking.textContent='Error: '+e;}});
 }}

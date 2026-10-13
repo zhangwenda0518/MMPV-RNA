@@ -1,18 +1,23 @@
 #!/usr/bin/env python3
 """
-rescue_pipeline.py -- 病毒基因组四支路级联拯救 v3.0
+rescue_pipeline.py -- 病毒基因组两支路级联拯救 v3.2
 ==================================================
 
-独立拯救脚本: 接收已聚类的 centroids + clusters + 拆分文件, 直接执行四支路拯救。
+独立拯救脚本: 接收已聚类的 centroids + clusters + 拆分文件, 直接执行拯救。
 不重新聚类, 不重新过滤。聚类由 cluster_pipeline.py 完成, rescue 只做拯救。
 
 流程:
-  分支 A: CheckV 并行评估 → completeness>90% 输出; 失败 → 分支 B
-  分支 B: Virseqimprover reads 延伸 (cluster 内多样本聚合) → CheckV; 失败 → 分支 C
-  分支 C: BLASTN 参考比对 + ragtag 参考引导延伸 → CheckV; 失败 → 分支 D
-  分支 D: genus_len 属水平长度拯救 (同属物种长度 ±15%)
+  分支 A: CheckV 并行评估 → completeness>90% 直通; 失败 → 分支 B
+  分支 B: Virseqimprover reads 延伸 (cluster 内多样本聚合) → CheckV 复评
+          (CheckV=NA/不达标但长度达属均 85% 时回退拯救, 节段属按范围判定)
+  A/B 均失败 → 记为未拯救, 不入 HQ 目录
 
-依赖: checkv, blastn, Virseqimprover.py
+分支 C (BLASTN 参考引导重建) 与分支 D (genus_len 兜底) 已于 2026-10-11 移除归档
+(archive/20261011_rescue_branch_cd/): C 的重建路径因自动库缺 -parse_seqids 全部失败,
+实际产出退化为"片段被参考包含即直通" (OneKP 9212/9212 直通, <1kb 占 11%), 与高质量
+序列目标相悖; D 在全部实测数据集零产出且与 B 的属长回退重复。详见归档目录 README。
+
+依赖: checkv, Virseqimprover.py
 """
 
 import argparse, subprocess, sys, os, threading, shutil, json, re
@@ -158,20 +163,6 @@ def parse_checkv(qs_path, threshold=90.0):
         else:
             fail_ids.add(cid)
     return pass_ids, fail_ids, skip_ids, meta
-
-
-# ══════════════════════════════════════════════════════════════
-# BLASTN
-# ══════════════════════════════════════════════════════════════
-
-def run_blastn(query, db, out, threads=4):
-    """BLASTN 搜索: dc-megablast → outfmt 6 std qlen slen (供 WVDB 坐标合并)"""
-    run(["blastn", "-task", "dc-megablast", "-query", str(query), "-db", str(db),
-         "-outfmt", "6 qseqid sseqid pident length qstart qend sstart send evalue bitscore qlen slen",
-         "-num_threads", str(threads), "-max_target_seqs", "5",
-         "-evalue", "1e-5", "-word_size", "11",
-         "-out", str(out)],
-        f"BLASTN: {Path(query).name}", check=False)
 
 
 # ══════════════════════════════════════════════════════════════
@@ -706,7 +697,7 @@ def branch_b(fail_fa, fastq_dir, work_dir, checkv_db, threads, jobs, vsi_path, s
             vsi_records.append(rec)
 
     if not vsi_records:
-        # VSI 全部失败 → 所有原始序列写进 fail_fa → 分支 C 兜底 (不丢任何 contig)
+        # VSI 全部失败 → 所有原始序列写进 fail_fa 存档 (2026-10-11 起无分支 C, 记为未拯救)
         fail_fa_out = d / "branchB_fail.fasta"
         SeqIO.write(list(fail_records) + list(short_records), fail_fa_out, "fasta")
         return None, str(fail_fa_out), 0, len(fail_records) + len(short_records)
@@ -750,7 +741,7 @@ def branch_b(fail_fa, fastq_dir, work_dir, checkv_db, threads, jobs, vsi_path, s
     # ── CheckV=NA 或 <threshold 的 genus 回退拯救 ──
     # VSI 自身已停止延伸, CheckV 数值不可靠时, 用属平均长度兜底
     genus_rescued = set()
-    genus_tol = 0.85  # 属长度容忍度 (同分支D)
+    genus_tol = 0.85  # 属长度容忍度 (原分支D已归档, 现仅分支 B 使用)
     rescue_candidates = set()
     if skip_ids: rescue_candidates.update(skip_ids)
     if fail_ids: rescue_candidates.update(fail_ids)
@@ -789,10 +780,10 @@ def branch_b(fail_fa, fastq_dir, work_dir, checkv_db, threads, jobs, vsi_path, s
                 vsi_match = [r for r in vsi_records if r.id == rec.id]
                 fail_to_write.append(vsi_match[0] if vsi_match else rec)
         else:
-            # VSI 失败 (超时/崩溃/未延伸/缺reads) → 原始序列进分支 C 兜底
+            # VSI 失败 (超时/崩溃/未延伸/缺reads) → 原始序列记为未拯救 (仅存档)
             vsi_fail_n += 1
             fail_to_write.append(rec)
-    # short_records (< min_vsi_len) 也加入 fail → 直升分支 C
+    # short_records (< min_vsi_len) 也加入 fail 存档 (不参与 VSI, 记为未拯救)
     if short_records:
         fail_to_write.extend(short_records)
     SeqIO.write(fail_to_write, fail_fa_out, "fasta")
@@ -800,508 +791,14 @@ def branch_b(fail_fa, fastq_dir, work_dir, checkv_db, threads, jobs, vsi_path, s
     n_fail_total = len(fail_ids - genus_rescued) + len(skip_ids - genus_rescued) + len(short_records) + vsi_fail_n
     na_fail = len(skip_ids - genus_rescued)
     num_fail = len(fail_ids - genus_rescued)
-    print(f"  分支 B: pass={len(pass_ids):,}  fail={n_fail_total} (含{len(short_records)}短序列直升C, {na_fail}条NA直升C, {num_fail}条<阈值直升C)")
+    print(f"  分支 B: pass={len(pass_ids):,}  未拯救={n_fail_total} (含{len(short_records)}短序列, {na_fail}条NA, {num_fail}条<阈值)")
     return str(pass_fa) if Path(pass_fa).is_file() else None, \
            str(fail_fa_out) if Path(fail_fa_out).is_file() else None, \
            len(pass_ids), n_fail_total
 
 
 # ══════════════════════════════════════════════════════════════
-# 分支 C: BLASTN + ragtag 多contig参考引导拼接 (N填充)
-# ══════════════════════════════════════════════════════════════
-
-def _load_clusters(clusters_tsv):
-    """加载 vclust 聚类结果 → {contig_id: cluster_rep_id}"""
-    cmap = {}
-    if not clusters_tsv or not Path(clusters_tsv).is_file():
-        return cmap
-    with open(clusters_tsv) as f:
-        for line in f:
-            parts = line.strip().split('\t')
-            if len(parts) >= 2:
-                cmap[parts[0].strip()] = parts[1].strip()
-    return cmap
-
-
-def _collect_pass_ids(*fa_paths):
-    """收集多个 pass FASTA 的 ID 集 (文件缺失/0 字节自动跳过)。"""
-    ids = set()
-    for fa in fa_paths:
-        if fa and os.path.isfile(fa) and os.path.getsize(fa) > 0:
-            for rec in SeqIO.parse(str(fa), "fasta"):
-                ids.add(rec.id)
-    return ids
-
-
-def _select_c_input(fa_b_fail, fa_a_fail, pass_ids, out_fa):
-    """分支 C 输入选择 + 防重复过滤 (与分支 D 保护同口径)。
-
-    B 有失败 → 直接用 B 的失败集 (与 B-pass 天然不相交, 过滤为 no-op);
-    B 无失败 (branchB_fail.fasta 为 0 字节, SeqIO.write 空列表也建文件) → 回退
-    A 的失败集, 但该集合含已被 B 拯救的 ID, 而 C 的 BLAST 库又加载 branchB_pass
-    (见 branch_c 内 895-901), 这些 ID 会被 C 再判 completo → 同一 ID 同时进
-    branchB_pass/branchC_pass → all_HQ 拼接重复、cnt 虚高。故先剔除已在 pass 集
-    (A/B pass) 的 ID。
-
-    返回 (可用 FASTA 路径 | None, 排除条数); 无排除时原样返回 fail 路径,
-    全部被排除时返回 None (调用方跳过分支 C)。
-    """
-    fail_for_c = fa_b_fail if (fa_b_fail and os.path.isfile(fa_b_fail)
-                               and os.path.getsize(fa_b_fail) > 0) else fa_a_fail
-    if not fail_for_c or not pass_ids or not os.path.isfile(fail_for_c):
-        return fail_for_c, 0
-    kept, n_excl = [], 0
-    for rec in SeqIO.parse(str(fail_for_c), "fasta"):
-        if rec.id in pass_ids:
-            n_excl += 1
-        else:
-            kept.append(rec)
-    if not n_excl:
-        return fail_for_c, 0
-    if not kept:
-        return None, n_excl
-    Path(out_fa).parent.mkdir(parents=True, exist_ok=True)
-    SeqIO.write(kept, out_fa, "fasta")
-    return str(out_fa), n_excl
-
-
-def branch_c(fail_fa, fastq_dir, work_dir,
-             checkv_db, blast_db, threads, jobs, vsi_path=None, salmon_bin=None,
-             clusters=None, clustermap_tsv=None, centroids_fa=None, split_dir=None, fasta_info=None,
-             max_vsi_samples=10, threshold=90.0, taxonomy_tsv=None, cdhit_fa=None, flye_sample_map=None):
-    """B 失败 → 按属分组多contig + BLASTN自建库参考 + ragtag拼接 + CheckV质量标注"""
-    d = Path(work_dir) / "branch_c"; d.mkdir(parents=True, exist_ok=True)
-
-    if not fail_fa or not os.path.isfile(fail_fa):
-        print("  分支 C: 无待处理序列"); return None, 0
-    fail_records = list(SeqIO.parse(fail_fa, "fasta"))
-    if not fail_records:
-        print("  分支 C: 无待处理序列"); return None, 0
-
-    # 加载 cluster 信息 + centroids
-    cmap = {}
-    if clustermap_tsv:
-        cmap = _load_clusters(clustermap_tsv)
-    centroids_all = {}
-    cluster_split = {}  # {cluster_id: [records]} from split_fastas
-    if centroids_fa and Path(centroids_fa).is_file():
-        for rec in SeqIO.parse(centroids_fa, "fasta"):
-            centroids_all[rec.id] = rec
-    if split_dir and Path(split_dir).is_dir():
-        for sp in Path(split_dir).glob("cluster_*.all.fasta"):
-            cid = sp.stem.replace("cluster_", "").replace(".all", "")
-            cluster_split[cid] = list(SeqIO.parse(sp, "fasta"))
-    if cmap and centroids_all:
-        print(f"  分支 C: clusters={len(set(cmap.values()))}, centroids={len(centroids_all)}")
-
-    # 查找工具 (建库前)
-    ragtag_bin = shutil.which("ragtag.py") or os.path.expanduser("~/mambaforge/bin/ragtag.py")
-    blastdbcmd_bin = shutil.which("blastdbcmd") or "blastdbcmd"
-    bwa_bin = shutil.which("bwa-mem2") or shutil.which("bwa") or "bwa-mem2"
-    vc_bin = shutil.which("viral_consensus")
-    has_ragtag = os.path.isfile(ragtag_bin) if ragtag_bin else False
-    has_vc = vc_bin is not None
-    print(f"  分支 C: ragtag={'✓' if has_ragtag else '✗ (仅BLASTN)'}  viral_consensus={'✓' if has_vc else '✗ (仅ragtag/BLASTN)'}  bwa={bwa_bin}")
-
-    # ── BLAST DB: 优先用户指定, 否则自动构建 (cdhit_combined + 分支B成功补充) ──
-    if blast_db:
-        print(f"  分支 C: 使用指定 BLAST DB = {blast_db}")
-    else:
-        all_cluster_seqs = []
-        seen_ids = set()
-        # 主库: cdhit_combined.fasta (用户指定 → 自动搜索)
-        if not cdhit_fa:
-            for guess in [
-                Path(work_dir).parent.parent / _D['d_cluster'] / "2_cdhit" / "cdhit_combined.fasta",
-                Path(work_dir).parent / _D['d_cluster'] / "2_cdhit" / "cdhit_combined.fasta",
-            ]:
-                if guess.is_file():
-                    cdhit_fa = str(guess)
-                    break
-            if not cdhit_fa:
-                cdhit_glob = list(Path(work_dir).parent.parent.glob("*/2_cdhit/cdhit_combined.fasta"))
-                if cdhit_glob:
-                    cdhit_fa = str(cdhit_glob[0])
-        cdhit_added = 0
-        if cdhit_fa and Path(cdhit_fa).is_file():
-            for rec in SeqIO.parse(str(cdhit_fa), "fasta"):
-                if rec.id not in seen_ids:
-                    all_cluster_seqs.append(rec)
-                    seen_ids.add(rec.id)
-                    cdhit_added += 1
-            if cdhit_added:
-                print(f"  分支 C: 加载 cdhit_combined → +{cdhit_added:,} 条 (主参考库)")
-        # 补充: 分支 B 成功的基因组 (VSI reads 延伸后通过 CheckV/genus 的 contig)
-        branch_b_pass = Path(work_dir) / "branch_b" / "branchB_pass.fasta"
-        bb_added = 0
-        if branch_b_pass.is_file() and branch_b_pass.stat().st_size > 0:
-            for rec in SeqIO.parse(str(branch_b_pass), "fasta"):
-                if rec.id not in seen_ids:
-                    all_cluster_seqs.append(rec)
-                    seen_ids.add(rec.id)
-                    bb_added += 1
-            if bb_added:
-                print(f"  分支 C: 加载分支B成功基因组 → +{bb_added} 条")
-        if not all_cluster_seqs:
-            print("  分支 C: 无可用的序列构建 BLAST DB, 跳过"); return None, 0
-
-        auto_db_dir = d / "auto_blast_db"
-        auto_db_dir.mkdir(exist_ok=True)
-        auto_db_fa = auto_db_dir / "cluster_centroids.fasta"
-        SeqIO.write(all_cluster_seqs, auto_db_fa, "fasta")
-
-        subprocess.run(["makeblastdb", "-in", str(auto_db_fa), "-dbtype", "nucl",
-                        "-out", str(auto_db_dir / "auto_db"), "-title", "Cluster_Centroids"],
-                       capture_output=True, check=False)
-        blast_db = str(auto_db_dir / "auto_db")
-        db_final_count = sum(1 for _ in SeqIO.parse(auto_db_fa, "fasta"))
-        print(f"  分支 C: 自动构建 BLAST DB → {db_final_count} 条")
-
-    # ── VirASCA 风格: 先 BLAST → 三档分类 → 属分组 → 分流 ──
-
-    # Phase 1: BLASTN 所有 fail contigs (并行, 断点续传)
-    blast_done_dir = d / "blast_results"; blast_done_dir.mkdir(exist_ok=True)
-    contig_blast = {}  # {contig_id: {"best_acc": str, "best_pident": float, "best_qcov": float, "best_bitscore": float, "status": str}}
-    blast_lock = threading.Lock()
-
-    def _blast_one(rec):
-        bid = rec.id
-        out_tsv = blast_done_dir / f"{bid[:60]}.tsv"
-        if not out_tsv.is_file():
-            tmp_fa = blast_done_dir / f"{bid[:60]}.fa"
-            SeqIO.write([rec], tmp_fa, "fasta")
-            run_blastn(tmp_fa, blast_db, out_tsv, threads)
-        if not out_tsv.is_file() or out_tsv.stat().st_size == 0:
-            with blast_lock: contig_blast[bid] = {"status": "no_hit"}
-            return
-        hits = [l.strip() for l in open(out_tsv) if l.strip() and not l.startswith('#')]
-        if not hits:
-            with blast_lock: contig_blast[bid] = {"status": "no_hit"}
-            return
-        # 对每个 hit 计算 qcov, 排除自匹配, 选最佳
-        best = None
-        qlen = len(rec.seq)
-        for line in hits:
-            cols = line.split('\t')
-            if len(cols) < 12: continue
-            try:
-                pid = float(cols[2]); alen = int(cols[3]); qlen_hit = int(cols[10])
-                acc = cols[1]; bitscore = float(cols[9])
-            except: continue
-            if acc == bid: continue  # 自匹配
-            qcov = alen / qlen if qlen > 0 else 0
-            if best is None or bitscore > best["best_bitscore"]:
-                best = {"best_acc": acc, "best_pident": pid, "best_qcov": qcov, "best_bitscore": bitscore}
-        if best is None:
-            with blast_lock: contig_blast[bid] = {"status": "no_hit"}
-            return
-        # 三档分类 (VirASCA: Completo/Intermediario/Incompleto)
-        if best["best_qcov"] >= 0.98:
-            best["status"] = "completo"
-        elif best["best_pident"] >= 90:
-            best["status"] = "intermediario"
-        elif best["best_pident"] >= 60:
-            best["status"] = "incompleto"
-        else:
-            best["status"] = "desconhecido"
-        with blast_lock: contig_blast[bid] = best
-
-    print(f"  分支 C: BLASTN {len(fail_records)} 个 contigs (并行 {jobs} jobs)...")
-    if jobs > 1 and len(fail_records) > 1:
-        with ThreadPoolExecutor(max_workers=min(jobs, len(fail_records))) as ex:
-            list(_safe_tqdm(ex.map(_blast_one, fail_records), total=len(fail_records), desc="  BLASTN", unit="contig"))
-    else:
-        for rec in _safe_tqdm(fail_records, desc="  BLASTN", unit="contig"):
-            _blast_one(rec)
-
-    # 统计
-    n_completo = sum(1 for v in contig_blast.values() if v.get("status") == "completo")
-    n_inter = sum(1 for v in contig_blast.values() if v.get("status") == "intermediario")
-    n_incomp = sum(1 for v in contig_blast.values() if v.get("status") == "incompleto")
-    n_des = sum(1 for v in contig_blast.values() if v.get("status") == "desconhecido")
-    n_nohit = sum(1 for v in contig_blast.values() if v.get("status") == "no_hit")
-
-    # Phase 2: 按 Genus 分组 (从 05_Taxonomy), completo 直达 pass
-    genus_map = {}
-    if taxonomy_tsv and Path(taxonomy_tsv).is_file():
-        genus_map = _load_taxonomy(taxonomy_tsv)
-    genus_groups = defaultdict(set)
-    no_genus_groups = set()  # 无属分类的组名集合
-    completed_pass = []  # Completo contigs 直接通过
-    for rec in fail_records:
-        bi = contig_blast.get(rec.id, {})
-        if bi.get("status") in ("no_hit", "desconhecido"):
-            continue  # 无 BLASTN 命中或 identity<60%, 直接进分支D
-        if bi.get("status") == "completo":
-            # Completo: 直接放入 completed_pass, 不进入 genus 组
-            completed_pass.append(rec)
-            continue
-        g = genus_map.get(rec.id, "")
-        g = g.replace('g__', '').replace('G__', '')
-        if not g:
-            g = f"NOGENUS_{cmap.get(rec.id, rec.id)[:30]}"
-            no_genus_groups.add(g)
-        genus_groups[g].add(rec.id)
-    if completed_pass:
-        print(f"  分支 C: {len(completed_pass)} 条 Completo → 直达 pass (无需组内组装)")
-    n_nogenus = sum(1 for g in genus_groups if g in no_genus_groups)
-    n_valid = len(genus_groups) - n_nogenus
-    print(f"  分支 C: {n_valid} 个属组 + {n_nogenus} 个无属组 (将直接进fail)")
-    print(f"  分支 C 统计: Completo={n_completo}  Intermed={n_inter}  Incompleto={n_incomp}  Desconh={n_des}  NoHit={n_nohit}")
-
-    # Phase 3: 断点续传
-    pass_fa = d / "branchC_pass.fasta"
-    ckpt_file = d / "branchC_checkpoint.txt"
-    done_groups = set()
-    if pass_fa.is_file() and pass_fa.stat().st_size > 0:
-        for rec in SeqIO.parse(str(pass_fa), "fasta"):
-            done_groups.add(rec.id)
-    if ckpt_file.is_file():
-        with open(ckpt_file) as cf:
-            for line in cf: done_groups.add(line.strip())
-    if done_groups:
-        print(f"  分支 C: [resume] 已完成 {len(done_groups)} 个组")
-
-    lock = threading.Lock()
-    pass_records = list(completed_pass)  # Completo contigs 直达
-    fail_group_ids = set()
-
-    # NOGENUS 组标记为 fail (无属分类无法 blastdbcmd 提取参考)
-    for g in list(genus_groups.keys()):
-        if g.startswith("NOGENUS_"):
-            fail_group_ids.add(g)
-    pending_groups = {g: ms for g, ms in genus_groups.items()
-                      if g not in done_groups and not g.startswith("NOGENUS_")}
-    if fail_group_ids:
-        n_nogenus_fail = sum(1 for g in fail_group_ids if g.startswith("NOGENUS_"))
-        print(f"  分支 C: {n_nogenus_fail} 个无属组 → 直接进 fail (无参考可提取)")
-    print(f"  分支 C: {len(pending_groups)} 个属组待处理")
-
-    # ── 参考引导组装 ──
-    def _ref_guided_assembly(ref_fa, member_ids, out_dir, rga_threads=8, log_fh=None):
-        """member_ids: contig ID 列表, 从 cluster 反查样本 → 合并 reads → bwa-mem2+viral_consensus"""
-        d = Path(out_dir); d.mkdir(parents=True, exist_ok=True)
-        consensus_fa = d / "consensus.fa"
-        log = log_fh or open(d / "rga.log", "a")
-        # 断点续传
-        if consensus_fa.is_file() and consensus_fa.stat().st_size > 100:
-            return str(consensus_fa)
-        sample_ids = set()
-        for mid in member_ids:
-            samples = _contig_cluster_samples(mid, clusters, fasta_info, max_vsi_samples, flye_sample_map=flye_sample_map)
-            if samples:
-                sample_ids.update(samples)
-        if not sample_ids:
-            log.write(f"[RGA] 无样本信息 (contigs: {list(member_ids)[:5]})\n"); log.flush()
-            return None
-        r1, r2, _ = _gather_cluster_reads(fastq_dir, list(sample_ids), d, prefix="rga")
-        if not r1:
-            log.write(f"[RGA] reads 未找到 (samples: {list(sample_ids)[:5]})\n"); log.flush()
-            return None
-        log.write(f"[RGA] bwa index {ref_fa}\n"); log.flush()
-        subprocess.run([bwa_bin, "index", str(ref_fa)], stdout=log, stderr=subprocess.STDOUT, check=False)
-        mapped_bam = d / "mapped.bam"
-        bwa_args = [bwa_bin, "mem", "-t", str(rga_threads), str(ref_fa), str(r1)]
-        if r2 and Path(r2).is_file() and Path(r2).stat().st_size > 0:
-            bwa_args.append(str(r2))
-        log.write(f"[RGA] bwa mem + samtools sort\n"); log.flush()
-        p1 = subprocess.Popen(bwa_args, stdout=subprocess.PIPE, stderr=log)
-        p2 = subprocess.Popen(["samtools", "sort", "-o", str(mapped_bam), "-"],
-                              stdin=p1.stdout, stdout=log, stderr=subprocess.STDOUT)
-        if p1.stdout: p1.stdout.close()
-        p2.communicate()
-        if not mapped_bam.is_file() or mapped_bam.stat().st_size < 100:
-            log.write("[RGA] mapped.bam empty or missing\n"); log.flush()
-            return None
-        log.write("[RGA] samtools index\n"); log.flush()
-        subprocess.run(["samtools", "index", str(mapped_bam)], stdout=log, stderr=subprocess.STDOUT, check=False)
-        log.write("[RGA] viral_consensus\n"); log.flush()
-        subprocess.run([vc_bin if has_vc else "viral_consensus",
-                 "-i", str(mapped_bam),
-                 "-r", str(ref_fa),
-                 "-o", str(consensus_fa),
-                 "-d", "1",
-                 "-f", "0.5",
-                 "-q", "20",
-                 "--ambig", "N"],
-                stdout=log, stderr=subprocess.STDOUT, check=False)
-        if consensus_fa.is_file() and consensus_fa.stat().st_size > 100:
-            log.write(f"[RGA] done → {consensus_fa}\n"); log.flush()
-            return str(consensus_fa)
-        log.write("[RGA] consensus.fa empty or missing\n"); log.flush()
-        return None
-
-    def _do_group(group_id):
-        """输入: genus 名. 从 contig_blast 取所有成员的 BLASTN 结果, 选参考, 分流."""
-        member_ids = genus_groups[group_id]
-        sub_dir = d / f"group_{group_id[:50].replace('/','_').replace(' ','_')}"
-        sub_dir.mkdir(exist_ok=True)
-        group_log = open(sub_dir / "group.log", "w")
-        group_log.write(f"# Group: {group_id}\n# Members: {len(member_ids)}\n\n")
-        group_log.flush()
-
-        # 收集同属 contigs 的 BLASTN 最佳 hit
-        group_hits = {}  # {acc: {"total_pident": 0, "total_bitscore": 0, "count": 0, "contigs": set()}}
-        group_contigs = []
-        for mid in member_ids:
-            bi = contig_blast.get(mid, {})
-            if bi.get("status") in ("no_hit", "desconhecido", None):
-                continue
-            acc = bi["best_acc"]
-            if acc not in group_hits:
-                group_hits[acc] = {"total_pident": 0, "total_bitscore": 0, "count": 0, "contigs": set()}
-            group_hits[acc]["total_pident"] += bi["best_pident"]
-            group_hits[acc]["total_bitscore"] += bi["best_bitscore"]
-            group_hits[acc]["count"] += 1
-            group_hits[acc]["contigs"].add(mid)
-            # 收集 contig 序列
-            if mid in centroids_all:
-                group_contigs.append(centroids_all[mid])
-            else:
-                match = [r for r in fail_records if r.id == mid]
-                if match: group_contigs.append(match[0])
-
-        if not group_hits:
-            group_log.write("[SKIP] no valid BLASTN hits\n"); group_log.close()
-            fail_group_ids.add(group_id)
-            return
-
-        # 选最佳参考 (平均 pident 最高, 次选 bitscore)
-        best_acc = max(group_hits, key=lambda a: (group_hits[a]["total_pident"] / group_hits[a]["count"], group_hits[a]["total_bitscore"]))
-        best_info = group_hits[best_acc]
-        avg_pident = best_info["total_pident"] / best_info["count"]
-        n_contigs = best_info["count"]
-        print(f"  [{group_id[:40]}] | {n_contigs} contigs → ref={best_acc} | avg_pident={avg_pident:.1f}%", flush=True)
-
-        # 提取参考序列
-        ref_fa = sub_dir / "reference.fa"
-        if not ref_fa.is_file():
-            top_acc_clean = best_acc.replace('ref|', '').replace('|', ' ')
-            group_log.write(f"[blastdbcmd] extracting {best_acc}\n"); group_log.flush()
-            result = subprocess.run([blastdbcmd_bin, "-db", str(blast_db), "-entry", best_acc,
-                                     "-out", str(ref_fa)], capture_output=True, text=True)
-            if result.returncode != 0:
-                result = subprocess.run([blastdbcmd_bin, "-db", str(blast_db), "-entry",
-                                         top_acc_clean, "-out", str(ref_fa)], capture_output=True, text=True)
-                if result.returncode != 0 or not ref_fa.is_file() or ref_fa.stat().st_size <= 100:
-                    group_log.write(f"[FAIL] blastdbcmd: {best_acc} → {result.stderr}\n"); group_log.flush()
-                    print(f"  [FAIL] blastdbcmd: {best_acc}", flush=True)
-                    fail_group_ids.add(group_id)
-                    group_log.close()
-                    return
-
-        # 路径分流 (VirASCA: Intermediario/Incompleto, Completo已在Phase2直达pass)
-        final_fa = None; method = None
-        query_fa = sub_dir / "query_contigs.fa"
-        SeqIO.write(group_contigs, query_fa, "fasta")
-        scaffold_fa = sub_dir / "ragtag_out" / "ragtag.scaffold.fasta"
-        cv_out = sub_dir / "cv" / "completeness.tsv"
-
-        # Intermediario (avg_pident >= 90%): 参考引导组装
-        if avg_pident >= 90.0:
-            group_log.write(f"[method] Intermediario → RGA\n"); group_log.flush()
-            consensus = _ref_guided_assembly(ref_fa, member_ids, sub_dir / "rga", log_fh=group_log)
-            if consensus:
-                final_fa = Path(consensus)
-                method = "RGA"
-            else:
-                method = "RGA-failed"
-
-        # Incompleto (avg_pident 60-90%): ragtag (>=2 contigs) 或 RGA (<2 contigs)
-        elif n_contigs >= 2:
-            group_log.write(f"[method] Incompleto ({n_contigs} contigs) → RagTag\n"); group_log.flush()
-            if not scaffold_fa.is_file():
-                ragtag_out = sub_dir / "ragtag_out"
-                ragtag_out.mkdir(exist_ok=True)
-                subprocess.run([ragtag_bin, "scaffold", str(ref_fa), str(query_fa),
-                              "-o", str(ragtag_out), "-t", str(threads), "-w", "-u"],
-                             stdout=group_log, stderr=subprocess.STDOUT, check=False)
-            if scaffold_fa.is_file() and scaffold_fa.stat().st_size > 0:
-                final_fa = scaffold_fa
-                method = "ragtag"
-        else:
-            # Incompleto 单 contig: 回退 RGA
-            group_log.write(f"[method] Incompleto (1 contig) → RGA-solo\n"); group_log.flush()
-            consensus = _ref_guided_assembly(ref_fa, member_ids, sub_dir / "rga", log_fh=group_log)
-            if consensus:
-                final_fa = Path(consensus)
-                method = "RGA-solo"
-
-        if final_fa is None:
-            group_log.write(f"[FAIL] {method}\n"); group_log.flush()
-            print(f"  [FAIL] {group_id[:40]} | {method}", flush=True)
-            fail_group_ids.add(group_id)
-            group_log.close()
-            return
-
-        # 输出 + CheckV 标注
-        final_size = final_fa.stat().st_size if final_fa.is_file() else 0
-        comp_val = "NA"
-        if checkv_db and final_fa.is_file() and final_size > 0:
-            if not cv_out.is_file() or cv_out.stat().st_mtime < final_fa.stat().st_mtime:
-                run_checkv(final_fa, sub_dir / "cv", checkv_db, threads)
-            if cv_out.is_file():
-                try:
-                    df = pd.read_csv(cv_out, sep='\t')
-                    if 'aai_completeness' in df.columns and len(df) > 0:
-                        cv = df['aai_completeness'].iloc[0]
-                        comp_val = f"{cv:.1f}%" if not pd.isna(cv) else "NA"
-                except: pass
-        group_log.write(f"[DONE] method={method} size={final_size}bp CheckV={comp_val}\n"); group_log.flush()
-        print(f"  [DONE] {group_id[:40]} | method={method} | size={final_size}bp | CheckV={comp_val}", flush=True)
-        group_log.close()
-        with lock:
-            for srec in SeqIO.parse(str(final_fa), "fasta"):
-                srec.id = group_id
-                srec.description = f"method={method} CheckV={comp_val}"
-                pass_records.append(srec)
-            with open(ckpt_file, "a") as cf: cf.write(group_id + "\n")
-
-    # Phase 4: 执行
-    if jobs > 1 and len(pending_groups) > 1:
-        with ThreadPoolExecutor(max_workers=min(jobs, len(pending_groups))) as ex:
-            list(_safe_tqdm(ex.map(_do_group, pending_groups), total=len(pending_groups),
-                     desc="  分支 C", unit="group"))
-    else:
-        for gid in _safe_tqdm(list(pending_groups), desc="  分支 C", unit="group"):
-            _do_group(gid)
-
-    if pass_records:
-        SeqIO.write(pass_records, pass_fa, "fasta")
-
-    # 输出失败的 contigs → 供分支 D 使用
-    fail_fa_out = d / "branchC_fail.fasta"
-    fail_contig_ids = set()
-    for gid in fail_group_ids:
-        if gid in genus_groups:
-            fail_contig_ids |= genus_groups[gid]
-    # 加入 no_hit + desconhecido contigs
-    for rec in fail_records:
-        bi = contig_blast.get(rec.id, {})
-        if bi.get("status") in ("no_hit", "desconhecido"):
-            fail_contig_ids.add(rec.id)
-    fail_contigs = [r for r in fail_records if r.id in fail_contig_ids]
-    if fail_contigs:
-        SeqIO.write(fail_contigs, fail_fa_out, "fasta")
-
-    n_pass = len(pass_records)
-    n_fail = len(fail_contigs)
-    print(f"  分支 C: pass={n_pass}  fail={n_fail}")
-
-    # 写出 genus→contig 映射 (供最终报告追溯)
-    map_tsv = d / "branchC_genus_map.tsv"
-    with open(map_tsv, "w") as mf:
-        mf.write("genus_group\tcontig_ids\n")
-        for gid, mids in genus_groups.items():
-            mf.write(f"{gid}\t{','.join(mids)}\n")
-
-    if n_pass == 0:
-        return None, str(fail_fa_out) if fail_contigs else None, 0, n_fail
-    return str(pass_fa), str(fail_fa_out) if fail_contigs else None, n_pass, n_fail
-
-
-# ══════════════════════════════════════════════════════════════
-# 分支 D: genus_len 属水平长度拯救
+# 属分类 / 属长工具 (分支 B 回退判定 + 报告共用)
 # ══════════════════════════════════════════════════════════════
 
 def _load_taxonomy(tax_tsv):
@@ -1415,124 +912,6 @@ def _genus_len_ok(contig_len, gal, seg_info, genus_tol=0.85):
     if gal and gal > 0:
         return contig_len >= gal * genus_tol
     return False
-
-
-def branch_d(fail_fa, tax_tsv, genus_len_path, output_dir,
-             genus_tol=0.85, min_len=500):
-    """分支 D: genus_len 属水平长度拯救
-
-    对 ABC 都失败的 contig, 如果其长度 ≥ 同属平均长度的 genus_tol (默认85%),
-    则认为其具有属水平完整长度, 拯救为 HQ。
-
-    Args:
-        fail_fa: 最终失败的 FASTA 路径 (来自 branch C 或 B)
-        tax_tsv: taxonomy 分类 TSV (final_integrated_classification.tsv)
-        genus_len_path: genus→avg_length 参考文件
-        output_dir: 输出根目录 (通常为 08_Rescue/Plant/)
-        genus_tol: 容忍度 (默认 0.85, 即 contig >= 85% 属平均长度则拯救)
-        min_len: 最小长度阈值 bp (低于此值不参与 genus 拯救)
-    Returns:
-        (pass_fa, pass_count): 拯救的 FASTA 路径 & 数量
-    """
-    d = Path(output_dir) / "branch_d"; d.mkdir(parents=True, exist_ok=True)
-
-    if not fail_fa or not Path(fail_fa).is_file():
-        print("  分支 D: 无失败序列"); return None, 0
-
-    if not tax_tsv or not Path(tax_tsv).is_file():
-        print("  分支 D: 无 taxonomy 文件, 跳过"); return None, 0
-
-    if not genus_len_path or not Path(genus_len_path).is_file():
-        print("  分支 D: 无 genus_len 文件, 跳过"); return None, 0
-
-    fail_records = list(SeqIO.parse(str(fail_fa), "fasta"))
-    total = len(fail_records)
-    if not fail_records:
-        print("  分支 D: 无失败序列"); return None, 0
-
-    # 加载 taxonomy 和 genus_len
-    tax_map = _load_taxonomy(tax_tsv)
-    genus_len_map = _load_genus_len(genus_len_path)
-    # v2 表节段属元数据 (老表为空 dict → 全部走属均值规则)
-    seg_meta = _load_genus_seg_meta(genus_len_path)
-
-    rescued = []
-    no_tax = 0
-    no_genus_ref = 0
-    too_short = 0
-    below_threshold = 0
-
-    for rec in fail_records:
-        cid = rec.id
-        contig_len = len(rec.seq)
-
-        # 长度过滤
-        if contig_len < min_len:
-            too_short += 1
-            continue
-
-        # 查 taxonomy → genus
-        genus = tax_map.get(cid)
-        if not genus:
-            no_tax += 1
-            continue
-
-        # 查 genus → avg_length
-        avg_len = genus_len_map.get(genus)
-        if not avg_len or avg_len <= 0:
-            no_genus_ref += 1
-            continue
-
-        # 计算 fraction (节段属用范围判定, 其余沿用 >= genus_tol 均值)
-        sinfo = seg_meta.get(genus) if seg_meta else None
-        if _genus_len_ok(contig_len, avg_len, sinfo, genus_tol):
-            if sinfo and sinfo.get("is_segmented"):
-                lo = sinfo["ref_min"] * genus_tol
-                hi = sinfo["ref_max"] * (2.0 - genus_tol)
-                rec.description = (f"genus_rescued genus={genus} len={contig_len}bp "
-                                   f"range=[{lo:.0f},{hi:.0f}]bp mode=segmented_range")
-            else:
-                rec.description = f"genus_rescued genus={genus} len={contig_len}bp avg={avg_len:.0f}bp fraction={contig_len/avg_len:.2f}"
-            rescued.append(rec)
-        else:
-            below_threshold += 1
-
-    pass_fa = d / "branchD_pass.fasta"
-    report_tsv = d / "branchD_report.tsv"
-    fail_fa_out = d / "branchD_fail.fasta"
-    fail_records_out = []
-
-    if rescued:
-        SeqIO.write(rescued, str(pass_fa), "fasta")
-
-    # 写出详细报告（无论是否有成功拯救）
-    with open(report_tsv, "w") as rf:
-        rf.write("contig_id\tlength\tgenus\tref_avg_len\tfraction\tstatus\n")
-        for rec in fail_records:
-            cid = rec.id; clen = len(rec.seq)
-            g = tax_map.get(cid, "")
-            al = genus_len_map.get(g, 0) if g else 0
-            frac = clen / al if al > 0 else 0
-            if clen < min_len:
-                status = "too_short"
-            elif not g:
-                status = "no_taxonomy"
-            elif not al:
-                status = "no_genus_ref"
-            elif _genus_len_ok(clen, al, seg_meta.get(g) if seg_meta else None, genus_tol):
-                status = "rescued"
-            else:
-                status = "below_threshold"
-                fail_records_out.append(rec)
-            rf.write(f"{cid}\t{clen}\t{g}\t{al:.0f}\t{frac:.4f}\t{status}\n")
-
-    # 写出失败序列 FASTA（供调试）
-    if fail_records_out:
-        SeqIO.write(fail_records_out, str(fail_fa_out), "fasta")
-
-    print(f"  分支 D: rescue={len(rescued)}  no_tax={no_tax}  "
-          f"no_ref={no_genus_ref}  short={too_short}  below_thr={below_threshold}")
-    return str(pass_fa) if rescued else None, len(rescued)
 
 
 # ══════════════════════════════════════════════════════════════
@@ -1732,8 +1111,9 @@ def _write_rescue_report(out_dir, centroids_records, clusters,
         a_note = f"（另含 {prepass} 条免拯救 prepass, 不在候选表内）" if prepass else ""
         mf.write(f"| A | CheckV ≥90% (蛋白完整) | {a_inrun} {a_note} | {a_inrun/total*100:.1f}% |\n")
         mf.write(f"| B | VSI reads延伸 + genus回退 | {cnt_b} | {cnt_b/total*100:.1f}% |\n")
-        mf.write(f"| C | BLASTN + RGA/ragtag | {cnt_c} | {cnt_c/total*100:.1f}% |\n")
-        mf.write(f"| D | genus_len 属水平兜底 | {cnt_d} | {cnt_d/total*100:.1f}% |\n")
+        if cnt_c or cnt_d:   # 历史输出兼容 (2026-10-11 起 C/D 已归档, 新运行恒为 0 不再列出)
+            mf.write(f"| C | BLASTN + RGA/ragtag | {cnt_c} | {cnt_c/total*100:.1f}% |\n")
+            mf.write(f"| D | genus_len 属水平兜底 | {cnt_d} | {cnt_d/total*100:.1f}% |\n")
         mf.write(f"| **合计 (候选表内)** | | **{rescued_rows}** | **{rescued_rows/total*100:.1f}%** |\n")
         mf.write(f"| 未拯救 (候选表内) | | {failed} | {failed/total*100:.1f}% |\n")
         if prepass:
@@ -1764,23 +1144,23 @@ def _write_rescue_report(out_dir, centroids_records, clusters,
 # ══════════════════════════════════════════════════════════════
 
 def main():
-    p = argparse.ArgumentParser(description="病毒基因组四支路级联拯救 v3.0 (A:CheckV≥90% → B:VSI → C:参考引导重建 → D:属长兜底)")
+    p = argparse.ArgumentParser(description="病毒基因组两支路级联拯救 v3.2 (A: CheckV≥90% 直通 → B: VSI reads 延伸; C/D 已归档见 archive/20261011_rescue_branch_cd/)")
     p.add_argument("--centroids", "-c", required=True, help="输入 centroids FASTA")
     p.add_argument("--clusters-tsv", required=True, help="vclust 聚类结果 TSV")
     p.add_argument("--split-dir", required=True, help="per-cluster 拆分文件目录 (split_fastas/)")
     p.add_argument("--output-dir", "-o", required=True)
     p.add_argument("--fastq-dir", "-fq", required=True, help="原始 reads 目录")
     p.add_argument("--checkv-db", "-cv", required=True)
-    p.add_argument("--blast-db", "-db", default=None)
+    p.add_argument("--blast-db", "-db", default=None, help="[已废弃 2026-10-11] 分支C已归档, 接受但忽略")
     p.add_argument("--virseqimprover-path", default=None)
     p.add_argument("--salmon-bin", default=os.path.expanduser("~/mambaforge/envs/Virseqimprover/bin/salmon"))
     p.add_argument("--max-vsi-samples", type=int, default=10, help="VSI 最大合并样本数 (0=不限制, 默认10)")
-    p.add_argument("--min-vsi-len", type=int, default=2000, help="VSI 最小 contig 长度 bp (短于此值直升分支C, 默认2000)")
+    p.add_argument("--min-vsi-len", type=int, default=2000, help="VSI 最小 contig 长度 bp (短于此值跳过VSI记为未拯救, 默认2000)")
     p.add_argument("--checkv-threshold", type=float, default=90.0, help="CheckV completeness 通过阈值 (默认90, Plant建议80)")
-    p.add_argument("--taxonomy-tsv", default=None, help="05_Taxonomy 分类结果 final_integrated_classification.tsv (分支D genus_len 拯救)")
-    p.add_argument("--cdhit-fa", default=None, help="cdhit_combined.fasta 路径 (供分支C自动建库, 默认自动搜索 04_CLUSTER/)")
-    p.add_argument("--genus-len", default=None, help="genus_len 参考文件 (属平均长度, 分支D用)")
-    p.add_argument("--genus-tolerance", type=float, default=0.85, help="分支D genus 拯救容忍度 (默认0.85, 即contig≥85%%属平均长度则拯救)")
+    p.add_argument("--taxonomy-tsv", default=None, help="05_Taxonomy 分类结果 final_integrated_classification.tsv (B 属长回退判定用)")
+    p.add_argument("--cdhit-fa", default=None, help="[已废弃 2026-10-11] 分支C已归档, 接受但忽略")
+    p.add_argument("--genus-len", default=None, help="genus_len 参考文件 (属平均长度, B 属长回退判定用)")
+    p.add_argument("--genus-tolerance", type=float, default=0.85, help="[已废弃 2026-10-11] 分支D已归档, 接受但忽略 (B 内部固定 0.85)")
     p.add_argument("--threads", "-t", type=int, default=64)
     p.add_argument("--jobs", "-j", type=int, default=4, help="Virseqimprover 并行数")
     p.add_argument("--ani", type=float, default=0.95, help="最终 vclust ANI")
@@ -1788,8 +1168,11 @@ def main():
     p.add_argument("--resume", action="store_true", default=True, help="断点续传 (默认开启, --no-resume 关闭)")
     p.add_argument("--no-resume", action="store_false", dest="resume", help="禁用断点续传, 强制重跑")
     p.add_argument("--flye-sample-map", default=None,
-                   help="Flye 共组装 contig→样本 映射 JSON (merge 阶段产出, 供 VSI/RGA reads 回退)")
+                   help="Flye 共组装 contig→样本 映射 JSON (merge 阶段产出, 供 VSI reads 回退)")
     args = p.parse_args()
+    for _dep in ("blast_db", "cdhit_fa", "genus_tolerance"):
+        if getattr(args, _dep, None) not in (None, 0.85):
+            print(f"  [DEPRECATED] --{_dep.replace('_', '-')} 已随分支C/D归档被忽略 (2026-10-11)")
 
     # 进程守护
     try:
@@ -1829,11 +1212,11 @@ def main():
             flye_sample_map = json.load(fm)
         print(f"  flye_sample_map: {len(flye_sample_map)} 条 Flye contig 映射")
 
-    # 统计长短序列分布 (短序列后续跳过B直升C)
+    # 统计长短序列分布 (短序列跳过 B, 记为未拯救)
     n_long = sum(1 for r in centroids_records if len(r.seq) >= args.min_vsi_len)
     n_short = len(centroids_records) - n_long
     if n_short > 0:
-        print(f"  长度分布: ≥{args.min_vsi_len}bp={n_long} 条, <{args.min_vsi_len}bp={n_short} 条 (A后跳过B直升C)")
+        print(f"  长度分布: ≥{args.min_vsi_len}bp={n_long} 条, <{args.min_vsi_len}bp={n_short} 条 (A后跳过B, 不拯救)")
 
     # 2. 分支 A: CheckV 并行评估 (全部序列)
     print("\n── Step 1: 分支 A (CheckV) ──")
@@ -1880,78 +1263,24 @@ def main():
             seg_meta = _load_genus_seg_meta(args.genus_len)
         fa_b_pass, fa_b_fail, cnt_b, cnt_b_fail = branch_b(fa_a_fail, args.fastq_dir, out, args.checkv_db, args.threads, args.jobs, args.virseqimprover_path, args.salmon_bin, clusters, fasta_info, args.max_vsi_samples, args.min_vsi_len, args.checkv_threshold, genus_map=genus_map, genus_lens=genus_lens, flye_sample_map=flye_sample_map, seg_meta=seg_meta)
 
-    # 4. 分支 C: BLASTN (纯比对)
-    print("\n── Step 3: 分支 C (BLASTN) ──")
-    fa_c_pass = out / "branch_c" / "branchC_pass.fasta"
-    fa_c_fail = out / "branch_c" / "branchC_fail.fasta"
-    cnt_c = 0; cnt_c_fail = 0
-    if args.resume and fa_c_pass.is_file() and fa_c_pass.stat().st_size > 0:
-        print("  [RESUME] 分支 C 已有结果, 跳过")
-        cnt_c = sum(1 for _ in SeqIO.parse(fa_c_pass, "fasta"))
-        cnt_c_fail = sum(1 for _ in SeqIO.parse(fa_c_fail, "fasta")) if fa_c_fail.is_file() else 0
-        fa_c_pass, fa_c_fail = str(fa_c_pass), str(fa_c_fail) if fa_c_fail.is_file() else None
-    else:
-        # 防重复 (2026-10-03, 同分支 D 1874-1876 口径): B 全 pass 时 branchB_fail.fasta
-        # 为 0 字节 → 回退 fa_a_fail, 但该文件含已被 B 拯救的 ID; C 的 BLAST 库又加载
-        # branchB_pass, 这些 ID 会被 C 再判 completo → 同一 ID 进两个 pass 集 →
-        # all_HQ 重复 + cnt 虚高。故 C 输入先剔除已在 A/B pass 集的 ID (排除数打日志)。
-        fail_for_c, n_excl_c = _select_c_input(
-            fa_b_fail, fa_a_fail, _collect_pass_ids(fa_a_pass, fa_b_pass),
-            out / "branch_c" / "branchC_input.fasta")
-        if n_excl_c:
-            print(f"  分支 C: 输入排除 {n_excl_c} 条已在 A/B pass 的 ID (防合并重复)")
-        if fail_for_c:
-            fa_c_pass, fa_c_fail, cnt_c, cnt_c_fail = branch_c(fail_for_c, args.fastq_dir, out, args.checkv_db,
-                getattr(args, 'blast_db', None),
-                args.threads, args.jobs,
-                clusters=clusters,
-                clustermap_tsv=args.clusters_tsv,
-                centroids_fa=args.centroids,
-                split_dir=args.split_dir,
-                fasta_info=fasta_info,
-                taxonomy_tsv=getattr(args, 'taxonomy_tsv', None),
-                cdhit_fa=getattr(args, 'cdhit_fa', None),
-                flye_sample_map=flye_sample_map)
-        else:
-            print("  分支 C: 无待处理序列 (全部已在 A/B pass), 跳过")
-            fa_c_pass = fa_c_fail = None   # cnt_c/cnt_c_fail 保持上方初始化的 0
-
-    # 5. 分支 D: genus_len 属水平长度拯救 (ABC 全失败后的最终兜底)
-    print("\n── Step 4: 分支 D (genus_len) ──")
-    fa_d_pass = out / "branch_d" / "branchD_pass.fasta"
-    cnt_d = 0
-    if args.resume and fa_d_pass.is_file() and fa_d_pass.stat().st_size > 0:
-        print("  [RESUME] 分支 D 已有结果, 跳过")
-        cnt_d = sum(1 for _ in SeqIO.parse(fa_d_pass, "fasta"))
-        fa_d_pass = str(fa_d_pass)
-    else:
-        # 分支 D 只处理分支 C 失败的下传。C 全 pass (fail 为空/不存在) 时 D 无任务,
-        # 绝不回退到 B/A fail (否则会重复处理 C 已 pass 的 contig, 合并时重复 ID)
-        fail_for_d = fa_c_fail
-        if fail_for_d and Path(fail_for_d).is_file() and Path(fail_for_d).stat().st_size > 0:
-            fa_d_pass, cnt_d = branch_d(fail_for_d, args.taxonomy_tsv, args.genus_len,
-                                         out, args.genus_tolerance)
-        else:
-            print("  分支 D: 无失败序列可处理")
-
-    # 6. 合并
-    print("\n── Step 5: 合并 ──")
+    # 3. 合并
+    print("\n── Step 3: 合并 ──")
     d4 = out / "merged"; d4.mkdir(exist_ok=True)
     merged = d4 / "all_HQ.fasta"
     centroids_final = out / "centroids" / "final_centroids.fasta"
 
     if args.resume and centroids_final.is_file() and centroids_final.stat().st_size > 0:
-        print("  [RESUME] Step 5+6 已有最终结果, 跳过")
-        total_m = sum(1 for _ in SeqIO.parse(merged, "fasta")) if merged.is_file() else cnt_a + cnt_b + cnt_c + cnt_d
+        print("  [RESUME] Step 3+4 已有最终结果, 跳过")
+        total_m = sum(1 for _ in SeqIO.parse(merged, "fasta")) if merged.is_file() else cnt_a + cnt_b
         n_final = sum(1 for _ in SeqIO.parse(centroids_final, "fasta"))
     else:
         with open(merged, "w") as mf:
-            for fp in [fa_a_pass, fa_b_pass, fa_c_pass, fa_d_pass]:
+            for fp in [fa_a_pass, fa_b_pass]:
                 if fp and os.path.isfile(fp):
                     with open(fp) as inf:
                         mf.write(inf.read())
         total_m = sum(1 for _ in SeqIO.parse(merged, "fasta"))
-        print(f"  A:{cnt_a}  B:{cnt_b}  C:{cnt_c}  D:{cnt_d}  →  {total_m} 条  →  {merged}")
+        print(f"  A:{cnt_a}  B:{cnt_b}  →  {total_m} 条  →  {merged}")
 
         if total_m < 2:
             print("  [SKIP] <2 条, 跳过最终 vclust")
@@ -1960,8 +1289,8 @@ def main():
                 cf.write(mf2.read())
             n_final = total_m
         else:
-            # 7. 最终 vclust 去重
-            print("\n── Step 6: vclust 最终去重 ──")
+            # 4. 最终 vclust 去重
+            print("\n── Step 4: vclust 最终去重 ──")
             centroids_final.parent.mkdir(parents=True, exist_ok=True)
             fctsv = run_vclust_prefilter_align_cluster(str(merged), out / "centroids", args.ani, args.qcov, args.threads)
             fclusters = parse_vclust_clusters(fctsv)
@@ -1977,10 +1306,10 @@ def main():
             print(f"\n  清理: {bd}")
 
     # ── 生成最终追踪报告 ──
-    print("\n── Step 7: 生成报告 ──")
+    print("\n── Step 5: 生成报告 ──")
     _write_rescue_report(out, centroids_records, clusters,
-                          fa_a_pass, fa_b_pass, fa_c_pass, fa_d_pass,
-                          cnt_a, cnt_b, cnt_c, cnt_d, n_final,
+                          fa_a_pass, fa_b_pass, None, None,
+                          cnt_a, cnt_b, 0, 0, n_final,
                           taxonomy_tsv=getattr(args, 'taxonomy_tsv', None),
                           genus_lens_path=getattr(args, 'genus_len', None),
                           min_vsi_len=args.min_vsi_len,
@@ -1990,8 +1319,6 @@ def main():
     print(f"\n{'=' * 60}")
     print(f"  分支 A (CheckV):      {cnt_a:,}")
     print(f"  分支 B (VSI):         {cnt_b:,}")
-    print(f"  分支 C (BLASTN):      {cnt_c:,}")
-    print(f"  分支 D (genus_len):   {cnt_d:,}")
     print(f"  最终无冗余:           {n_final:,}")
     print(f"  最终输出:             {centroids_final}")
     print(f"  耗时:                 {elapsed / 60:.1f} min")

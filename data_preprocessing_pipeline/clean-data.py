@@ -125,7 +125,28 @@ class FastqScanner:
         return re.search(r'[._-][Rr]?%d(?=[._-]|$)' % digit, rest, re.I)
 
     @staticmethod
+    def _extract_lane(fname, sample):
+        # lane token (_L001/_L002 等, Illumina 命名): 同样只在样本名之后的部分
+        # 查找, 避免样本名自带的 Lxxx 片段被误判; 无 lane 返回 None
+        base = os.path.basename(fname)
+        m = re.search(re.escape(sample) + r'(.*)$', base)
+        rest = m.group(1) if m else base
+        lm = re.search(r'[._-]([Ll]\d+)(?=[._-]|$)', rest)
+        return lm.group(1).upper() if lm else None
+
+    @staticmethod
     def scan_and_pair(input_dir):
+        """扫描输入目录, 返回 (样本, R1, R2|None) 任务列表。
+
+        lane 感知: 同一样本的文件先按 lane token (_L001/_L002) 分桶 ——
+          - 同 lane 的 R1/R2 配对; 不同 lane 各自成对 (旧实现只取第一对,
+            其余 lane 整对丢弃);
+          - 样本跨多个 lane 时任务键加 lane 后缀 ({sample}_L001) 保证输出名
+            唯一 (旧实现里多文件同键会在并发下抢写同一输出); 单 lane 保持
+            原样本名 (输出命名/断点记录契约不变);
+          - 同 lane 内仍无法唯一配对 (多个 R1 / 配对后还有多余文件) 时
+            raise ValueError, 列出冲突文件 (fail-loud, 不做静默丢弃)。
+        """
         patterns = ["**/*fq*", "**/*fastq*"]
         files = set()
         for p in patterns:
@@ -139,17 +160,41 @@ class FastqScanner:
         tasks = []
         for sample, f_list in samples.items():
             f_list = sorted(f_list)
-            # 自动寻找 R1 和 R2 标识
-            r1 = next((f for f in f_list if FastqScanner._has_read_tag(f, sample, 1)), None)
-            r2 = next((f for f in f_list if FastqScanner._has_read_tag(f, sample, 2)), None)
-            
-            if len(f_list) == 2 and not r1 and not r2:
-                r1, r2 = f_list[0], f_list[1]
-                
-            if r1 and r2: tasks.append((sample, r1, r2))
-            else:
-                for f in f_list: tasks.append((sample, f, None))
-        
+
+            def _conflict(lane, lane_files, _s=sample):
+                return ValueError(
+                    f"样本 {_s} lane {lane or '(无 lane 标记)'} 无法唯一配对, "
+                    f"冲突文件: " + ", ".join(os.path.basename(f) for f in lane_files))
+
+            # 按 lane 分桶 (无 lane 标记的归入 None 桶)
+            by_lane = defaultdict(list)
+            for f in f_list:
+                by_lane[FastqScanner._extract_lane(f, sample)].append(f)
+            multi_lane = len(by_lane) > 1
+
+            for lane, lane_files in by_lane.items():
+                lane_sample = f"{sample}_{lane}" if (multi_lane and lane) else sample
+                r1s = [f for f in lane_files if FastqScanner._has_read_tag(f, sample, 1)]
+                r2s = [f for f in lane_files if FastqScanner._has_read_tag(f, sample, 2)]
+                if len(r1s) > 1 or len(r2s) > 1:
+                    raise _conflict(lane, lane_files)
+                r1 = r1s[0] if r1s else None
+                r2 = r2s[0] if r2s else None
+
+                if len(lane_files) == 2 and not r1 and not r2:
+                    r1, r2 = lane_files[0], lane_files[1]
+
+                if r1 and r2:
+                    if len(lane_files) > 2:      # 配对成功还有多余文件 → 歧义
+                        raise _conflict(lane, lane_files)
+                    tasks.append((lane_sample, r1, r2))
+                elif len(lane_files) == 1:
+                    tasks.append((lane_sample, lane_files[0], None))
+                else:
+                    # 单端多文件 / 只找到一端但仍有其它文件: 逐个当 SE 会同名
+                    # 并发抢写同一输出, 直接报错要求人工确认
+                    raise _conflict(lane, lane_files)
+
         return tasks
 
 # ==========================================
@@ -438,7 +483,11 @@ def main():
         logger.error(f"输入目录不存在: {args.input}")
         sys.exit(1)
 
-    tasks = FastqScanner.scan_and_pair(args.input)
+    try:
+        tasks = FastqScanner.scan_and_pair(args.input)
+    except ValueError as e:
+        logger.error(f"文件配对冲突, 已终止: {e}")
+        sys.exit(1)
     if not tasks:
         logger.error("在输入目录中未找到任何 fastq/fq 文件！")
         sys.exit(1)

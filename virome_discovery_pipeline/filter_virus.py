@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
 """
-02b_Filter: UniProt + CDD tiered virus contig filter.
+02b_Filter: UniProt virus contig filter (CDD/mmseqs 层已移除, 2026-10-11).
 UniProt: Diamond BLASTX + virus TaxID + keyword rescue
-CDD:     mmseqs translated search + 3-tier classification
 
 Modes:
-  -m filter  UniProt(filter) + CDD(filter) → viral+viral_plant+viral_bacteria
-  -m strict  UniProt(strict) + CDD(strict)  → viral only
+  -m filter  UniProt(filter): viral TaxID / 关键词抢救 / 比对不可信抢救 / no-hit 保留
+  -m strict  UniProt(strict): 仅 viral TaxID
   -m raw     symlink only
 
 Split mode (merge-then-split):
@@ -14,8 +13,8 @@ Split mode (merge-then-split):
   -o split_outdir/    Base output dir for per-sample results
 """
 
-import argparse, os, sys, subprocess, csv, re, time
-from collections import Counter, defaultdict
+import argparse, os, sys, subprocess, time
+from collections import defaultdict
 
 # 跨管线统一 I/O 布局 (mmpv_common/, 仓库根): 目录名随 MMPV_IO_LAYOUT 解析
 # (编排器已 normalize 环境变量, 子进程导入本模块时快照即正确布局)
@@ -26,9 +25,6 @@ from mmpv_common.io_layout import layout_dirs as _layout_dirs
 _D = _layout_dirs(os.environ.get("MMPV_IO_LAYOUT"))
 
 DEFAULTS = {
-    'CDD_DB':        os.path.expanduser('~/database/cdd/cdd-db/cdd_db'),
-    'CDD_WHITELIST': os.path.expanduser('~/MMPV-RNA/database/cdd/cdd_virus_final_v4.txt'),
-    'CDD_CLASSIFIED': os.path.expanduser('~/MMPV-RNA/database/cdd/cdd_classified_taxid.tsv'),
     'UNIPROT_DB':     os.environ.get('UNIPROT_DB', os.path.expanduser('~/database/uniport_db/uniref90/uniref90')),
     'VIRUS_TAXID':    os.environ.get('VIRUS_TAXID', os.path.expanduser('~/MMPV-RNA/database/uniprot/virus.taxid.txt')),
     'THREADS':        os.environ.get('THREADS', '120'),
@@ -56,12 +52,13 @@ def symlink_force(src, dst):
 
 # ===================== UniProt =====================
 
-def run_uniprot(input_fa, outdir, uniprot_db, threads, virus_taxid_path=None, mode='filter'):
+def run_uniprot(input_fa, outdir, uniprot_db, threads, virus_taxid_path=None, mode='filter',
+                force=False):
     base = os.path.basename(input_fa).rsplit('.', 1)[0]
     out_fa = os.path.join(outdir, f'{base}_uniprot.fasta')
 
-    # 断点续传: 已有过滤结果则跳过
-    if os.path.isfile(out_fa) and os.path.getsize(out_fa) > 0:
+    # 断点续传: 已有过滤结果则跳过 (--force 时忽略既有产物强制重算)
+    if not force and os.path.isfile(out_fa) and os.path.getsize(out_fa) > 0:
         print(f'  UniProt: [resume] 已有 {out_fa}, 跳过', flush=True)
         return out_fa
 
@@ -187,167 +184,42 @@ def run_uniprot(input_fa, outdir, uniprot_db, threads, virus_taxid_path=None, mo
     print(f'  UniProt: kept {keep_count}/{total_count} contigs', flush=True)
     return out_fa
 
-# ===================== CDD =====================
-
-def run_cdd(input_fa, outdir, cdd_db, whitelist_path, classified_path, threads, mode, orig_base=None):
-    base = orig_base or os.path.basename(input_fa).rsplit('.', 1)[0]
-    out_fa = os.path.join(outdir, f'{base}_cdd_{mode}.fasta')
-
-    whitelist = set(open(whitelist_path).read().strip().split('\n'))
-
-    tier = {}
-    cdd_cat = {}
-    # 逆转录酶 name 正则：Root 类里被 category 漏掉的病毒结构域（RT_LTR/RNase_HI_RT_Ty3 等）
-    RT_RE = re.compile(r"(?i)\brt_|_rt_|_rt\b|reverse transcriptase|rvt_|rtvl")
-    with open(classified_path) as f:
-        for r in csv.DictReader(f, delimiter='\t'):
-            acc = r['accession']
-            cat = r['category']
-            title = r.get('title', '')
-            cdd_cat[acc] = cat
-            if acc not in whitelist: continue
-            if cat == 'Virus': tier[acc] = 1
-            elif cat == 'Virus_title': tier[acc] = 1
-            elif cat == 'Root' and RT_RE.search(title): tier[acc] = 1  # Root 里的逆转录酶
-            elif cat == 'Root': tier[acc] = 3
-            else: tier[acc] = 2
-    for acc in whitelist:
-        if acc not in tier:
-            tier[acc] = 2  # default empirical, Root handled above
-
-    mmd = os.path.join(outdir, 'mmseqs')
-    os.makedirs(mmd, exist_ok=True)
-    qdb = os.path.join(mmd, 'qDB')
-    rdb = os.path.join(mmd, 'rDB')
-    tsv = os.path.join(mmd, 'hits.tsv')
-
-    run(f'mmseqs createdb {input_fa} {qdb} -v 1 --threads {threads}', 'mmseqs-createdb')
-    run(f'mmseqs search {qdb} {cdd_db} {rdb} {mmd}/tmp --search-type 2 -s 4 '
-        f'-v 1 --threads {threads} --max-seqs 300', 'mmseqs-search')
-    run(f'mmseqs convertalis {qdb} {cdd_db} {rdb} {tsv} '
-        f'--format-output query,target,evalue --threads {threads} -v 1', 'mmseqs-convertalis')
-
-    contig_tiers = defaultdict(lambda: Counter())
-    contig_hosts = defaultdict(lambda: Counter())
-
-    with open(tsv) as f:
-        for line in f:
-            p = line.strip().split('\t')
-            if len(p) < 3: continue
-            q, t, ev = p[0], p[1], float(p[2])
-            if ev > 1e-3: continue
-            if t in whitelist:
-                ti = tier.get(t, 3)
-                contig_tiers[q][f'tier{ti}'] += 1
-            else:
-                contig_tiers[q]['non_viral'] += 1
-                cat = cdd_cat.get(t, '')
-                if cat == 'Plant': contig_hosts[q]['Plant'] += 1
-                elif cat == 'Bacteria': contig_hosts[q]['Bacteria'] += 1
-                elif cat == 'Fungi': contig_hosts[q]['Fungi'] += 1
-                elif cat in ('Animal', 'Metazoa'): contig_hosts[q]['Animal'] += 1
-                elif cat == 'Archaea': contig_hosts[q]['Archaea'] += 1
-
-    def dominant_host(contig):
-        ch = contig_hosts.get(contig, Counter())
-        if not ch: return None
-        total = sum(ch.values())
-        top = ch.most_common(1)[0]
-        return top[0] if top[1] > total * 0.5 else top[0]
-
-    def callit(contig):
-        ct = contig_tiers.get(contig, Counter())
-        t1, t2, t3 = ct.get('tier1', 0), ct.get('tier2', 0), ct.get('tier3', 0)
-        nv = ct.get('non_viral', 0)
-        host = dominant_host(contig)
-        # T3 (Root/universal) treated same as T2 → ambiguous
-        if t1 >= 1:
-            return f'viral_{host.lower()}' if host else 'viral'
-        if t2 >= 1 or t3 >= 1:
-            return f'ambiguous_{host.lower()}' if host else 'ambiguous'
-        if host: return f'non_viral_{host.lower()}'
-        if nv > 0: return 'non_viral'
-        return 'unclassified'
-
-    all_contigs = set()
-    with open(input_fa) as f:
-        for line in f:
-            if line.startswith('>'):
-                all_contigs.add(line[1:].split()[0])
-
-    kept = set()
-    calls = Counter()
-    contig_call = {}
-    for contig in sorted(all_contigs):
-        call = callit(contig)
-        contig_call[contig] = call
-        calls[call] += 1
-        # 保留规则: 命中白名单 (tier1/2/3 → viral*/ambiguous*) 或 CDD 无命中 (unclassified)
-        if mode == 'strict':
-            keep = (call == 'viral')  # strict: 仅纯病毒域 (无宿主污染)
-        else:
-            keep = call.startswith('viral') or call.startswith('ambiguous') or call == 'unclassified'
-        if keep:
-            kept.add(contig)
-
-    keep_count = 0
-    with open(input_fa) as fin, open(out_fa, 'w') as fout:
-        write = False
-        for line in fin:
-            if line.startswith('>'):
-                write = line[1:].split()[0] in kept
-                if write: keep_count += 1
-            if write: fout.write(line)
-
-    summary = os.path.join(outdir, 'cdd_calls.tsv')
-    with open(summary, 'w') as f:
-        f.write('contig\tcall\n')
-        for contig in sorted(all_contigs):
-            f.write(f'{contig}\t{contig_call[contig]}\n')
-
-    # 输出 CDD unclassified (无任何 CDD 命中) 的 contig ID 列表
-    if mode == 'filter':
-        uncl_id = os.path.join(outdir, f'{base}_cdd.unclassified.id')
-        n_uncl = 0
-        with open(uncl_id, 'w') as f:
-            for contig in sorted(all_contigs):
-                if contig_call[contig] == 'unclassified':
-                    f.write(contig + '\n')
-                    n_uncl += 1
-        print(f'  CDD unclassified ID → {uncl_id} ({n_uncl} contigs)', flush=True)
-
-    print(f'  CDD ({mode}):')
-    for c, n in calls.most_common():
-        if mode == 'strict':
-            keep = (c == 'viral')
-        else:
-            keep = c.startswith('viral') or c.startswith('ambiguous') or c == 'unclassified'
-        marker = ' KEPT' if keep else ''
-        print(f'    {c}: {n}{marker}')
-    print(f'  Kept: {keep_count}/{len(all_contigs)}')
-
-    return out_fa
-
 # ===================== Split =====================
 
-def split_output(split_outdir, cdd_fa, uniprot_fa, cdd_dir, uniprot_dir, calls_tsv, base, mode='filter'):
-    """Split merged output by contig prefix → per-sample dirs with cdd/ + uniprot/.
-    After split, remove merged cdd/ and uniprot/ dirs."""
+def _sample_of(contig, sample_names=None):
+    """contig header → 样本名。sample_names 提供时按最长前缀匹配 (样本名含 _ 时
+    不再被首段截断, 如样本 SRR1_clean 的 contig SRR1_clean_k141_1 正确归 SRR1_clean);
+    未提供时维持旧行为 (首段 _ 前缀)。匹配要求样本名后跟 _ 或 句点, 防 SRR1 误配
+    到 SRR10 的 contig; 无匹配时回退旧行为。"""
+    if sample_names:
+        best = None
+        for s in sample_names:
+            if (contig == s or contig.startswith(s + '_')
+                    or contig.startswith(s + '.')):
+                if best is None or len(s) > len(best):
+                    best = s
+        if best is not None:
+            return best
+    return contig.split('_', 1)[0]
+
+
+def split_output(split_outdir, uniprot_fa, uniprot_dir, base, sample_names=None):
+    """Split merged output by contig prefix → per-sample dirs with uniprot/.
+    After split, remove merged uniprot/ dir."""
     from collections import defaultdict
 
-    # 确定源文件: UniProt 结果优先, 否则 CDD 结果
-    filtered_fa = uniprot_fa if uniprot_fa and os.path.isfile(uniprot_fa) else cdd_fa
-    if not filtered_fa or not os.path.isfile(filtered_fa):
-        print('Split: 无有效过滤结果 (CDD 和 UniProt 均未产出), 跳过拆分')
+    # 确定源文件: UniProt 结果
+    if not uniprot_fa or not os.path.isfile(uniprot_fa):
+        print('Split: 无有效过滤结果 (UniProt 未产出), 跳过拆分')
         return
 
     # Pass 1: collect sample → contig set
     sample_contigs = defaultdict(set)
-    with open(filtered_fa) as f:
+    with open(uniprot_fa) as f:
         for line in f:
             if line.startswith('>'):
                 contig = line[1:].split()[0]
-                sample = contig.split('_', 1)[0]
+                sample = _sample_of(contig, sample_names)
                 sample_contigs[sample].add(contig)
 
     all_samples = sorted(sample_contigs.keys())
@@ -363,7 +235,7 @@ def split_output(split_outdir, cdd_fa, uniprot_fa, cdd_dir, uniprot_dir, calls_t
                 for line in fin:
                     if line.startswith('>'):
                         contig = line[1:].split()[0]
-                        sample = contig.split('_', 1)[0]
+                        sample = _sample_of(contig, sample_names)
                         # 样本切换 → 关旧开新 (输入按样本分组, 切换次数=样本数-1)
                         if sample != cur_sample:
                             if cur_fh:
@@ -378,31 +250,12 @@ def split_output(split_outdir, cdd_fa, uniprot_fa, cdd_dir, uniprot_dir, calls_t
             if cur_fh:
                 cur_fh.close()
 
-    # CDD 结果 (仅当存在)
-    if cdd_fa and os.path.isfile(cdd_fa):
-        _split_fasta(cdd_fa, 'cdd', f'{base}_cdd_{mode}.fasta')
     # UniProt 结果
     if uniprot_fa and os.path.isfile(uniprot_fa):
         _split_fasta(uniprot_fa, 'uniprot', f'{base}_uniprot.fasta')
 
-    # 拆分 cdd_calls.tsv
-    def _split_calls():
-        sample_calls = defaultdict(list)
-        if calls_tsv and os.path.isfile(calls_tsv):
-            with open(calls_tsv) as f:
-                next(f)
-                for line in f:
-                    contig = line.split('\t', 1)[0]
-                    sample = contig.split('_', 1)[0]
-                    sample_calls[sample].append(line)
-            for s in all_samples:
-                if sample_calls[s]:
-                    s_cdd = os.path.join(split_outdir, s, 'cdd')
-                    os.makedirs(s_cdd, exist_ok=True)
-                    with open(os.path.join(s_cdd, 'cdd_calls.tsv'), 'w') as f:
-                        f.write('contig\tcall\n')
-                        for l in sample_calls[s]:
-                            f.write(l)
+    # 并行: fasta 拆分已完成 (串行一遍), blast/id 并行
+    from concurrent.futures import ThreadPoolExecutor, as_completed
 
     # 拆分 blastx.tsv (UniProt diamond 结果)
     def _split_blast():
@@ -412,7 +265,7 @@ def split_output(split_outdir, cdd_fa, uniprot_fa, cdd_dir, uniprot_dir, calls_t
             with open(blast_tsv) as f:
                 for line in f:
                     contig = line.split('\t', 1)[0]
-                    sample = contig.split('_', 1)[0]
+                    sample = _sample_of(contig, sample_names)
                     sample_blast[sample].append(line)
             for s in all_samples:
                 if sample_blast[s]:
@@ -422,10 +275,7 @@ def split_output(split_outdir, cdd_fa, uniprot_fa, cdd_dir, uniprot_dir, calls_t
                         for l in sample_blast[s]:
                             f.write(l)
 
-    # 并行: fasta 拆分已完成 (CDD/UniProt 串行但每文件一遍), calls/blast/id 并行
-    from concurrent.futures import ThreadPoolExecutor, as_completed
-
-    # 拆分 unclassified ID 列表: 每样本一行到 <s>/cdd/ 或 <s>/uniprot/
+    # 拆分 unclassified ID 列表: 每样本一行到 <s>/uniprot/
     def _split_id(id_file, subdir, outname):
         if not id_file or not os.path.isfile(id_file):
             return
@@ -435,7 +285,7 @@ def split_output(split_outdir, cdd_fa, uniprot_fa, cdd_dir, uniprot_dir, calls_t
                 contig = line.strip()
                 if not contig:
                     continue
-                sample = contig.split('_', 1)[0]
+                sample = _sample_of(contig, sample_names)
                 sample_ids[sample].append(contig)
         for s, ids in sample_ids.items():
             s_dir = os.path.join(split_outdir, s, subdir)
@@ -443,9 +293,7 @@ def split_output(split_outdir, cdd_fa, uniprot_fa, cdd_dir, uniprot_dir, calls_t
             with open(os.path.join(s_dir, outname), 'w') as f:
                 f.write('\n'.join(ids) + '\n')
 
-    cdd_uncl_id = os.path.join(cdd_dir, f'{base}_cdd.unclassified.id') if cdd_dir else None
-    # UniProt unclassified.id 实际由 run_uniprot 生成, base 是 CDD 过滤文件名 (all_candidates_cdd_filter),
-    # 用 glob 匹配避免文件名不一致
+    # UniProt unclassified.id 实际由 run_uniprot 生成, 用 glob 匹配避免文件名不一致
     uniprot_uncl_id = None
     if uniprot_dir and os.path.isdir(uniprot_dir):
         import glob as _glob
@@ -459,53 +307,42 @@ def split_output(split_outdir, cdd_fa, uniprot_fa, cdd_dir, uniprot_dir, calls_t
 
     jobs = []
     with ThreadPoolExecutor(max_workers=4) as ex:
-        if calls_tsv and os.path.isfile(calls_tsv):
-            jobs.append(ex.submit(_split_calls))
         blast_tsv_check = os.path.join(uniprot_dir, 'diamond_uniprot', 'blastx.tsv') if uniprot_dir else None
         if blast_tsv_check and os.path.isfile(blast_tsv_check):
             jobs.append(ex.submit(_split_blast))
-        if cdd_uncl_id and os.path.isfile(cdd_uncl_id):
-            jobs.append(ex.submit(_split_id, cdd_uncl_id, 'cdd', 'cdd.unclassified.id'))
         if uniprot_uncl_id and os.path.isfile(uniprot_uncl_id):
             jobs.append(ex.submit(_split_id, uniprot_uncl_id, 'uniprot', 'uniprot.unclassified.id'))
         for j in as_completed(jobs):
             j.result()
 
-    # COBRA 兼容 symlink: 分层输出 02a原始 → CDD → UniProt
+    # COBRA 兼容 symlink: 分层输出 02a原始 → UniProt
     ident_dir = os.path.normpath(os.path.join(split_outdir, '..', _D['d_ident']))
     for s in all_samples:
         sdir = os.path.join(split_outdir, s)
-        cdd_ok = cdd_fa and os.path.isfile(cdd_fa)
-        uni_ok = uniprot_fa and os.path.isfile(uniprot_fa)
-        cdd_out = os.path.join(sdir, 'cdd', f'{base}_cdd_{mode}.fasta') if cdd_ok else None
-        uni_out = os.path.join(sdir, 'uniprot', f'{base}_uniprot.fasta') if uni_ok else None
+        uni_out = os.path.join(sdir, 'uniprot', f'{base}_uniprot.fasta')
         # 02a 原始候选
         orig_fa = os.path.join(ident_dir, s, f'{s}_virus.all.candidate.fasta')
         if not os.path.isfile(orig_fa):
             orig_fa = os.path.join(ident_dir, s, f'{s}.virus.candidate.fasta')
         if os.path.isfile(orig_fa):
             symlink_force(orig_fa, os.path.join(sdir, f'{s}_virus.all.candidate.fasta'))
-        # CDD 结果 (仅 CDD 真跑过)
-        if cdd_ok:
-            symlink_force(cdd_out, os.path.join(sdir, f'{s}.virus.candidate_cdd_filtered.fasta'))
         # UniProt 结果 (仅 UniProt 真跑过, 无回退)
-        if uni_ok:
+        if os.path.isfile(uni_out):
             symlink_force(uni_out, os.path.join(sdir, f'{s}.virus.candidate_uniprot_filtered.fasta'))
-        # 综合: UniProt > CDD > 02a 原始
-        final_fa = uni_out or cdd_out or orig_fa
+        # 综合: UniProt > 02a 原始
+        final_fa = uni_out if os.path.isfile(uni_out) else orig_fa
         if os.path.isfile(final_fa):
             symlink_force(final_fa, os.path.join(sdir, f'{s}.virus.candidate_filtered.fasta'))
 
-    # 拆分完成后删除合并的 cdd/ 和 uniprot/
+    # 拆分完成后删除合并的 uniprot/
     import shutil
-    for d in (cdd_dir, uniprot_dir):
-        if d and os.path.isdir(d):
-            shutil.rmtree(d, ignore_errors=True)
-            print(f'  removed merged dir: {d}')
+    if uniprot_dir and os.path.isdir(uniprot_dir):
+        shutil.rmtree(uniprot_dir, ignore_errors=True)
+        print(f'  removed merged dir: {uniprot_dir}')
 
     print(f'Split complete: {len(all_samples)} samples')
 
-# ===================== Graph verdict pass (graph 阶段消费点) =====================
+# ===================== FASTA 工具 =====================
 
 def _fasta_ids(path):
     ids = []
@@ -516,35 +353,32 @@ def _fasta_ids(path):
     return ids
 
 
-def _copy_fasta_subset(src, dst, keep_ids):
-    """按 header 首 token 过滤复制 FASTA (记录逐行原样保留)。"""
-    with open(src) as fin, open(dst, 'w') as fout:
-        write_on = False
-        for line in fin:
-            if line.startswith('>'):
-                cid = line[1:].split()[0] if len(line) > 1 else ''
-                write_on = cid in keep_ids
-            if write_on:
-                fout.write(line)
-
-
 # ===================== COBRA 主链镜像 (恢复 filter→COBRA 主链契约) =====================
 
 def build_cobra_mirror(outdir, base, filter_mode, split_by_prefix=False,
-                       verdict_dir=None):
+                       verdict_dir=None, mirror_root=None):
     """把 filter 最终候选集以 02a 兼容结构镜像到
     {d_filter}/candidates/{S}/{S}_virus.all.candidate.fasta, 供 COBRA 主链消费。
+
+    镜像根统一为 filter 输出根的 candidates (2026-10-13 用户裁定):
+      - merged 形态 (--split-by-prefix, outdir = filter 根): outdir/candidates
+      - per-sample 形态 (单样本/--no-merge, outdir = filter 根/<S>): 上提一层到
+        os.path.dirname(outdir)/candidates (旧行为错误落在 <outdir>/candidates
+        即 d_filter/<S>/candidates, 与 COBRA 消费位 d_filter/candidates 错位)
+    mirror_root 显式传入时优先于自动判定。
 
     口径 (2026-10-07 用户裁定): graph 只对 filter 后无证据 (unclassified 且无
     blastx hit) 的结果做过滤 — 该动作由 graph 阶段 (graph_propagation.py,
     本阶段之后运行) 的裁决完成, 本镜像原样搬运, 不做额外增删。
 
-    背景: 原始设计 COBRA 吃 filter 结果 (编排器按 cdd>uniprot>raw 逐级选择);
+    背景: 原始设计 COBRA 吃 filter 结果 (编排器按 cdd>uniprot>raw 逐级选择;
+    CDD 层已于 2026-10-11 移除, 现为 uniprot>raw);
     feb352f (2026-09-30) 因 02b 结构与 cobra raw 模式不兼容导致 8/8 崩溃, 被迫
     绕开 filter。本镜像以 cobra 认识的结构承载 filter 结果, 恢复主链契约且不
     复发崩溃。"""
     del verdict_dir  # 历史参数: 早期镜像曾在此做 graph_nonviral 剔除, 现口径收窄后不再需要
     entries = []
+    persample = False   # 最终链文件直接位于 outdir → outdir 即样本目录 (per-sample 形态)
     if split_by_prefix:
         for d in sorted(os.listdir(outdir)):
             sdir = os.path.join(outdir, d)
@@ -559,9 +393,20 @@ def build_cobra_mirror(outdir, base, filter_mode, split_by_prefix=False,
         pick = chain if os.path.exists(chain) else (alt if os.path.exists(alt) else None)
         if pick:
             entries.append((os.path.basename(os.path.normpath(outdir)), pick))
+            persample = True
     if not entries:
         return
-    mirror_root = os.path.join(outdir, 'candidates')
+    if mirror_root is None:
+        if persample:
+            parent = os.path.dirname(os.path.normpath(outdir))
+            if parent:
+                mirror_root = os.path.join(parent, 'candidates')
+            else:
+                print(f'CobraMirror: WARN 无法从 {outdir} 推出 filter 根 (无父目录), '
+                      f'镜像根回退 {outdir}/candidates', file=sys.stderr, flush=True)
+                mirror_root = os.path.join(outdir, 'candidates')
+        else:
+            mirror_root = os.path.join(outdir, 'candidates')
     os.makedirs(mirror_root, exist_ok=True)
     tot = kept_tot = 0
     for s, chain in entries:
@@ -579,27 +424,22 @@ def build_cobra_mirror(outdir, base, filter_mode, split_by_prefix=False,
 # ===================== Main =====================
 
 def main():
-    parser = argparse.ArgumentParser(description='UniProt + CDD virus contig filter')
+    parser = argparse.ArgumentParser(description='UniProt virus contig filter')
     parser.add_argument('-i', '--input', help='Input fasta (use with -o for single sample)')
     parser.add_argument('--input-dir', help='Input directory of per-sample candidates (merges automatically)')
     parser.add_argument('-o', '--outdir', required=True)
     parser.add_argument('-m', '--filter-mode', choices=['filter','strict','raw'], default='filter')
     parser.add_argument('--skip-uniprot', action='store_true')
-    parser.add_argument('--skip-cdd', action='store_true')
     parser.add_argument('--uniprot-db', default=DEFAULTS['UNIPROT_DB'])
     parser.add_argument('--virus-taxid', default=DEFAULTS['VIRUS_TAXID'])
-    parser.add_argument('--cdd-db', default=DEFAULTS['CDD_DB'])
-    parser.add_argument('--cdd-whitelist', default=DEFAULTS['CDD_WHITELIST'])
-    parser.add_argument('--cdd-classified', default=DEFAULTS['CDD_CLASSIFIED'])
     parser.add_argument('-t', '--threads', default=DEFAULTS['THREADS'])
     parser.add_argument('--split-by-prefix', action='store_true',
                         help='Split output by contig prefix (first _ segment) into sample dirs')
-    parser.add_argument('--graph-verdict-dir', default=None,
-                        help='graph 阶段判定目录 (d_graph); 缺省走 io_layout, 目录不存在则本 pass 无操作')
-    parser.add_argument('--no-graph-rescue', action='store_true',
-                        help='禁用图传播救回 (graph_viral 被丢弃 contig → 加回)')
-    parser.add_argument('--no-graph-demote', action='store_true',
-                        help='禁用图传播降级 (graph_nonviral 零证据保留 contig → 移出)')
+    parser.add_argument('--sample-names', default=None,
+                        help='逗号分隔的已知样本名列表: 按最长前缀匹配确定 contig 归属样本 '
+                             '(样本名含 _ 时不被首段截断); 缺省沿用首段 _ 截断旧行为')
+    parser.add_argument('--force', action='store_true', default=False,
+                        help='忽略既有产物强制重算 (跳过 resume 检查)')
     args = parser.parse_args()
 
     os.makedirs(args.outdir, exist_ok=True)
@@ -613,7 +453,7 @@ def main():
                 with open(f) as fin:
                     fout.write(fin.read())
         args.input = merged_fa
-        if not args.skip_cdd:
+        if args.filter_mode != 'raw':
             args.split_by_prefix = True  # auto-split back
 
     if not args.input:
@@ -621,89 +461,40 @@ def main():
         sys.exit(1)
 
     # Mode resolution
-    skip_uniprot_explicit = '--skip-uniprot' in sys.argv
-    skip_cdd_explicit = '--skip-cdd' in sys.argv
-
-    if skip_uniprot_explicit or skip_cdd_explicit:
-        if not args.skip_uniprot:
-            args.uniprot_mode = 'filter'
-        if not args.skip_cdd:
-            args.mode = 'filter'
-    else:
-        if args.filter_mode == 'raw':
-            args.skip_uniprot = True
-            args.skip_cdd = True
-        elif args.filter_mode == 'filter':
-            args.skip_uniprot = False
-            args.skip_cdd = False
-            args.uniprot_mode = 'filter'
-            args.mode = 'filter'
-        elif args.filter_mode == 'strict':
-            args.skip_uniprot = False
-            args.skip_cdd = False
-            args.uniprot_mode = 'strict'
-            args.mode = 'strict'
+    if args.filter_mode == 'raw':
+        args.skip_uniprot = True
+    args.uniprot_mode = 'strict' if args.filter_mode == 'strict' else 'filter'
 
     print(f'Input:  {args.input}')
     print(f'Output: {args.outdir}')
     print(f'Mode:   {args.filter_mode}', flush=True)
 
     current_input = args.input
-
-    # ---- CDD first (faster, reduces input for UniProt) ----
-    cdd_dir = os.path.join(args.outdir, 'cdd')
-    os.makedirs(cdd_dir, exist_ok=True)
-    filter_fa_path = None
-    calls_tsv_path = None
     base = os.path.basename(current_input).rsplit('.', 1)[0]
 
-    if args.skip_cdd:
-        filter_fa = os.path.join(cdd_dir, f'{base}_cdd_filter.fasta')
-        strict_fa = os.path.join(cdd_dir, f'{base}_cdd_strict.fasta')
-        symlink_force(current_input, filter_fa)
-        symlink_force(current_input, strict_fa)
-        print('CDD: SKIP -> symlink')
-    else:
-        filter_fa_path = os.path.join(cdd_dir, f'{base}_cdd_filter.fasta')
-        calls_tsv_path = os.path.join(cdd_dir, 'cdd_calls.tsv')
-        if args.mode in ('filter', 'both'):
-            if os.path.isfile(filter_fa_path) and os.path.getsize(filter_fa_path) > 0:
-                print(f'CDD: [resume] 已有 {filter_fa_path}, 跳过 CDD 搜索')
-            else:
-                run_cdd(current_input, cdd_dir, args.cdd_db,
-                        args.cdd_whitelist, args.cdd_classified, args.threads, 'filter', orig_base=base)
-        if args.mode in ('strict', 'both'):
-            strict_fa = os.path.join(cdd_dir, f'{base}_cdd_strict.fasta')
-            if os.path.isfile(strict_fa) and os.path.getsize(strict_fa) > 0:
-                print(f'CDD: [resume] 已有 {strict_fa}, 跳过 strict CDD')
-            else:
-                run_cdd(current_input, cdd_dir, args.cdd_db,
-                        args.cdd_whitelist, args.cdd_classified, args.threads, 'strict', orig_base=base)
-
-    # ---- UniProt second (only on CDD-filtered contigs, much smaller) ----
+    # ---- UniProt ----
     uniprot_dir = os.path.join(args.outdir, 'uniprot')
     os.makedirs(uniprot_dir, exist_ok=True)
 
     if args.skip_uniprot:
-        uniprot_out = filter_fa_path or current_input
+        uniprot_out = None
         uniprot_out_link = os.path.join(uniprot_dir, f'{base}_uniprot.fasta')
-        symlink_force(uniprot_out, uniprot_out_link)
+        symlink_force(current_input, uniprot_out_link)
         print('UniProt: SKIP -> symlink')
     else:
-        uni_input = filter_fa_path or current_input
-        uniprot_out = run_uniprot(uni_input, uniprot_dir, args.uniprot_db,
-                                  args.threads, args.virus_taxid, args.uniprot_mode)
+        uniprot_out = run_uniprot(current_input, uniprot_dir, args.uniprot_db,
+                                  args.threads, args.virus_taxid, args.uniprot_mode,
+                                  force=args.force)
 
     # ---- Output ----
     # 确定实际运行的组件 (供 split 判断)
-    cdd_real = filter_fa_path if filter_fa_path else None          # CDD 真跑过
     uni_real = uniprot_out if not args.skip_uniprot else None      # UniProt 真跑过
 
     if args.split_by_prefix:
-        split_output(args.outdir, cdd_real, uni_real,
-                     cdd_dir, uniprot_dir, calls_tsv_path, base, mode=args.mode)
+        sample_names = [s for s in (args.sample_names or '').split(',') if s]
+        split_output(args.outdir, uni_real, uniprot_dir, base, sample_names)
     else:
-        final_src = uni_real or cdd_real or current_input
+        final_src = uni_real or current_input
         final_dst = os.path.join(args.outdir, f'{base}_filtered.fasta')
         symlink_force(final_src, final_dst)
         cobra_dst = os.path.join(args.outdir, f'{base}_virus.all.candidate.fasta')

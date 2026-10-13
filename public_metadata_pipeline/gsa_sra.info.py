@@ -24,7 +24,6 @@ import warnings
 import datetime
 import random
 import requests
-import builtins
 import concurrent.futures
 import pandas as pd
 import xmltodict
@@ -43,7 +42,12 @@ def safe_print(*args, **kwargs):
     kwargs.pop('end', None)
     msg = " ".join(map(str, args))
     tqdm.write(msg)
-builtins.print = safe_print
+# 2026-10-13 修: 旧版 `builtins.print = safe_print` 把**整个进程**的 print 换掉 ——
+# 本模块内函数经 globals 解析 print, 改为模块级遮蔽效果完全相同; 而 builtin 劫持
+# 会让 print.__module__ 变成 'gsa_sra_info', 同进程任何后续 numba 导入
+# (@infer_global(print) 做 sys.modules[val.__module__]) 直接 KeyError
+# (实测: ⑤ 引入 scikit-allel 后, 单 pytest 会话里 ① 测试与 numba 相撞)。
+print = safe_print
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36"

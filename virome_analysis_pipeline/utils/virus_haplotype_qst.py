@@ -13,7 +13,8 @@ EasyHap 思想的 AF 兼容重写 (零 GPL 代码): 把 04_post_analysis 已有�
 ====
 1) Token 化: 每个样本在每个位点编码为离散 token。
    - 默认二值: 值 >= --af-min 记 '1', 否则 '0', 缺失记 'N'
-   - --af-bins "0.05,0.25,0.75": 分级剂量 '0'(低于首阈)/'L'/'M'/'H', 保留准种梯度信息
+   - --af-bins "0.05,0.25,0.75": 分级剂量 L/M/H (实际档位边界 = 第 2/第 3 阈值, 见
+     _bins_legend; 首阈值不产生独立档位), 保留准种梯度信息
 2) QST 定义: 跨全部受检位点的 token 元组即一条单倍型模式; 相同模式归并。
 3) 聚类: union-find 连通分量, 两模式 Hamming 距离 <= --hamming-threshold 即合并;
    距离只在双方均非 'N' 的位点计算 (缺失跳过), 共享位点数为 0 时永不合并。
@@ -188,17 +189,27 @@ def tokenize_matrix(M, af_min, af_bins):
         for k in range(len(thr)):
             codes[vals >= thr[k]] = grades[k]
         return [[c for c in row] for row in codes], legend
-    legend = f"二值编码: >={af_min:g}='1', <{af_min:g}='0', 缺失='N'"
+    legend = f"Binary coding: >={af_min:g}='1', <{af_min:g}='0', missing='N'"
     codes = np.where(np.isnan(vals), "N", np.where(vals >= af_min, "1", "0"))
     return [[c for c in row] for row in codes], legend
 
 
 def _bins_legend(thr, grades):
-    segs = [f"<{thr[0]:g}='0'"]
-    for lo, hi, g in zip(thr[:-1], thr[1:], grades[1:]):
+    """图例必须与 tokenize_matrix 的真实赋值一致 (P2-14 修复: 旧图例宣称 '0'/'M'/'H'/'L'
+    与实际 token 完全对不上)。
+
+    真实赋值: 全矩阵先填 grades[0], 再对 k 逐档覆盖 vals >= thr[k] = grades[k];
+    因此实际档位边界是 thr[1..], 首个阈值 thr[0] 不产生独立档位
+    (低于 thr[1] 与 [thr[0],thr[1]) 同为 grades[0])。
+    """
+    if len(thr) < 2:
+        return (f"Dose grading (as coded): single threshold {thr[0]:g} yields one grade, "
+                f"all non-missing sites='{grades[0]}'")
+    segs = [f"<{thr[1]:g}='{grades[0]}'"]
+    for lo, hi, g in zip(thr[1:-1], thr[2:], grades[1:-1]):
         segs.append(f"{lo:g}-{hi:g}='{g}'")
-    segs.append(f">={thr[-1]:g}='{grades[0]}'")
-    return "分级剂量: " + ", ".join(segs)
+    segs.append(f">={thr[-1]:g}='{grades[-1]}'")
+    return "Dose grading (as coded): " + ", ".join(segs)
 
 
 # ==========================================

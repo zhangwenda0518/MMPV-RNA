@@ -1041,6 +1041,7 @@ class CobraPipeline:
                     pbar.update(1)
 
         self.display_summary(results)
+        return results
     
     def display_summary(self, results: List[Dict]):
         """显示运行摘要"""
@@ -1257,7 +1258,20 @@ def main():
                         main_logger.info(f"  - {sample} [{assembler}]")
                         count += 1
         else:
-            pipeline.run()
+            results = pipeline.run()
+            # P1-5b: 任务级失败被 process_sample_tool 内部兜住 (status=failed/exception)
+            # 后 main 恒 exit 0 → 编排器无法感知整批失败。此处按 summary 兜口:
+            # failed/exception 任务数 > 0 且本轮成功产出延伸 contig 的任务数为 0
+            # → 非零退出 (断点续跑跳过的任务视为上一轮已完成, 单独计数避免误判)。
+            n_failed = sum(1 for r in results
+                           if r.get("status") in ("failed", "exception"))
+            n_ext_ok = sum(1 for r in results
+                           if (r.get("status") == "success" and r.get("cobra_status") == "success")
+                           or r.get("status") == "skipped")
+            if n_failed > 0 and n_ext_ok == 0:
+                main_logger.error(
+                    f"全部任务无延伸产物且 {n_failed} 个任务失败/异常 → 以非零状态退出")
+                sys.exit(1)
             
     except KeyboardInterrupt:
         main_logger.info("\n用户中断执行")

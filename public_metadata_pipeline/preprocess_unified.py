@@ -270,6 +270,9 @@ def stage_deplete(fasta_dir, outdir, logger,
         f"-x {step2_index}",
         f"--threads {threads}",
         f"--jobs {jobs}",
+        # 统计/绘图产物落 <deplete>/logs/ (seqkit 汇总表 / ribodetector 报告 / line,bar PNG),
+        # ② report 阶段与 ③ 报告都从这里读; 不指定会落 CWD 导致找不到
+        f"--logs_dir {outdir}/logs",
     ]
     if rrna:
         cmd_parts.append("--rrna")
@@ -450,7 +453,7 @@ def main():
         fasta_input = clean_dir / "3.clumpify"
         if not fasta_input.is_dir() or not any(fasta_input.iterdir()):
             fasta_input = clean_dir / "2.fasta"
-        if not str(fasta_input):
+        if not fasta_input.is_dir():
             logger.error("[deplete] clean 阶段无有效输出, 终止")
             sys.exit(1)
         logger.info("  deplete 输入: %s", fasta_input)

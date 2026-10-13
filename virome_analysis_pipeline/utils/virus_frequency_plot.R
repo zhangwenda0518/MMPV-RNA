@@ -1,4 +1,6 @@
 #!/usr/bin/env Rscript
+# 注意: 本脚本已无自动化调用方 (batch_plot_virus_depth.py 等均不再引用), 保留供手工使用。
+# 因此 viridis 缺失时不再自动联网安装 (原 install.packages 依赖网络), 只提示后退出。
 
 suppressWarnings({
   suppressPackageStartupMessages({
@@ -6,7 +8,9 @@ suppressWarnings({
     library(dplyr)
     library(tidyr)
     library(optparse)
-    if (!require("viridis", quietly = TRUE)) install.packages("viridis", dependencies = TRUE, repos="http://cran.rstudio.com/")
+    if (!requireNamespace("viridis", quietly = TRUE)) {
+      stop("缺少 R 包 'viridis'（本脚本不再自动联网安装）; 请先手工执行: install.packages('viridis')")
+    }
     library(viridis)
   })
 })

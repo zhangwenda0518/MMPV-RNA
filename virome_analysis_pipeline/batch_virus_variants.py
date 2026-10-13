@@ -307,21 +307,51 @@ def worker_align(args):
             mlf.write(err)
         return sname, None, fq["is_fasta"]
 
+def _site_pi_mean(site_counters):
+    """逐位点等位基因计数 → 样本量校正的成对差异数均值 (核苷酸多样性 π)。
+
+    2026-10-13 (修 10-10 V03): 公式实现调用 scikit-allel 的
+    mean_pairwise_difference (n/(n-1)·(1−Σp²)), 不手写; 旧实现
+    (tot−max)/tot = 1−p_max 是"非主等位读段占比", 并非 π。
+    只认 A/C/G/T (N 与其它符号按缺失处理); 位点有效深度 <2 记 NaN
+    (无法估计)。独立成模块级函数便于无 pysam 环境单测。
+    """
+    import allel as _allel
+    _ALLELES = ('A', 'C', 'G', 'T')
+    _nan = float('nan')
+    if not site_counters:
+        return _nan
+    rows = [[c.get(b, 0) for b in _ALLELES] for c in site_counters]
+    ac = np.asarray(rows, dtype=np.int64)
+    keep = ac.sum(axis=1) >= 2
+    if not keep.any():
+        return _nan
+    mpd = _allel.mean_pairwise_difference(
+        _allel.AlleleCountsArray(ac[keep]), fill=_nan)
+    vals = [x for x in np.asarray(mpd).ravel() if x == x]
+    return float(np.mean(vals)) if vals else _nan
+
+
 def worker_calc_metrics(args):
     s, v, row_dict, bam_path = args
+    # 2026-10-13 修 (10-10 V04): Pi/Shannon/ANI 初始化改 NaN —— "不可计算"
+    # (BAM 缺失/损坏/异常) 与 "真的是 0" 在结果里可区分; 旧版静默 0 会被
+    # 当成功值写进汇总。计数类字段的 0 语义不变。
+    _nan = float('nan')
     stats = {
-        'read_count': 0, 'mean_coverage': 0.0, 'covered_bases': 0, 'Sites_0X': 0, 
-        'Sites_LowCov': 0, 'Pi': 0.0, 'Shannon': 0.0, 'ANI': 0.0, 'contig_length': 0, 'bam_total_reads': 0
+        'read_count': 0, 'mean_coverage': 0.0, 'covered_bases': 0, 'Sites_0X': 0,
+        'Sites_LowCov': 0, 'Pi': _nan, 'Shannon': _nan, 'ANI': _nan,
+        'contig_length': 0, 'bam_total_reads': 0
     }
-    
+
     if bam_path and Path(bam_path).exists():
         try:
             with pysam.AlignmentFile(bam_path, "rb") as bamfile:
-                try: 
+                try:
                     stats['bam_total_reads'] = bamfile.mapped + bamfile.unmapped
-                except Exception: 
+                except Exception:
                     pass
-                
+
                 if v in bamfile.references:
                     length = bamfile.get_reference_length(v)
                     if length > 0:
@@ -329,41 +359,59 @@ def worker_calc_metrics(args):
                         bc =[Counter() for _ in range(length)]
                         idents =[]
                         reads =[r for r in bamfile.fetch(v) if not r.is_secondary and not r.is_unmapped]
-                        
+
                         if reads:
                             for r in reads:
-                                for blk in r.get_blocks(): 
+                                for blk in r.get_blocks():
                                     cov[blk[0]:blk[1]] += 1
-                                    
-                                for q, ref, base in r.get_aligned_pairs(matches_only=True, with_seq=True):
-                                    if q is not None and ref is not None and ref < length:
+
+                                # 2026-10-13 修 (10-10 V04): 去掉 with_seq=True ——
+                                # 代码只用 ref 的**比对位置**做边界检查, 不用参考碱基,
+                                # 而 with_seq 需要 BAM 带 MD 标签, 缺 MD 直接抛异常
+                                # → 外层吞掉后指标全零。matches_only 本就不返回 None。
+                                for q, ref in r.get_aligned_pairs(matches_only=True):
+                                    if ref < length:
                                         b = r.query_sequence[q].upper()
-                                        if b in 'ACGTN': 
+                                        if b in 'ACGTN':
                                             bc[ref][b] += 1
-                                            
+
                                 align_len = r.query_alignment_length
                                 nm = r.get_tag('NM') if r.has_tag('NM') else None
-                                if nm is not None and align_len > 0: 
+                                if nm is not None and align_len > 0:
                                     idents.append((align_len - nm) / align_len)
-                            
-                            pi_list = []
+
+                            # 2026-10-13 修 (10-10 V03): Pi 走 _site_pi_mean
+                            # (scikit-allel, 见函数 docstring); 旧实现
+                            # (tot−max)/tot = 1−p_max 并非核苷酸多样性。
+                            pi_val = _nan
                             shannon_list =[]
-                            for pos, c in enumerate(bc):
-                                if cov[pos] > 0 and c and sum(c.values()) > 0:
-                                    tot = sum(c.values())
-                                    pi_list.append((tot - max(c.values())) / tot)
-                                    h = sum(-(count/tot) * math.log(count/tot) for count in c.values() if count > 0)
-                                    shannon_list.append(h)
-                                       
+                            _cov_counters = [c for i, c in enumerate(bc)
+                                             if cov[i] > 0 and c and sum(c.values()) > 0]
+                            if _cov_counters:
+                                try:
+                                    pi_val = _site_pi_mean(_cov_counters)
+                                except ImportError as _ie:
+                                    logger.warning(
+                                        f"[{s}/{v}] Pi 需要 scikit-allel "
+                                        f"(pixi.toml 已登记; pip install scikit-allel): {_ie} → Pi 记 NaN")
+                            for c in _cov_counters:
+                                tot = sum(c.values())
+                                h = sum(-(count/tot) * math.log(count/tot) for count in c.values() if count > 0)
+                                shannon_list.append(h)
+
                             stats.update({
-                                'read_count': len(reads), 'mean_coverage': float(np.mean(cov)), 'covered_bases': int(np.count_nonzero(cov)), 
-                                'Sites_0X': int(np.count_nonzero(cov == 0)), 'Sites_LowCov': int(np.count_nonzero((cov > 0) & (cov < 10))), 
-                                'Pi': float(np.mean(pi_list)) if pi_list else 0.0, 'Shannon': float(np.mean(shannon_list)) if shannon_list else 0.0, 
-                                'ANI': float(np.mean(idents)) if idents else 0.0, 'contig_length': length
+                                'read_count': len(reads), 'mean_coverage': float(np.mean(cov)), 'covered_bases': int(np.count_nonzero(cov)),
+                                'Sites_0X': int(np.count_nonzero(cov == 0)), 'Sites_LowCov': int(np.count_nonzero((cov > 0) & (cov < 10))),
+                                'Pi': pi_val, 'Shannon': float(np.mean(shannon_list)) if shannon_list else _nan,
+                                'ANI': float(np.mean(idents)) if idents else _nan, 'contig_length': length
                             })
-        except Exception: 
-            pass
-            
+        except Exception as _e:
+            # 2026-10-13 修 (10-10 V04): 旧版裸 `except: pass` → 异常被吞、
+            # 指标以全零随成功行写出。现在保留已算出的部分, 未算出的保持 NaN,
+            # 并把异常明确喊出来。
+            logger.warning(f"[{s}/{v}] 指标计算失败 ({type(_e).__name__}: {_e}), "
+                           f"未算出的指标记 NaN")
+
     row_dict.update(stats)
     return row_dict
 

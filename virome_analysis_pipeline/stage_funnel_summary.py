@@ -47,13 +47,13 @@ except Exception:
 
 ACC_RE = re.compile(r'([A-Z]{1,4}_?\d{5,9}\.\d{1,2})')
 
-# (key, 英文图标签, 中文说明) — 顺序即漏斗顺序
+# (key, 英文图标签, 英文说明) — 顺序即漏斗顺序
 STAGES = [
-    ("raw",       "Raw Detection",            "原始检出 (Poisson 过滤前)"),
-    ("best",      "Best (Poisson-filtered)",  "best 检出 (Poisson 过滤+物种最优代表)"),
-    ("highconf",  "High-Conf Filter",         "过滤检出 (多维高置信过滤)"),
-    ("assembly",  "Full-Length Assembly",     "全长组装 (de novo, 含终态统计)"),
-    ("extracted", "Extracted Full-Length",    "全长组装过滤 (提取+长度/N 过滤留存)"),
+    ("raw",       "Raw Detection",            "Raw detections (pre-Poisson)"),
+    ("best",      "Best (Poisson-filtered)",  "Best detections (Poisson filter + per-species representative)"),
+    ("highconf",  "High-Conf Filter",         "Filtered detections (multi-dimensional high-confidence filter)"),
+    ("assembly",  "Full-Length Assembly",     "Full-length assembly (de novo, with final-state stats)"),
+    ("extracted", "Extracted Full-Length",    "Filtered full-length (extraction + length/N filter retained)"),
 ]
 STAGE_KEYS = [s[0] for s in STAGES]
 

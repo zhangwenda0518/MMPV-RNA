@@ -199,7 +199,9 @@ accession 列表文件 (每行一个 Run ID)
 
 ## 5. gsa_sra.plot.py — SCI 级宏观可视化
 
-**用途:** 读取合并元数据 CSV，生成 3×2 面板出版级图表: (A) 时间分布折线图, (B) 数据库占比环形图, (C) Top 10 机构, (D) Top 研究组织, (E) Top 采样地区, (F) Top 发育阶段/年龄。
+**用途:** 读取合并元数据 CSV，生成 3×2 面板出版级图表: (A) 时间分布折线图, (B) 数据库占比环形图, (C) Top 10 机构, (D) Top 研究部位 (Tissue), (E) Top 采样地区, (F) Top 发育阶段/年龄。
+
+> 缺列不崩: 缺 `ReleaseDate` 只跳过 Panel A, 缺 `Database`/`Run` 只跳过 Panel B (打印警告, 其余面板照出); 0 行 CSV 时 Panel B 显示 "No data"。
 
 ### 参数
 
@@ -209,13 +211,13 @@ accession 列表文件 (每行一个 Run ID)
 | `-o` / `--outdir` | `SCI_Figures_Output` | 输出目录 |
 
 ### 输入
-含 `Run`, `ReleaseDate`, `Organization_CenterName`, `Tissue`, `Location`, `Age_GrowthStage` 列的 CSV
+含 `Run`, `ReleaseDate`, `CenterName` (兼容 `Organization_CenterName`), `Tissue`, `Location`, `Age_GrowthStage` 列的 CSV
 
 ### 输出
 ```
 {outdir}/
   Combined_Landscape_Full.pdf   ← 矢量图
-  Combined_Landscape_Full.png   ← 光栅图 (150 dpi)
+  Combined_Landscape_Full.png   ← 光栅图 (600 dpi)
 ```
 
 ---

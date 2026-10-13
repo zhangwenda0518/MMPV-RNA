@@ -49,6 +49,19 @@ plt.rcParams.update({
     'savefig.facecolor': 'white',
 })
 
+# ── 画布封顶 (2026-10-11) ───────────────────────────────────────────────
+# 历史 bug: 下列三处 figsize 随样本数**线性放大且无上限**。
+# barbarum 262 样本 @dpi=300 实测产出:
+#   sample_virus_count_bar       23550 × 1768 px (13:1 横条)
+#   coabundance_abundance_heatmap 6809 × 47127 px (1:6.9 竖条, 5.2 MB)
+#   coabundance_relabund_stacked 63101 × 1766 px (35:1 细线)
+# 三者既无法阅读, 也无法嵌入报告。封顶到"每元素仍有可读像素"的尺寸:
+SAMPLE_BAR_MAX_W_IN = 20.0   # 每样本一柱 -> 6000 px @300dpi, ~23 px/柱
+ABUND_HEAT_MAX_H_IN = 24.0   # 每样本一行 -> 7200 px @300dpi, ~27 px/行 (容 6pt 行标签)
+STACKED_MAX_W_IN    = 20.0   # 每样本一柱 -> 6000 px @300dpi, ~23 px/柱
+# 元素过多时逐元素文字标注必然糊死 -> 关闭 (项目「标签分级」原则)
+DENSE_ELEM_THRESHOLD = 60
+
 try:
     import seaborn as sns
     HAS_SEABORN = True
@@ -646,16 +659,21 @@ def run_sample_mode(args):
     ).reset_index(name='Virus_Count')
     sample_counts = sample_counts.sort_values('Virus_Count', ascending=False)
 
-    # 柱形图
-    fig, ax = plt.subplots(figsize=(max(10, len(sample_counts) * 0.3), 6))
-    colors = plt.cm.viridis(np.linspace(0.2, 0.9, len(sample_counts)))
-    bars = ax.bar(range(len(sample_counts)), sample_counts['Virus_Count'], color=colors, edgecolor='#333', linewidth=0.5)
-    for i, (_, row) in enumerate(sample_counts.iterrows()):
-        ax.text(i, row['Virus_Count'] + 0.1, str(row['Virus_Count']), ha='center', fontsize=8, fontweight='bold')
-    ax.set_xticks(range(len(sample_counts)))
-    ax.set_xticklabels(sample_counts['Sample'], rotation=90, ha='center', fontsize=7)
+    # 柱形图 (画布封顶: 262 样本时 0.3 in/柱 会拉到 78 in = 23550 px, 见文件头注释)
+    _n_samp = len(sample_counts)
+    fig, ax = plt.subplots(figsize=(min(SAMPLE_BAR_MAX_W_IN, max(10, _n_samp * 0.3)), 6))
+    colors = plt.cm.viridis(np.linspace(0.2, 0.9, _n_samp))
+    bars = ax.bar(range(_n_samp), sample_counts['Virus_Count'], color=colors, edgecolor='#333', linewidth=0.5)
+    if _n_samp <= DENSE_ELEM_THRESHOLD:
+        for i, (_, row) in enumerate(sample_counts.iterrows()):
+            ax.text(i, row['Virus_Count'] + 0.1, str(row['Virus_Count']), ha='center', fontsize=8, fontweight='bold')
+        ax.set_xticks(range(_n_samp))
+        ax.set_xticklabels(sample_counts['Sample'], rotation=90, ha='center', fontsize=7)
+    else:
+        # 逐柱标名在 n>60 时糊成黑带 -> 只留坐标轴刻度数字 (项目「标签分级」原则)
+        ax.set_xticks([])
     ax.set_ylabel('Virus Species Count', fontweight='bold')
-    ax.set_title(f'Detected Virus Count per Sample (n={len(sample_counts)})', fontweight='bold', fontsize=14)
+    ax.set_title(f'Detected Virus Count per Sample (n={_n_samp})', fontweight='bold', fontsize=14)
     ax.set_ylim(bottom=0)
     plt.tight_layout()
     fn_bar = os.path.join(args.output, "sample_virus_count_bar.pdf")
@@ -787,15 +805,20 @@ def run_coabundance_mode(args):
     tpm_display.columns = [c.replace('\n', ' ').split('(')[-1].rstrip(')') if '(' in c else c[:15]
                            for c in tpm_display.columns]
     log_tpm = np.log10(tpm_display + 1)
-    fig, ax = plt.subplots(figsize=(max(8, n_viruses * 1.2), max(5, total_samples * 0.6)))
-    sns.heatmap(log_tpm, annot=True, fmt=".1f", cmap="YlGnBu", ax=ax,
+    # 画布封顶 + 密集标注守卫 (262 样本时原式高度 = 262*0.6 in = 157 in = 47127 px)
+    _dense = total_samples > DENSE_ELEM_THRESHOLD
+    _annot = not _dense            # 262 行逐格标数必然糊死 -> 关
+    _yfs = 9 if not _dense else 6  # 行数多则缩小行标签字号以放进 27 px/行
+    fig, ax = plt.subplots(figsize=(max(8, n_viruses * 1.2),
+                                    min(ABUND_HEAT_MAX_H_IN, max(5, total_samples * 0.6))))
+    sns.heatmap(log_tpm, annot=_annot, fmt=".1f", cmap="YlGnBu", ax=ax,
                cbar_kws={'label': 'log10(TPM + 1)'})
     ax.set_title(f'Virus Abundance Heatmap\n({n_viruses} viruses, {total_samples} samples)',
                 fontweight='bold', fontsize=13)
     ax.set_ylabel('Sample')
     ax.set_xlabel('')
     plt.xticks(rotation=45, ha='right', fontsize=8)
-    plt.yticks(rotation=0, fontsize=9)
+    plt.yticks(rotation=0, fontsize=_yfs)
     plt.tight_layout()
     fn_ah = os.path.join(args.output, f"coabundance_abundance_heatmap.{args.format}")
     plt.savefig(fn_ah, dpi=args.dpi, bbox_inches='tight')
@@ -810,14 +833,18 @@ def run_coabundance_mode(args):
         rel_pivot_pct = rel_pivot.div(rel_pivot.sum(axis=1), axis=0) * 100
         rel_pivot_pct.columns = [c.replace('\n', ' ').split('(')[-1].rstrip(')') if '(' in c else c[:15]
                                  for c in rel_pivot_pct.columns]
-        fig, ax = plt.subplots(figsize=(max(10, total_samples * 0.8), 6))
+        # 画布封顶 (262 样本时原式宽度 = 262*0.8 in = 209 in = 63101 px, 见文件头注释)
+        fig, ax = plt.subplots(figsize=(min(STACKED_MAX_W_IN, max(10, total_samples * 0.8)), 6))
         rel_pivot_pct.plot(kind='bar', stacked=True, cmap='Set2', ax=ax, edgecolor='#333', linewidth=0.5)
         ax.set_title(f'Virus Relative Abundance Composition per Sample\n({total_samples} samples)',
                     fontweight='bold', fontsize=13)
         ax.set_ylabel('Relative Abundance (%)', fontweight='bold')
         ax.set_xlabel('Sample')
         ax.legend(title='', bbox_to_anchor=(1.02, 1), loc='upper left', fontsize=8)
-        plt.xticks(rotation=0)
+        if total_samples <= DENSE_ELEM_THRESHOLD:
+            plt.xticks(rotation=0)
+        else:
+            ax.set_xticks([])   # 262 个样本名逐柱标注不可读 -> 关闭
         plt.tight_layout()
         fn_ra = os.path.join(args.output, f"coabundance_relabund_stacked.{args.format}")
         plt.savefig(fn_ra, dpi=args.dpi, bbox_inches='tight')

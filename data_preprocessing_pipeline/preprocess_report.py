@@ -18,6 +18,7 @@ ribodetector 报告 / 比对日志) 的既有统计产物, 生成:
 """
 
 import argparse
+import base64
 import os
 import csv
 import json
@@ -30,6 +31,7 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 from mmpv_common.io_layout import layout_dirs as _layout_dirs
+
 _D = _layout_dirs(os.environ.get("MMPV_IO_LAYOUT"))
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -48,6 +50,15 @@ def _num(s):
             return float(str(s).replace(",", "").strip())
         except ValueError:
             return None
+
+
+def _median(vals):
+    """中位数: 偶数个取中间两数均值 (旧代码取上中位, 两样本时偏大)"""
+    s = sorted(vals)
+    if not s:
+        return None
+    mid = len(s) // 2
+    return s[mid] if len(s) % 2 else (s[mid - 1] + s[mid]) / 2
 
 
 # ═══════════════════════════════════════════
@@ -78,17 +89,35 @@ def collect_fastp(clean_dir):
 
 
 def collect_seqkit(deplete_dir):
-    """host_depletion.py 的 {logs}/host_depletion_seqkit_summary.tsv (Sample/Stage/num_seqs...)"""
+    """host_depletion.py 的 {logs}/host_depletion_seqkit_summary.tsv (Sample/Stage/num_seqs...)
+
+    PE 样本每 stage 落两行 (R1/R2 各一, seqkit stats 逐文件一行): 必须按端
+    累加为合计, 旧代码后行覆盖前行 → 只剩 R2 的量。此处口径与 fastp JSON 的
+    total_reads (本就两端合计) 一致, 故两者可直接对比/回退, 不再叠加。
+
+    重跑语义 (按 (Sample, Stage) 分组, 只取"最后一批"):
+      - 稳定路径 (1_Raw 输入 / 无 rrna 时的终产物): 重跑写同名文件 → 同名行
+        视为同一批的覆盖写, 以后写为准, 不重复累加;
+      - 临时随机路径 (2_Kraken2_Filtered / 3_Host_Filtered 的中间产物):
+        重跑整批落在新临时目录 → 旧批与新批文件名完全不同, 按 file 列去重
+        会双倍累加 (After_Kraken2/After_HostAlign 虚高), 故以「文件所在目录
+        变化」标记新一批, 只累加最后一批。
+    """
     out = {}
     if not deplete_dir:
         return out
-    for p in Path(deplete_dir).rglob("host_depletion_seqkit_summary.tsv"):
+    # (sample, stage键) → {批目录: {file: num_seqs}}; 批目录 = 该批文件所在目录
+    # (同一批由一次 SeqkitStats.run 写出, 文件同目录; 重跑的临时批落在新目录)。
+    # 跨多个汇总表 (历史运行残留) 共用一个批次流, 按路径排序保证 "最后一批" 稳定
+    groups = {}
+    last_dir = {}
+    for p in sorted(Path(deplete_dir).rglob("host_depletion_seqkit_summary.tsv")):
         try:
             with open(p, encoding="utf-8") as f:
                 rows = list(csv.DictReader(f, delimiter="\t"))
         except Exception:
             continue
-        for r in rows:
+        for i, r in enumerate(rows):
             sample = (r.get("Sample") or "").strip()
             stage = (r.get("Stage") or "").strip()
             key = None
@@ -100,10 +129,18 @@ def collect_seqkit(deplete_dir):
                 key = "host"
             elif stage.startswith("4_"):
                 key = "rrna"
-            if key and sample:
-                n = _num(r.get("num_seqs"))
-                if n is not None:
-                    out.setdefault(sample, {})[key] = n
+            if not (key and sample):
+                continue
+            n = _num(r.get("num_seqs"))
+            if n is None:
+                continue
+            fname = (r.get("file") or "").strip() or f"__row{i}"
+            fdir = os.path.dirname(fname)
+            per_dir = groups.setdefault((sample, key), {})
+            per_dir.setdefault(fdir, {})[fname] = n   # 同名 (稳定路径重跑) 后写覆盖
+            last_dir[(sample, key)] = fdir            # 行序上最后出现的批即最后一批
+    for (sample, key), per_dir in groups.items():
+        out.setdefault(sample, {})[key] = sum(per_dir[last_dir[(sample, key)]].values())
     return out
 
 
@@ -135,57 +172,108 @@ def collect_rrna(deplete_dir):
 
 
 def collect_aligner(deplete_dir):
-    """bowtie2/hisat2 stderr 汇总行 (从未被解析过的盲点): 'overall alignment rate  95.5%'"""
+    """bowtie2/hisat2 stderr 汇总行: '95.50% overall alignment rate' (百分比在前)
+
+    真实输出顺序是「百分比 → overall alignment rate」, 旧正则按反向匹配, 恒不命中。
+    两种排版都收: '<pct>% overall alignment rate' 与 'overall alignment rate: <pct>%'。
+    日志在但无该行 (如 samtools / minimap2 的日志) 显式记 UNPARSED, 不留空。
+    """
     out = {}
     if not deplete_dir:
         return out
-    pat = re.compile(r"overall alignment rate\D+([\d.]+)", re.IGNORECASE)
+    pat = re.compile(r"([\d.]+)%\s*overall alignment rate|overall alignment rate[:\s]+([\d.]+)",
+                     re.IGNORECASE)
     for p in Path(deplete_dir).rglob("*.step2_align_filter.*.log"):
-        sample = p.name.split(".")[0]
+        # 日志命名 {sample}.step2_align_filter.{i}_{tool}.log; 样本名自带点
+        # (如 ERR1.2) 时 split(".")[0] 会截断, 按 stage 标记 rsplit 取全名
+        sample = p.name.rsplit(".step2_align_filter", 1)[0]
         try:
-            m = pat.search(p.read_text(encoding="utf-8", errors="replace"))
+            text = p.read_text(encoding="utf-8", errors="replace")
         except Exception:
             continue
-        if m:
-            try:
-                out[sample] = float(m.group(1))
-            except ValueError:
-                pass
+        m = pat.search(text)
+        if not m:
+            out.setdefault(sample, "UNPARSED")
+            continue
+        try:
+            out[sample] = float(m.group(1) or m.group(2))
+        except (TypeError, ValueError):
+            out.setdefault(sample, "UNPARSED")
     return out
 
 
+# 最终 reads 各级产物命名 → (样本, 端) 规则, 长后缀优先。
+# 注意: host_depletion.py 的 auto_pair_files 保留输入的读端标签, 输入带 R 标签
+# (X_R1.fa.gz) 时产物是 X_clean_R1/X_clean_R2; 不显式列出就会落到最后的通用兜底,
+# 把 R1/R2 拆成两个幻影样本。
 FINAL_PATTERNS = [
-    (re.compile(r"^(?P<s>.+)_clean_1\.(?:fastq|fq|fa)\.gz$"), "pe"),
-    (re.compile(r"^(?P<s>.+)_clean_2\.(?:fastq|fq|fa)\.gz$"), "pe"),
+    (re.compile(r"^(?P<s>.+)_clean_1\.(?:fastq|fq|fa)\.gz$"), "pe1"),
+    (re.compile(r"^(?P<s>.+)_clean_2\.(?:fastq|fq|fa)\.gz$"), "pe2"),
+    (re.compile(r"^(?P<s>.+)_clean_R1\.(?:fastq|fq|fa)\.gz$"), "pe1"),
+    (re.compile(r"^(?P<s>.+)_clean_R2\.(?:fastq|fq|fa)\.gz$"), "pe2"),
     (re.compile(r"^(?P<s>.+)_clean\.(?:fastq|fq|fa)\.gz$"), "se"),
-    (re.compile(r"^(?P<s>.+)_1\.(?:fastq|fq|fa)\.gz$"), "pe"),
-    (re.compile(r"^(?P<s>.+)_2\.(?:fastq|fq|fa)\.gz$"), "pe"),
+    (re.compile(r"^(?P<s>.+)_1\.(?:fastq|fq|fa)\.gz$"), "pe1"),
+    (re.compile(r"^(?P<s>.+)_2\.(?:fastq|fq|fa)\.gz$"), "pe2"),
     (re.compile(r"^(?P<s>.+)\.(?:fastq|fq|fa)\.gz$"), "se"),
 ]
 
+# run_bbnorm.py 产物: {输入名去读端}_norm_{R1,R2,SE}.fq.gz; 去读端后样本名可能残留
+# 上游 _clean / 扩展名 (SE 走 rsplit('.') 命名), 由可选组吃掉。
+BBNORM_PATTERNS = [
+    (re.compile(r"^(?P<s>.+?)(?:_clean)?(?:[._-][Rr]?[12])?_norm_R1\.(?:fastq|fq)\.gz$"), "pe1"),
+    (re.compile(r"^(?P<s>.+?)(?:_clean)?(?:[._-][Rr]?[12])?_norm_R2\.(?:fastq|fq)\.gz$"), "pe2"),
+    (re.compile(r"^(?P<s>.+?)(?:_clean)?(?:\.(?:fastq|fq|fasta|fa))?(?:[._-][Rr]?[12])?_norm_SE\.(?:fastq|fq)\.gz$"), "se"),
+]
 
-def collect_final_files(deplete_dir, clean_dir):
-    """最终 reads 文件: 去宿主输出优先, 回退 clean 的 3.clumpify / 2.fasta"""
-    files = {}
-    roots = []
+
+def _collect_source(root, patterns, source, found):
+    """扫描一个来源目录, 归入 {样本: {来源: {端: Path}}}"""
+    for f in sorted(root.rglob("*.gz")):
+        if not f.is_file():
+            continue
+        if "rrna" in f.relative_to(root).parts[:-1]:  # --keep_rrna 的 rrna/ 子目录产物不是最终交付 reads
+            continue
+        for pat, role in patterns:
+            m = pat.match(f.name)
+            if m:
+                found.setdefault(m.group("s"), {}).setdefault(source, {})[role] = f
+                break
+
+
+def collect_final_files(deplete_dir, clean_dir, bbnorm_dir=None):
+    """最终 reads 文件: bbnorm 归一化 > 去宿主 > clean, 每样本只取一套完整 PE/SE
+
+    返回 {样本: {"source": "normalized"|"depleted"|"clean", "files": [Path, ...]}}。
+    旧实现把去宿主根与 clean 子目录的产物全量累积到同一列表, 同一样本既列
+    deplete 又列 clean (下游会把同一份数据交两遍); 且 bbnorm 产物完全没进清单。
+    """
+    sources = []                                  # (来源标签, 根目录, 规则) 优先级从高到低
+    if bbnorm_dir and Path(bbnorm_dir).is_dir():
+        sources.append(("normalized", Path(bbnorm_dir), BBNORM_PATTERNS))
     if deplete_dir:
-        roots.append(Path(deplete_dir))
+        sources.append(("depleted", Path(deplete_dir), FINAL_PATTERNS))
     if clean_dir:
         for sub in ("3.clumpify", "2.fasta"):
             d = Path(clean_dir) / sub
             if d.is_dir():
-                roots.append(d)
-    for root in roots:
-        for f in sorted(root.rglob("*.gz")):
-            if not f.is_file():
+                sources.append(("clean", d, FINAL_PATTERNS))
+
+    found = {}
+    for label, root, pats in sources:
+        _collect_source(root, pats, label, found)
+
+    files = {}
+    for s, per_src in found.items():
+        for label, _root, _pats in sources:        # 取第一套完整 PE/SE
+            roles = per_src.get(label)
+            if not roles:
                 continue
-            if "rrna" in f.relative_to(root).parts[:-1]:  # --keep_rrna 的 rrna/ 子目录产物不是最终交付 reads
-                continue
-            for pat, layout in FINAL_PATTERNS:
-                m = pat.match(f.name)
-                if m:
-                    files.setdefault(m.group("s"), []).append(f)
-                    break
+            if "pe1" in roles and "pe2" in roles:
+                files[s] = {"source": label, "files": [roles["pe1"], roles["pe2"]]}
+                break
+            if "se" in roles:
+                files[s] = {"source": label, "files": [roles["se"]]}
+                break
     return files
 
 
@@ -193,12 +281,12 @@ def collect_final_files(deplete_dir, clean_dir):
 # 汇总
 # ═══════════════════════════════════════════
 
-def build_rows(clean_dir, deplete_dir, warn_retained):
+def build_rows(clean_dir, deplete_dir, warn_retained, bbnorm_dir=None):
     fastp = collect_fastp(clean_dir)
     seqkit = collect_seqkit(deplete_dir)
     rrna = collect_rrna(deplete_dir)
     aligner = collect_aligner(deplete_dir)
-    files = collect_final_files(deplete_dir, clean_dir)
+    files = collect_final_files(deplete_dir, clean_dir, bbnorm_dir)
 
     samples = sorted(set(fastp) | set(seqkit) | set(rrna) | set(files))
     rows = []
@@ -210,7 +298,8 @@ def build_rows(clean_dir, deplete_dir, warn_retained):
         after_k2 = sk.get("kraken2")
         after_host = sk.get("host")
         after_rrna = sk.get("rrna") if sk.get("rrna") is not None else rr.get("non_rrna")
-        final = files.get(s, [])
+        finfo = files.get(s) or {}
+        final = finfo.get("files", [])
         final_n = len(final)
 
         base = input_n if input_n is not None else fp.get("fastp")
@@ -238,15 +327,19 @@ def build_rows(clean_dir, deplete_dir, warn_retained):
             "Retained(%)": retained,
             "Aligner_Rate(%)": aligner.get(s),
             "Final_Files": final_n,
+            "Final_Source": finfo.get("source"),
             "Status": status,
         })
     return rows
 
 
+SUMMARY_COLS = ["Sample", "Raw_Reads", "Fastp_Clean_Reads", "Fastp_Q30(%)", "Depletion_Input",
+                "After_Kraken2", "After_HostAlign", "After_rRNA", "Retained(%)",
+                "Aligner_Rate(%)", "Final_Files", "Final_Source", "Status"]
+
+
 def write_summary_tsv(rows, out_path):
-    cols = ["Sample", "Raw_Reads", "Fastp_Clean_Reads", "Fastp_Q30(%)", "Depletion_Input",
-            "After_Kraken2", "After_HostAlign", "After_rRNA", "Retained(%)",
-            "Aligner_Rate(%)", "Final_Files", "Status"]
+    cols = SUMMARY_COLS
     with open(out_path, "w", encoding="utf-8", newline="") as f:
         w = csv.DictWriter(f, fieldnames=cols, delimiter="\t", extrasaction="ignore")
         w.writeheader()
@@ -270,10 +363,10 @@ def write_summary_tsv(rows, out_path):
 
 
 def write_ready_list(files, out_path):
-    """交接清单: 每行一个最终 reads 文件绝对路径 (按样本分组)"""
+    """交接清单: 每行一个最终 reads 文件绝对路径 (按样本分组, 每样本一套)"""
     with open(out_path, "w", encoding="utf-8", newline="") as f:
         for s in sorted(files):
-            for pth in files[s]:
+            for pth in files[s]["files"]:
                 f.write(str(pth.resolve()) + "\n")
 
 
@@ -293,19 +386,43 @@ def _chartjs_inline():
         return ""
 
 
-def generate_html(rows, out_path, warn_retained):
+def _png_data_uri(path):
+    """PNG → data URI (内嵌 HTML, 离线可看); 读不到返回 None"""
+    try:
+        return "data:image/png;base64," + base64.b64encode(Path(path).read_bytes()).decode("ascii")
+    except Exception:
+        return None
+
+
+def find_deplete_plots(deplete_dir):
+    """定位 host_depletion.py 的 line/bar PNG (logs_dir 默认 <deplete>/logs/)"""
+    if not deplete_dir:
+        return []
+    root = Path(deplete_dir)
+    out = []
+    for d in (root / "logs", root):
+        for kind in ("line", "bar"):
+            p = d / f"host_depletion_plot_{kind}.png"
+            if p.is_file() and p not in out:
+                out.append(p)
+    return out
+
+
+def generate_html(rows, out_path, warn_retained, plot_paths=None):
     now = __import__("datetime").datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     n = len(rows)
     n_pass = sum(1 for r in rows if r["Status"] == "PASS")
     n_low = sum(1 for r in rows if r["Status"] == "LOW_RETAINED")
     n_bad = sum(1 for r in rows if r["Status"] in ("NO_OUTPUT", "NO_DATA"))
     rets = [r["Retained(%)"] for r in rows if r["Retained(%)"] is not None]
-    median = sorted(rets)[len(rets) // 2] if rets else None
+    median = _median(rets)
 
     chart_data = {"samples": [r["Sample"] for r in rows if r["Retained(%)"] is not None],
                   "retained": [r["Retained(%)"] for r in rows if r["Retained(%)"] is not None],
                   "warn": warn_retained}
     chartjs = _chartjs_inline()
+    # 样本名进 <script> 前转义 '<' (json.dumps 不转义, </script> 会截断脚本块)
+    chart_json = json.dumps(chart_data).replace("<", "\\u003c")
 
     def fmt(v):
         return "" if v is None else (f"{v:,}" if isinstance(v, int) else v)
@@ -314,12 +431,18 @@ def generate_html(rows, out_path, warn_retained):
     for r in rows:
         cls = {"PASS": "st-pass", "LOW_RETAINED": "st-low"}.get(r["Status"], "st-bad")
         body_rows += f'<tr class="{cls}">' + "".join(
-            f"<td>{fmt(r[c])}</td>" for c in
-            ["Sample", "Raw_Reads", "Fastp_Clean_Reads", "Fastp_Q30(%)", "Depletion_Input",
-             "After_Kraken2", "After_HostAlign", "After_rRNA", "Retained(%)",
-             "Aligner_Rate(%)", "Final_Files", "Status"]) + "</tr>"
+            f"<td>{_esc(fmt(r[c]))}</td>" for c in SUMMARY_COLS) + "</tr>"
 
-    html = f'''<!DOCTYPE html><html lang="zh"><head><meta charset="UTF-8">
+    plot_imgs = ""
+    for p in (plot_paths or []):
+        uri = _png_data_uri(p)
+        if uri:
+            plot_imgs += (f'<div class="plot-card"><div class="plot-t">{_esc(Path(p).stem)}</div>'
+                          f'<img src="{uri}" alt="{_esc(Path(p).name)}"></div>')
+    plots_html = (f'<h2>Host Depletion Plots</h2><div class="plots">{plot_imgs}</div>'
+                  if plot_imgs else "")
+
+    html = f'''<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
 <title>Data Preprocessing Report</title>
 <style>
 :root{{--ink:#1a2332;--sub:#5a6a7e;--acc:#2563eb;--bg:#f6f8fb;--bd:#e1e5eb;--ok:#16a34a;--warn:#d97706;--bad:#dc2626}}
@@ -338,11 +461,15 @@ tbody tr:hover td{{background:#eff4ff}}
 .st-low td:last-child{{color:var(--warn);font-weight:600}}
 .st-bad td:last-child{{color:var(--bad);font-weight:600}}
 .chart-card{{background:#fff;border:1px solid var(--bd);border-radius:6px;padding:14px;margin:12px 0;max-width:900px}}
+.plots{{display:flex;gap:12px;flex-wrap:wrap;margin:12px 0}}
+.plot-card{{background:#fff;border:1px solid var(--bd);border-radius:6px;padding:14px;flex:1;min-width:360px}}
+.plot-t{{font-size:12px;color:var(--sub);margin-bottom:8px}}
+.plot-card img{{width:100%;height:auto}}
 .note{{background:#eff4ff;border:1px solid var(--bd);border-radius:6px;padding:10px 14px;font-size:12px;color:var(--sub);margin:10px 0}}
 code{{background:var(--bg);padding:1px 6px;border-radius:4px;font-size:11px}}
 </style></head><body>
-<h1>Data Preprocessing Report — 数据清洗与去宿主</h1>
-<div class="meta">Generated: {now} &nbsp;|&nbsp; 阈值: Retained &lt; {warn_retained}% → LOW_RETAINED</div>
+<h1>Data Preprocessing Report — Cleaning &amp; Host Depletion</h1>
+<div class="meta">Generated: {now} &nbsp;|&nbsp; Threshold: Retained &lt; {warn_retained}% → LOW_RETAINED</div>
 <div class="cards">
 <div class="card"><div class="v">{n}</div><div class="l">Samples</div></div>
 <div class="card"><div class="v" style="color:var(--ok)">{n_pass}</div><div class="l">PASS</div></div>
@@ -350,15 +477,17 @@ code{{background:var(--bg);padding:1px 6px;border-radius:4px;font-size:11px}}
 <div class="card"><div class="v" style="color:var(--bad)">{n_bad}</div><div class="l">NO_OUTPUT / NO_DATA</div></div>
 <div class="card"><div class="v">{median if median is not None else "?"}</div><div class="l">Median Retained (%)</div></div>
 </div>
-<h2>交付物 / Handoff</h2>
-<div class="note">下游交接清单: <code>assembly_ready.list</code> (最终 reads 绝对路径, 逐行一条) ·
-<code>preprocessing_summary.tsv</code> (本表机器可读版)。<br>
-下一步: <code>virome_discovery_pipeline/virome_pipeline.py --input_reads &lt;00b_HostDepletion 目录&gt;</code></div>
+<h2>Handoff</h2>
+<div class="note">Downstream handoff list: <code>assembly_ready.list</code> (absolute paths of final reads, one per line; one set per sample;
+see the Final_Source column below: normalized=bbnorm &gt; depleted &gt; clean) ·
+<code>preprocessing_summary.tsv</code> (machine-readable version of this table).<br>
+Next step: <code>virome_discovery_pipeline/virome_pipeline.py --input_reads &lt;{_D['d_hostdep']} dir&gt;</code></div>
 <div class="chart-card"><canvas id="ret" height="110"></canvas></div>
-<h2>每样本明细 / Per-Sample Summary</h2>
-<table><thead><tr>{"".join(f"<th>{c}</th>" for c in ["Sample","Raw_Reads","Fastp_Clean_Reads","Fastp_Q30(%)","Depletion_Input","After_Kraken2","After_HostAlign","After_rRNA","Retained(%)","Aligner_Rate(%)","Final_Files","Status"])}</tr></thead>
+{plots_html}
+<h2>Per-Sample Summary</h2>
+<table><thead><tr>{"".join(f"<th>{c}</th>" for c in SUMMARY_COLS)}</tr></thead>
 <tbody>{body_rows}</tbody></table>
-<script>var CD={json.dumps(chart_data)};var hasChart={ "true" if chartjs else "false"};</script>
+<script>var CD={chart_json};var hasChart={ "true" if chartjs else "false"};</script>
 {chartjs}
 <script>
 if(hasChart&&typeof Chart!=='undefined'&&CD.samples.length){{
@@ -394,7 +523,11 @@ def main():
     print(f"[report] clean:   {clean_dir or '(未提供)'}")
     print(f"[report] deplete: {deplete_dir or '(未提供)'}")
 
-    rows = build_rows(clean_dir, deplete_dir, args.warn_retained)
+    # bbnorm 产物 (--stage bbnorm, 仅在显式跑过时存在): 交接优先级 bbnorm > 去宿主 > clean
+    bbnorm_dir = outdir / _D['d_bbnorm']
+    bbnorm_dir = bbnorm_dir if bbnorm_dir.is_dir() else None
+
+    rows = build_rows(clean_dir, deplete_dir, args.warn_retained, bbnorm_dir)
     if not rows:
         print("[report] 未找到任何样本统计 (fastp JSON / seqkit 汇总 / 输出文件), 不生成报告")
         sys.exit(1)
@@ -402,14 +535,40 @@ def main():
     tsv = outdir / "preprocessing_summary.tsv"
     write_summary_tsv(rows, tsv)
 
-    files = collect_final_files(deplete_dir, clean_dir)
+    files = collect_final_files(deplete_dir, clean_dir, bbnorm_dir)
     ready = outdir / "assembly_ready.list"
     write_ready_list(files, ready)
 
     html = outdir / "preprocessing_report.html"
-    generate_html(rows, html, args.warn_retained)
+    plots = find_deplete_plots(deplete_dir)
+    generate_html(rows, html, args.warn_retained, plots)
+    if not plots:
+        print("[report] 未找到 host_depletion_plot_{line,bar}.png, HTML 不含可视化小节")
 
-    n_ready = sum(len(v) for v in files.values())
+    # AI 解读 section (可选, 纯增量: 离线/未配 key 时自动跳过, 不改动报告)
+    try:
+        from mmpv_common.ai import append_ai_section_to_html
+        from mmpv_common.run_digest import guess_state_dir
+        n_pass = sum(1 for r in rows if r["Status"] == "PASS")
+        n_low = sum(1 for r in rows if r["Status"] == "LOW_RETAINED")
+        n_bad = sum(1 for r in rows if r["Status"] in ("NO_OUTPUT", "NO_DATA"))
+        rets = [r["Retained(%)"] for r in rows
+                if r["Retained(%)"] is not None]
+        append_ai_section_to_html(html, {
+            "pipeline": "preprocessing", "n_samples": len(rows),
+            "pass": n_pass, "low_retained": n_low, "no_output_or_no_data": n_bad,
+            "median_retained_pct": _median(rets),
+        }, state_dir=guess_state_dir(outdir))
+    except Exception:
+        pass
+    # 过程面板 (确定性, 无需 AI): 项目 90_Handoff/state 在时嵌入全过程总览
+    try:
+        from mmpv_common.process_report import append_process_panel_to_html
+        append_process_panel_to_html(html, outdir)
+    except Exception:
+        pass
+
+    n_ready = sum(len(v["files"]) for v in files.values())
     print(f"[report] 样本: {len(rows)}  |  最终 reads 文件: {n_ready}")
     print(f"[report] 汇总表:   {tsv}")
     print(f"[report] 交接清单: {ready}")

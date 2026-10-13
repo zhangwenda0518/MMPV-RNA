@@ -28,6 +28,9 @@ try:
     matplotlib.use('Agg')
     import matplotlib.pyplot as plt
     import pandas as pd
+    # 中文样本名/标签: 微软雅黑 → 黑体 回退, 负号用 ASCII 形 (免 Glyph missing 方框)
+    matplotlib.rcParams['font.sans-serif'] = ['Microsoft YaHei', 'SimHei', 'DejaVu Sans']
+    matplotlib.rcParams['axes.unicode_minus'] = False
     PLOT_AVAILABLE = True
 except ImportError:
     PLOT_AVAILABLE = False
@@ -131,7 +134,7 @@ def generate_rrna_report(tool_logs_dir, output_path):
         if fname.endswith('_ribodetector.log'):
             sample = fname.replace('_ribodetector.log', '')
             total, non_rrna, rrna = 0, 0, 0
-            with open(os.path.join(tool_logs_dir, fname), 'r') as f:
+            with open(os.path.join(tool_logs_dir, fname), 'r', encoding='utf-8', errors='replace') as f:
                 for line in f:
                     clean_line = remove_ansi_escape(line)
                     if 'Processed' in clean_line and 'sequences in total' in clean_line:
@@ -149,14 +152,14 @@ def generate_rrna_report(tool_logs_dir, output_path):
                     'non_rRNA_percent': (non_rrna / total * 100), 'rRNA_percent': (rrna / total * 100)
                 })
     if results:
-        with open(output_path, 'w') as f:
+        with open(output_path, 'w', encoding='utf-8') as f:   # 样本名可为中文: Windows 默认 GBK 会崩
             f.write("Sample\tTotal_sequences\tnon_rRNA\trRNA\tnon_rRNA(%)\trRNA(%)\n")
             for res in sorted(results, key=lambda x: x['sample']):
                 f.write(f"{res['sample']}\t{res['total']}\t{res['non_rRNA']}\t{res['rRNA']}\t{res['non_rRNA_percent']:.2f}%\t{res['rRNA_percent']:.2f}%\n")
         logger.info(f"📊 rRNA 去除统计报告已生成: {output_path}")
 
 # --- 绘图函数整合 ---
-def plot_data(pivot_df, plot_type, output_file, figsize=(10, 6), dpi=100, max_labels=50, million=False):
+def plot_data(pivot_df, plot_type, output_file, figsize=(10, 6), dpi=300, max_labels=50, million=False):
     fig, ax = plt.subplots(figsize=figsize, dpi=dpi)
     ylabel = 'Read Count' + (' (millions)' if million else '')
     
@@ -190,20 +193,30 @@ def plot_data(pivot_df, plot_type, output_file, figsize=(10, 6), dpi=100, max_la
     plt.close(fig)
 
 def generate_plots(tsv_file, output_prefix):
+    """读取 seqkit 汇总表绘制 line/bar PNG; 失败打印 traceback 并返回 False (不静默)"""
     try:
         df = pd.read_csv(tsv_file, sep='\t', header=0)
         required_cols = ['Sample', 'Stage', 'num_seqs']
         if not all(col in df.columns for col in required_cols):
             logger.warning(f"缺少必要的列 {required_cols}，跳过绘图。")
-            return
-        
+            return False
+
         df = df[required_cols].copy()
+        # num_seqs 可能带千分位逗号/非数值 (seqkit 变体或手工表): 统一转数值, 丢弃不可解析行
+        df['num_seqs'] = pd.to_numeric(
+            df['num_seqs'].astype(str).str.replace(',', '', regex=False), errors='coerce')
+        df = df.dropna(subset=['num_seqs'])
+        if df.empty:
+            logger.warning("num_seqs 列无可用数值，跳过绘图。")
+            return False
         df_grouped = df.groupby(['Sample', 'Stage'], as_index=False)['num_seqs'].mean()
         pivot_df = df_grouped.pivot(index='Sample', columns='Stage', values='num_seqs')
         stages = sorted(pivot_df.columns.tolist())
         pivot_df = pivot_df[stages]
 
-        if pivot_df.empty: return
+        if pivot_df.empty:
+            logger.warning("汇总表无有效样本×阶段数据，跳过绘图。")
+            return False
 
         line_out = output_prefix + '_line.png'
         bar_out = output_prefix + '_bar.png'
@@ -211,8 +224,10 @@ def generate_plots(tsv_file, output_prefix):
         plot_data(pivot_df, 'line', line_out)
         plot_data(pivot_df, 'bar', bar_out)
         logger.info(f"📈 可视化图表已生成: {line_out} 和 {bar_out}")
+        return True
     except Exception as e:
-        logger.error(f"绘图失败: {e}")
+        logger.error(f"绘图失败: {e}", exc_info=True)
+        return False
 
 # ==========================================
 # 2. 日志与基础配置
@@ -1200,7 +1215,8 @@ def main():
     if os.path.exists(summary_tsv_path):
         if PLOT_AVAILABLE:
             plot_prefix = os.path.join(args.logs_dir, "host_depletion_plot")
-            generate_plots(summary_tsv_path, plot_prefix)
+            if not generate_plots(summary_tsv_path, plot_prefix):
+                logger.warning("⚠️ 可视化图表未生成 (详见上文错误/traceback); 报告与汇总表不受影响")
         else:
             logger.warning("未检测到 matplotlib 或 pandas，已跳过可视化绘图步骤。")
 

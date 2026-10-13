@@ -20,6 +20,7 @@ submission_gui.py — Virome Submission Pipeline 独立桌面 GUI
 import sys
 import os
 import re
+import glob
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -36,39 +37,15 @@ from PySide6.QtGui import QAction, QColor, QBrush, QFont
 
 
 # ══════════════════════════════════════════════════════════════
-# 字段定义 (与 unified_metadata.py 一致)
+# 字段定义 (单一真相源: unified_metadata.py —— 本文件不再维护第二副本)
 # ══════════════════════════════════════════════════════════════
 
-UNIFIED_COLUMNS = [
-    ("organism",               True,  "NCBI Taxonomy 物种名"),
-    ("sequence_name",          True,  "FASTA 中的序列 ID"),
-    ("authors",                True,  "引用作者: Last, First; ..."),
-    ("collection_date",        True,  "采集日期 (YYYY-MM-DD)"),
-    ("bioproject",             True,  "BioProject ID (PRJNA...)"),
-    ("src-Isolate",            True,  "唯一分离株标识"),
-    ("src-geo_loc_name",       True,  "采集地点 (Country:Region)"),
-    ("src-Lat_Lon",            True,  "经纬度 (XX.XX N XXX.XX E)"),
-    ("src-Host",               False, "宿主物种名"),
-    ("src-Segment",            False, "分段病毒的片段编号"),
-    ("src-Isolation-source",   False, "分离来源描述"),
-    ("src-Note",               False, "额外备注"),
-    ("src-Tissue_type",        False, "组织类型"),
-    ("src-Collected_by",       False, "采集人"),
-    ("src-Cultivar",           False, "栽培品种"),
-    ("src-Dev_stage",          False, "发育阶段"),
-    ("gb-sample_name",         True,  "GenBank 记录名 (≤50字符)"),
-    ("gb-title",               False, "提交标题"),
-    ("sra",                    False, "SRA 登录号 (SRR...)"),
-    ("biosample",              True,  "BioSample ID (SAMN...)"),
-    ("cmt-Assembly_Method",    True,  "组装方法"),
-    ("cmt-Sequencing_Technology", True, "测序平台"),
-    ("cmt-Genome_Coverage",    False, "基因组覆盖度"),
-    ("cmt-Annotation_Pipeline", False, "注释流程"),
-    ("bs-isolate",             False, "BioSample: 分离株标识"),
-    ("bs-geo_loc_name",        False, "BioSample: 采集地点"),
-    ("bs-host",                False, "BioSample: 宿主"),
-    ("bs-isolation_source",    False, "BioSample: 分离来源"),
-]
+# unified_metadata: OrderedDict {列名: {"required", "group", "desc"}} (无 PySide6/重副作用,
+# 已在上面 sys.path 里); 此处转成 GUI 用的三元组 (列名, 是否必填, 说明)。
+from unified_metadata import UNIFIED_COLUMNS as _UM_COLUMNS   # noqa: E402
+
+UNIFIED_COLUMNS = [(name, bool(meta["required"]), str(meta.get("desc", "")))
+                   for name, meta in _UM_COLUMNS.items()]
 
 REQUIRED_COLS = [name for name, req, _ in UNIFIED_COLUMNS if req]
 COL_DESC = {name: desc for name, _, desc in UNIFIED_COLUMNS}
@@ -517,7 +494,8 @@ class MainWindow(QMainWindow):
 
         self._preview_combo = QComboBox()
         self._preview_combo.addItems(["source.src", "miuvig.tsv", "assembly.tsv",
-                                      "biosample_template.tsv", "validation_report.txt"])
+                                      "biosample_template.tsv", "validation_report.txt",
+                                      "report.html"])
         self._preview_combo.currentTextChanged.connect(self._show_preview_file)
         lay.addWidget(self._preview_combo)
 
@@ -681,7 +659,7 @@ class MainWindow(QMainWindow):
         self._preview_combo.clear()
         for fname in ["source.src", "miuvig.tsv", "assembly.tsv",
                       "biosample_template.tsv", "validation_report.txt",
-                      "unified_metadata.csv"]:
+                      "unified_metadata.csv", "report.html"]:
             if os.path.isfile(os.path.join(d, fname)):
                 self._preview_combo.addItem(fname)
         self._show_preview_file()
@@ -697,7 +675,11 @@ class MainWindow(QMainWindow):
             try:
                 with open(fpath, "r", encoding="utf-8", errors="replace") as f:
                     content = f.read(50000)  # cap at 50KB
-                self._preview_text.setPlainText(content)
+                if fname.lower().endswith((".html", ".htm")):
+                    # HTML 报告渲染视图 (相对资源断链可接受), 其余维持源码视图
+                    self._preview_text.setHtml(content)
+                else:
+                    self._preview_text.setPlainText(content)
             except Exception as e:
                 self._preview_text.setPlainText(f"Error: {e}")
         else:
@@ -741,10 +723,14 @@ class MainWindow(QMainWindow):
         else:
             # Auto-detect unified_metadata.csv in common locations
             script_dir = os.path.dirname(os.path.abspath(__file__))
-            for candidate in [
+            candidates = [
                 os.path.join(script_dir, "submission", "unified_metadata.csv"),
                 os.path.join(script_dir, "submission_metadata", "unified_metadata.csv"),
-            ]:
+            ]
+            # ⑦ report_html 产物落 submission_<run_title>/ (向上一层 glob)
+            candidates += sorted(glob.glob(
+                os.path.join(script_dir, "submission_*", "unified_metadata.csv")))
+            for candidate in candidates:
                 if os.path.isfile(candidate):
                     if self.store.load(candidate):
                         self._model.refresh()

@@ -399,7 +399,15 @@ class SequinBuilder:
                 # gcode 统一标准密码子表 1 (S1-③): Rhabdoviridae 等植物病毒通用
                 # transl_table=1; 旧的 11 是细菌/质体表, 不适用于负链 RNA 病毒
                 gcode = 1
-                mol_type = 'cRNA' if 'RNA' in genome_type else 'DNA'
+                # mol_type 必须取 INSDC 受控词表 (genomic DNA/genomic RNA/viral cRNA...):
+                #   负链 RNA 病毒的提交分子记作 viral cRNA; 其余 RNA 记 genomic RNA;
+                #   旧写法 'cRNA'/'DNA' 是非法值, table2asn 校验即报错
+                if 'ssRNA(-)' in genome_type or 'ssRNA(−)' in genome_type:
+                    mol_type = 'viral cRNA'
+                elif 'RNA' in genome_type:
+                    mol_type = 'genomic RNA'
+                else:
+                    mol_type = 'genomic DNA'
                 topology = self.topology_map.get(contig, 'linear')
 
                 header_parts = [contig]
@@ -464,15 +472,18 @@ class SequinBuilder:
     def _write_src(self, path, vgroup, taxonomy, isolate_id, meta):
         """写 source modifier (.src) — 备用格式"""
         with open(path, 'w', encoding='utf-8') as f:
-            f.write("Sequence_ID\tOrganism\tIsolate\tCollection_date\tgeo_loc_name\t"
+            # 表头与数据行必须同为 12 列 (旧版表头 11 列/数据 12 字段, 从
+            # Bioproject 起整体右移一列, BioProject/BioSample 永远拿不到值)
+            f.write("Sequence_ID\tOrganism\tIsolate\tCollection_date\tgeo_loc_name\tLat_Lon\t"
                      "Bioproject\tBiosample\tSRA\tMetagenomic\tMetagenome_source\tSegment\n")
             for s in vgroup['seqs']:
                 sra = extract_sra(s['contig'])
                 date = meta.get('collection_date', '')
                 geo = meta.get('geo_loc_name', '')
+                latlon = meta.get('lat_lon', '')
                 bp = meta.get('bioproject', '')
                 bs = meta.get('biosample', '')
-                f.write(f"{s['contig']}\t{taxonomy}\t{isolate_id}\t{date}\t{geo}\t\t"
+                f.write(f"{s['contig']}\t{taxonomy}\t{isolate_id}\t{date}\t{geo}\t{latlon}\t"
                          f"{bp}\t{bs}\t{sra}\tTRUE\t{self.metagenome_source}\t\n")
 
     def _save_summary(self, rows):
@@ -504,18 +515,18 @@ class SequinBuilder:
         """保存运行参数"""
         path = self.out_dir / self.run_title / f"{self.run_title}_run_arguments.txt"
         with open(path, 'w') as f:
-            f.write(f"Sequin 提交文件构建参数\n")
+            f.write(f"Sequin submission file build parameters\n")
             f.write(f"{'='*50}\n")
-            f.write(f"运行时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-            f.write(f"运行标题: {self.run_title}\n")
-            f.write(f"病毒种类: {len(self.virus_groups)}\n")
-            f.write(f"序列总数: {total_seqs}\n")
-            f.write(f"\n输入文件:\n")
+            f.write(f"Run time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+            f.write(f"Run title: {self.run_title}\n")
+            f.write(f"Virus groups: {len(self.virus_groups)}\n")
+            f.write(f"Total sequences: {total_seqs}\n")
+            f.write(f"\nInput files:\n")
             f.write(f"  taxonomy:     {self.tax_tsv}\n")
             f.write(f"  features:     {self.tbl_path}\n")
             f.write(f"  proteins:     {self.faa_path}\n")
             f.write(f"  nucleotides:  {self.fna_path}\n")
-            f.write(f"\n参数:\n")
+            f.write(f"\nParameters:\n")
             f.write(f"  sequencer:    {self.sequencer}\n")
             f.write(f"  assembler:    {self.assembler}\n")
             f.write(f"  enrichment:   {self.enrichment}\n")

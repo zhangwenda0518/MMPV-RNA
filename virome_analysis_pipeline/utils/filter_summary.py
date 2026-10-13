@@ -85,8 +85,12 @@ def print_summary(df, args):
     print("=" * 55 + "\n")
 
 
-def write_summary(df, out_path):
-    """输出每样本和每病毒的统计 TSV"""
+def write_summary(df, out_path, suffix=""):
+    """输出每样本和每病毒的统计 TSV
+
+    suffix: 附加后缀 (如 '.passed' → {prefix}.per_sample.passed.tsv), 列结构与原表完全一致;
+            供报告侧 "Post-Filter" 列区分过滤前/过滤后统计。
+    """
     rows = []
     if "Sample" in df.columns and "Adjusted_Species" in df.columns:
         smp = df.group_by("Sample").agg([
@@ -94,8 +98,9 @@ def write_summary(df, out_path):
             pl.col("Asm_EM_Reads").sum().alias("total_EM_reads"),
             pl.col("Rep_Coverage(%)").mean().alias("mean_coverage"),
         ]).sort("Sample")
-        smp.write_csv(str(out_path).rsplit('.', 1)[0] + ".per_sample.tsv", separator='\t')
-        print(f"  Per-sample summary -> {str(out_path).rsplit('.', 1)[0]}.per_sample.tsv")
+        ps_path = str(out_path).rsplit('.', 1)[0] + f".per_sample{suffix}.tsv"
+        smp.write_csv(ps_path, separator='\t')
+        print(f"  Per-sample summary -> {ps_path}")
 
         vsp = df.group_by("Adjusted_Species").agg([
             pl.col("Sample").n_unique().alias("n_samples"),
@@ -104,8 +109,9 @@ def write_summary(df, out_path):
             pl.col("Asm_EM_Reads").sum().alias("total_EM_reads"),
             pl.col("Asm_TPM").sum().alias("total_TPM"),
         ]).sort("n_samples", "total_EM_reads", descending=[True, True])
-        vsp.write_csv(str(out_path).rsplit('.', 1)[0] + ".per_virus.tsv", separator='\t')
-        print(f"  Per-virus summary  -> {str(out_path).rsplit('.', 1)[0]}.per_virus.tsv")
+        pv_path = str(out_path).rsplit('.', 1)[0] + f".per_virus{suffix}.tsv"
+        vsp.write_csv(pv_path, separator='\t')
+        print(f"  Per-virus summary  -> {pv_path}")
 
 
 def main():
@@ -276,14 +282,19 @@ def main():
     if args.dry_run:
         print("\n  DRY-RUN mode: no files written.")
     else:
+        # [P2-23b] 0 条通过时也写"含表头"的空表 (下游按文件存在性判定; 原实现不产文件 + exit 0 会误导)
+        passed.write_csv(args.output, separator='\t')
         if len(passed) > 0:
-            passed.write_csv(args.output, separator='\t')
             print(f"  Passed -> {args.output}")
         else:
-            print(f"  No records passed, output not created.")
+            print(f"  No records passed, empty table with header written -> {args.output}")
         if len(failed) > 0:
             failed.write_csv(discarded_file, separator='\t')
             print(f"  Discarded -> {discarded_file}")
+        # [P2-23a] 过滤判定完成后追加写 passed 版 per-sample/per-virus 汇总 (列结构与原表一致);
+        # 原 --summary 在过滤前写出, 报告侧曾把过滤前统计当 "Post-Filter"
+        if args.summary:
+            write_summary(passed, args.summary, suffix=".passed")
 
     # ── 过滤摘要图 ──
     if args.plot:

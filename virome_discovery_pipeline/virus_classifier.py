@@ -448,7 +448,7 @@ def merge_taxonomy_results(sample, output_dir, tools_ran):
     for tool in tools_ran:
         tf = tf_map.get(tool)
         if not tf or not os.path.exists(tf): continue
-        with open(tf) as f: lines = f.readlines()
+        with open(tf, encoding='utf-8') as f: lines = f.readlines()
         has_hdr = bool(lines) and lines[0].startswith("seq_name")
         for line in lines[int(has_hdr):]:
             line = line.strip()
@@ -461,7 +461,7 @@ def merge_taxonomy_results(sample, output_dir, tools_ran):
             else:
                 continue
             rows.append([parts[0], tool] + [r.get(rn,"NA") for rn in RANK_NAMES])
-    with open(combined, 'w') as f:
+    with open(combined, 'w', encoding='utf-8') as f:
         f.write('\t'.join(HEADER) + '\n')
         for row in rows:
             line = '\t'.join(row)
@@ -480,7 +480,7 @@ def save_resource_summary(out_dir, sample, metrics):
     # 读已有记录, 只更新当前运行的工具 (避免覆盖其他工具)
     existing = {}
     if os.path.exists(usage_file):
-        with open(usage_file) as f:
+        with open(usage_file, encoding='utf-8') as f:
             for line in f.readlines()[1:]:
                 ps = line.strip().split('\t')
                 if len(ps) >= 5: existing[ps[1]] = ps
@@ -491,7 +491,7 @@ def save_resource_summary(out_dir, sample, metrics):
                 f"{m.get('wall_time_sec',0):.1f}",
                 f"{m.get('cpu_time_sec',0):.1f}",
                 f"{m.get('peak_rss_mb',0):.1f}", "OK"]
-    with open(usage_file, 'w') as f:
+    with open(usage_file, 'w', encoding='utf-8') as f:
         f.write("sample\ttool\twall_sec\tcpu_sec\tmem_mb\tstatus\n")
         for tool in sorted(existing):
             f.write('\t'.join(existing[tool]) + '\n')
@@ -506,7 +506,7 @@ def validate_results(output_dir, sample, tools_ran=None, verbose=False):
         return
 
     combined_rows = {}
-    with open(combined) as f:
+    with open(combined, encoding='utf-8') as f:
         f.readline()
         for line in f:
             ps = line.strip().split('\t')
@@ -521,7 +521,7 @@ def validate_results(output_dir, sample, tools_ran=None, verbose=False):
         nc = TOOL_COLS.get(tool, 3)
         tf = os.path.join(output_dir, f"{sample}_{tool}_taxonomy.tsv")
         if not os.path.exists(tf): continue
-        with open(tf) as f:
+        with open(tf, encoding='utf-8') as f:
             has_hdr = f.readline().startswith("seq_name")
             if not has_hdr: f.seek(0)
             for line in f:
@@ -585,7 +585,7 @@ def fill_taxonomy_na(tsv_path, output_path):
         safe_print("  [fill] 跳过 — fullnamelineage.dmp 不存在"); return
 
     # 1. 收集 unique 最深 rank 名
-    with open(tsv_path) as f:
+    with open(tsv_path, encoding='utf-8') as f:
         lines = [l.rstrip('\r\n') for l in f.readlines()]
     hdr = lines[0].strip().split('\t')
     rank_cols = list(RANK_NAMES)
@@ -634,7 +634,7 @@ def fill_taxonomy_na(tsv_path, output_path):
 
     # 3. 逐行回填 NA
     n_fill = 0; n_skip = 0; n_hit = 0
-    with open(output_path, 'w') as fo:
+    with open(output_path, 'w', encoding='utf-8') as fo:
         fo.write('\t'.join(hdr) + '\n')
         for line in lines[1:]:
             if not line.strip(): continue
@@ -848,7 +848,7 @@ def process_single_wrapper(args_bundle):
 
 def main():
     p = argparse.ArgumentParser(description="病毒分类整合脚本 v4.2 — 8级 taxonomy", formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="工具: genomad,metabuli,diamond_lca,VITAP,mmseqs,ACVirus,vcontact3,PhaGCN3,all")
+        epilog="工具: genomad,metabuli,diamond_lca,VITAP,mmseqs,ACVirus,vcontact3,PhaGCN3 (预留未接线，-t 无法选中),all")
     p.add_argument('-g','--genomes', help='FASTA')
     p.add_argument('-s','--sample', help='样品名')
     p.add_argument('-i','--input-dir', help='输入目录')

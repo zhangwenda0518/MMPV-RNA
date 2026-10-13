@@ -81,7 +81,7 @@ The MMPV-RNA Nature Communications manuscript (`D:\桌面\文章写作\MMPV_plat
 - ★★ potentially novel: ≥70% protein identity but <90% nucleotide identity
 - ★★★ truly novel: <70% protein identity to any reference
 
-**Terminology**: 15-stage discovery workflow; seven pipelines (Public Data, Preprocessing, Discovery, Analysis, Phylo, EVE, Submission); vOTU catalog from centroids; HQ vOTUs after cascaded rescue. Family-level claims should cite ICTV VMR MSL41-derived reference database.
+**Terminology**: 15-stage discovery workflow; main-chain pipelines = Public Data, Preprocessing, Discovery, Analysis, Phylo, Submission. **⑥ EVE and ⑧ host-expression were ARCHIVED 2026-10-11** (immature methodology; moved to `archive/20261011_endogenous_virus_pipeline/` and `archive/20261011_host_expression_pipeline/`) — do NOT present them as current pipelines. Existing `06_EVE/` / `08_HostExpression/` outputs from historical projects may still be interpreted (see the dedicated `eve-results-analysis` / `host-expression-results-analysis` skills). vOTU catalog from centroids; HQ vOTUs after cascaded rescue. Family-level claims should cite ICTV VMR MSL41-derived reference database.
 
 **Where results data plugs into the paper**: ident_summary/clusters → Fig. survey vOTU counts and novelty tiers; integrated_classification → family composition panels; evidence chain verdicts → novel-virus characterization paragraphs; CheckV/rescue yields → extension/rescue improvement claims (paper reserves these as [TBD] slots — analysis deliverables should fill them with file-cited numbers).
 
@@ -91,5 +91,5 @@ If analysis reveals values inconsistent with the anchors above (e.g., a rerun us
 
 - Light-color, colorblind-safe figures only if plotting is requested (Okabe-Ito palette, ≥300 dpi, English labels).
 - Never fabricate a count: if a file is absent or empty, mark N/A.
-- Version-drift awareness: default parameters correspond to `virome_pipeline.py` v3.x (see METHODS_Virome_Discovery.md in the pipeline repo). If the user's run used overrides recorded in `run_config.json`/`provenance.json`, prefer those values in prose.
+- Version-drift awareness: default parameters correspond to `virome_pipeline.py` **v2.3** (code version, matches `pixi.toml` 2.3.0; the platform display name v3.x — v3.1 = unified I/O layout, v3.2 = nine-stage metadata orchestrator — is a separate numbering, see METHODS_Virome_Discovery.md in the pipeline repo). If the user's run used overrides recorded in `run_config.json`/`provenance.json`, prefer those values in prose.
 - Chinese responses should mirror the same structure if the user writes in Chinese; keep file names and tool names in English regardless.

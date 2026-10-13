@@ -90,9 +90,12 @@ def ensure_hostdb(args, log):
     """无现成库时现场构建宿主参考 (--host_fasta 或 --host_species+--host_taxid).
 
     直接调用 download_host_genome.py (四通道下载) + build_hostbase.py (只建 kraken2 +
-    当前比对工具), 结果写入 {output_dir}/host_reference/hostdb/, 并回填 args.host_db。
+    当前比对工具), 结果写入 {output_dir}/<宿主参考目录>/hostdb/ (布局感知:
+    legacy=host_reference, standard=05_HostRef), 并回填 args.host_db。
     """
-    host_reference = Path(args.output_dir) / 'host_reference'
+    # 布局感知落点: h_genome 键的父目录 (legacy=host_reference / standard=05_HostRef),
+    # 与 preprocess_unified.py 的 hostref 阶段保持同一落点
+    host_reference = Path(args.output_dir) / os.path.split(layout_dir_name('h_genome'))[0]
     hostdb = host_reference / 'hostdb'
     if hostdb.is_dir() and any(hostdb.iterdir()) and not args.force:
         log.info("  复用已有宿主参考: %s (--force 重建)", hostdb)
@@ -315,7 +318,7 @@ def main():
     g.add_argument('--host_db', help='宿主数据库目录 (支持 hostdb/ 本身、host_reference 根、kraken2 库目录, 自动查找子索引)')
     g.add_argument('--kraken2_db', help='Kraken2 宿主库 (与 --host_align_db 同用, 精确指定)')
     g.add_argument('--host_align_db', help='宿主比对索引前缀 (bowtie2/minimap2)')
-    g.add_argument('--host_fasta', help='宿主基因组 FASTA (无现成库时现场构建到 {output_dir}/host_reference/)')
+    g.add_argument('--host_fasta', help='宿主基因组 FASTA (无现成库时现场构建到 {output_dir}/宿主参考目录/)')
     g.add_argument('--host_species', help='宿主物种拉丁学名 (与 --host_taxid 同用, 现场构建)')
     g.add_argument('--host_taxid', type=int, help='宿主 NCBI Taxonomy ID')
 
@@ -387,7 +390,7 @@ def main():
             log.error("去宿主需要宿主参考, 三选一:")
             log.error("  ① --host_db <宿主库目录>                  (hostdb/ 或 host_reference 根, 自动查找子索引)")
             log.error("  ② --kraken2_db <dir> --host_align_db <prefix>   (分开精确指定)")
-            log.error("  ③ --host_fasta <FASTA> 或 --host_species X --host_taxid N   (现场构建到 {output_dir}/host_reference/)")
+            log.error("  ③ --host_fasta <FASTA> 或 --host_species X --host_taxid N   (现场构建到 {output_dir}/宿主参考目录/)")
             sys.exit(1)
         if not has_db:
             ensure_hostdb(args, log)
@@ -415,7 +418,9 @@ def main():
         log.info("  Normalized reads → %s", bbnorm_out)
 
     if _all or 'report' in stages:
-        run_report(args, log)
+        if not run_report(args, log):
+            log.error("report 阶段失败 (汇总表/交接清单/HTML 可能未生成), 退出码 1")
+            sys.exit(1)
 
     log.info("=" * 50)
     log.info("预处理完成!")

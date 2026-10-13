@@ -15,7 +15,7 @@ Virome Pipeline v2.3 — 宏病毒组端到端全自动主控流水线
   ../data_preprocessing_pipeline/host_depletion.py → Step 0b: Kraken2 + Align + Ribodetector
   assembly_pipeline.py       → Step 1:  MEGAHIT / rnaviralSPAdes / Penguin
   virus_identification.py  → Step 2a: Genomad + Blast + VirSorter2 + ...
-  filter_virus.py           → Step 2b: UniProt + CDD 分层过滤
+  filter_virus.py           → Step 2b: UniProt 过滤 (CDD 层已移除)
   cobra_pipeline.py          → Step 3:  BWA-MEM2 + COBRA 批量延伸
   cluster_pipeline.py        → Step 4:  CLUSTER 三支路病毒基因组去冗余
   virus_classifier.py      → Step 5:  病毒分类注释 (直接调用)
@@ -408,21 +408,35 @@ class ViromePipeline:
             'deplete':  lambda: d['hostdep'].is_dir() and any(d['hostdep'].iterdir()),
             'assembly': lambda: len(_vg.glob(os.path.join(str(d['asm']), '*', '*.contig.fasta'))) > 0,
             'identification': lambda: len(_vg.glob(os.path.join(str(d['ident']), '*', '*virus.all.candidate.fasta'))) > 0,
-            'filter':   lambda: any(
-                p.is_dir() and p.name not in ('cdd','uniprot')
-                for p in d['filter'].iterdir()
-            ) if d['filter'].is_dir() else False,
+            'filter':   lambda: (
+                # 必须是真实过滤产物 (旧判据"有任意非 cdd/uniprot 目录即通过"会被
+                # 空壳样本目录/纯日志目录骗过, P1-5c)。覆盖两种运行模式的产物名:
+                #   合并模式: candidates/{S}/{S}_virus.all.candidate.fasta (COBRA 主链镜像)
+                #   逐样本模式: {S}_virus.all.candidate_filtered.fasta (filter_virus 新名) /
+                #               {S}.virus.candidate_filtered.fasta (旧名) / {base}_filtered.fasta
+                any(
+                    p.is_file() and p.stat().st_size > 0
+                    for pat in ('candidates/*/*_virus.all.candidate.fasta',
+                                '*/*_virus.all.candidate_filtered.fasta',
+                                '*/*.virus.candidate_filtered.fasta',
+                                '*/*_filtered.fasta')
+                    for p in d['filter'].glob(pat)
+                ) if d['filter'].is_dir() else False
+            ),
             'cobra':    lambda: (
                 # co-assembly 模式下 COBRA 被有意跳过, 信任标记
                 getattr(self.args, 'coassembly', False)
                 or any(
                     (cobra_d and cobra_d.is_dir() and any(
-                        # 样本目录内必须确有产物文件 (失败残留的空壳目录不算)
-                        p.is_dir() and any(f.is_file() for f in p.rglob('*'))
-                        for p in cobra_d.iterdir()
-                        if p.name not in ('cobra.log','checkpoint_status.json')
+                        # 样本目录内必须确有延伸产物 fasta (P1-5c):
+                        # *cobra*.fa / *extended*.fa / 目录下除 .log 外的 .fa|.fasta 文件;
+                        # 旧判据任意文件 (含纯任务 .log) 即通过 → 失败残留的空壳目录也算完成
+                        f.is_file() and f.suffix.lower() in ('.fa', '.fasta', '.fna')
+                        for f in p.rglob('*')
                     ))
                     for cobra_d in d.get('_cobra_dirs', [d['cobra']])
+                    for p in cobra_d.iterdir()
+                    if p.is_dir()
                 )
             ),
             'merge':    lambda: (
@@ -440,10 +454,12 @@ class ViromePipeline:
             ),
             'taxonomy': lambda: (
                 # 真实产物形态 = 逐样本 {sample}.integrated/final_integrated_classification.tsv;
-                # 聚合 integrated/ 与历史旧名 Votus.integrated/ 兜底
+                # 旧判据 *final_integrated_classification.tsv 只在 taxonomy 根层 glob,
+                # 不跨样本子目录 → 永不命中 (P2-11), 改为 *.integrated/ 跨目录寻址;
+                # 另保留 ('integrated','Votus.integrated') 旧名兜底。
                 any(
                     p.is_file() and p.stat().st_size > 100
-                    for p in d['taxonomy'].glob('*final_integrated_classification.tsv')
+                    for p in d['taxonomy'].glob('*.integrated/final_integrated_classification.tsv')
                 ) or any(
                     (d['taxonomy'] / sub / 'final_integrated_classification.tsv').is_file()
                     and (d['taxonomy'] / sub / 'final_integrated_classification.tsv').stat().st_size > 100
@@ -455,7 +471,11 @@ class ViromePipeline:
                 and (d['host_pred'] / 'ensemble_host_summary.tsv').stat().st_size > 100
             ),
             'checkv':   lambda: len(_vg.glob(str(d['checkv_dir'] / '*' / 'completeness.tsv'))) > 0,
-            'rescue':   lambda: d['rescue_dir'].is_dir() and any(d['rescue_dir'].iterdir()),
+            'rescue':   lambda: (
+                # 真实产物 = HQ 汇总 fasta (P1-9); 旧判据"目录非空"会被中途失败残留骗过。
+                # run_rescue 任何正常路径 (含早退) 均已落该文件, 缺失=空跑, 删标记重跑
+                (d['rescue_dir'] / 'HQ_plant_viruses.fasta').is_file()
+            ),
         }
         if stage in checks:
             return checks[stage]()
@@ -759,8 +779,7 @@ class ViromePipeline:
     # ── filter 子步骤: 组装图标签传播 (思想源自 GMW; 默认关闭, graph.enabled 开启) ──
     def run_graph(self):
         self.d['graph'].mkdir(parents=True, exist_ok=True)
-        if getattr(self.args, 'skip_graph', False) or \
-                not getattr(self.args, 'graph_enabled', True):
+        if getattr(self.args, 'skip_graph', False) or not self.args.graph_enabled:
             self.log.info("  [graph 子步骤] 默认关闭 (graph.enabled=false / --skip-graph), 跳过")
             return
         self.log.info("=" * 50)
@@ -854,8 +873,8 @@ class ViromePipeline:
 
         self.log.info("  过滤完成, 输出: %s", self.d['filter'])
 
-        # ── graph 子步骤 (默认关闭; graph.enabled: true 时对 filter 无证据结果二次裁决) ──
-        if getattr(self.args, 'graph_enabled', False) and \
+        # ── graph 子步骤 (默认关闭; graph.enabled: true / --graph-enabled 时对 filter 无证据结果二次裁决) ──
+        if self.args.graph_enabled and \
                 not getattr(self.args, 'skip_graph', False):
             self.run_graph()
 
@@ -926,7 +945,11 @@ class ViromePipeline:
         skipped = 0
         for sample, cand_fa in candidates:
             sample_out = self.d['filter'] / sample
-            final_fa = sample_out / f"{sample}.virus.candidate_filtered.fasta"
+            # 断点判据 = filter_virus 逐样本模式实际产物名
+            # (非 split 模式写 {base}_filtered.fasta, base = 输入文件名去扩展名 →
+            #  {sample}_virus.all.candidate.fasta → {sample}_virus.all.candidate_filtered.fasta;
+            #  旧判据 {sample}.virus.candidate_filtered.fasta 永不命中, 断点续传全程失效, P1-8a)
+            final_fa = sample_out / f"{sample}_virus.all.candidate_filtered.fasta"
             if not self.args.force and final_fa.is_file():
                 self.log.info("  Filter-%s: 跳过 (已完成, %s 存在)", sample, final_fa.name)
                 skipped += 1
@@ -946,7 +969,7 @@ class ViromePipeline:
                 f"-i {cand_fa}",
                 f"-o {sample_out}",
                 f"-t {self.args.threads}",
-            ]
+            ] + (["--force"] if getattr(self.args, 'force', False) else [])
             log_file = sample_out / "filter.log"
             cmd = ' '.join(parts)
             result = subprocess.run(cmd, shell=True, executable='/bin/bash',
@@ -1508,6 +1531,8 @@ class ViromePipeline:
 
         if not target_ids:
             self.log.warning("  无目标宿主 centroids, 跳过三支路拯救")
+            # 早退也落 HQ 汇总 (免拯救产物已在 known/ 之外保留, P1-9)
+            self._write_hq_summary()
             return
 
         # 4.5 区分 CD-HIT known vs vclust novel
@@ -1566,6 +1591,8 @@ class ViromePipeline:
 
         if not target_novel:
             self.log.warning("  无 vclust novel centroids, 跳过三支路拯救")
+            # 早退也落 HQ 汇总 (known/CheckV-pass 产物不丢, P1-9)
+            self._write_hq_summary(n_cdhit, n_checkv)
             return
 
         # 5. 加载 clusters.tsv → 找到目标 novel centroids 所在的 cluster 成员
@@ -1599,6 +1626,8 @@ class ViromePipeline:
 
         if n_written == 0:
             self.log.error("  无有效 centroids, 跳过三支路拯救")
+            # 早退也落 HQ 汇总 (known/CheckV-pass 产物不丢, P1-9)
+            self._write_hq_summary(n_cdhit, n_checkv)
             return
 
         # 7. 调用 rescue_pipeline.py (直接使用已有聚类, 不重新 vclust)
@@ -1628,7 +1657,7 @@ class ViromePipeline:
         parts += [f"--max-vsi-samples {self.args.max_vsi_samples}"]
         parts += [f"--min-vsi-len {self.args.min_vsi_len}"]
         parts += [f"--checkv-threshold {getattr(self.args, 'checkv_threshold', 90.0)}"]
-        # Taxonomy + genus_len (分支 D + VSI genus_avg_len 备选截止)
+        # Taxonomy + genus_len (VSI 属长回退判定)
         sample = getattr(self.args, 'tax_sample_name', None) or "Votus"
         tax_tsv = self.d['taxonomy'] / f"{sample}.integrated" / "final_integrated_classification.tsv"
         if tax_tsv.is_file():
@@ -1640,17 +1669,28 @@ class ViromePipeline:
             parts.append(f"--genus-len {genus_len_path}")
         if not self.args.force:
             parts.append("--resume")
-        # cdhit_combined.fasta (供分支C自动建库)
         # Flye 样本映射 (让 rescue 精确找到 Flye contig 的来源样本)
         flye_map = self.d['merge_samples'] / "flye_coassembly" / "flye_sample_map.json"
         if flye_map.is_file():
             parts.append(f"--flye-sample-map {flye_map}")
-
-        cdhit_fa = self.d['cluster'] / "2_cdhit" / "cdhit_combined.fasta"
-        if cdhit_fa.is_file():
-            parts.append(f"--cdhit-fa {cdhit_fa}")
+        # (2026-10-11) 分支 C/D 已归档 (archive/20261011_rescue_branch_cd/),
+        # 不再向 rescue 传递 --cdhit-fa / --blast-db
 
         ok, _ = run_cmd(' '.join(parts), self.log, f"Rescue ({','.join(host_filter)})", str(rescue_out / "rescue.log"))
+
+        # P2-14: 整批拯救落空 fail-loud — VSI 分支启用 (Virseqimprover.py 实际存在)
+        # 且存在待拯救候选 (能走到此处即 n_written > 0) 时, A 直通 (branchA_pass) 与
+        # B 延伸 (branchB_pass) 均为 0 = 本轮没有任何一条候选被救回 (C/D 已归档),
+        # 抛出让主循环不写 .ok; 任一分支有产物 (部分失败) 维持 warning,
+        # 与同文件 run_graph/run_filter/run_cobra 的 partial-fail 口径一致。
+        n_a_pass = self._fasta_seq_count(rescue_out / "branch_a" / "branchA_pass.fasta")
+        n_b_pass = self._fasta_seq_count(rescue_out / "branch_b" / "branchB_pass.fasta")
+        if Path(os.path.expanduser(str(vsi_path))).is_file() and n_a_pass == 0 and n_b_pass == 0:
+            # HQ 汇总先落盘再抛, 保证任何路径下 HQ 产物不丢 (P1-9)
+            self._write_hq_summary(n_cdhit, n_checkv)
+            raise RuntimeError(
+                f"Rescue 全部落空 (A 直通 0 / B 延伸 0, 待拯救候选 {n_written} 条) — "
+                f"检查 {rescue_out / 'rescue.log'} 与 branch_a/branch_b 日志")
         if ok:
             final_out = rescue_out / "centroids" / "final_centroids.fasta"
             if final_out.exists():
@@ -1658,9 +1698,27 @@ class ViromePipeline:
                 self.log.info("  Rescue 最终输出: %d 条 HQ vOTU → %s", n, final_out)
             self.log.info("  Rescue 完成 → %s", rescue_out)
         else:
-            self.log.warning("  Rescue 部分任务失败")
+            self.log.warning("  Rescue 部分任务失败 (A 直通 %d / B 延伸 %d)", n_a_pass, n_b_pass)
 
         # ── 合并 免拯救(known+CheckV-pass) + rescue → 完整病毒集合 ──
+        self._write_hq_summary(n_cdhit, n_checkv)
+
+        # ── CheckV 质量评估 (按宿主统计) ──
+        self.log.info("=" * 50)
+        self.log.info("[CheckV] 各宿主质量评估统计")
+        self._run_checkv_summary()
+
+
+    def _write_hq_summary(self, n_cdhit=None, n_checkv=None):
+        """HQ 汇总 (P1-9): 免拯救产物 (known/ 或 no_rescue/ 的 centroids)
+        + 各目标宿主的 rescue centroids → rescue_dir/HQ_plant_viruses.fasta。
+
+        任何路径 (含早退 return / fail-loud raise 前) 都必须调用, 保证 HQ 产物不丢。
+        """
+        host_filter = self.args.host_filter or ["Plant"]
+        if isinstance(host_filter, str):
+            host_filter = [h.strip() for h in host_filter.split(",")]
+
         all_plant = self.d['rescue_dir'] / "HQ_plant_viruses.fasta"
         no_rescue_fa = self.d['rescue_dir'] / "no_rescue" / "centroids" / "final_centroids.fasta"
         if not no_rescue_fa.is_file():
@@ -1680,13 +1738,21 @@ class ViromePipeline:
         self.log.info("=" * 50)
         self.log.info("  完整植物病毒: %d 条 → %s",
                       n_no_rescue + n_rescued_total, all_plant)
-        self.log.info("    CD-HIT known: %d  |  CheckV pass(≥90%%): %d  |  rescued: %d",
-                      n_cdhit, n_checkv, n_rescued_total)
+        if n_cdhit is not None or n_checkv is not None:
+            self.log.info("    CD-HIT known: %d  |  CheckV pass(≥90%%): %d  |  rescued: %d",
+                          n_cdhit or 0, n_checkv or 0, n_rescued_total)
+        return n_no_rescue + n_rescued_total
 
-        # ── CheckV 质量评估 (按宿主统计) ──
-        self.log.info("=" * 50)
-        self.log.info("[CheckV] 各宿主质量评估统计")
-        self._run_checkv_summary()
+    @staticmethod
+    def _fasta_seq_count(path):
+        """统计 FASTA 序列条数 (文件不存在/读取失败返回 0)"""
+        path = Path(path)
+        if not path.is_file():
+            return 0
+        try:
+            return sum(1 for line in open(path) if line.startswith('>'))
+        except Exception:
+            return 0
 
 
     # ── CheckV 辅助 ──
@@ -2336,7 +2402,7 @@ class ViromePipeline:
             self.log.info("  rescue 检测 — 跳过 (batch_virus_depth.py 或 HQ fasta 不存在)")
 
         # ── Part 5 已移至 09b (virus_validation) ──
-        # CDD 验证 + 五层证据整合 + verdict 判定 → 09b_ACVirus_Analysis/virus_validation/
+        # CDD 验证 + 五层证据整合 + verdict 判定 → 09b_Analysis_Verify/virus_validation/
         self.log.info("  [9a] Part 5 (CDD/blast 验证/verdict) 已转移 → 09b virus_validation")
 
         self.log.info("  分析完成 → %s", self.d['analysis'])
@@ -2355,15 +2421,33 @@ class ViromePipeline:
     def _write_frequency_table(self, summary_path, out_path, fasta_path=None, prevalence_path=None):
         """从检测 summary 统计检出样本数, 生成频次表 (contig_id + n_samples)
         合并 prevalence_full_table 的 checkv 质量字段, 覆盖全部候选 (含 0 检出)
+
+        ⚠⚠ **口径修正（2026-10-13，用户：「你这发生率有点问题」）**：
+        旧实现按 `Rep_Accession` 分组（`freq[acc].add(sample)`），但 `Rep_Accession`
+        是**属/物种级代表序列**（`rescue_detection_summary.tsv` 里只有 31 个不同值），
+        而本表**逐 contig_id 输出** → 同一代表序列下的 19–23 条 contig **全部拿到
+        同一个样本数**。实测后果：
+          · `SRR15037478_clean_NODE_23`（cov **0.70×**）报 **272** 样本 / 87.18%，
+            与同属 cov 45.87× 的 `CRR527049_clean_NODE_8` **完全相同** → 明显是
+            沾了同属高丰度 contig 的光，不是它自己被检出的样本数。
+          · 逐 contig 真值：前者 178、后者 186（差 94 个样本）。
+        → 改为从 **`Segment_Accessions`**（每行列出该样本下同 taxid 的**全部** contig，
+          `batch_virus_depth21.py::asm_df` 的 `group_by(["Sample","taxid"])` 聚合列）
+          展开，**逐 contig 收集样本**。`Rep_Accession` 恒为 `Segment_Accessions`
+          的成员（实测 60/60），故代表序列自身也仍被正确统计。
+        ⚠ 兼容：`Segment_Accessions` 缺失或为空时**回退**到 `Rep_Accession`，
+          并在日志里告警（不静默给错口径）。
         """
         from collections import defaultdict
         from Bio import SeqIO
         freq = defaultdict(set)
+        n_rep_only = 0
         with open(summary_path, errors='ignore') as f:
             header = f.readline().rstrip('\n').split('\t')
             col = {h: i for i, h in enumerate(header)}
             acc_col = col.get('Rep_Accession', col.get('Accession', None))
             sample_col = col.get('Sample', 0)
+            seg_col = col.get('Segment_Accessions', None)
             if acc_col is None:
                 self.log.warning("  频次表 — 找不到 Rep_Accession/Accession 列")
                 return
@@ -2371,30 +2455,68 @@ class ViromePipeline:
                 p = line.split('\t')
                 if len(p) <= max(acc_col, sample_col):
                     continue
-                acc = p[acc_col]
-                sample = p[sample_col]
-                if not acc or not sample.startswith(('SRR', 'CRR', 'ERR')):
+                acc = p[acc_col].strip().strip('"')
+                sample = p[sample_col].strip().strip('"')
+                if not sample.startswith(('SRR', 'CRR', 'ERR')):
                     continue
-                freq[acc].add(sample)
-        # 总样本数 (检测分母, 用于计算 prevalence_%)
+                # ── 逐 contig：优先用 Segment_Accessions 展开 ──
+                segs = []
+                if seg_col is not None and len(p) > seg_col:
+                    segs = [a.strip().strip('"')
+                            for a in (p[seg_col] or '').split(',') if a.strip()]
+                if segs:
+                    for a in segs:
+                        freq[a].add(sample)
+                elif acc:
+                    # 回退：只有代表序列名（口径较粗，必须告警）
+                    freq[acc].add(sample)
+                    n_rep_only += 1
+        if n_rep_only:
+            self.log.warning(
+                "  频次表 — %d 行缺 Segment_Accessions，回退到 Rep_Accession 口径"
+                "（这些 contig 的 n_samples 可能被属级值放大）", n_rep_only)
+        # ── 检测分母（prevalence_% 的分母）──
+        # ⚠⚠ **分母 ≠ summary 里的样本数**（2026-10-13 实测）：
+        #   `rescue_detection_summary.tsv` 只记录**有检出**的 (样本 × 代表序列) 行
+        #   （本树 203 个样本有检出），而队列里实际有 **312 个样本**（含无检出的）。
+        #   旧实现把 `total_samples` 覆盖成 summary 的样本数 → 分母偏小、prevalence_%
+        #   被系统性放大（实测 n_samples=272 时 prevalence_% 仍写 87.18 = 272/312，
+        #   说明该树的表其实是由**别的路径**写出的，本函数口径与表不一致）。
+        #   现行优先级（从可靠到不可靠）：
+        #     ① `--n-total-samples`（调用方显式给出队列样本总数，最可靠）
+        #     ② summary 的 `Sample` 列去重（**有检出的样本数**，只作下界兜底）
+        #     ③ `freq` 里的最大样本数（最不可靠，仅当上面都拿不到）
+        #   ⚠ 任一档取到的值都会写进日志，便于核对（不静默）。
         total_samples = 0
-        for _acc, _samps in freq.items():
-            total_samples = max(total_samples, len(_samps))
-        # 更准确: 从 summary 的 Sample 列去重 (含无检出的样本)
-        try:
-            with open(summary_path, errors='ignore') as _sf:
-                _hdr = _sf.readline().rstrip('\n').split('\t')
-                _sc = {h: i for i, h in enumerate(_hdr)}.get('Sample', 0)
-                _sf.seek(0); _sf.readline()
-                _all_samps = set()
-                for _line in _sf:
-                    _pp = _line.split('\t')
-                    if len(_pp) > _sc and _pp[_sc].startswith(('SRR', 'CRR', 'ERR')):
-                        _all_samps.add(_pp[_sc])
-                if _all_samps:
-                    total_samples = len(_all_samps)
-        except Exception:
-            pass
+        _denom_src = "n/a"
+        if getattr(self.args, 'n_total_samples', None):
+            total_samples = int(self.args.n_total_samples)
+            _denom_src = "--n-total-samples"
+        if not total_samples:
+            try:
+                with open(summary_path, errors='ignore') as _sf:
+                    _hdr = _sf.readline().rstrip('\n').split('\t')
+                    _sc = {h: i for i, h in enumerate(_hdr)}.get('Sample', 0)
+                    _sf.seek(0); _sf.readline()
+                    _all_samps = set()
+                    for _line in _sf:
+                        _pp = _line.split('\t')
+                        if len(_pp) > _sc and _pp[_sc].startswith(('SRR', 'CRR', 'ERR')):
+                            _all_samps.add(_pp[_sc])
+                    if _all_samps:
+                        total_samples = len(_all_samps)
+                        _denom_src = "summary Sample column (LOWER BOUND — detected only)"
+            except Exception:
+                pass
+        if not total_samples:
+            for _acc, _samps in freq.items():
+                total_samples = max(total_samples, len(_samps))
+            _denom_src = "max(n_samples) over contigs (FALLBACK — least reliable)"
+        self.log.info('  频次表分母 = %d 样本  [来源: %s]', total_samples, _denom_src)
+        if _denom_src != "--n-total-samples":
+            self.log.warning(
+                "  频次表 — 分母未由 --n-total-samples 指定，回退到「%s」；"
+                "prevalence_%% 可能偏高，建议显式传队列样本总数", _denom_src)
         # 读 prevalence_full_table 的 checkv 质量字段 (合并进频次表, 避免质量层丢失)
         cv_info = {}
         if prevalence_path and os.path.exists(prevalence_path):
@@ -2922,7 +3044,11 @@ class ViromePipeline:
                               g, len(user_ok), sdt_max, len(user_ok)*(len(user_ok)-1)//2)
                 continue
             od = sdt_out / g
-            done = any((od / f'SDT_{g}.png').exists() for _ in [0]) or (od / f'SDT_{g}.pdf').exists()
+            # 实际产物名 SDT_{属}_heatmap.{png|pdf} (sdt_genus_matrix.py →
+            # virus_auto_pipeline plot_heatmap 的 {prefix}_heatmap.{fmt}); 旧名兼容
+            done = any((od / f).exists() for f in (
+                f'SDT_{g}_heatmap.png', f'SDT_{g}_heatmap.pdf',
+                f'SDT_{g}.png', f'SDT_{g}.pdf'))
             if done:
                 self.log.info('  [9b] SDT %s 已存在, 跳过', g)
                 continue
@@ -3024,7 +3150,7 @@ Stage 流程 (顺序执行, 共15个, 与 STAGE_ORDER 一致; graph 为 filter �
   taxonomy        → 分类学注释 (8工具加权投票)
   host            → 宿主预测 (三级决策树)
   checkv          → 完整性评估 (CheckV)
-  rescue          → 四支路级联拯救 (CheckV → VSI → BLASTN/PlantVirusDB → genus_len)
+  rescue          → 两支路级联拯救 (CheckV 直通 → VSI reads 延伸; C/D 已归档)
   analysis        → 病毒组下游分析
   analysis_verify → 分析复核 (HMM/CT3 证据)
   report          → HTML 报告生成
@@ -3063,9 +3189,12 @@ def _build_parser(add_help=True):
     g.add_argument('--stage', default=['all'], nargs='+',
                    choices=['all', 'clean', 'deplete', 'assembly', 'identification', 'filter', 'cobra', 'merge', 'cluster', 'taxonomy', 'host', 'checkv', 'rescue', 'analysis', 'analysis_verify', 'report'],
                    help='运行阶段 (可多个, 如: --stage clean deplete)')
+    g.add_argument('--graph-enabled', action='store_true', default=False,
+                   help='启用 filter 的 graph 子步骤 (与 pipeline_config.yaml 的 '
+                        'graph.enabled: true 等效, CLI 显式传参优先级更高; 默认关闭)')
     g.add_argument('--skip-graph', action='store_true',
                    help='强制跳过 filter 的 graph 子步骤 (该子步骤默认关闭; '
-                        'graph.enabled: true 时可用此参数临时关闭)')
+                        'graph.enabled: true / --graph-enabled 时可用此参数临时关闭)')
 
     g = p.add_argument_group('组装图标签传播 (filter 阶段的可选子步骤; 缺省值见 pipeline_config.yaml graph: 块)')
     g.add_argument('--graph-min-link-pairs', type=int, default=None,
@@ -3177,7 +3306,7 @@ def _build_parser(add_help=True):
 
     g = p.add_argument_group('Filter 阶段 (filter_virus.py)')
     g.add_argument('--filter-mode', choices=['filter','strict','raw'], default='filter',
-                   help='过滤模式: raw=不过滤, filter=UniProt(关键词抢救)+CDD(viral+viral_plant+viral_bacteria), strict=UniProt(仅TaxID)+CDD(仅viral)')
+                   help='过滤模式: raw=不过滤, filter=UniProt(关键词抢救+no-hit保留), strict=UniProt(仅viral TaxID)')
     g.add_argument('--no-merge', action='store_true', help='逐样本过滤 (默认合并后拆分)')
 
     g = p.add_argument_group('COBRA 阶段 (cobra_pipeline.py)')
@@ -3202,7 +3331,7 @@ def _build_parser(add_help=True):
                    help='Flye 读长错误率 (默认: 0.005)')
 
     g = p.add_argument_group('Taxonomy 阶段 (virus_classifier.py)')
-    g.add_argument('--tax_tools', default='all', help='分类工具: genomad,metabuli,diamond_lca,VITAP,mmseqs,ACVirus,vcontact3,PhaGCN3,all (默认: all)')
+    g.add_argument('--tax_tools', default='all', help='分类工具: genomad,metabuli,diamond_lca,VITAP,mmseqs,ACVirus,vcontact3,all (默认: all; PhaGCN3 预留未接线 — virus_classifier.py 目前无法选中)')
     g.add_argument('--tax_jobs', type=int, default=1, help='分类并行任务数 (默认: 1)')
     g.add_argument('--tax_ext', default='.fasta', help='分类输入文件扩展名 (默认: .fasta)')
     g.add_argument('--tax_sample_name', default='Votus', help='分类样本名 (输出目录前缀, 默认: Votus)')
@@ -3275,6 +3404,12 @@ def _build_parser(add_help=True):
     g.add_argument('--max_vsi_samples', type=int, default=10, help='VSI 最大合并样本数 (0=不限制, 默认: 10)')
     g.add_argument('--min_vsi_len', type=int, default=2000, help='VSI 最小 contig 长度 bp (默认: 2000)')
     g.add_argument('--checkv_threshold', type=float, default=90.0, help='CheckV completeness 通过阈值 (默认90, 植物病毒建议80)')
+    # ⚠⚠ `frequency_table.tsv` 的 `prevalence_%` 分母 = **队列样本总数**（含无检出的样本）。
+    #   不显式传的话会回退到「summary 里有检出的样本数」→ 分母偏小、发生率被系统性放大
+    #   （2026-10-13 实测踩坑，见 `_write_frequency_table` docstring）。**强烈建议显式传**。
+    g.add_argument('--n-total-samples', type=int, default=None,
+                   help='队列样本总数（frequency_table 发生率的分母）。'
+                        '不传则回退到 summary 的有检出样本数并告警。')
 
     g = p.add_argument_group('分类数据库 (virus_classifier.py)')
     g.add_argument('--genomad_db', help='genomad DB 路径')
@@ -3922,6 +4057,11 @@ def main():
 
     if failed_stages:
         logger.warning("以下阶段失败: %s", ', '.join(failed_stages))
+        # P1-4: 默认容错模式 (无 --stop-on-error) 已尽量跑完后续阶段, 但存在失败
+        # 阶段时必须非零退出 — 旧行为只 warning 后正常返回, 外层 (调度器/CI) 无法感知。
+        for _s in failed_stages:
+            logger.error("  失败阶段: %s (%s)", _s, STAGE_HELP.get(_s, _s))
+        sys.exit(1)
 
 
 if __name__ == '__main__':

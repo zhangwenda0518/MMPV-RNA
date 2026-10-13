@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-report_pipeline.py — 独立报告生成器 (MMPV-RNA v2.3)
+report_pipeline.py — 独立报告生成器 (MMPV-RNA v3.1)
 
 根据流水线输出目录生成:
   - 各阶段汇总 TSV (data/assembly/ident/filter/cobra/hostdep/checkv)
@@ -26,7 +26,86 @@ from mmpv_common.io_layout import layout_dirs as _layout_dirs, build_discovery_d
 _D = _layout_dirs(os.environ.get("MMPV_IO_LAYOUT"))
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-VERSION = "v2.3"
+VERSION = "v3.1"
+
+# ═══════════════════════════════════════════════════════════════
+# 统一 SCI 配色 —— 唯一真源 = virome_discovery_pipeline/utils/sci_palette.py
+# ═══════════════════════════════════════════════════════════════
+# 2026-10-12: 此前本文件 chart.js 的**数据色**是 ~60 处游离 hex
+# (#8B2C1F / #537D96 / #4A6B4A / #ffa726 / #00838f / #90caf9 / #88D6B2 …)，
+# 与静态 SCI 图 (Fig_GojiVirome_Discovery / Fig_KnownVirome_Composite) 不同色系。
+# 现统一到 sci_palette：
+#   分类(无序) → OKABE_ITO   ·  序数(有序) → SEQ_CMAP=viridis
+#   语义(好坏/判定) → SEMANTIC
+# ⚠ 加载必须按**显式文件路径**：服务器 site-packages 里有同名第三方 `utils`
+#   常规包 (有 __init__.py)，优先级高于本仓库的命名空间包，`import utils.…`
+#   与 sys.path 顺序无关地必然失败。
+_PAL = None
+for _rel in ("virome_discovery_pipeline/utils/sci_palette.py",
+             "virome_phylo_pipeline/utils/sci_palette.py"):
+    _cand = Path(_REPO_ROOT) / _rel
+    if _cand.is_file():
+        import importlib.util as _ilu
+        _spec = _ilu.spec_from_file_location("_sci_palette", _cand)
+        _mod = _ilu.module_from_spec(_spec)
+        sys.modules.setdefault("_sci_palette", _mod)
+        _spec.loader.exec_module(_mod)
+        _PAL = _mod
+        break
+
+
+class _PaletteFallback:                       # 真源缺失也不让报告生成失败
+    OKABE_ITO = ['#E69F00', '#56B4E9', '#009E73', '#F0E442', '#0072B2',
+                 '#D55E00', '#CC79A7', '#000000', '#999999']
+    OKABE_BRANCH = ['#0072B2', '#D55E00', '#009E73', '#E69F00', '#CC79A7']
+    SEQ_CMAP = "viridis"
+    DIV_CMAP = "RdBu_r"
+    SEMANTIC = {}
+
+
+if _PAL is None:
+    _PAL = _PaletteFallback()
+
+OI = list(_PAL.OKABE_ITO)                     # 9 色，顺序固定
+_SEM = getattr(_PAL, "SEMANTIC", None) or {}
+
+
+def _sem(group, key, default):
+    """取 sci_palette.SEMANTIC[group][key]，缺则回退 default。"""
+    return (_SEM.get(group) or {}).get(key, default)
+
+
+# 语义色（全部取自 OKABE_ITO，无游离 hex）
+_C_TOTAL = "#DDDDDD"                          # 总量 / 中性底
+_C_MUTED = OI[8]                              # #999999 次要 / 缺测
+_C_BAD = OI[5]                                # #D55E00 负向 / 去除
+_C_GOOD = OI[2]                               # #009E73 正向 / 保留
+_C_WARN = OI[0]                               # #E69F00 警戒 / 中等
+# 三档阈值配色（越高越好 / 越低越好），供 N50·contigs·dup 等阈值条共用
+_TIER_GOOD = [OI[8], OI[0], OI[2]]            # 低 → 中 → 高
+_TIER_BAD = [OI[2], OI[0], OI[5]]             # 好 → 警戒 → 差
+# 序数色带：viridis(lo + (hi-lo)·i/(n-1))，lo=0.12 hi=0.90，与 sci_palette.SEQ_CMAP 同源。
+# 本模块只产出 HTML/JS、不依赖 matplotlib，故色值必须字面量固化。
+_VIRIDIS_RAMPS = {
+    3: ['#472a7a', '#20928c', '#bddf26'],
+    4: ['#472a7a', '#2c738e', '#2cb17e', '#bddf26'],
+    5: ['#472a7a', '#33638d', '#20928c', '#46c06f', '#bddf26'],
+    6: ['#472a7a', '#38598c', '#27808e', '#21a585', '#5ac864', '#bddf26'],
+    7: ['#472a7a', '#3b528b', '#2c738e', '#20928c', '#2cb17e', '#69cd5b', '#bddf26'],
+    8: ['#472a7a', '#3d4d8a', '#306a8e', '#25858e', '#1fa088', '#3aba76', '#73d056', '#bddf26'],
+}
+
+
+def _ramp(n):
+    """viridis 上取 n 档（3–8；其余按 0.12–0.90 现插值）。"""
+    if n in _VIRIDIS_RAMPS:
+        return list(_VIRIDIS_RAMPS[n])
+    if n == 1:
+        return ['#20928c']
+    lo, hi = 0.12, 0.90
+    return ['#472a7a' if i == 0 else '#bddf26' if i == n - 1 else '#20928c'
+            for i in range(n)]
+
 
 # ═══════════════════════════════════════════════════════════════
 # 辅助函数
@@ -53,6 +132,9 @@ _EN_MAP = {
 '噬菌体污染':'Phage contamination','无病毒域+blast弱':'No viral domain + weak blast','已检出但证据弱':'Detected but weak evidence',
 '已运行但无最终结果':'Ran but no final result','未运行':'Not run','已运行':'Ran',
 '其他':'Other','新科':'New family','远缘(未定)':'Distantly related (undetermined)','近缘(未定)':'Closely related (undetermined)',
+# 数据派生词 (gen_final_judgement.py category 列中残存的混合词) → 显示层英文
+'噬菌体Contamination':'Phage contamination','真菌病毒/Contamination':'Fungal virus/contamination',
+'短片段/低覆盖':'Short fragment / low coverage',
 }
 def _en(t):
     """把显示文本中的中文词映射为英文 (report 全英文化)。"""
@@ -82,28 +164,61 @@ def _resolve_analysis_dir(base):
             return d
     return Path(base) / _D['d_analysis']
 
+# rescue 目录下的基础设施子目录 (非宿主), 不参与宿主子目录解析
+_NON_HOST_SUBDIRS = ("known", "no_rescue", "checkv")
+
+
+def _resolve_host_subdirs(root):
+    """rescue 目录下的宿主子目录候选名 (优先 "Plant", 其后为其余宿主子目录)
+
+    多宿主运行 (--host-filter Plant,Fungi → rescue 目录名 "Plant_Fungi") 下,
+    硬编码 "Plant" 会取不到产物而静默为空。现枚举 rescue 下含
+    centroids/final_centroids.fasta 或 rescue_report.tsv 的宿主子目录
+    (排除 known/no_rescue/checkv), 按目录名排序保证确定性。
+    返回候选名列表; "Plant" 始终在首位 (存在性由调用方 is_file() 判定)。
+    """
+    names = ["Plant"]
+    rescue = Path(root) / _D['d_rescue']
+    if rescue.is_dir():
+        for d in sorted(p for p in rescue.iterdir() if p.is_dir()):
+            if d.name in names or d.name in _NON_HOST_SUBDIRS:
+                continue
+            if (d / "centroids" / "final_centroids.fasta").is_file() \
+               or (d / "rescue_report.tsv").is_file():
+                names.append(d.name)
+    return names
+
 def _count_fasta(path):
     if not path or not os.path.isfile(str(path)): return 0
-    with open(str(path)) as f:
+    with open(str(path), encoding='utf-8') as f:
         return sum(1 for _ in f if _.startswith('>'))
 
 def _count_lines(path):
     if not path or not os.path.isfile(str(path)): return 0
-    with open(str(path)) as f:
+    with open(str(path), encoding='utf-8') as f:
         return sum(1 for _ in f)
 
 def _count_dir(d):
     return sum(1 for _ in Path(d).iterdir() if _.is_dir()) if d and Path(d).is_dir() else 0
 
+def _tool_id_file(d, tool):
+    """样本目录 d 下某工具的结果 id 文件。常规为 {sample}_virus.{tool}.result.id;
+    类病毒 BLASTN 产物名特殊: {sample}_viroids.result.id (virus_identification.py)。"""
+    if tool == 'viroid_blastn':
+        return d / f"{d.name}_viroids.result.id"
+    return d / f"{d.name}_virus.{tool}.result.id"
+
 def _read_tsv(path):
     rows = []
     p = Path(path)
     if not p.is_file(): return rows
-    with open(p) as f:
-        hdr = f.readline().strip().split('\t')
+    # newline='' 保留原始行尾 → 显式剥 CR (生产端既有产物可能是 CRLF/混合行尾)
+    with open(p, encoding='utf-8', newline='') as f:
+        hdr = f.readline().rstrip('\r\n').split('\t')
         for line in f:
+            line = line.rstrip('\r\n')
             if not line.strip(): continue
-            rows.append(dict(zip(hdr, line.strip().split('\t'))))
+            rows.append(dict(zip(hdr, line.split('\t'))))
     return rows
 
 def _n50_n90(lens):
@@ -120,7 +235,7 @@ def _n50_n90(lens):
 
 def _parse_fasta_lens(fa_path):
     lens = []; seq = ""
-    with open(str(fa_path)) as f:
+    with open(str(fa_path), encoding='utf-8') as f:
         for line in f:
             s = line.strip()
             if s.startswith('>'):
@@ -136,8 +251,10 @@ def _img_to_base64(path, max_kb=3000):
     import base64
     if not path or not Path(path).exists():
         return None
-    size_kb = Path(path).stat().st_size / 1024
-    if size_kb > max_kb:
+    size = Path(path).stat().st_size
+    if size == 0:                      # 0 字节 (写失败/占位文件) → 不内嵌
+        return None
+    if size / 1024 > max_kb:
         return None
     with open(str(path), 'rb') as f:
         return base64.b64encode(f.read()).decode('utf-8')
@@ -151,20 +268,20 @@ def _collect_cleandata(root, report_dir, _add):
     """00a_CleanData 阶段"""
     clean = root / _D['d_clean']
     if not clean.is_dir():
-        _add(_D['d_clean'], "○", details="未运行"); return
+        _add(_D['d_clean'], "○", details="Not run"); return
     ns = len(set(f.name.split("_")[0] for d in [clean / "3.clumpify", clean / "2.fasta"] if d.is_dir() for f in d.iterdir() if f.is_file())) or _count_dir(clean / "3.clumpify") or _count_dir(clean / "2.fasta") or _count_dir(clean)
-    _add(_D['d_clean'], "✓", key_metric=f"{ns} 样本", details=str(clean))
+    _add(_D['d_clean'], "✓", key_metric=f"{ns} samples", details=str(clean))
     fp = clean / "logs"
     if not fp.is_dir(): return
     jf_list = list(fp.glob("*_fastp_report.json"))
     if not jf_list: return
     n_total_before, n_total_after = 0, 0
     b_total_before, b_total_after = 0, 0  # bases
-    with open(report_dir / "data_summary.tsv", "w") as ds:
+    with open(report_dir / "data_summary.tsv", "w", encoding='utf-8') as ds:
         ds.write("Sample\tRaw_Reads\tClean_Reads\tRetained(%)\tRaw_Bases\tClean_Bases\tRaw_Q20(%)\tClean_Q20(%)\tRaw_Q30(%)\tClean_Q30(%)\tLowQ_Reads\tTooShort_Reads\tDup_Rate(%)\n")
         for jf in sorted(jf_list):
             try:
-                with open(jf) as jfh:
+                with open(jf, encoding='utf-8') as jfh:
                     js = json.load(jfh)
                 sn = jf.name.replace("_fastp_report.json", "")
                 bef = js.get("summary", {}).get("before_filtering", {})
@@ -191,7 +308,7 @@ def _collect_hostdepletion(root, report_dir, _add):
     """00b_HostDepletion 阶段"""
     hostdep = root / _D['d_hostdep']
     if not hostdep.is_dir():
-        _add(_D['d_hostdep'], "○", details="未运行"); return
+        _add(_D['d_hostdep'], "○", details="Not run"); return
     ns = _count_dir(hostdep)
     hd_rows = {}
     sq_tsv = hostdep / "logs" / "host_depletion_seqkit_summary.tsv"
@@ -216,13 +333,13 @@ def _collect_hostdepletion(root, report_dir, _add):
             hd_rows[sn]["non_rRNA"] = int(r.get("non_rRNA",0))
             hd_rows[sn]["Total_rRNA"] = int(r.get("Total_sequences",0))
     if hd_rows:
-        with open(report_dir / "hostdep_summary.tsv", "w") as hf:
+        with open(report_dir / "hostdep_summary.tsv", "w", encoding='utf-8') as hf:
             cols = ["Sample","Raw","After_Kraken2","After_Host","Total_rRNA","non_rRNA","rRNA"]
             hf.write("\t".join(cols)+"\n")
             for sn in sorted(hd_rows):
                 r = hd_rows[sn]
                 hf.write("\t".join(str(r.get(c,0)) for c in cols)+"\n")
-    _add(_D['d_hostdep'], "✓", key_metric=f"{ns} 样本", details=str(hostdep))
+    _add(_D['d_hostdep'], "✓", key_metric=f"{ns} samples", details=str(hostdep))
 
 
 def _collect_bbnorm(root, report_dir, _add):
@@ -243,11 +360,11 @@ def _collect_assembly(root, report_dir, _add):
     """01_Assembly 阶段"""
     asm = root / _D['d_asm']
     if not asm.is_dir():
-        _add(_D['d_asm'], "○", details="未运行"); return
+        _add(_D['d_asm'], "○", details="Not run"); return
     ns = _count_dir(asm)
     total_contigs, total_bp = 0, 0
     asm_data = []
-    with open(report_dir / "assembly_summary.tsv", "w") as af:
+    with open(report_dir / "assembly_summary.tsv", "w", encoding='utf-8') as af:
         af.write("Sample\tAssembler\tSize(Mb)\tContigs\tMax_Len\tN50\tN90\t>500bp\t>500bp(%)\t>1000bp\t>1000bp(%)\n")
         for d in sorted(asm.iterdir()):
             if not d.is_dir(): continue
@@ -269,8 +386,8 @@ def _collect_assembly(root, report_dir, _add):
         if len(asm_data) > 1:
             t_n = sum(r['n'] for r in asm_data); t_bp = sum(r['total'] for r in asm_data)
             af.write(f"TOTAL\tall\t{t_bp/1e6:.1f}\t{t_n}\t-\t-\t-\t-\t-\t-\t-\n")
-    _add(_D['d_asm'], "✓", key_metric=f"{ns} 样本, {total_contigs:,} contigs, {total_bp/1e6:.1f} Mb", details=str(asm))
-    as_script = SCRIPT_DIR.parent / "analysis" / "assembly_stats.py"
+    _add(_D['d_asm'], "✓", key_metric=f"{ns} samples, {total_contigs:,} contigs, {total_bp/1e6:.1f} Mb", details=str(asm))
+    as_script = SCRIPT_DIR / "utils" / "assembly_stats.py"
     if as_script.is_file():
         as_out = report_dir / "assembly_detail"
         as_out.mkdir(parents=True, exist_ok=True)
@@ -282,23 +399,23 @@ def _collect_identification(root, report_dir, _add):
     """02_Identification 阶段"""
     ident = root / _D['d_ident']
     if not ident.is_dir():
-        _add("02_Identification", "○", details="未运行"); return
+        _add("02_Identification", "○", details="Not run"); return
     ns = _count_dir(ident)
     n_virus = 0
     for d in ident.iterdir():
         if not d.is_dir(): continue
         for f in d.glob("*virus.all.candidate.fasta"): n_virus += _count_fasta(f)
     _add("02_Identification", "✓", key_metric=f"{ns} samples, {n_virus:,} viral sequences", details=str(ident))
-    tools_list = ['genomad','blast','metabuli','virsorter2','viralverify','virhunter','virbot','viralm','rdrpcatch']
+    tools_list = ['genomad','blast','metabuli','virsorter2','viralverify','virhunter','virbot','viralm','rdrpcatch','viroid_blastn']
     ident_data = []
-    with open(report_dir / "ident_summary.tsv", "w") as ids:
+    with open(report_dir / "ident_summary.tsv", "w", encoding='utf-8') as ids:
         ids.write("Sample\tAll_Candidate\t" + "\t".join(tools_list) + "\n")
         for d in sorted(ident.iterdir()):
             if not d.is_dir(): continue
             all_ids = _count_fasta(d / f"{d.name}_virus.all.candidate.fasta")
             tcounts = {}
             for tool in tools_list:
-                idf = d / f"{d.name}_virus.{tool}.result.id"
+                idf = _tool_id_file(d, tool)
                 tcounts[tool] = _count_lines(idf) if idf.is_file() else 0
             ids.write(f"{d.name}\t{all_ids}\t" + "\t".join(str(tcounts[t]) for t in tools_list) + "\n")
             ident_data.append({'Sample': d.name, 'All': all_ids, **tcounts})
@@ -312,16 +429,15 @@ def _collect_identification(root, report_dir, _add):
     filter_dir = root / _D['d_filter']
     if filter_dir.is_dir():
         filter_data = []; modes_seen = set()
-        with open(report_dir / "filter_summary.tsv", "w") as fs:
+        with open(report_dir / "filter_summary.tsv", "w", encoding='utf-8') as fs:
             fs.write("Sample\tMode\tAll_Candidate\tPassed\tRetained(%)\n")
             for d in sorted(filter_dir.iterdir()):
                 if not d.is_dir(): continue
                 all_n = _count_fasta(d / f"{d.name}_virus.all.candidate.fasta")
                 for fm, ff in [('filter', d / f"{d.name}.virus.candidate_uniprot_filtered.fasta"),
-                               ('strict', d / f"{d.name}.virus.candidate_filtered.fasta"),
-                               ('comb', d / f"{d.name}.virus.candidate_uniprot_filtered.fasta")]:
+                               ('strict', d / f"{d.name}.virus.candidate_filtered.fasta")]:
                     nf = _count_fasta(ff) if ff.is_file() else 0
-                    if fm == 'comb' or nf > 0:
+                    if nf > 0:
                         fs.write(f"{d.name}\t{fm}\t{all_n}\t{nf}\t{round(nf/max(all_n,1)*100,1)}\n")
                         filter_data.append({'Sample': d.name, 'Mode': fm, 'All': all_n, 'Passed': nf})
                         modes_seen.add(fm)
@@ -331,14 +447,14 @@ def _collect_identification(root, report_dir, _add):
                     t_all = sum(r['All'] for r in mr); t_pass = sum(r['Passed'] for r in mr)
                     fs.write(f"TOTAL\t{m}\t{t_all}\t{t_pass}\t{round(t_pass/max(t_all,1)*100,1)}\n")
     # Per-tool raw/filter/strict 统计 (raw 取 02a 工具结果, filter/strict 回退 02b)
-    with open(report_dir / "tool_filter_summary.tsv", "w") as tfs:
+    with open(report_dir / "tool_filter_summary.tsv", "w", encoding='utf-8') as tfs:
         tfs.write("Tool\tRaw\tFilter\tStrict\n")
         tool_filter = {t: [0, 0, 0] for t in tools_list}  # [raw, filter, strict]
         for d in sorted(ident.iterdir()):
             if not d.is_dir(): continue
             fd2 = root / _D['d_filter'] / d.name
             for tool in tools_list:
-                tool_filter[tool][0] += _count_lines(d / f"{d.name}_virus.{tool}.result.id")
+                tool_filter[tool][0] += _count_lines(_tool_id_file(d, tool))
                 for fi, sub in [(1,'candidate_uniprot_filtered'),(2,'candidate_filtered')]:
                     idf = fd2 / f"{d.name}.virus.{tool}.{sub}.id"
                     tool_filter[tool][fi] += _count_lines(idf) if idf.is_file() else 0
@@ -346,7 +462,7 @@ def _collect_identification(root, report_dir, _add):
             raw, filt, strict = tool_filter[tool]
             if raw > 0:
                 tfs.write(f"{tool}\t{raw}\t{filt}\t{strict}\n")
-    is_script = SCRIPT_DIR.parent / "analysis" / "ident_stats.py"
+    is_script = SCRIPT_DIR / "utils" / "ident_stats.py"
     if is_script.is_file():
         is_out = report_dir / "ident_detail"
         is_out.mkdir(parents=True, exist_ok=True)
@@ -354,14 +470,51 @@ def _collect_identification(root, report_dir, _add):
         except Exception as e: print(f"  [WARN] ident_stats.py 失败: {e}")
 
 
+def _collect_graph(root, report_dir, _add):
+    """graph 阶段 (组装图标签传播; 目录 d_graph = 02b/03_Filter/graph, 默认不跑)
+
+    有产物才登记: 逐样本 {sample}.graph_verdict.tsv → verdict 计数表
+    (doc.md §6b; 契约见 graph_propagation.py VERDICT_COLUMNS)。
+    """
+    graph = root / _D['d_graph']
+    if not graph.is_dir():
+        return
+    verdicts = sorted(graph.rglob("*.graph_verdict.tsv"))    # 产物在 d_graph/<样本>/ 下
+    if not verdicts:
+        return
+    order = ['viral_seed', 'nonviral_seed', 'graph_viral', 'graph_nonviral', 'unknown', 'conflicting']
+    counted = {}                      # {Sample: {verdict: n}}
+    for vf in verdicts:
+        sn = vf.name.replace(".graph_verdict.tsv", "")
+        cnt = {}
+        for r in _read_tsv(vf):
+            v = (r.get('verdict') or '').strip() or 'unknown'
+            cnt[v] = cnt.get(v, 0) + 1
+        counted[sn] = cnt
+    seen = {v for cnt in counted.values() for v in cnt}
+    labels = [v for v in order if v in seen] + sorted(seen - set(order))
+    with open(report_dir / "graph_verdict_summary.tsv", "w", encoding='utf-8') as gf:
+        gf.write("Sample\t" + "\t".join(labels) + "\tTotal\n")
+        tot = {v: 0 for v in labels}
+        for sn in sorted(counted):
+            cnt = counted[sn]
+            for v in labels: tot[v] += cnt.get(v, 0)
+            gf.write(f"{sn}\t" + "\t".join(str(cnt.get(v, 0)) for v in labels)
+                     + f"\t{sum(cnt.values())}\n")
+        gf.write("TOTAL\t" + "\t".join(str(tot[v]) for v in labels) + f"\t{sum(tot.values())}\n")
+    _add(_D['d_graph'], "✓",
+         key_metric=f"{len(counted)} samples, graph_viral={tot.get('graph_viral',0)}, graph_nonviral={tot.get('graph_nonviral',0)}",
+         details=str(graph))
+
+
 def _collect_cobra(root, report_dir, _add):
     """03_COBRA 阶段"""
     cobra = root / _D['d_cobra']
     if not cobra.is_dir():
-        _add("03_COBRA", "○", details="未运行"); return
+        _add("03_COBRA", "○", details="Not run"); return
     ns = _count_dir(cobra)
     n_ext, n_queries, n_orphan, n_total_gain = 0, 0, 0, 0
-    with open(report_dir / "cobra_summary.tsv", "w") as cs:
+    with open(report_dir / "cobra_summary.tsv", "w", encoding='utf-8') as cs:
         cs.write("Sample\tTotal_Queries\tExtended_Circular\tExtended_Partial\tExtended_Failed\tOrphan_End\tExtension_Rate(%)\tOrphan_Rate(%)\tExtended_Contigs\tTotal_Gain(bp)\n")
         for sd in sorted(cobra.iterdir()):
             if not sd.is_dir(): continue
@@ -379,7 +532,7 @@ def _collect_cobra(root, report_dir, _add):
             tq = ec = ep = ef = oe = 0
             if cobra_logs:
                 try:
-                    with open(str(cobra_logs[0])) as lf:
+                    with open(str(cobra_logs[0]), encoding='utf-8') as lf:
                         for line in lf:
                             s = line.strip()
                             try:
@@ -393,8 +546,8 @@ def _collect_cobra(root, report_dir, _add):
             n_queries += tq; n_orphan += oe
             er = round((ec+ep)/max(tq,1)*100, 1); or_ = round(oe/max(tq,1)*100, 1)
             cs.write(f"{sn}\t{tq}\t{ec}\t{ep}\t{ef}\t{oe}\t{er}\t{or_}\t{sn_ext}\t{sn_gain}\n")
-    _add("03_COBRA", "✓", key_metric=f"{ns} 样本, {n_ext} 延伸, {n_queries} query, {n_orphan} orphan, {n_total_gain:,} bp gain")
-    cs_script = SCRIPT_DIR.parent / "analysis" / "cobra_stats.py"
+    _add("03_COBRA", "✓", key_metric=f"{ns} samples, {n_ext} extended, {n_queries} query, {n_orphan} orphan, {n_total_gain:,} bp gain")
+    cs_script = SCRIPT_DIR / "utils" / "cobra_stats.py"
     if cs_script.is_file():
         cs_out = report_dir / "cobra_detail"
         cs_out.mkdir(parents=True, exist_ok=True)
@@ -427,7 +580,7 @@ def _collect_cluster(root, report_dir, _add):
     """04_CLUSTER 阶段"""
     cluster = root / _D['d_cluster']
     if not cluster.is_dir():
-        _add(_D['d_cluster'], "○", details="未运行"); return
+        _add(_D['d_cluster'], "○", details="Not run"); return
     centroids_fa = None
     for cand in ["4_centroids", "04_centroids", "centroids"]:
         cf = cluster / cand / "final_centroids.fasta"
@@ -441,7 +594,7 @@ def _collect_cluster(root, report_dir, _add):
     if ctsv.is_file():
         n_contigs_in = _count_lines(ctsv) - 1
         cluster_map = {}
-        with open(ctsv) as cf:
+        with open(ctsv, encoding='utf-8') as cf:
             cf.readline()
             for line in cf:
                 parts = line.strip().split()
@@ -452,7 +605,7 @@ def _collect_cluster(root, report_dir, _add):
         sizes = [len(v) for v in cluster_map.values()]
         singletons = sum(1 for sz in sizes if sz <= 1)
         max_sz = max(sizes) if sizes else 0
-        _add("  └ vclust", "✓", key_metric=f"{n_clusters:,} 簇, {singletons} 单例, 最大簇={max_sz}")
+        _add("  └ vclust", "✓", key_metric=f"{n_clusters:,} clusters, {singletons} singletons, max cluster={max_sz}")
         size_bins = {'1 (singleton)':0,'2-3':0,'4-5':0,'6-10':0,'11-20':0,'21+':0}
         for sz in sizes:
             if sz <= 1: size_bins['1 (singleton)'] += 1
@@ -461,85 +614,90 @@ def _collect_cluster(root, report_dir, _add):
             elif sz <= 10: size_bins['6-10'] += 1
             elif sz <= 20: size_bins['11-20'] += 1
             else: size_bins['21+'] += 1
-        with open(report_dir / 'cluster_size_distribution.tsv', 'w') as csf:
+        with open(report_dir / 'cluster_size_distribution.tsv', 'w', encoding='utf-8') as csf:
             csf.write('Size\tCount\n')
             for k, v in size_bins.items():
                 csf.write(f'{k}\t{v}\n')
-        with open(report_dir / 'cluster_pipeline_reduction.tsv', 'w') as prf:
+        with open(report_dir / 'cluster_pipeline_reduction.tsv', 'w', encoding='utf-8') as prf:
             prf.write('Stage\tCount\n')
             prf.write(f'Input contigs\t{sum(sizes)}\n')
             prf.write(f'vOTU clusters\t{n_clusters}\n')
             prf.write(f'Final centroids\t{n_centroids}\n')
         skip_counts = {}
-        centroids_d = cluster / 'centroids'
-        if centroids_d.is_dir():
+        # centroids 子目录名随布局变化 (写方在 4_centroids): 与上方最终 centroids
+        # 同一三候选列表解析, 否则 cluster_skip_by_host.tsv 恒为空
+        centroids_d = None
+        for cand in ["4_centroids", "04_centroids", "centroids"]:
+            cd = cluster / cand
+            if cd.is_dir(): centroids_d = cd; break
+        if centroids_d is not None:
             for sf in centroids_d.glob('skipped_*.fasta'):
                 host = sf.stem.replace('skipped_', '').title()
                 skip_counts[host] = _count_fasta(sf)
             unk = _count_fasta(centroids_d / 'unknown_votus.fasta')
             if unk > 0: skip_counts['Unknown'] = unk
             if skip_counts:
-                with open(report_dir / 'cluster_skip_by_host.tsv', 'w') as hsf:
+                with open(report_dir / 'cluster_skip_by_host.tsv', 'w', encoding='utf-8') as hsf:
                     hsf.write('Host\tCount\n')
                     for h, c in sorted(skip_counts.items(), key=lambda x: -x[1]):
                         hsf.write(f'{h}\t{c}\n')
     known_linked_fa = cluster / "2_cdhit" / "known_linked_centroids.fasta"
     n_linked = _count_fasta(known_linked_fa) if known_linked_fa.is_file() else 0
-    if n_linked > 0: _add("  └ CD-HIT linked", "✓", key_metric=f"{n_linked} 有关联contig的已知簇")
-    if n_known - n_linked > 0: _add("  └ CD-HIT pure", "○", key_metric=f"{n_known - n_linked} 纯参考簇 (不进下游)")
+    if n_linked > 0: _add("  └ CD-HIT linked", "✓", key_metric=f"{n_linked} known clusters with linked contigs")
+    if n_known - n_linked > 0: _add("  └ CD-HIT pure", "○", key_metric=f"{n_known - n_linked} pure reference clusters (not downstream)")
 
 
 def _collect_taxonomy(root, report_dir, _add):
     """05_Taxonomy 阶段"""
     tax = root / _D['d_taxonomy']
-    final_tax = _find_final_taxonomy(tax)
-    if final_tax:
-        n = _count_lines(final_tax) - 1
+    tax_files = _find_final_taxonomy(tax)
+    # 多份产物 (逐样本 {sample}.integrated/) 按 contig_id 合并去重 (先出现者为准)
+    _, tax_rows = _merge_tax_rows(tax_files) if tax_files else ([], [])
+    if tax_rows:
+        n = len(tax_rows)
         counts = {"Known": 0, "Novel_Species": 0, "Novel_Genus": 0, "Novel_Family": 0}
         rank_fill = {"Realm":0,"Kingdom":0,"Phylum":0,"Class":0,"Order":0,"Family":0,"Genus":0,"Species":0}
-        with open(final_tax) as tf:
-            for row in csv.DictReader(tf, delimiter="\t"):
-                sp = row.get("Species", row.get("species", ""))
-                ge = row.get("Genus", row.get("genus", ""))
-                fa = row.get("Family", row.get("family", ""))
-                if sp and sp not in ("NA", "-"): counts["Known"] += 1
-                elif ge and ge not in ("NA", "-"): counts["Novel_Species"] += 1
-                elif fa and fa not in ("NA", "-"): counts["Novel_Genus"] += 1
-                else: counts["Novel_Family"] += 1
-                for rk in ["Realm","Kingdom","Phylum","Class","Order","Family","Genus","Species"]:
-                    v = row.get(rk, row.get(rk.lower(), ""))
-                    if v and v not in ("NA", "-"): rank_fill[rk] += 1
-        _add(_D['d_taxonomy'], "✓", key_metric=f"{n} 条, ★{counts['Known']} 已知, ★★{counts['Novel_Species']} 新种", details=str(tax))
+        for row in tax_rows:
+            sp = row.get("Species", row.get("species", ""))
+            ge = row.get("Genus", row.get("genus", ""))
+            fa = row.get("Family", row.get("family", ""))
+            if sp and sp not in ("NA", "-"): counts["Known"] += 1
+            elif ge and ge not in ("NA", "-"): counts["Novel_Species"] += 1
+            elif fa and fa not in ("NA", "-"): counts["Novel_Genus"] += 1
+            else: counts["Novel_Family"] += 1
+            for rk in ["Realm","Kingdom","Phylum","Class","Order","Family","Genus","Species"]:
+                v = row.get(rk, row.get(rk.lower(), ""))
+                if v and v not in ("NA", "-"): rank_fill[rk] += 1
+        _add(_D['d_taxonomy'], "✓", key_metric=f"{n} seqs, ★{counts['Known']} known, ★★{counts['Novel_Species']} novel species", details=str(tax))
         _add("  └ Novel Rank", "✓", key_metric=f"Known={counts['Known']} NewSp={counts['Novel_Species']} NewGe={counts['Novel_Genus']} NewFa={counts['Novel_Family']}")
         rk_info = " ".join(f"{r}={rank_fill[r]}" for r in ["Realm","Phylum","Class","Order","Family","Genus","Species"] if rank_fill.get(r,0) > 0)
         if rk_info: _add("  └ Rank Fill", "✓", key_metric=rk_info[:120])
     elif tax.is_dir():
-        _add(_D['d_taxonomy'], "○", key_metric="已运行但无最终结果", details=str(tax))
+        _add(_D['d_taxonomy'], "○", key_metric="Ran but no final result", details=str(tax))
     else:
-        _add(_D['d_taxonomy'], "○", details="未运行")
+        _add(_D['d_taxonomy'], "○", details="Not run")
 
     # 最终植物病毒分类汇总 (HQ_plant_viruses.fasta × taxonomy)
     all_plant_fa = root / _D['d_rescue'] / "HQ_plant_viruses.fasta"
-    if all_plant_fa.is_file() and final_tax and final_tax.is_file():
+    if all_plant_fa.is_file() and tax_rows:
         plant_ids = set()
-        for line in open(all_plant_fa):
+        for line in open(all_plant_fa, encoding='utf-8'):
             if line.startswith('>'): plant_ids.add(line[1:].split()[0])
         counts_p = {"Known": 0, "Novel_Species": 0, "Novel_Genus": 0, "Novel_Family": 0}
-        with open(final_tax) as tf:
-            for row in csv.DictReader(tf, delimiter="\t"):
-                cid = row.get("contig_id", row.get("Contig_ID", ""))
-                if cid not in plant_ids: continue
-                sp = row.get("Species", row.get("species", ""))
-                ge = row.get("Genus", row.get("genus", ""))
-                fa = row.get("Family", row.get("family", ""))
-                if sp and sp not in ("NA", "-"): counts_p["Known"] += 1
-                elif ge and ge not in ("NA", "-"): counts_p["Novel_Species"] += 1
-                elif fa and fa not in ("NA", "-"): counts_p["Novel_Genus"] += 1
-                else: counts_p["Novel_Family"] += 1
+        for row in tax_rows:
+            cid = row.get("contig_id", row.get("Contig_ID", ""))
+            if cid not in plant_ids: continue
+            sp = row.get("Species", row.get("species", ""))
+            ge = row.get("Genus", row.get("genus", ""))
+            fa = row.get("Family", row.get("family", ""))
+            if sp and sp not in ("NA", "-"): counts_p["Known"] += 1
+            elif ge and ge not in ("NA", "-"): counts_p["Novel_Species"] += 1
+            elif fa and fa not in ("NA", "-"): counts_p["Novel_Genus"] += 1
+            else: counts_p["Novel_Family"] += 1
         n_plant = sum(counts_p.values())
         if n_plant > 0:
             _add("  └ Plant Virus Taxonomy", "✓",
-                 key_metric=f"{n_plant} 条, Known={counts_p['Known']} NewSp={counts_p['Novel_Species']} NewGe={counts_p['Novel_Genus']} NewFa={counts_p['Novel_Family']}")
+                 key_metric=f"{n_plant} seqs, Known={counts_p['Known']} NewSp={counts_p['Novel_Species']} NewGe={counts_p['Novel_Genus']} NewFa={counts_p['Novel_Family']}")
 
     # 收集 R 生成的 TSV + taxonomy composition + UpSet PNG
     integrated_dir = None
@@ -563,19 +721,18 @@ def _collect_taxonomy(root, report_dir, _add):
             b64 = _img_to_base64(upset_png, max_kb=2000)
             if b64:
                 import json as _json
-                with open(report_dir / "taxonomy_images.json", "w") as imf:
+                with open(report_dir / "taxonomy_images.json", "w", encoding='utf-8') as imf:
                     _json.dump({"Tool Intersection UpSet": b64}, imf)
     # Taxonomy composition (from final_integrated_classification.tsv)
-    if final_tax and final_tax.is_file():
+    if tax_rows:
         tax_comp = {}
-        with open(final_tax) as tf:
-            for row in csv.DictReader(tf, delimiter="\t"):
-                for rk in ["Realm","Kingdom","Phylum","Class","Order","Family","Genus","Species"]:
-                    v = row.get(rk, row.get(rk.lower(), ""))
-                    if v and str(v).strip() not in ("","NA","-","N/A","None"):
-                        tax_comp.setdefault(rk, {})
-                        tax_comp[rk][v] = tax_comp[rk].get(v, 0) + 1
-        with open(report_dir / "taxonomy_composition.tsv", "w") as tcf:
+        for row in tax_rows:
+            for rk in ["Realm","Kingdom","Phylum","Class","Order","Family","Genus","Species"]:
+                v = row.get(rk, row.get(rk.lower(), ""))
+                if v and str(v).strip() not in ("","NA","-","N/A","None"):
+                    tax_comp.setdefault(rk, {})
+                    tax_comp[rk][v] = tax_comp[rk].get(v, 0) + 1
+        with open(report_dir / "taxonomy_composition.tsv", "w", encoding='utf-8') as tcf:
             tcf.write("Rank\tTaxon\tCount\n")
             for rk in ["Realm","Kingdom","Phylum","Class","Order","Family","Genus","Species"]:
                 if rk not in tax_comp: continue
@@ -586,9 +743,13 @@ def _collect_taxonomy(root, report_dir, _add):
             _add("  \u2514 Family", "\u2713", key_metric=" | ".join(f"{k}={v}" for k,v in top_fam)[:200])
 
     # 复制 final_integrated_classification.tsv 到 report_dir 供表格嵌入
-    if final_tax and final_tax.is_file():
+    # (多份逐样本产物 → 先按 contig_id 合并去重再嵌入)
+    if tax_files:
         import shutil as _shutil
-        _shutil.copy2(str(final_tax), str(report_dir / "final_integrated_classification.tsv"))
+        if len(tax_files) == 1:
+            _shutil.copy2(str(tax_files[0]), str(report_dir / "final_integrated_classification.tsv"))
+        else:
+            _write_merged_tax(tax_files, report_dir / "final_integrated_classification.tsv")
 
 
 def _collect_hostprediction(root, report_dir, _add):
@@ -604,26 +765,26 @@ def _collect_hostprediction(root, report_dir, _add):
             if "Final_Host" in hdf.columns:
                 hcounts = hdf.group_by("Final_Host").agg(pl.len().alias("count")).sort("count", descending=True)
                 all_hosts = " | ".join(f"{r[0]}={r[1]}" for r in hcounts.iter_rows())
-                _add(_D['d_host_pred'], "✓", key_metric=f"{n} 条, {all_hosts}", details=str(host))
+                _add(_D['d_host_pred'], "✓", key_metric=f"{n} seqs, {all_hosts}", details=str(host))
                 # 写入 host_distribution.tsv
-                with open(report_dir / "host_distribution.tsv", "w") as hdfile:
+                with open(report_dir / "host_distribution.tsv", "w", encoding='utf-8') as hdfile:
                     hdfile.write("Host\tCount\n")
                     for r in hcounts.iter_rows():
                         hdfile.write(f"{r[0]}\t{r[1]}\n")
             # Decision_Method 分布
             if "Decision_Method" in hdf.columns:
                 dm_counts = hdf.group_by("Decision_Method").agg(pl.len().alias("count")).sort("count", descending=True)
-                with open(report_dir / "host_decision_method.tsv", "w") as dmf:
+                with open(report_dir / "host_decision_method.tsv", "w", encoding='utf-8') as dmf:
                     dmf.write("Method\tCount\n")
                     for r in dm_counts.iter_rows():
                         dmf.write(f"{r[0]}\t{r[1]}\n")
         except Exception as e:
             print(f"  [WARN] HostPrediction polars 解析失败: {e}")
-            _add(_D['d_host_pred'], "✓", key_metric=f"{n} 条", details=str(host))
+            _add(_D['d_host_pred'], "✓", key_metric=f"{n} seqs", details=str(host))
     elif host.is_dir():
-        _add(_D['d_host_pred'], "○", key_metric="已运行但无最终结果", details=str(host))
+        _add(_D['d_host_pred'], "○", key_metric="Ran but no final result", details=str(host))
     else:
-        _add(_D['d_host_pred'], "○", details="未运行")
+        _add(_D['d_host_pred'], "○", details="Not run")
 
     # 复制 C9 ICTV 分类汇总表
     c9_summary = host / "C9_ICTV_result" / "classification_summary.tsv"
@@ -641,10 +802,10 @@ def _collect_checkv(root, report_dir, _add):
     cv_dir = root / _D['d_checkv']
     QUALITY_ORDER = ["Complete","High-quality","Medium-quality","Low-quality","Not-determined"]
     if not cv_dir.is_dir():
-        _add("07_CheckV", "○", details="未运行"); return
+        _add("07_CheckV", "○", details="Not run"); return
     cv_tsvs = list(cv_dir.rglob("completeness.tsv"))
     if not cv_tsvs:
-        _add("07_CheckV", "✓", key_metric="已运行", details=str(cv_dir)); return
+        _add("07_CheckV", "✓", key_metric="Ran", details=str(cv_dir)); return
     host_qd = {}; host_conf = {}
     for ct in cv_tsvs:
         host_name = ct.parent.name
@@ -656,8 +817,9 @@ def _collect_checkv(root, report_dir, _add):
             cv = pl.read_csv(str(ct), separator="\t", null_values=["NA","N/A",""])
             if "aai_confidence" in cv.columns:
                 for row in cv.iter_rows(named=True):
-                    conf = str(row.get("aai_confidence","")).strip()
-                    if not conf or conf in ("NA","N/A",""): conf = "Not-determined"
+                    conf = (row.get("aai_confidence") or "")
+                    conf = str(conf).strip()   # None → "" (不能 str(None) 变 "None")
+                    if not conf or conf.upper() in ("NA","N/A","NONE","NAN"): conf = "Not-determined"
                     host_conf[host_name][conf] = host_conf[host_name].get(conf,0) + 1
             comp_col = next((c for c in ["aai_completeness","completeness"] if c in cv.columns), None)
             if comp_col:
@@ -678,7 +840,7 @@ def _collect_checkv(root, report_dir, _add):
         for q in QUALITY_ORDER: global_qd[q] += hqd[q]
     n_total = sum(global_qd.values())
     n_hq = global_qd["Complete"] + global_qd["High-quality"]
-    with open(report_dir / "checkv_summary.tsv", "w") as cvf:
+    with open(report_dir / "checkv_summary.tsv", "w", encoding='utf-8') as cvf:
         cvf.write("Host\t" + "\t".join(QUALITY_ORDER) + "\tTotal\tHQ\n")
         for h in sorted(host_qd):
             hqd = host_qd[h]; t = sum(hqd.values()); hq = hqd["Complete"]+hqd["High-quality"]
@@ -688,7 +850,7 @@ def _collect_checkv(root, report_dir, _add):
         all_confs = set()
         for hc in host_conf.values(): all_confs.update(hc.keys())
         conf_order = sorted(all_confs)
-        with open(report_dir / "checkv_confidence.tsv", "w") as cff:
+        with open(report_dir / "checkv_confidence.tsv", "w", encoding='utf-8') as cff:
             cff.write("Host\t"+"\t".join(conf_order)+"\tTotal\n")
             for h in sorted(host_conf):
                 hc = host_conf[h]; t = sum(hc.values())
@@ -806,6 +968,7 @@ def collect_data(output_dir, report_dir, blast_db=None):
     _collect_bbnorm(root, report_dir, _add)
     _collect_assembly(root, report_dir, _add)
     _collect_identification(root, report_dir, _add)
+    _collect_graph(root, report_dir, _add)
     _collect_cobra(root, report_dir, _add)
     _collect_merge(root, report_dir, _add)
     _collect_cluster(root, report_dir, _add)
@@ -827,7 +990,9 @@ def _collect_acvirus(root, report_dir, _add):
     """09b ACVirus Analysis - 收集 KEEP 重分类/新病毒鉴定/进化树"""
     acv = _resolve_acv_dir(root)
     if not acv.is_dir():
-        _add("09b_分析验证", "○", "未运行")
+        # Stage 标签不能与 legacy 目录名逐字相同 (审计器 FAIL 精确字面量判定),
+        # 保持 "09b" 前缀 → _stage_key_of 的 startswith('09b') → s11 映射不变
+        _add("09b Analysis Verify", "○", "Not run")
         return
     try:
         import csv as _c
@@ -835,46 +1000,49 @@ def _collect_acvirus(root, report_dir, _add):
         # classify
         cls = acv / "acvirus_classify" / "final_result_with_confidence.tsv"
         keep_fa = acv / "class_KEEP.fasta"
-        n_keep = sum(1 for _ in open(keep_fa) if _.startswith('>')) if keep_fa.exists() else 0
+        n_keep = sum(1 for _ in open(keep_fa, encoding='utf-8') if _.startswith('>')) if keep_fa.exists() else 0
         if cls.is_file():
-            rows = list(_c.DictReader(open(cls), delimiter='\t'))
+            rows = list(_c.DictReader(open(cls, encoding='utf-8'), delimiter='\t'))
             fams = {}
             for r in rows:
                 f = r.get('Family','') or ''
                 if f and f != 'NA': fams[f] = fams.get(f,0)+1
             top = ', '.join(f"{k}×{v}" for k,v in sorted(fams.items(),key=lambda x:-x[1])[:5])
-            _add("09b_分析验证", "✓", key_metric=f"{n_keep} KEEP, classify到{len(fams)}科 ({top})",
+            _add("09b Analysis Verify", "✓", key_metric=f"{n_keep} KEEP, classified to {len(fams)} families ({top})",
                  details=str(acv))
         # identify
         idt = acv / "acvirus_identify" / "identification_result_score.csv"
         if idt.is_file():
-            ir = list(_c.DictReader(open(idt)))
+            ir = list(_c.DictReader(open(idt, encoding='utf-8')))
             novel = sum(1 for r in ir if (r.get('Final_Verdict','') in ('High_Conf_Novel','Putative_Novel')))
             hn = sum(1 for r in ir if r.get('Final_Verdict','')=='High_Conf_Novel')
-            _add("09b_鉴定", "✓", key_metric=f"{len(ir)} 序列, 新病毒{novel}条, 高置信{hn}条")
+            _add("09b_Identification", "✓", key_metric=f"{len(ir)} sequences, novel {novel}, high-confidence {hn}")
         # trees
         trees = [d for d in acv.joinpath('acvirus_trees').iterdir() if d.is_dir()] if (acv/'acvirus_trees').is_dir() else []
         if trees:
-            _add("09b_进化树", "✓", key_metric=f"{len(trees)} 个科建树: {', '.join(d.name for d in trees[:6])}")
+            _add("09b_Phylogeny", "✓", key_metric=f"{len(trees)} families with trees: {', '.join(d.name for d in trees[:6])}")
         # keep_summary 综合判定 (final_call 整合 9a×ACVirus)
         ksum = acv / "keep_summary.tsv"
         if ksum.is_file():
-            ks = list(_c.DictReader(open(ksum), delimiter='\t'))
+            ks = list(_c.DictReader(open(ksum, encoding='utf-8'), delimiter='\t'))
             from collections import Counter as _Cnt
             fc = _Cnt(r.get('final_call','') for r in ks)
             conf = sum(1 for r in ks if r.get('conflict')=='Y')
             novel_total = sum(1 for r in ks if str(r.get('final_call','')).startswith('Novel'))
-            _add("09b_新病毒判定", "✓",
-                 key_metric=f"综合判定 {len(ks)} KEEP: Novel×{novel_total} (dual {fc.get('Novel(dual)',0)}/blast {fc.get('Novel(blast)',0)}/ACV {fc.get('Novel(ACV)',0)}), Known×{fc.get('Known',0)+fc.get('Known(ACV-conflict)',0)}, 冲突{conf}条")
+            _add("09b_Novelty_Call", "✓",
+                 key_metric=f"Final verdict {len(ks)} KEEP: Novel×{novel_total} (dual {fc.get('Novel(dual)',0)}/blast {fc.get('Novel(blast)',0)}/ACV {fc.get('Novel(ACV)',0)}), Known×{fc.get('Known',0)+fc.get('Known(ACV-conflict)',0)}, conflicts {conf}")
         # SDT 属级一致性矩阵统计
         sdt_dir = acv / "SDT_matrix"
         if sdt_dir.is_dir():
-            sdt_done = [d for d in sdt_dir.iterdir() if d.is_dir() and ((d/f"SDT_{d.name}.png").exists() or (d/f"SDT_{d.name}.pdf").exists())]
+            # 产物为 SDT_{属}_heatmap.png/.pdf (sdt_genus_matrix.py); 旧名一并兼容
+            sdt_done = [d for d in sdt_dir.iterdir() if d.is_dir() and any(
+                (d / f).exists() for f in (f"SDT_{d.name}_heatmap.png", f"SDT_{d.name}_heatmap.pdf",
+                                           f"SDT_{d.name}.png", f"SDT_{d.name}.pdf"))]
             if sdt_done:
-                _add("09b_SDT矩阵", "✓", key_metric=f"SDT 属级矩阵 {len(sdt_done)} 属: {', '.join(d.name for d in sdt_done[:6])}",
+                _add("09b_SDT_matrix", "✓", key_metric=f"SDT genus matrix for {len(sdt_done)} genera: {', '.join(d.name for d in sdt_done[:6])}",
                      details=str(sdt_dir))
     except Exception as e:
-        _add("09b_分析验证", "✗", key_metric=str(e)[:60])
+        _add("09b Analysis Verify", "✗", key_metric=str(e)[:60])
 
 
 
@@ -883,10 +1051,13 @@ def _generate_plant_virus_summary(root, report_dir, _add, blast_db=None):
     all_plant_fa = root / _D['d_rescue'] / "HQ_plant_viruses.fasta"
     if not all_plant_fa.is_file(): return
 
-    # 1. 读取 contig IDs + lengths + 来源
+    # 1. 读取 contig IDs + lengths + 来源 (宿主子目录动态解析, 兼容多宿主)
     plant_data = {}  # {contig_id: {length, source, ...}}
-    for src_label, src_fa in [("免拯救", root / _D['d_rescue'] / "known" / "centroids" / "final_centroids.fasta"),
-                               ("rescued", root / _D['d_rescue'] / "Plant" / "centroids" / "final_centroids.fasta")]:
+    host_dirs = _resolve_host_subdirs(root)
+    src_cands = [("no-rescue", root / _D['d_rescue'] / "known" / "centroids" / "final_centroids.fasta")]
+    src_cands += [("rescued", root / _D['d_rescue'] / hd / "centroids" / "final_centroids.fasta")
+                  for hd in host_dirs]
+    for src_label, src_fa in src_cands:
         if not src_fa.is_file(): continue
         for rec in SeqIO.parse(str(src_fa), "fasta"):
             plant_data[rec.id] = {"contig_id": rec.id, "length": len(rec.seq), "source": src_label}
@@ -895,9 +1066,10 @@ def _generate_plant_virus_summary(root, report_dir, _add, blast_db=None):
 
     # 2. CheckV 数据: 优先 post-rescue (最新评估), 回退 CheckV 阶段原始值
     cv_data = {}
-    for cv_tsv in [root / _D['d_rescue'] / "checkv" / "Plant" / "completeness.tsv",
-                   root / _D['d_rescue'] / "checkv" / "no_rescue" / "completeness.tsv",
-                   root / _D['d_checkv'] / "Plant" / "completeness.tsv"]:
+    cv_cands = [root / _D['d_rescue'] / "checkv" / hd / "completeness.tsv" for hd in host_dirs]
+    cv_cands.append(root / _D['d_rescue'] / "checkv" / "no_rescue" / "completeness.tsv")
+    cv_cands += [root / _D['d_checkv'] / hd / "completeness.tsv" for hd in host_dirs]
+    for cv_tsv in cv_cands:
         if not cv_tsv.is_file(): continue
         rows = _read_tsv(cv_tsv)
         for r in rows:
@@ -913,8 +1085,9 @@ def _generate_plant_virus_summary(root, report_dir, _add, blast_db=None):
 
     # 2.5. Rescue 数据: 挽救后长度 + 属平均长度 (来自 rescue_report.tsv)
     rescue_data = {}
-    for rescue_tsv in [root / _D['d_rescue'] / "Plant" / "rescue_report.tsv",
-                       root / _D['d_rescue'] / "known" / "rescue_report.tsv"]:
+    rs_cands = [root / _D['d_rescue'] / hd / "rescue_report.tsv" for hd in host_dirs]
+    rs_cands.append(root / _D['d_rescue'] / "known" / "rescue_report.tsv")
+    for rescue_tsv in rs_cands:
         if not rescue_tsv.is_file(): continue
         for r in _read_tsv(rescue_tsv):
             cid = r.get("contig_id","")
@@ -927,23 +1100,21 @@ def _generate_plant_virus_summary(root, report_dir, _add, blast_db=None):
                     "method": r.get("method",""),
                 }
 
-    # 3. Taxonomy
-    tax_tsv = _find_final_taxonomy(root / _D['d_taxonomy'])
+    # 3. Taxonomy (多份逐样本产物按 contig_id 合并去重, 先出现者为准)
     tax_data = {}
-    if tax_tsv:
-        with open(tax_tsv) as tf:
-            for row in csv.DictReader(tf, delimiter="\t"):
-                cid = row.get("contig_id","")
-                if cid in plant_data:
-                    tax_data[cid] = {rk: row.get(rk, row.get(rk.lower(),"")) for rk in
-                                     ["Realm","Kingdom","Phylum","Class","Order","Family","Genus","Species"]}
+    tax_files = _find_final_taxonomy(root / _D['d_taxonomy'])
+    for row in (_merge_tax_rows(tax_files)[1] if tax_files else []):
+        cid = row.get("contig_id","")
+        if cid in plant_data:
+            tax_data[cid] = {rk: row.get(rk, row.get(rk.lower(),"")) for rk in
+                             ["Realm","Kingdom","Phylum","Class","Order","Family","Genus","Species"]}
 
     # 写入 plant_virus_summary.tsv (全部作为新病毒 vOTU)
     cols = ["contig_id","length","final_len","genus_avg_len","pct_of_genus","source","branch","method",
             "aai_completeness","aai_confidence",
             "viral_length","aai_expected_length","kmer_freq",
             "Realm","Kingdom","Phylum","Class","Order","Family","Genus","Species"]
-    with open(report_dir / "plant_virus_summary.tsv", "w") as pvf:
+    with open(report_dir / "plant_virus_summary.tsv", "w", encoding='utf-8') as pvf:
         pvf.write("\t".join(cols) + "\n")
         for cid in sorted(plant_data):
             d = plant_data[cid]; cv = cv_data.get(cid, {}); tx = tax_data.get(cid, {}); rc = rescue_data.get(cid, {})
@@ -955,11 +1126,11 @@ def _generate_plant_virus_summary(root, report_dir, _add, blast_db=None):
             pvf.write("\t".join(str(v) for v in vals) + "\n")
 
     n = len(plant_data)
-    n_no_rescue = sum(1 for v in plant_data.values() if v["source"]=="免拯救")
+    n_no_rescue = sum(1 for v in plant_data.values() if v["source"]=="no-rescue")
     n_rescued = n - n_no_rescue
     _add("09_Plant_virus", "✓",
-         key_metric=f"{n} 条 (免拯救={n_no_rescue} + rescued={n_rescued})",
-         details=f"全部作为新病毒 vOTU | {report_dir / 'plant_virus_summary.tsv'}")
+         key_metric=f"{n} seqs (no-rescue={n_no_rescue} + rescued={n_rescued})",
+         details=f"All treated as novel-virus vOTUs | {report_dir / 'plant_virus_summary.tsv'}")
 
     # 5. 旭日图 (Plotly Sunburst)
     if not tax_data: return
@@ -1004,24 +1175,65 @@ def _generate_plant_virus_summary(root, report_dir, _add, blast_db=None):
 # ═══════════════════════════════════════════════════════════════
 
 def _find_final_taxonomy(tax_dir):
-    """在 05_Taxonomy 下动态查找 final_integrated_classification.tsv (子目录名不固定)"""
+    """在 05_Taxonomy 下动态查找全部 final_integrated_classification.tsv (子目录名不固定)
+
+    taxonomy 产物在逐样本布局下每样本一份 ({sample}.integrated/), 旧实现只取
+    首份匹配 → 多样本项目丢失其余样本注释。现返回**全部**命中路径, 顺序为
+    标准路径 → *integrated*/ → 其余子目录 (与 build_ref_info.py 的合并顺序一致);
+    单份时列表长度 1, 行为与旧实现相同。
+    """
     tax_dir = Path(tax_dir)
-    # 1. 优先查找标准路径
-    p = tax_dir / "integrated" / "final_integrated_classification.tsv"
-    if p.is_file(): return p
-    # 2. glob 搜索任意子目录
-    for p in sorted(tax_dir.glob("*integrated*/final_integrated_classification.tsv")):
-        if p.is_file(): return p
-    # 3. glob 搜索任意子目录 (兜底)
-    for p in sorted(tax_dir.glob("*/final_integrated_classification.tsv")):
-        if p.is_file(): return p
-    return None
+    cands = [tax_dir / "integrated" / "final_integrated_classification.tsv"]
+    cands += sorted(tax_dir.glob("*integrated*/final_integrated_classification.tsv"))
+    cands += sorted(tax_dir.glob("*/final_integrated_classification.tsv"))
+    out = []
+    for p in cands:
+        if p.is_file() and p not in out:
+            out.append(p)
+    return out
+
+
+def _merge_tax_rows(tax_files):
+    """读取多份 taxonomy TSV, 按 contig_id 合并去重 (先出现者为准)
+
+    参照 build_ref_info.py 的按 id 合并逻辑; 表头取首份文件。返回 (header, rows),
+    rows 为 dict 列表; 单文件时即该文件原样行序。
+    """
+    header, rows, seen = None, [], set()
+    for fp in tax_files:
+        with open(fp, encoding='utf-8') as tf:
+            rd = csv.DictReader(tf, delimiter="\t")
+            if header is None:
+                header = list(rd.fieldnames or [])
+            for row in rd:
+                cid = (row.get("contig_id") or row.get("Contig_ID") or "").strip()
+                if cid:
+                    if cid in seen: continue
+                    seen.add(cid)
+                rows.append(row)
+    return (header or []), rows
+
+
+def _write_merged_tax(tax_files, out_path):
+    """把多份 taxonomy TSV 按 contig_id 合并写出 (供只接受单文件的下游脚本);
+    单份输入时直接返回原路径, 不做拷贝 (行为与旧实现一致)。"""
+    if len(tax_files) == 1:
+        return tax_files[0]
+    header, rows = _merge_tax_rows(tax_files)
+    cols = header or ["contig_id"]
+    with open(out_path, "w", encoding='utf-8', newline='') as of:
+        of.write("\t".join(cols) + "\n")
+        for row in rows:
+            of.write("\t".join(str(row.get(c, "")) for c in cols) + "\n")
+    return out_path
 
 def generate_sankey(output_dir, report_dir):
     """生成交互式 taxonomy Sankey HTML (全部 + 植物病毒)"""
     tax = Path(output_dir) / _D['d_taxonomy']
-    final_tax = _find_final_taxonomy(tax)
-    if not final_tax: return
+    tax_files = _find_final_taxonomy(tax)
+    if not tax_files: return
+    # 多份产物 (逐样本 {sample}.integrated/) → 先合并为单文件再喂 sankey 脚本
+    final_tax = _write_merged_tax(tax_files, report_dir / "final_integrated_classification.merged.tsv")
     sankey_script = SCRIPT_DIR.parent / "stats" / "taxonomic_sankey.py"
     if not sankey_script.is_file():
         sankey_script = SCRIPT_DIR / "utils" / "taxonomic_sankey.py"
@@ -1032,14 +1244,19 @@ def generate_sankey(output_dir, report_dir):
             print("  安装 plotly...")
             subprocess.run([sys.executable, "-m", "pip", "install", "plotly", "-q"], check=False)
         # 生成交互式 HTML (--format html, 不设 title 避免重叠)
-        subprocess.run([sys.executable, str(sankey_script),
-                        "-i", str(final_tax), "-o", str(report_dir / "classification_sankey.html"),
+        _sk_html = report_dir / "classification_sankey.html"
+        _r1 = subprocess.run([sys.executable, str(sankey_script),
+                        "-i", str(final_tax), "-o", str(_sk_html),
                         "--format", "html", "--min-flow", "1", "--min-genus-flow", "10",
-                        "--palette", "set3", "--height", "600", "--width", "800", "--node-pad", "30",
+                        "--palette", "okabe_ito", "--height", "600", "--width", "800", "--node-pad", "30",
                         "--label-truncate", "25", "--font-size", "9", "--title-font-size", "14",
                         "--title", ""],
                        capture_output=True, timeout=120)
-        print(f"  Sankey HTML → {report_dir / 'classification_sankey.html'}")
+        if _r1.returncode == 0 and _sk_html.is_file():   # 成功才报 "→", 失败打 error (不再假成功)
+            print(f"  Sankey HTML → {_sk_html}")
+        else:
+            print(f"  [ERROR] Sankey 生成失败 (rc={_r1.returncode}): "
+                  f"{(_r1.stderr or b'').decode('utf-8','ignore')[-200:]}")
         # Plant-only
         host_summary = Path(output_dir) / _D['d_host_pred'] / "ensemble_host_summary.tsv"
         if host_summary.is_file():
@@ -1049,19 +1266,24 @@ def generate_sankey(output_dir, report_dir):
                 plant_ids = set(hdf.filter(pl.col("Final_Host")=="Plant")["contig_id"].to_list())
                 if plant_ids:
                     plant_tax = report_dir / "plant_final_taxonomy.tsv"
-                    with open(final_tax) as tf, open(plant_tax, "w") as pf:
+                    with open(final_tax, encoding='utf-8') as tf, open(plant_tax, "w", encoding='utf-8') as pf:
                         pf.write(tf.readline())
                         for line in tf:
                             cid = line.split('\t')[0].strip('"')
                             if cid in plant_ids: pf.write(line)
-                    subprocess.run([sys.executable, str(sankey_script),
-                                    "-i", str(plant_tax), "-o", str(report_dir / "classification_sankey_plant.html"),
+                    _sk_plant = report_dir / "classification_sankey_plant.html"
+                    _r2 = subprocess.run([sys.executable, str(sankey_script),
+                                    "-i", str(plant_tax), "-o", str(_sk_plant),
                                     "--format", "html", "--min-flow", "1", "--min-genus-flow", "5",
-                                    "--palette", "set3", "--height", "600", "--width", "800", "--node-pad", "30",
+                                    "--palette", "okabe_ito", "--height", "600", "--width", "800", "--node-pad", "30",
                                     "--label-truncate", "25", "--font-size", "9", "--title-font-size", "14",
                                     "--title", ""],
                                    capture_output=True, timeout=120)
-                    print(f"  Plant Sankey HTML → {report_dir / 'classification_sankey_plant.html'}")
+                    if _r2.returncode == 0 and _sk_plant.is_file():
+                        print(f"  Plant Sankey HTML → {_sk_plant}")
+                    else:
+                        print(f"  [ERROR] Plant Sankey 生成失败 (rc={_r2.returncode}): "
+                              f"{(_r2.stderr or b'').decode('utf-8','ignore')[-200:]}")
             except Exception as e: print(f"  [WARN] Plant Sankey 生成失败: {e}")
     except Exception as e: print(f"  [WARN] Sankey 生成失败: {e}")
 
@@ -1115,8 +1337,17 @@ def write_html_report(report_dir, stage_stats):
   if(!d||!el||!window.UpSetJS)return;
   try{
     var elems=JSON.parse(d.textContent);
+    // ⚠ 防御: R jsonlite auto_unbox 会把单元素 sets 拆成字符串标量
+    //   ("ACVirus" 而非 ["ACVirus"]) → UpSetJS.extractCombinations() 调
+    //   .forEach() 抛 TypeError → 整图渲染中断。此处统一规范化为数组。
+    elems.forEach(function(e){
+      if(!e) return;
+      if(e.sets==null){ e.sets=[]; }
+      else if(typeof e.sets==='string'){ e.sets=[e.sets]; }
+      else if(!Array.isArray(e.sets)){ e.sets=Array.from(e.sets); }
+    });
     var comb=window.UpSetJS.extractCombinations(elems);
-    var _pal=['#0072B2','#D55E00','#009E73','#CC79A7','#E69F00','#56B4E9','#F0E442','#8B2C1F','#1B365D','#9D5F4D','#537D96','#4A6B4A'];
+    var _pal=['#E69F00','#56B4E9','#009E73','#F0E442','#0072B2','#D55E00','#CC79A7','#000000','#999999'];
     comb.sets.forEach(function(s,i){s.color=_pal[i%_pal.length];});
     function fmt(n){if(n===null||n===undefined)return"";if(n>=1000)return (n/1000).toFixed(n>=10000?0:1)+"k";return String(n);}
     var _sel=null;
@@ -1132,7 +1363,7 @@ def write_html_report(report_dir, stage_stats):
     main_stages = [s for s in stage_stats if not s["Stage"].startswith("  ")]
 
     S = {"✓": "pass", "○": "skip", "✗": "fail"}
-    def _esc(v): return str(v).replace("&","&amp;").replace("<","&lt;").replace(">","&gt;")
+    def _esc(v): return str(v).replace("&","&amp;").replace("<","&lt;").replace(">","&gt;").replace("'","&#39;")
     def _extract_kv(text, pattern):
         result = {}
         for m in re.finditer(pattern, text):
@@ -1176,10 +1407,10 @@ def write_html_report(report_dir, stage_stats):
             chart_scripts += _chart('chart_s00a', 'bar', {
                 "labels": dq_samples,
                 "datasets": [
-                    {"label":"Raw Reads (M)","data":[round(v/1e6,1) for v in dq_raw],"backgroundColor":"#90a4ae","yAxisID":"y"},
-                    {"label":"Clean Reads (M)","data":[round(v/1e6,1) for v in dq_clean],"backgroundColor":"#56B4E9","yAxisID":"y"},
-                    {"label":"Q20 Raw (%)","data":[round(v,1) for v in dq_q20b],"backgroundColor":"#ffa726","yAxisID":"y1"},
-                    {"label":"Q20 Clean (%)","data":[round(v,1) for v in dq_q20a],"backgroundColor":"#009E73","yAxisID":"y1"},
+                    {"label":"Raw Reads (M)","data":[round(v/1e6,1) for v in dq_raw],"backgroundColor":_C_MUTED,"yAxisID":"y"},
+                    {"label":"Clean Reads (M)","data":[round(v/1e6,1) for v in dq_clean],"backgroundColor":OI[1],"yAxisID":"y"},
+                    {"label":"Q20 Raw (%)","data":[round(v,1) for v in dq_q20b],"backgroundColor":_C_WARN,"yAxisID":"y1"},
+                    {"label":"Q20 Clean (%)","data":[round(v,1) for v in dq_q20a],"backgroundColor":_C_GOOD,"yAxisID":"y1"},
                 ]}, {"responsive":True,"plugins":{"title":{"display":True,"text":"Read Quality & Filtering"}},
                      "scales":{"y":{"beginAtZero":True,"position":"left","title":{"text":"Reads (M)"}},
                               "y1":{"beginAtZero":True,"position":"right","max":100,"grid":{"drawOnChartArea":False},"title":{"text":"Q20 (%)"}}}})
@@ -1187,7 +1418,7 @@ def write_html_report(report_dir, stage_stats):
         chart_scripts += _chart('chart_s00a_dup', 'bar', {
             "labels": dq_samples,
             "datasets": [{"label":"Duplication Rate (%)","data":[round(v,2) for v in dq_dup],
-                          "backgroundColor":['#8B2C1F' if v>30 else '#ffa726' if v>15 else '#009E73' for v in dq_dup]}]},
+                          "backgroundColor":[_C_BAD if v>30 else _C_WARN if v>15 else _C_GOOD for v in dq_dup]}]},
             {"responsive":True,"plugins":{"title":{"display":True,"text":"Duplication Rate per Sample"}},
              "scales":{"y":{"beginAtZero":True,"title":{"text":"Dup Rate (%)"}}}})
 
@@ -1205,8 +1436,8 @@ def write_html_report(report_dir, stage_stats):
             stage_has_chart['s00b'] = True
             chart_scripts += _chart('chart_s00b', 'bar', {
                 "labels": hd_samples,
-                "datasets": [{"label":"Retained (non-host)","data":hd_retained,"backgroundColor":"#009E73"},
-                              {"label":"Removed (host+rRNA)","data":hd_removed,"backgroundColor":"#8B2C1F"}]},
+                "datasets": [{"label":"Retained (non-host)","data":hd_retained,"backgroundColor":_C_GOOD},
+                              {"label":"Removed (host+rRNA)","data":hd_removed,"backgroundColor":_C_BAD}]},
                 {"responsive":True,"indexAxis":"y","plugins":{"title":{"display":True,"text":"Host Depletion: Reads Retained vs Removed"}},
                  "scales":{"x":{"stacked":True,"beginAtZero":True,"title":{"text":"Reads"}},"y":{"stacked":True}}})
 
@@ -1221,14 +1452,14 @@ def write_html_report(report_dir, stage_stats):
             chart_scripts += _chart('chart_s01a', 'bar', {
                 "labels": asm_samples,
                 "datasets": [{"label":"N50 (kb)","data":[round(v/1000,1) for v in asm_n50],
-                              "backgroundColor":['#0072B2' if v>5000 else '#56B4E9' if v>1000 else '#90caf9' for v in asm_n50]}]},
+                              "backgroundColor":[_TIER_GOOD[2] if v>5000 else _TIER_GOOD[1] if v>1000 else _TIER_GOOD[0] for v in asm_n50]}]},
                 {"responsive":True,"plugins":{"title":{"display":True,"text":"Assembly N50 (kb)"}},
                  "scales":{"y":{"beginAtZero":True,"title":{"text":"N50 (kb)"}}}})
             stage_has_chart['s01b'] = True
             chart_scripts += _chart('chart_s01b', 'bar', {
                 "labels": asm_samples,
                 "datasets": [{"label":"Contigs","data":asm_contigs,
-                              "backgroundColor":['#009E73' if v>5000 else '#88D6B2' if v>1000 else '#C3E7D5' for v in asm_contigs]}]},
+                              "backgroundColor":[_TIER_GOOD[2] if v>5000 else _TIER_GOOD[1] if v>1000 else _TIER_GOOD[0] for v in asm_contigs]}]},
                 {"responsive":True,"plugins":{"title":{"display":True,"text":"Assembly Contig Count"}},
                  "scales":{"y":{"beginAtZero":True,"title":{"text":"Contigs"}}}})
 
@@ -1244,9 +1475,9 @@ def write_html_report(report_dir, stage_stats):
             chart_scripts += _chart('chart_s02', 'bar', {
                 "labels": tools,
                 "datasets": [
-                    {"label":"Raw","data":raw_vals,"backgroundColor":"#90caf9"},
-                    {"label":"Filter","data":filt_vals,"backgroundColor":"#56B4E9"},
-                    {"label":"Strict","data":strict_vals,"backgroundColor":"#0072B2"},
+                    {"label":"Raw","data":raw_vals,"backgroundColor":_ramp(3)[0]},
+                    {"label":"Filter","data":filt_vals,"backgroundColor":_ramp(3)[1]},
+                    {"label":"Strict","data":strict_vals,"backgroundColor":_ramp(3)[2]},
                 ]},
                 {"responsive":True,"plugins":{"title":{"display":True,"text":"Per-Tool: Raw vs Filter vs Strict"}},
                  "scales":{"y":{"beginAtZero":True,"title":{"text":"Sequences"}}}})
@@ -1263,9 +1494,9 @@ def write_html_report(report_dir, stage_stats):
             stage_has_chart['s03'] = True
             cobra_ext = [float(r.get(er_key,0)) for r in cobra_rows]
             cobra_orph = [float(r.get(or_key,0)) for r in cobra_rows] if or_key else []
-            ds_c = [{"label":"Extension Rate (%)","data":cobra_ext,"backgroundColor":"#009E73","yAxisID":"y"}]
+            ds_c = [{"label":"Extension Rate (%)","data":cobra_ext,"backgroundColor":_C_GOOD,"yAxisID":"y"}]
             if cobra_orph:
-                ds_c.append({"label":"Orphan Rate (%)","data":cobra_orph,"backgroundColor":"#8B2C1F","yAxisID":"y1"})
+                ds_c.append({"label":"Orphan Rate (%)","data":cobra_orph,"backgroundColor":_C_BAD,"yAxisID":"y1"})
             scales_c = {"y":{"beginAtZero":True,"position":"left","title":{"text":"Rate (%)"}}}
             if cobra_orph:
                 scales_c["y1"] = {"beginAtZero":True,"position":"right","grid":{"drawOnChartArea":False},"title":{"text":"Orphan (%)"}}
@@ -1277,14 +1508,14 @@ def write_html_report(report_dir, stage_stats):
     if csd_rows:
         csd_labels = [r.get("Size","") for r in csd_rows]
         csd_counts = [int(r.get("Count",0)) for r in csd_rows]
-        csd_colors = ["#e8eaf6","#c5cae9","#9fa8da","#7986cb","#537D96","#3949ab"]
+        csd_colors = _ramp(6)
         chart_scripts += _chart('chart_s04a', 'bar', {"labels": csd_labels, "datasets": [{"label":"Clusters","data":csd_counts,"backgroundColor":csd_colors}]}, {"responsive":True,"plugins":{"title":{"display":True,"text":"Cluster Size Distribution"},"legend":{"display":False}}, "scales":{"y":{"beginAtZero":True,"title":{"text":"Number of Clusters"}}}})
         stage_has_chart['s04a'] = True
     prd_rows = _read_tsv(report_dir / "cluster_pipeline_reduction.tsv")
     if prd_rows:
         prd_labels = [r.get("Stage","") for r in prd_rows]
         prd_counts = [int(r.get("Count",0)) for r in prd_rows]
-        prd_colors = ["#90caf9","#56B4E9","#0072B2"]
+        prd_colors = _ramp(3)
         chart_scripts += _chart('chart_s04c', 'bar', {"labels": prd_labels, "datasets": [{"label":"Count","data":prd_counts,"backgroundColor":prd_colors}]}, {"responsive":True,"indexAxis":"y", "plugins":{"title":{"display":True,"text":"Pipeline Reduction: Contigs to vOTUs"},"legend":{"display":False}}, "scales":{"x":{"beginAtZero":True,"title":{"text":"Count"}}}})
         stage_has_chart['s04c'] = True
 
@@ -1295,13 +1526,13 @@ def write_html_report(report_dir, stage_stats):
         if family_rows:
             f_labels = [r.get("Taxon","")[:25] for r in family_rows[:20]]
             f_counts = [int(r.get("Count",0)) for r in family_rows[:20]]
-            chart_scripts += _chart('chart_s05b', 'bar', {"labels": f_labels, "datasets": [{"label":"vOTUs","data":f_counts,"backgroundColor":"#0072B2"}]}, {"responsive":True,"indexAxis":"y","plugins":{"title":{"display":True,"text":"Family Distribution"},"legend":{"display":False}}, "scales":{"x":{"beginAtZero":True,"title":{"text":"vOTU Count"}}}})
+            chart_scripts += _chart('chart_s05b', 'bar', {"labels": f_labels, "datasets": [{"label":"vOTUs","data":f_counts,"backgroundColor":OI[4]}]}, {"responsive":True,"indexAxis":"y","plugins":{"title":{"display":True,"text":"Family Distribution"},"legend":{"display":False}}, "scales":{"x":{"beginAtZero":True,"title":{"text":"vOTU Count"}}}})
             stage_has_chart['s05b'] = True
         genus_rows = [r for r in tax_comp_rows if r.get("Rank","") == "Genus"]
         if genus_rows:
             g_labels = [r.get("Taxon","")[:25] for r in genus_rows[:20]]
             g_counts = [int(r.get("Count",0)) for r in genus_rows[:20]]
-            chart_scripts += _chart('chart_s05c', 'bar', {"labels": g_labels, "datasets": [{"label":"vOTUs","data":g_counts,"backgroundColor":"#CC79A7"}]}, {"responsive":True,"indexAxis":"y","plugins":{"title":{"display":True,"text":"Genus Distribution"},"legend":{"display":False}}, "scales":{"x":{"beginAtZero":True,"title":{"text":"vOTU Count"}}}})
+            chart_scripts += _chart('chart_s05c', 'bar', {"labels": g_labels, "datasets": [{"label":"vOTUs","data":g_counts,"backgroundColor":OI[6]}]}, {"responsive":True,"indexAxis":"y","plugins":{"title":{"display":True,"text":"Genus Distribution"},"legend":{"display":False}}, "scales":{"x":{"beginAtZero":True,"title":{"text":"vOTU Count"}}}})
             stage_has_chart['s05c'] = True
     # R data charts
     fs_rows = _read_tsv(report_dir / "taxonomy_fill_stats.tsv")
@@ -1309,7 +1540,7 @@ def write_html_report(report_dir, stage_stats):
         fs_labels = [r.get("Rank","") for r in fs_rows]
         fs_rates = [round(float(r.get("Rate",0))*100, 1) for r in fs_rows]
         fs_filled = [int(r.get("Filled",0)) for r in fs_rows]
-        chart_scripts += _chart('chart_s05d', 'bar', {"labels": fs_labels, "datasets": [{"label":"Fill Rate (%)","data":fs_rates,"backgroundColor":"#0072B2","yAxisID":"y"}, {"label":"Filled vOTUs","data":fs_filled,"backgroundColor":"#90caf9","yAxisID":"y1"}]}, {"responsive":True,"indexAxis":"y", "plugins":{"title":{"display":True,"text":"Taxonomy Fill Rate by Rank"}}, "scales":{"x":{"beginAtZero":True,"position":"bottom","title":{"text":"Fill Rate (%)"}},"y":{"position":"left"},"y1":{"display":False}}})
+        chart_scripts += _chart('chart_s05d', 'bar', {"labels": fs_labels, "datasets": [{"label":"Fill Rate (%)","data":fs_rates,"backgroundColor":OI[4],"yAxisID":"y"}, {"label":"Filled vOTUs","data":fs_filled,"backgroundColor":OI[1],"yAxisID":"y1"}]}, {"responsive":True,"indexAxis":"y", "plugins":{"title":{"display":True,"text":"Taxonomy Fill Rate by Rank"}}, "scales":{"x":{"beginAtZero":True,"position":"bottom","title":{"text":"Fill Rate (%)"}},"y":{"position":"left"},"y1":{"display":False}}})
         stage_has_chart['s05d'] = True
     ag_rows = _read_tsv(report_dir / "taxonomy_agreement_stats.tsv")
     if ag_rows:
@@ -1321,7 +1552,7 @@ def write_html_report(report_dir, stage_stats):
             if lv not in ag_by_level: ag_by_level[lv] = {}
             ag_by_level[lv][r.get("Tool","")] = round(float(r.get("Agreement_Rate",0))*100, 1)
         ag_levels = [lv for lv in levels_order if lv in ag_by_level]
-        ag_colors = ["#0072B2","#56B4E9","#1a237e","#537D96","#7986cb","#9fa8da","#283593","#3949ab"]
+        ag_colors = list(OI[:8])
         ag_datasets = []
         for ti, tool in enumerate(tools_set):
             ag_datasets.append({"label": tool, "data": [ag_by_level.get(lv,{}).get(tool, 0) for lv in ag_levels], "backgroundColor": ag_colors[ti % 8]})
@@ -1336,7 +1567,7 @@ def write_html_report(report_dir, stage_stats):
             cs_by_level[lv][r.get("Tool","")] = int(r.get("Classified",0))
         cs_levels = [lv for lv in levels_order if lv in cs_by_level]
         cs_tools = sorted(set(r.get("Tool","") for r in cs_rows))
-        cs_colors = ["#4A6B4A","#009E73","#88D6B2","#81c784","#4caf50","#388e3c","#1b5e20","#43a047"]
+        cs_colors = list(OI[:8])
         cs_datasets = []
         for ti, tool in enumerate(cs_tools):
             cs_datasets.append({"label": tool, "data": [cs_by_level.get(lv,{}).get(tool, 0) for lv in cs_levels], "backgroundColor": cs_colors[ti % 8]})
@@ -1350,8 +1581,9 @@ def write_html_report(report_dir, stage_stats):
             tax_novelty_kv = _extract_kv(s['Key_Metric'], r'(Known|NewSp|NewGe|NewFa)=(\d+)')
     if tax_novelty_kv:
         stage_has_chart['s05'] = True
-        bar_colors = ["#4A6B4A","#0072B2","#D55E00","#8B2C1F"]
-        _tax_label_map = {"Known":"已知","NewSp":"新种","NewGe":"新属","NewFa":"新科"}
+        bar_colors = [_sem("novelty", "Known", OI[8]), _sem("novelty", "NewSp", OI[0]),
+                      _sem("novelty", "NewGe", OI[5]), _sem("novelty", "NewFa", OI[6])]
+        _tax_label_map = {"Known":"Known","NewSp":"Novel species","NewGe":"Novel genus","NewFa":"Novel family"}
         chart_scripts += _chart('chart_s05a', 'bar', {
             "labels": [_tax_label_map.get(k,k) for k in tax_novelty_kv.keys()],
             "datasets": [{"label":"Sequences","data":list(tax_novelty_kv.values()),"backgroundColor":bar_colors}]},
@@ -1365,7 +1597,7 @@ def write_html_report(report_dir, stage_stats):
             host_kv = _extract_kv(s['Key_Metric'], r'(\w+)=(\d+)')
     if host_kv:
         stage_has_chart['s06'] = True
-        host_colors = ["#56B4E9","#009E73","#ffa726","#8B2C1F","#CC79A7","#26c6da","#7e57c2","#78909c"]
+        host_colors = list(OI[:8])
         chart_scripts += _chart('chart_s06a', 'bar', {
             "labels": list(host_kv.keys()),
             "datasets": [{"label":"Sequences","data":list(host_kv.values()),"backgroundColor":host_colors[:len(host_kv)]}]},
@@ -1383,7 +1615,9 @@ def write_html_report(report_dir, stage_stats):
             for q in qlabels: cv_qdata[q].append(int(r.get(q,0)))
         if cv_hosts:
             stage_has_chart['s07a'] = True
-            colors = ['#4A6B4A','#0072B2','#D55E00','#8B2C1F','#9e9e9e']
+            colors = [_sem("quality", q, d) for q, d in
+                      (("Complete", OI[4]), ("High-quality", OI[2]), ("Medium-quality", OI[0]),
+                       ("Low-quality", OI[5]), ("Not-determined", "#CCCCCC"))]
             cv_datasets = [{"label":q,"data":cv_qdata[q],"backgroundColor":colors[i]} for i,q in enumerate(qlabels)]
             chart_scripts += _chart('chart_s07a', 'bar', {"labels":cv_hosts,"datasets":cv_datasets},
                 {"responsive":True,"plugins":{"title":{"display":True,"text":"CheckV Quality by Host"}},
@@ -1397,7 +1631,7 @@ def write_html_report(report_dir, stage_stats):
             for q in cql: cf_data[q].append(int(r.get(q,0)))
         if cf_hosts and cql:
             stage_has_chart['s07b'] = True
-            colors2 = ['#4A6B4A','#D55E00','#8B2C1F','#0072B2','#9e9e9e']
+            colors2 = _ramp(5)
             cf_datasets = [{"label":q,"data":cf_data[q],"backgroundColor":colors2[i%5]} for i,q in enumerate(cql)]
             chart_scripts += _chart('chart_s07b', 'bar', {"labels":cf_hosts,"datasets":cf_datasets},
                 {"responsive":True,"plugins":{"title":{"display":True,"text":"CheckV aai_confidence by Host"}},
@@ -1409,7 +1643,7 @@ def write_html_report(report_dir, stage_stats):
     if rr.is_file():
         import csv as _rc
         try:
-            for row in _rc.DictReader(open(rr), delimiter='\t'):
+            for row in _rc.DictReader(open(rr, encoding='utf-8'), delimiter='\t'):
                 b = (row.get('branch') or '').strip()
                 m = (row.get('method') or '').strip()
                 if b in ('fail','F','') or b == '-':
@@ -1425,7 +1659,7 @@ def write_html_report(report_dir, stage_stats):
         _labels = list(rescue_bc.keys()); _data = list(rescue_bc.values())
         chart_scripts += _chart('chart_s08', 'pie', {
             "labels": _labels,
-            "datasets": [{"data":_data,"backgroundColor":["#009E73","#56B4E9","#ffa726","#CC79A7","#8B2C1F"]}]},
+            "datasets": [{"data":_data,"backgroundColor":[OI[2], OI[1], OI[0], OI[6], OI[5]]}]},
             {"responsive":True,"plugins":{"title":{"display":True,"text":"Rescue Branch Contributions"},"legend":{"position":"bottom"}}})
 
     # S09 — Viroid species summary
@@ -1439,7 +1673,7 @@ def write_html_report(report_dir, stage_stats):
             stage_has_chart['s09'] = True
             chart_scripts += _chart('chart_s09', 'bar', {
                 "labels": sp_labels,
-                "datasets": [{"label":"Contigs","data":sp_counts,"backgroundColor":"#00838f"}]},
+                "datasets": [{"label":"Contigs","data":sp_counts,"backgroundColor":_sem("genome","Viroid", OI[2])}]},
                 {"indexAxis":"y","responsive":True,
                  "plugins":{"title":{"display":True,"text":"Top Viroid Species by Contig Count"},"legend":{"display":False}},
                  "scales":{"x":{"title":{"text":"Contig Count"},"beginAtZero":True}}})
@@ -1459,8 +1693,8 @@ def write_html_report(report_dir, stage_stats):
             chart_scripts += _chart('chart_s09b', 'bar', {
                 "labels": pg_labels,
                 "datasets": [
-                    {"label":"Total","data":pg_contigs,"backgroundColor":"#009E73"},
-                    {"label":"Rescued HQ","data":pg_rescued,"backgroundColor":"#00838f"}]},
+                    {"label":"Total","data":pg_contigs,"backgroundColor":_C_GOOD},
+                    {"label":"Rescued HQ","data":pg_rescued,"backgroundColor":OI[1]}]},
                 {"indexAxis":"y","responsive":True,
                  "plugins":{"title":{"display":True,"text":"Plant Virus Genera (All Predicted)"},"legend":{"position":"bottom"}},
                  "scales":{"x":{"title":{"text":"Contig Count"},"beginAtZero":True,"stacked":True}}})
@@ -1477,7 +1711,9 @@ def write_html_report(report_dir, stage_stats):
             v_order = ['KEEP', 'REVIEW', 'DROP']
             v_labels = [v for v in v_order if v in verdict_cnt]
             v_counts = [verdict_cnt[v] for v in v_labels]
-            v_colors = {'KEEP': '#009E73', 'REVIEW': '#ffa726', 'DROP': '#8B2C1F'}
+            v_colors = {'KEEP': _sem("verdict","KEEP", OI[2]),
+                        'REVIEW': _sem("verdict","REVIEW", OI[0]),
+                        'DROP': _sem("verdict","DROP", OI[5])}
             stage_has_chart['s09c'] = True
             chart_scripts += _chart('chart_s09c', 'pie', {
                 "labels": v_labels,
@@ -1495,34 +1731,11 @@ def write_html_report(report_dir, stage_stats):
             stage_has_chart['s09d'] = True
             chart_scripts += _chart('chart_s09d', 'bar', {
                 "labels": nov_labels,
-                "datasets": [{"label": "Contigs", "data": nov_counts, "backgroundColor": "#00838f"}]},
+                "datasets": [{"label": "Contigs", "data": nov_counts, "backgroundColor": OI[4]}]},
                 {"indexAxis": "y", "responsive": True,
                  "plugins": {"title": {"display": True, "text": "Novelty Annotation"},
                              "legend": {"display": False}},
                  "scales": {"x": {"title": {"text": "Contig Count"}, "beginAtZero": True}}})
-
-            # S11a — 综合新病毒判定 (9a × ACVirus 整合) — keep_summary final_call
-    ksum = _resolve_acv_dir(report_dir.parent) / "keep_summary.tsv"
-    if ksum.is_file():
-        ks_rows = _read_tsv(ksum)
-        if ks_rows:
-            fc_cnt = {}
-            for r in ks_rows:
-                k = r.get('final_call', '') or 'Unknown'
-                fc_cnt[k] = fc_cnt.get(k, 0) + 1
-            order = ['Novel(dual)', 'Novel(blast)', 'Novel(ACV)', 'Known(ACV-conflict)', 'Known']
-            labels = [k for k in order if k in fc_cnt]
-            counts = [fc_cnt[k] for k in labels]
-            colors = {'Novel(dual)': '#00838f', 'Novel(blast)': '#4db6ac', 'Novel(ACV)': '#ffb74d',
-                      'Known(ACV-conflict)': '#ff8a65', 'Known': '#b0bec5'}
-            stage_has_chart['s11a'] = True
-            chart_scripts += _chart('chart_s11a', 'pie', {
-                "labels": labels,
-                "datasets": [{"data": counts, "backgroundColor": [colors.get(k,'#ccc') for k in labels]}]},
-                {"responsive": True,
-                 "plugins": {"title": {"display": True,
-                                       "text": "Comprehensive Novelty Call (9a BLAST × ACVirus)"},
-                             "legend": {"position": "bottom"}}})
 
     # 检出频次分布 (chart_s09e)
             freq_bins = {'0 sample': 0, '1 sample': 0, '2-4 samples': 0, '5+ samples': 0}
@@ -1538,7 +1751,7 @@ def write_html_report(report_dir, stage_stats):
             stage_has_chart['s09e'] = True
             chart_scripts += _chart('chart_s09e', 'bar', {
                 "labels": list(freq_bins.keys()),
-                "datasets": [{"label": "Candidates", "data": list(freq_bins.values()), "backgroundColor": "#009E73"}]},
+                "datasets": [{"label": "Candidates", "data": list(freq_bins.values()), "backgroundColor": _C_GOOD}]},
                 {"responsive": True,
                  "plugins": {"title": {"display": True, "text": "Detection Frequency"},
                              "legend": {"display": False}},
@@ -1561,7 +1774,7 @@ def write_html_report(report_dir, stage_stats):
             stage_has_chart['s09f'] = True
             chart_scripts += _chart('chart_s09f', 'bar', {
                 "labels": list(sc_bins.keys()),
-                "datasets": [{"label": "Candidates", "data": list(sc_bins.values()), "backgroundColor": "#fb8c00"}]},
+                "datasets": [{"label": "Candidates", "data": list(sc_bins.values()), "backgroundColor": _C_WARN}]},
                 {"responsive": True,
                  "plugins": {"title": {"display": True, "text": "Total Evidence Score (30% nt + 30% aa + 40% Domain: max(CDD, HMM))"},
                              "legend": {"display": False}},
@@ -1579,7 +1792,7 @@ def write_html_report(report_dir, stage_stats):
             stage_has_chart['s09g'] = True
             chart_scripts += _chart('chart_s09g', 'bar', {
                 "labels": cat_labels,
-                "datasets": [{"label": "Contigs", "data": cat_vals, "backgroundColor": "#26a69a"}]},
+                "datasets": [{"label": "Contigs", "data": cat_vals, "backgroundColor": OI[4]}]},
                 {"indexAxis": "y", "responsive": True,
                  "plugins": {"title": {"display": True, "text": "Virus Attribute (Category)"},
                              "legend": {"display": False}},
@@ -1606,10 +1819,10 @@ def write_html_report(report_dir, stage_stats):
                 chart_scripts += _chart('chart_s09h', 'bar', {
                     "labels": lbls,
                     "datasets": [
-                        {"label": "blastn (30%)", "data": bblast, "backgroundColor": "#90caf9"},
-                        {"label": "blastx (30%)", "data": bblastx, "backgroundColor": "#ce93d8"},
-                        {"label": "CDD (域证据层)", "data": bcdd, "backgroundColor": "#88D6B2"},
-                        {"label": "HMM 补充 (max 部分)", "data": bhmm, "backgroundColor": "#ffb74d"}]},
+                        {"label": "blastn (30%)", "data": bblast, "backgroundColor": _ramp(4)[0]},
+                        {"label": "blastx (30%)", "data": bblastx, "backgroundColor": _ramp(4)[1]},
+                        {"label": "CDD (domain layer)", "data": bcdd, "backgroundColor": _ramp(4)[2]},
+                        {"label": "HMM complement (max part)", "data": bhmm, "backgroundColor": _ramp(4)[3]}]},
                     {"responsive": True,
                      "plugins": {"title": {"display": True, "text": "Top KEEP: Score Composition"},
                                  "legend": {"position": "bottom"}},
@@ -1626,27 +1839,27 @@ def write_html_report(report_dir, stage_stats):
                 hr = r.get('hmm_rescue', '') or ''
                 nt = _sf(r.get('nt_pident')); aa = _sf(r.get('aa_pident')); ns = _sf(r.get('n_samples'))
                 if v == 'KEEP':
-                    if hr.endswith('->KEEP'): lab = 'CT3-HMM全长profile'
-                    elif cdd in ('PASS_CORE', 'PASS_CORE_FAM', 'PASS_VIRAL'): lab = '病毒CDD域'
-                    elif nt >= 85: lab = 'blast已知(nt≥85)'
-                    elif nt >= 40 or aa >= 40: lab = 'blast/蛋白中度命中(40%+ )'
-                    elif ns > 0: lab = '已检出但证据弱'
-                    else: lab = '其他'
+                    if hr.endswith('->KEEP'): lab = 'CT3-HMM full-length profile'
+                    elif cdd in ('PASS_CORE', 'PASS_CORE_FAM', 'PASS_VIRAL'): lab = 'Viral CDD domain'
+                    elif nt >= 85: lab = 'BLAST-known (nt≥85)'
+                    elif nt >= 40 or aa >= 40: lab = 'BLAST/protein moderate hit (40%+)'
+                    elif ns > 0: lab = 'Detected but weak evidence'
+                    else: lab = 'Other'
                     reason_keep[lab] = reason_keep.get(lab, 0) + 1
                 elif v == 'DROP':
-                    if cdd in ('PASS_CORE', 'PASS_CORE_FAM', 'PASS_VIRAL'): lab = '⚠强CDD却去除'
-                    elif nt >= 85: lab = 'blast已知却去除'
-                    elif aa >= 40: lab = '蛋白近似却去除'
-                    elif ns > 0: lab = '有检出却去除'
-                    elif cdd in ('AMBIGUOUS', 'REVIEW'): lab = '无病毒域+blast弱'
-                    else: lab = '无任何证据'
+                    if cdd in ('PASS_CORE', 'PASS_CORE_FAM', 'PASS_VIRAL'): lab = '⚠ Strong CDD but removed'
+                    elif nt >= 85: lab = 'BLAST-known but removed'
+                    elif aa >= 40: lab = 'Protein-approx but removed'
+                    elif ns > 0: lab = 'Detected but removed'
+                    elif cdd in ('AMBIGUOUS', 'REVIEW'): lab = 'No viral domain + weak BLAST'
+                    else: lab = 'No evidence'
                     reason_drop[lab] = reason_drop.get(lab, 0) + 1
             # CT3-HMM 第三路探针补票 (无 CDD 病毒域但全长 profile 命中, DROP→REVIEW)
             reason_hmm = {}
             for r in sc_rows:
                 _hr = (r.get('hmm_rescue', '') or '').strip()
                 if _hr.endswith('->KEEP') or _hr == 'DROP->REVIEW':
-                    reason_hmm['HMM补票(CT3)'] = reason_hmm.get('HMM补票(CT3)', 0) + 1
+                    reason_hmm['HMM rescue (CT3)'] = reason_hmm.get('HMM rescue (CT3)', 0) + 1
             all_labs = []
             for k in list(reason_drop.keys()) + list(reason_keep.keys()) + list(reason_hmm.keys()):
                 if k not in all_labs: all_labs.append(k)
@@ -1659,18 +1872,45 @@ def write_html_report(report_dir, stage_stats):
             chart_scripts += _chart('chart_s09i', 'bar', {
                 "labels": labels_oi,
                 "datasets": [
-                    {"label": "DROP", "data": [reason_drop.get(k, 0) for k in labels_oi], "backgroundColor": "#8B2C1F"},
-                    {"label": "KEEP", "data": [reason_keep.get(k, 0) for k in labels_oi], "backgroundColor": "#009E73"},
-                    {"label": "HMM rescue", "data": [reason_hmm.get(k, 0) for k in labels_oi], "backgroundColor": "#56B4E9"}]},
+                    {"label": "DROP", "data": [reason_drop.get(k, 0) for k in labels_oi], "backgroundColor": _C_BAD},
+                    {"label": "KEEP", "data": [reason_keep.get(k, 0) for k in labels_oi], "backgroundColor": _C_GOOD},
+                    {"label": "HMM rescue", "data": [reason_hmm.get(k, 0) for k in labels_oi], "backgroundColor": OI[1]}]},
                 {"responsive": True,
                  "plugins": {"title": {"display": True, "text": "Removal / Retention Rationale"},
                              "legend": {"position": "bottom"}},
                  "scales": {"x": {"title": {"text": "Candidates"}, "stacked": True, "beginAtZero": True},
                              "y": {"stacked": True, "beginAtZero": True, "title": {"text": "Count"}}}})
 
+    # S11a — 综合新病毒判定 (9a × ACVirus 整合) — keep_summary final_call
+    # (原位置在 s09 链中间, 会把 s09e~s09i 的 12 空格块错误并入 `if ks_rows:`
+    #  且 scored 表缺失时 sc_rows 未绑定 → 崩溃; 移到链后独立成块)
+    ksum = _resolve_acv_dir(report_dir.parent) / "keep_summary.tsv"
+    if ksum.is_file():
+        ks_rows = _read_tsv(ksum)
+        if ks_rows:
+            fc_cnt = {}
+            for r in ks_rows:
+                k = r.get('final_call', '') or 'Unknown'
+                fc_cnt[k] = fc_cnt.get(k, 0) + 1
+            order = ['Novel(dual)', 'Novel(blast)', 'Novel(ACV)', 'Known(ACV-conflict)', 'Known']
+            labels = [k for k in order if k in fc_cnt]
+            counts = [fc_cnt[k] for k in labels]
+            colors = {'Novel(dual)': OI[6], 'Novel(blast)': OI[5], 'Novel(ACV)': OI[0],
+                      'Known(ACV-conflict)': OI[1], 'Known': OI[8]}
+            stage_has_chart['s11a'] = True
+            chart_scripts += _chart('chart_s11a', 'pie', {
+                "labels": labels,
+                "datasets": [{"data": counts, "backgroundColor": [colors.get(k,'#ccc') for k in labels]}]},
+                {"responsive": True,
+                 "plugins": {"title": {"display": True,
+                                       "text": "Comprehensive Novelty Call (9a BLAST × ACVirus)"},
+                             "legend": {"position": "bottom"}}})
+
     # S10 — 09 Virome Analysis: 核酸类型 (DNA/RNA) + 科属分布, 类病毒单列不并入 RNA
     _s10_note = ""
-    _TYPE_COLORS = {"DNA": "#0072B2", "RNA": "#D55E00", "Viroid": "#009E73", "Unassigned": "#BBBBBB"}
+    _TYPE_COLORS = {"DNA": _sem("genome","DNA", OI[4]), "RNA": _sem("genome","RNA", OI[5]),
+                    "Viroid": _sem("genome","Viroid", OI[2]),
+                    "Unassigned": _sem("genome","Unassigned", OI[8])}
     _TYPE_ORDER = ["DNA", "RNA", "Viroid", "Unassigned"]
     _VIROID_FAMS = ("Pospiviroidae", "Avsunviroidae")
 
@@ -1695,7 +1935,9 @@ def write_html_report(report_dir, stage_stats):
                 fam = (r.get('Family','') or '').strip()
                 gen = (r.get('Genus','') or '').strip()
                 sp  = (r.get('Species','') or '').strip()
-                gt  = (r.get('Genome_Type','') or '').strip()
+                # 生产端列表头为 Nucleic_acid (virome_pipeline.py HQ 表 /
+                # build_plant_virus_info.py); 兼容旧 Genome_Type 列名回退
+                gt  = (r.get('Nucleic_acid') or r.get('Genome_Type') or '').strip()
                 b = _na_bucket(fam, gen, sp, gt)
                 _type_cnt[b] = _type_cnt.get(b, 0) + 1
                 _fam_by_type.setdefault(b, {})[_lab(fam)] = _fam_by_type.setdefault(b, {}).get(_lab(fam), 0) + 1
@@ -1814,20 +2056,20 @@ def write_html_report(report_dir, stage_stats):
                          '<div class="chart-title">Note on nucleic acid type</div>'
                          '<div style="font-size:12px;line-height:1.7;color:var(--muted,#667)">'
                          'Type is resolved from VMR by precedence species &gt; genus &gt; family &gt; Realm/Kingdom '
-                         '(column <code>Genome_Type</code>). Viroids are counted from <code>viroid_analysis/</code> and reported '
+                         '(column <code>Nucleic_acid</code>). Viroids are counted from <code>viroid_analysis/</code> and reported '
                          'as a separate class, never merged into RNA. %d families here carry a family label that disagrees '
                          'with the resolved type (mixed-tool taxonomy integration); for those rows the type, being the more '
                          'specific call, is the reliable one.'
                          '</div></div>') % _conflict
 
     # Sankey 交互式嵌入 (用 Blob URL 动态注入, 避免 data URI 大小限制)
-    # s05=全部分类, s06=植物病毒
+    # 两张 Sankey 与旭日图都是分类学图 → 全挂 05 Taxonomy 章节
     sankey_by_stage = {}  # {stage_key: html_string}
     # 堆叠图默认切换为百分比模式 (延迟执行, 等图表全部渲染完)
     chart_scripts += "setTimeout(function(){document.querySelectorAll('.pct-btn').forEach(function(b){toggleStackedPct(b)})},100);\n"
     sankey_inject_scripts = ""
     sankey_map = [("classification_sankey.html","Taxonomy Classification Sankey","s05"),
-                  ("classification_sankey_plant.html","Plant Virus Taxonomy Sankey","s06")]
+                  ("classification_sankey_plant.html","Plant Virus Taxonomy Sankey","s05")]
     for i, (sname, stitle, stage_key) in enumerate(sankey_map):
         spath = report_dir / sname
         if spath.is_file():
@@ -1852,8 +2094,8 @@ def write_html_report(report_dir, stage_stats):
 <h3>Plant Virus Taxonomy Sunburst</h3>
 <iframe id="sunburst_iframe" style="width:100%;height:750px;border:none;border-radius:4px" loading="lazy"></iframe>
 </div>\n'''
-        sankey_by_stage.setdefault("s08", "")
-        sankey_by_stage["s08"] += sunburst_card
+        sankey_by_stage.setdefault("s05", "")
+        sankey_by_stage["s05"] += sunburst_card
         sankey_inject_scripts += f"(function(){{var b='{sunburst_b64}';var d=decodeURIComponent(escape(atob(b)));var u=URL.createObjectURL(new Blob([d],{{type:'text/html;charset=utf-8'}}));document.getElementById('sunburst_iframe').src=u;}})();\n"
 
     # ── KPI ──
@@ -1865,7 +2107,7 @@ def write_html_report(report_dir, stage_stats):
             for m in re.finditer(r'bases:\s*([\d,]+)→([\d,]+)', s.get('Key_Metric','')):
                 kpis['raw_bases'] = m.group(1); kpis['clean_bases'] = m.group(2)
         if s['Stage'] == _D['d_clean']:
-            for m in re.finditer(r'(\d+)\s*样本', s.get('Key_Metric','')): kpis['n_sample'] = m.group(1)
+            for m in re.finditer(r'(\d+)\s*samples', s.get('Key_Metric','')): kpis['n_sample'] = m.group(1)
         if s['Stage'] == _D['d_asm']:
             for m in re.finditer(r'([\d,]+)\s*contigs', s.get('Key_Metric','')): kpis['total_contigs'] = m.group(1)
             for m in re.finditer(r'([\d.]+)\s*Mb', s.get('Key_Metric','')): kpis['total_mb'] = m.group(1)
@@ -1878,14 +2120,14 @@ def write_html_report(report_dir, stage_stats):
             for m in re.finditer(r'NewGe=(\d+)', s.get('Key_Metric','')): kpis['n_newge'] = m.group(1)
             for m in re.finditer(r'NewFa=(\d+)', s.get('Key_Metric','')): kpis['n_newfa'] = m.group(1)
         if '  └ vclust' in s['Stage']:
-            for m in re.finditer(r'([\d,]+)\s*簇', s.get('Key_Metric','')): kpis['n_clusters'] = m.group(1)
-        if _D['d_host_pred'] in s['Stage'] and s['Stage'].startswith('06'):
-            for m in re.finditer(r'([\d,]+)\s*条', s.get('Key_Metric','')): kpis['host_total'] = m.group(1)
-        if '07_CheckV' in s['Stage'] and s['Stage'].startswith('07'):
+            for m in re.finditer(r'([\d,]+)\s*clusters', s.get('Key_Metric','')): kpis['n_clusters'] = m.group(1)
+        if s['Stage'] == _D['d_host_pred']:      # 精确匹配 (旧 startswith('06') 在 standard 布局失效)
+            for m in re.finditer(r'([\d,]+)\s*seqs', s.get('Key_Metric','')): kpis['host_total'] = m.group(1)
+        if s['Stage'] == '07_CheckV':
             for m in re.finditer(r'(\d+)\s*HQ', s.get('Key_Metric','')): kpis['hq_votus'] = m.group(1)
             for m in re.finditer(r'(\d+)\s*total', s.get('Key_Metric','')): kpis['cv_total'] = m.group(1)
-        if _D['d_rescue'] in s['Stage'] and s['Stage'].startswith('08'):
-            for m in re.finditer(r'([\d,]+)\s*HQ vOTU', s.get('Key_Metric','')): kpis['rescued'] = m.group(1)
+        if s['Stage'] == _D['d_rescue']:
+            for m in re.finditer(r'([\d,]+)\s*viruses', s.get('Key_Metric','')): kpis['rescued'] = m.group(1)
     # 从 hostdep_summary.tsv 提取宿主去除统计, 用量化的数据量(Gb/Mb)
     hd_rows = _read_tsv(report_dir / "hostdep_summary.tsv")
     if hd_rows:
@@ -1916,13 +2158,43 @@ def write_html_report(report_dir, stage_stats):
         ("s08","Rescue","08 Rescue","RESCUE","#1B365D"),
         # ("s09","PlantVirus") removed,
         ("s10","Analysis","09 Virome Analysis","AN","#CC79A7"),
-        ("s11","Verify","09b 分析验证","AV","#537D96"),
+        ("s11","Verify","09b Analysis & Validation","AV","#537D96"),
     ]
 
-    _skey_to_num = {'s00a':'00a','s00b':'00b','s00c':'00c','s01':'01','s02':'02','s03':'03',
-                    's04':'04','s05':'05','s06':'06','s07':'07','s08':'08','s09':'09','s10':'10','s11':'09b'}
+    # ── 阶段 → 章节 精确映射 ───────────────────────────────────────────
+    # Stage 字段 = 收集函数写入的字面量 (多数是当前布局的目录名, 少数写死)。
+    # 旧实现按"旧编号前缀"匹配且不 break → standard 布局大面积串章
+    # (01_CleanData 被当成 s01 Assembly, 05/07/08 张冠李戴 等)。
+    # 现改为: d_* 逻辑键 → 两布局真实目录名 + 写死字面量别名 → 章节 key 的
+    # 精确表; 一次匹配一次赋值 (首条为准, 主阶段行先于子行写入)。
+    _stage_section = {}
+    for _sk, _dkeys in (
+        ('s00a', ('d_clean',)),    ('s00b', ('d_hostdep',)), ('s00c', ('d_bbnorm',)),
+        ('s01',  ('d_asm',)),      ('s02',  ('d_ident', 'd_graph')),
+        ('s03',  ('d_cobra',)),    ('s04',  ('d_cluster',)),
+        ('s05',  ('d_taxonomy',)), ('s06',  ('d_host_pred',)),
+        ('s07',  ('d_checkv',)),   ('s08',  ('d_rescue',)),
+        ('s10',  ('d_analysis',)), ('s11',  ('d_verify',)),
+    ):
+        for _dk in _dkeys:
+            for _lay in ('standard', 'legacy'):        # 两布局目录名均为候选
+                _stage_section[_layout_dirs(_lay)[_dk]] = _sk
+    _stage_section.update({                            # 收集函数写死的 Stage 字面量
+        '00c_BBNorm': 's00c', '02_Identification': 's02', '03_COBRA': 's03',
+        '03b_Merge': 's03', '07_CheckV': 's07', '10_Virome_Analysis': 's10',
+    })
+
+    def _stage_key_of(sn):
+        """Stage 字面量 → 章节 key (09b_* 归 s11; 未收录者按旧编号回退)"""
+        if sn in _stage_section:
+            return _stage_section[sn]
+        if sn.startswith('09b'):
+            return 's11'
+        return 's' + (sn.split('_')[0] if '_' in sn else sn)
+
     _subnav = {
-        's02': [('#stagetbl_s02_ident_summary','02a Identification'),('#stagetbl_s02_filter_summary','02b Filter')],
+        's02': [('#stagetbl_s02_ident_summary','02a Identification'),('#stagetbl_s02_filter_summary','02b Filter'),
+                ('#stagetbl_s02_graph_verdict_summary_tsv','graph verdicts')],
         's03': [('#stagetbl_s03_cobra_summary','03a COBRA'),('#merge-flye','03b Merge')],
         's05': [('#upset-container','Tool UpSet')],
         's11': [('#keep-table','KEEP Sequences'),('#s11-tree','Phylogeny'),('#s11-sdt','SDT Matrix'),('#s11-cv','Coverage')],
@@ -1930,13 +2202,10 @@ def write_html_report(report_dir, stage_stats):
 
     stage_status = {}; stage_metric = {}
     for s in stage_stats:
-        sn = s['Stage']
-        for sk, _, _, _, _ in stage_defs:
-            snum = _skey_to_num.get(sk,'')
-            if sn.startswith(snum) or (snum+'_') in sn or sn == snum:
-                stage_status[sk] = S.get(s['Status'],'skip')
-                stage_metric[sk] = s.get('Key_Metric','')
-                break
+        sk = _stage_key_of(s['Stage'])
+        if sk in stage_status: continue                # 一次匹配一次赋值 (首条为准)
+        stage_status[sk] = S.get(s['Status'], 'skip')
+        stage_metric[sk] = s.get('Key_Metric', '')
 
     chart_map = {
         's00a': [('chart_s00a','Read Quality'),('chart_s00a_dup','Duplication Rate')],
@@ -1965,7 +2234,7 @@ def write_html_report(report_dir, stage_stats):
         's00a': ['data_summary.tsv'],
         's00b': ['hostdep_summary.tsv'],
         's01':  ['assembly_summary.tsv'],
-        's02':  ['ident_summary.tsv', 'filter_summary.tsv'],
+        's02':  ['ident_summary.tsv', 'filter_summary.tsv', 'graph_verdict_summary.tsv'],
         's03':  ['cobra_summary.tsv'],
         's04':  ['cluster_size_distribution.tsv', 'cluster_pipeline_reduction.tsv'],
         's05':  ['taxonomy_composition.tsv', 'final_integrated_classification.tsv'],
@@ -1987,8 +2256,7 @@ def write_html_report(report_dir, stage_stats):
     for _s in stage_stats:
         _sn = _s.get("Stage", "")
         if not _sn.startswith("  "):
-            _num = _sn.split("_")[0] if "_" in _sn else _sn
-            _key = "s" + _num
+            _key = _stage_key_of(_sn)                  # 与章节状态同一精确映射 (旧按编号切分)
             _sd[_key] = {"stage": _sn, "status": _s.get("Status",""), "metrics": _s.get("Key_Metric",""), "short": _stage_key_map.get(_key, "")}
     import json as _json4
     stage_data_json = _json4.dumps(_sd, ensure_ascii=False)
@@ -2029,7 +2297,7 @@ def write_html_report(report_dir, stage_stats):
                     else:
                         _kbuf.append(_line.strip())
                 if _kid: seqs[_kid] = ''.join(_kbuf)
-            ksrows = list(_kcsv.DictReader(open(ksum), delimiter='\t'))
+            ksrows = list(_kcsv.DictReader(open(ksum, encoding='utf-8'), delimiter='\t'))
             # CT3-HMM 第三路探针注释: 从 scored.tsv 按 contig_id 左连 ct3_* / hmm_rescue 列
             _ct3_by_cid = {}
             _scored_p = report_dir / "rescue_evidence_scored.tsv"
@@ -2086,12 +2354,12 @@ def write_html_report(report_dir, stage_stats):
     if tax_img_json.is_file():
         try:
             import json as _json3
-            with open(tax_img_json) as tif:
+            with open(tax_img_json, encoding='utf-8') as tif:
                 tax_images = _json3.load(tif)
             img_html = ""
             for label, b64 in tax_images.items():
                 img_html += '<div class="chart-box"><div class="chart-title">' + _esc(label) + '</div>'
-                img_html += '<img src="data:image/png;base64,' + b64 + '" loading="lazy" onclick="openLightbox(this.src)" title="点击查看原图" style="width:100%;height:auto;max-height:650px;object-fit:contain;display:block;cursor:zoom-in"></div>'
+                img_html += '<img src="data:image/png;base64,' + b64 + '" loading="lazy" onclick="openLightbox(this.src)" title="Click to zoom" style="width:100%;height:auto;max-height:650px;object-fit:contain;display:block;cursor:zoom-in"></div>'
             if img_html:
                 stage_extra_html['s05'] = '<div class="stage-charts" style="grid-template-columns:1fr">' + img_html + '</div>'
         except Exception: pass
@@ -2115,13 +2383,19 @@ def write_html_report(report_dir, stage_stats):
                 if not b64: continue
                 csvf = d / f"sdt_matrix_{d.name}.csv"
                 csv_uri = _tsv_data_uri(csvf) if csvf.is_file() else ""
-                dl = (f' <a href="{csv_uri}" download style="font-size:.75rem;color:#00838f" title="下载 {d.name} 矩阵 CSV">matrix.csv</a>'
+                dl = (f' <a href="{csv_uri}" download style="font-size:.75rem;color:#00838f" title="Download {d.name} matrix CSV">matrix.csv</a>'
                       if csv_uri else '')
+                # PDF 回退不能塞进 data:image/png (浏览器不识别) → 用 <embed type=application/pdf>
+                if imgf.suffix.lower() == '.pdf':
+                    body = ('<embed src="data:application/pdf;base64,' + b64 + '" type="application/pdf" '
+                            'style="width:100%;height:600px;display:block">')
+                else:
+                    body = ('<img src="data:image/png;base64,' + b64 + '" loading="lazy" '
+                            'onclick="openLightbox(this.src)" title="Click to zoom" '
+                            'style="width:100%;height:auto;max-height:600px;object-fit:contain;display:block;cursor:zoom-in">')
                 sdt_imgs.append(
                     '<div class="chart-box"><div class="chart-title">SDT · ' + _esc(d.name) + dl + '</div>'
-                    '<img src="data:image/png;base64,' + b64 + '" loading="lazy" '
-                    'onclick="openLightbox(this.src)" title="点击查看原图" '
-                    'style="width:100%;height:auto;max-height:600px;object-fit:contain;display:block;cursor:zoom-in"></div>')
+                    + body + '</div>')
             if sdt_imgs:
                 ncol = 2 if len(sdt_imgs) >= 2 else 1
                 _s11_sdt = ('<div class="stage-charts" id="s11-sdt" style="grid-template-columns:'
@@ -2141,7 +2415,7 @@ def write_html_report(report_dir, stage_stats):
                 cv_imgs.append(
                     '<div class="chart-box"><div class="chart-title">Coverage · ' + _esc(lbl) + '</div>'
                     '<img src="data:image/png;base64,' + b64 + '" loading="lazy" '
-                    'onclick="openLightbox(this.src)" title="点击查看原图" '
+                    'onclick="openLightbox(this.src)" title="Click to zoom" '
                     'style="width:100%;height:auto;max-height:420px;object-fit:contain;display:block;cursor:zoom-in"></div>')
             if cv_imgs:
                 ncol2 = 2 if len(cv_imgs) >= 2 else 1
@@ -2164,7 +2438,7 @@ def write_html_report(report_dir, stage_stats):
                 tr_imgs.append(
                     '<div class="chart-box"><div class="chart-title">Phylogeny · ' + _esc(d.name) + '</div>'
                     '<img src="data:image/png;base64,' + b64 + '" loading="lazy" '
-                    'onclick="openLightbox(this.src)" title="点击查看原图" '
+                    'onclick="openLightbox(this.src)" title="Click to zoom" '
                     'style="width:100%;height:auto;max-height:560px;object-fit:contain;display:block;cursor:zoom-in"></div>')
             if tr_imgs:
                 ncol3 = 2 if len(tr_imgs) >= 2 else 1
@@ -2409,7 +2683,7 @@ tblShow_{tbid}(0);
         hd_after_str = _fmt_bases(str(int(kpis['hd_after_bp'])))
         hd_kpi = f"{hd_raw_str} → {hd_after_str}<br>({kpis['hd_retained']}% retained)"
     kpi_items = [
-        ("Samples", f"{sample_kpi}<br>{n_sample} 样本", "🧬"),
+        ("Samples", f"{sample_kpi}<br>{n_sample} samples", "🧬"),
         ("Host Depletion", hd_kpi, "🧹"),
         ("Assembly", f"{kpis.get('total_contigs','—')} contigs<br>{kpis.get('total_mb','—')} Mb", "🔧"),
         ("Viruses", f"{kpis.get('virus_seqs','—')} identified", "🦠"),
@@ -2444,13 +2718,15 @@ tblShow_{tbid}(0);
     if hds:
         s = sum(int(r.get("After_Host",0)) for r in hds)
         if s > 0: r_hostfree = s
-    if r_raw: flow_stages.append(("Raw Reads",r_raw,"#0d1b3e"))
-    if r_clean: flow_stages.append(("Clean Reads",r_clean,"#0072B2"))
-    if r_hostfree: flow_stages.append(("Host-free Reads",r_hostfree,"#546e7a"))
-    if r_contig: flow_stages.append(("Contigs",r_contig,"#009E73"))
-    if r_virus: flow_stages.append(("Viral Seqs",r_virus,"#D55E00"))
-    if r_votu: flow_stages.append(("vOTU Clusters",r_votu,"#CC79A7"))
-    if r_hq: flow_stages.append(("HQ vOTUs",r_hq,"#4A6B4A"))
+    # 序数色带（raw → HQ vOTUs 逐级筛选）：viridis 7 档，与静态图 SEQ_CMAP 同源
+    _flow_c = _ramp(7)
+    if r_raw: flow_stages.append(("Raw Reads",r_raw,_flow_c[0]))
+    if r_clean: flow_stages.append(("Clean Reads",r_clean,_flow_c[1]))
+    if r_hostfree: flow_stages.append(("Host-free Reads",r_hostfree,_flow_c[2]))
+    if r_contig: flow_stages.append(("Contigs",r_contig,_flow_c[3]))
+    if r_virus: flow_stages.append(("Viral Seqs",r_virus,_flow_c[4]))
+    if r_votu: flow_stages.append(("vOTU Clusters",r_votu,_flow_c[5]))
+    if r_hq: flow_stages.append(("HQ vOTUs",r_hq,_flow_c[6]))
 
     flow_html = ""
     ai_pager_js = """
@@ -2458,8 +2734,8 @@ function toggleChat(){var p=document.getElementById("chat-panel");p.style.displa
 function toggleAIPanel(){var p=document.getElementById("ai-panel");p.style.display=p.style.display==="none"?"block":"none";}
 function onProviderChange(){var p=document.getElementById("ai-provider").value;var m={openai:"gpt-4o-mini",deepseek:"deepseek-v4-flash",ollama:"qwen2.5:7b",moonshot:"moonshot-v1-8k",custom:""};document.getElementById("ai-model").value=m[p]||"";}
 function getAIURL(){var p=document.getElementById("ai-provider").value;if(p==="openai")return"https://api.openai.com/v1/chat/completions";if(p==="deepseek")return"https://api.deepseek.com/v1/chat/completions";if(p==="moonshot")return"https://api.moonshot.cn/v1/chat/completions";if(p==="ollama")return"http://localhost:11434/v1/chat/completions";return prompt("Enter API base URL:")||"";}
-function sendChat(){var inp=document.getElementById("chat-input");var q=inp.value.trim();if(!q)return;var key=document.getElementById("ai-api-key").value||sessionStorage.getItem("ai_key");if(!key){toggleAIPanel();alert("Please enter your API key");return;}sessionStorage.setItem("ai_key",key);var msgs=document.getElementById("chat-msgs");msgs.innerHTML+="<div class=chat-msg user>"+q.replace(/</g,"&lt;")+"</div>";inp.value="";msgs.scrollTop=msgs.scrollHeight;var th=document.createElement("div");th.className="chat-msg ai";th.textContent="...";msgs.appendChild(th);var ctx=document.getElementById("stage-data")?document.getElementById("stage-data").textContent:"{}";fetch(getAIURL(),{method:"POST",headers:{"Content-Type":"application/json",Authorization:"Bearer "+key},body:JSON.stringify({model:document.getElementById("ai-model").value,messages:[{role:"system",content:"You are a virology research assistant. Answer concisely in Chinese using the report context: "+ctx},{role:"user",content:q}],temperature:0.3,max_tokens:500})}).then(function(r){return r.json()}).then(function(d){th.textContent=d.choices[0].message.content.trim();msgs.scrollTop=msgs.scrollHeight;}).catch(function(e){th.textContent="Error: "+e;});}
-function runStageAI(sn){var key=document.getElementById("ai-api-key").value||sessionStorage.getItem("ai_key");if(!key){toggleAIPanel();alert("Please enter your API key");return;}sessionStorage.setItem("ai_key",key);var stageInfo=_stageData[sn]||{};var sel=stageInfo.short||sn;var btn=document.querySelector("#stage-"+sel+" .ai-stage-btn");if(!btn)return;var orig=btn.textContent;btn.textContent="...";btn.disabled=true;var ctx=document.getElementById("stage-data")?document.getElementById("stage-data").textContent:"{}";fetch(getAIURL(),{method:"POST",headers:{"Content-Type":"application/json",Authorization:"Bearer "+key},body:JSON.stringify({model:document.getElementById("ai-model").value,messages:[{role:"system",content:"You are a virology scientist. Summarize this pipeline stage concisely in Chinese (2-3 sentences)."},{role:"user",content:"Stage: "+sn+"\\nData: "+ctx}],temperature:0.3,max_tokens:300})}).then(function(r){return r.json()}).then(function(d){btn.textContent=orig;btn.disabled=false;var t=document.querySelector("#stage-"+sel+" .ai-stage-summary");if(!t){t=document.createElement("p");t.className="ai-stage-summary";t.style.display="block";var h=document.querySelector("#stage-"+sel+" .stage-charts, #stage-"+sel+" .stage-tables");if(h)h.before(t);else{var s=document.querySelector("#stage-"+sel+" .stage-header");if(s)s.after(t);}}t.textContent=d.choices[0].message.content.trim();}).catch(function(e){btn.textContent=orig;btn.disabled=false;alert("Error: "+e);});}
+function sendChat(){var inp=document.getElementById("chat-input");var q=inp.value.trim();if(!q)return;var key=document.getElementById("ai-api-key").value||sessionStorage.getItem("ai_key");if(!key){toggleAIPanel();alert("Please enter your API key");return;}sessionStorage.setItem("ai_key",key);var msgs=document.getElementById("chat-msgs");msgs.innerHTML+="<div class=chat-msg user>"+q.replace(/</g,"&lt;")+"</div>";inp.value="";msgs.scrollTop=msgs.scrollHeight;var th=document.createElement("div");th.className="chat-msg ai";th.textContent="...";msgs.appendChild(th);var ctx=document.getElementById("stage-data")?document.getElementById("stage-data").textContent:"{}";fetch(getAIURL(),{method:"POST",headers:{"Content-Type":"application/json",Authorization:"Bearer "+key},body:JSON.stringify({model:document.getElementById("ai-model").value,messages:[{role:"system",content:"You are a virology research assistant. Answer concisely in English using the report context: "+ctx},{role:"user",content:q}],temperature:0.3,max_tokens:500})}).then(function(r){return r.json()}).then(function(d){th.textContent=d.choices[0].message.content.trim();msgs.scrollTop=msgs.scrollHeight;}).catch(function(e){th.textContent="Error: "+e;});}
+function runStageAI(sn){var key=document.getElementById("ai-api-key").value||sessionStorage.getItem("ai_key");if(!key){toggleAIPanel();alert("Please enter your API key");return;}sessionStorage.setItem("ai_key",key);var stageInfo=_stageData[sn]||{};var sel=stageInfo.short||sn;var btn=document.querySelector("#stage-"+sel+" .ai-stage-btn");if(!btn)return;var orig=btn.textContent;btn.textContent="...";btn.disabled=true;var ctx=document.getElementById("stage-data")?document.getElementById("stage-data").textContent:"{}";fetch(getAIURL(),{method:"POST",headers:{"Content-Type":"application/json",Authorization:"Bearer "+key},body:JSON.stringify({model:document.getElementById("ai-model").value,messages:[{role:"system",content:"You are a virology scientist. Summarize this pipeline stage concisely in English (2-3 sentences)."},{role:"user",content:"Stage: "+sn+"\\nData: "+ctx}],temperature:0.3,max_tokens:300})}).then(function(r){return r.json()}).then(function(d){btn.textContent=orig;btn.disabled=false;var t=document.querySelector("#stage-"+sel+" .ai-stage-summary");if(!t){t=document.createElement("p");t.className="ai-stage-summary";t.style.display="block";var h=document.querySelector("#stage-"+sel+" .stage-charts, #stage-"+sel+" .stage-tables");if(h)h.before(t);else{var s=document.querySelector("#stage-"+sel+" .stage-header");if(s)s.after(t);}}t.textContent=d.choices[0].message.content.trim();}).catch(function(e){btn.textContent=orig;btn.disabled=false;alert("Error: "+e);});}
 var _stageData=JSON.parse(document.getElementById("stage-data").textContent);var _saved=sessionStorage.getItem("ai_key");if(_saved)document.getElementById("ai-api-key").value=_saved;
 document.getElementById("ai-provider").value=sessionStorage.getItem("ai_provider")||"openai";
 document.getElementById("ai-model").value=sessionStorage.getItem("ai_model")||"gpt-4o-mini";
@@ -2469,6 +2745,9 @@ document.getElementById("ai-model").value=sessionStorage.getItem("ai_model")||"g
         f_values = [s[1] for s in flow_stages]
         f_colors = [s[2] for s in flow_stages]
         flow_chart_id = "chart_pipeline_flow"
+        # Chart.js v4 的 tooltip 回调必须是真函数: 函数体放进 python 字典会被
+        # json.dumps 变成字符串 ("function..." 不执行)。先用唯一占位符走 _chart,
+        # 出 JS 后再把引号包裹的占位替换为函数字面量。
         chart_scripts += _chart(flow_chart_id, 'bar', {
             "labels": f_labels,
             "datasets": [{"label":"Count","data":f_values,"backgroundColor":f_colors,
@@ -2476,9 +2755,11 @@ document.getElementById("ai-model").value=sessionStorage.getItem("ai_model")||"g
             {"indexAxis":"y","responsive":True,
              "plugins":{"title":{"display":True,"text":"Pipeline Flow — Reads → HQ vOTUs","font":{"size":14}},
                         "legend":{"display":False},
-                        "tooltip":{"callbacks":{"label":"function(ctx){var v=ctx.raw;if(v>=1e6)return (v/1e6).toFixed(1)+' M';if(v>=1e3)return (v/1e3).toFixed(1)+' K';return v}"}}},
+                        "tooltip":{"callbacks":{"label":"__FLOW_LABEL_CB__"}}},
              "scales":{"x":{"type":"logarithmic","title":{"text":"Count (log scale)","display":True}}}}
-        )
+        ).replace('"__FLOW_LABEL_CB__"',
+                  "function(ctx){var v=ctx.raw;if(v>=1e6)return (v/1e6).toFixed(1)+' M';"
+                  "if(v>=1e3)return (v/1e3).toFixed(1)+' K';return v}")
         flow_html = f'<div class="flow-section"><div class="chart-box" style="max-width:800px;margin:0 auto"><canvas id="{flow_chart_id}" style="max-height:380px"></canvas></div></div>'
 
     html = f'''<!DOCTYPE html>
@@ -2751,7 +3032,7 @@ function exportTable(){{
     if(!chart)return;
     var ds=chart.data.datasets;
     var n=chart.data.labels.length;
-    // 检测值轴: 横向图(indexAxis='y')值轴是x, 纵向图值轴是y
+    // Value axis: horizontal charts (indexAxis='y') have the value axis on x; vertical charts on y
     var valAxis=chart.options.indexAxis==='y'?'x':'y';
     if(btn.getAttribute('data-mode')==='abs'){{
       if(!_orig[cid])_orig[cid]=ds.map(function(d){{return d.data.slice()}});
@@ -2825,10 +3106,10 @@ def generate_ai_summary(stage_stats, kpis, report_dir):
 ## 输出格式 (严格按此结构)
 
 [BRIEF]
-一段 150-200 字中文精炼摘要。涵盖: 研究目的、样本规模、关键发现(鉴定病毒数、新颖性比例、HQ vOTU数)、主要结论。如果数据中有植物病毒, 必须重点提及。风格类似顶刊 Highlights。
+A 150-200 word English research highlight. Cover: study purpose, sample scale, key findings (viruses identified, novelty ratio, HQ vOTU count), main conclusions. Highlight plant viruses if present. Style: top-journal Highlights.
 
 [DETAILED]
-按以下 IMRaD 结构撰写详报 (400-600字):
+Write the detailed report in the following IMRaD structure (400-600 words, English):
 
 [BACKGROUND]
 1-2句。病毒宏基因组学背景 + 本研究目标。
@@ -2867,7 +3148,7 @@ def generate_ai_summary(stage_stats, kpis, report_dir):
         base_url = getattr(generate_ai_summary, '_base_url', '')
 
         if not api_key:
-            return '<div class="ai-error">⚠ AI 总结需要 --ai-key 参数</div>'
+            return '<div class="ai-error">⚠ AI summary requires the --ai-key option</div>'
 
         import urllib.request
         url = base_url or "https://api.openai.com/v1/chat/completions"
@@ -2916,10 +3197,10 @@ def generate_ai_summary(stage_stats, kpis, report_dir):
 
         # 构建 HTML: Brief + 可折叠 Detail
         sec_labels = {
-            "background": ("📖 研究背景", "ai-bg"),
-            "methods": ("🔬 完整方法", "ai-methods"),
-            "results": ("📊 关键结果", "ai-results"),
-            "discussion": ("💡 讨论展望", "ai-discussion"),
+            "background": ("📖 Background", "ai-bg"),
+            "methods": ("🔬 Methods", "ai-methods"),
+            "results": ("📊 Results", "ai-results"),
+            "discussion": ("💡 Discussion", "ai-discussion"),
         }
         detail_items = ""
         for key in ("background","methods","results","discussion"):
@@ -2930,19 +3211,19 @@ def generate_ai_summary(stage_stats, kpis, report_dir):
 
         return f'''<div class="ai-section" id="ai-summary">
 <div class="ai-header">
-  <span class="ai-title">🤖 AI 研究简报</span>
+  <span class="ai-title">🤖 AI Research Brief</span>
   <span class="ai-model-tag">{model}</span>
   <span class="ai-format-tag">Brief + IMRaD</span>
 </div>
 <div class="ai-brief">{_html.escape(brief)}</div>
 <details class="ai-detail-toggle">
-  <summary>📋 展开详细报告 (IMRaD)</summary>
+  <summary>📋 Expand detailed report (IMRaD)</summary>
   <div class="ai-detail-content">{detail_items}</div>
 </details>
 </div>'''
     except Exception as e:
         print(f"  [WARN] AI Summary failed: {e}")
-        return f'<div class="ai-error">⚠ AI 总结生成失败: {e}</div>'
+        return f'<div class="ai-error">⚠ AI summary failed: {e}</div>'
 
 
 def main():
@@ -2983,13 +3264,13 @@ def main():
     stage_stats = collect_data(root, report_dir, args.blast_db)
 
     # 2. 写入 stage_summary.tsv + 目录树
-    with open(report_dir / "stage_summary.tsv", "w", newline="") as sf:
+    with open(report_dir / "stage_summary.tsv", "w", newline="", encoding='utf-8') as sf:
         w = csv.DictWriter(sf, fieldnames=["Stage","Status","Key_Metric","Details"], delimiter="\t")
         w.writeheader()
         for s in stage_stats: w.writerow(s)
 
     tree_file = report_dir / "directory_tree.txt"
-    with open(tree_file, "w") as tf:
+    with open(tree_file, "w", encoding='utf-8') as tf:
         for d in sorted(root.iterdir()):
             if not d.is_dir(): continue
             tf.write(f"{d.name}/\n")
@@ -3035,6 +3316,22 @@ def main():
         t0 = time.time()
         write_html_report(report_dir, stage_stats)
         print(f"  pipeline_report.html — {time.time()-t0:.0f}s")
+        # AI 解读 section (可选, 纯增量: 离线/未配 key 时自动跳过, 不改动报告;
+        # 与本文件既有 --ai-summary 旁路总结并存, 互不影响)
+        try:
+            from mmpv_common.ai import append_ai_section_to_html
+            from mmpv_common.run_digest import guess_state_dir
+            append_ai_section_to_html(report_dir / "pipeline_report.html",
+                                      {"pipeline": "discovery", "stage_stats": stage_stats},
+                                      state_dir=guess_state_dir(root))
+        except Exception:
+            pass
+        # 过程面板 (确定性, 无需 AI): 项目 90_Handoff/state 在时嵌入全过程总览
+        try:
+            from mmpv_common.process_report import append_process_panel_to_html
+            append_process_panel_to_html(report_dir / "pipeline_report.html", root)
+        except Exception:
+            pass
     else:
         print("\n[3/4] HTML: skipped")
 

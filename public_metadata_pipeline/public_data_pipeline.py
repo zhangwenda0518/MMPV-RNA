@@ -114,6 +114,10 @@ class PublicDataPipeline:
             p = os.path.join(self.bin_dir, script + '.py')
         return p
 
+    def _py(self) -> str:
+        # 裸 `python` 可能落到无依赖的解释器, 统一用当前解释器 (与 plot/report 阶段一致)
+        return shlex.quote(sys.executable or 'python')
+
     def _secrets(self) -> List[str]:
         """Return list of API key strings to mask in logs."""
         s = []
@@ -153,7 +157,7 @@ class PublicDataPipeline:
         self.ckpt.mark_start(s)
         detailed = '--detailed' if self.args.detailed else ''
         cmd = (
-            f'python {shlex.quote(self._bin("gsa_sra.search.py"))} '
+            f'{self._py()} {shlex.quote(self._bin("gsa_sra.search.py"))} '
             f'--query {shlex.quote(self.args.species)} '
             f'--source {shlex.quote(self.args.source_type)} '
             f'{detailed} {self._api_cli()} '
@@ -182,7 +186,7 @@ class PublicDataPipeline:
         if mode == 'local':
             UI.warn("未提供 --deepseek-api, 将跳过 AI 深度清洗 (mode=local)")
         cmd = (
-            f'python {shlex.quote(self._bin("gsa_sra.info.py"))} '
+            f'{self._py()} {shlex.quote(self._bin("gsa_sra.info.py"))} '
             f'--input {shlex.quote(sra_list)} --mode {shlex.quote(mode)} --fill-date '
             f'{self._api_cli()} --threads {self.args.threads} '
             f'--outdir {shlex.quote(self.dirs["info"])}'
@@ -275,7 +279,7 @@ class PublicDataPipeline:
         gsa_arg = '--no-gsa' if self.args.prescreen_no_gsa else ''
 
         cmd = (
-            f'python {shlex.quote(self._bin("stat_prescreen.py"))} '
+            f'{self._py()} {shlex.quote(self._bin("stat_prescreen.py"))} '
             f'--runs {shlex.quote(sra_list)} '
             f'{core_arg} '
             f'--expect-species {shlex.quote(self.args.species)} '
@@ -364,7 +368,7 @@ class PublicDataPipeline:
         links_file = os.path.join(self.dirs['search'], 'download_links.csv')
         links_arg = f'--links {shlex.quote(links_file)}' if os.path.isfile(links_file) else ''
         cmd = (
-            f'python {shlex.quote(self._bin("gsa_sra.down.py"))} '
+            f'{self._py()} {shlex.quote(self._bin("gsa_sra.down.py"))} '
             f'--list {shlex.quote(sra_list)} '
             f'--ngdc-method {shlex.quote(self.args.ngdc_method)} '
             f'--ngdc-concurrency {self.args.ngdc_concurrency} '
@@ -428,12 +432,14 @@ class PublicDataPipeline:
             return False
 
         all_ok = True
+        # 与画像阶段同理: 用 sys.executable, 裸 `python` 在 Windows 会解析到别的解释器
+        py = shlex.quote(sys.executable or 'python')
         for label, csv_path, subdir in sources:
             outdir = os.path.join(self.dirs['plot'], subdir)
             os.makedirs(outdir, exist_ok=True)
             UI.info(f"绘制 [{label}] → {outdir}")
             cmd = (
-                f'python {shlex.quote(self._bin("gsa_sra.plot.py"))} '
+                f'{py} {shlex.quote(self._bin("gsa_sra.plot.py"))} '
                 f'--input {shlex.quote(csv_path)} '
                 f'--outdir {shlex.quote(outdir)}'
             )
@@ -467,7 +473,7 @@ class PublicDataPipeline:
         genome_dir = os.path.join(self.work_dir, layout_dir_name('h_genome', self.layout))
         ncbi = f'--ncbi-api {shlex.quote(self.args.ncbi_api)}' if self.args.ncbi_api else ''
         cmd = (
-            f'python {shlex.quote(self._bin("download_host_genome.py"))} '
+            f'{self._py()} {shlex.quote(self._bin("download_host_genome.py"))} '
             f'--species {shlex.quote(str(host_species))} '
             f'--taxid {host_taxid} '
             f'--outdir {shlex.quote(genome_dir)} '
@@ -497,7 +503,7 @@ class PublicDataPipeline:
             return False
         hostdb_dir = os.path.join(self.work_dir, layout_dir_name('h_hostdb', self.layout))
         cmd = (
-            f'python {shlex.quote(self._bin("build_hostbase.py"))} '
+            f'{self._py()} {shlex.quote(self._bin("build_hostbase.py"))} '
             f'--tool {shlex.quote(self.args.hostdb_tools)} '
             f'--input {shlex.quote(fasta)} '
             f'--output {shlex.quote(hostdb_dir)} '
@@ -519,8 +525,17 @@ class PublicDataPipeline:
         s = 'report'
         UI.stage(self.STAGE_DESC[s], 'start')
         self.ckpt.mark_start(s)
-        cmd = f'python {shlex.quote(self._bin("generate_report.py"))} -d {shlex.quote(self.work_dir)}'
-        rc = run_cmd(cmd, s, self.log_dir)
+        # sys.executable: 与 plot/画像阶段同理, 不用裸 `python` (PATH 可能指向别的解释器)
+        py = shlex.quote(sys.executable or 'python')
+        # 配置了 DeepSeek 时把 key/model 透传给报告生成器, 报告里的 AI 摘要才有内容;
+        # 未配置则不传 (generate_report.py 的 --ai-key 默认空, 不会误触发)
+        ai_arg = ''
+        if self.args.deepseek_api:
+            ai_arg = (f' --ai-key {shlex.quote(self.args.deepseek_api)}'
+                      f' --ai-provider deepseek'
+                      f' --ai-model {shlex.quote(self.args.deepseek_model)}')
+        cmd = f'{py} {shlex.quote(self._bin("generate_report.py"))} -d {shlex.quote(self.work_dir)}{ai_arg}'
+        rc = run_cmd(cmd, s, self.log_dir, secrets=self._secrets())
         html = os.path.join(self.work_dir, 'Pipeline_Summary_Report.html')
         handoff = os.path.join(self.work_dir, 'sample_handoff.csv')
         if rc == 0 and os.path.isfile(html):

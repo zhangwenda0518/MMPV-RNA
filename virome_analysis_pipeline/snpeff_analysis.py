@@ -27,6 +27,54 @@ import seaborn as sns
 sns.set_theme(style="whitegrid", font_scale=1.1)
 plt.rcParams['pdf.fonttype'] = 42
 
+# ============================================================
+# 统一配色 (SCI 发表级 / Okabe-Ito 色盲友好)
+#   与 virome_analysis_pipeline/virus_metadata_plot.py 的 OKABE_ITO 同序同成员;
+#   R 模板 (ComplexHeatmap OncoPrint) 的 col_map 同步改用 Okabe 色相。
+#   2026-10-11: 原文件用 ColorBrewer Reds/Blues 与 RdYlBu 派生色, 与管线其余图不一致。
+# ============================================================
+OKABE_ITO = ["#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2",
+             "#D55E00", "#CC79A7", "#000000", "#999999"]
+ORANGE, SKY, GREEN, YELLOW, BLUE, VERM, PURPLE = OKABE_ITO[:7]
+BLACK, GREY = "#000000", "#999999"
+CMAP_SEQ = "viridis"        # 深(低) -> 浅(高); 原 flare 走这支
+CMAP_SEQ_R = "viridis_r"    # 浅(低) -> 深(高); 原 YlOrRd 走这支
+CMAP_DIV = "RdBu_r"         # 发散型: 蓝(低) - 白(中) - 红(高)
+
+
+def okabe_cycle(n):
+    """返回 n 个 Okabe-Ito 循环色 (n > 7 时自动循环)。"""
+    return [OKABE_ITO[i % 7] for i in range(max(0, int(n)))]
+
+
+# 分支/树图专用色序: 只用中深色, 排除最浅的 YELLOW(#F0E442) 与 SKY(#56B4E9)。
+# 原因: 152 样本 + color_threshold=0.7*max 会产生十几个簇, 颜色循环后大量落在
+# 橙/黄/浅蓝上, 白底细线分支对比度严重不足(视觉"发虚")。
+# 保留的 5 色 (深蓝/朱红/深绿/橙/玫红) 仍全部是 Okabe-Ito 成员, 色盲友好不变。
+OKABE_BRANCH = [BLUE, VERM, GREEN, ORANGE, PURPLE]
+
+
+def okabe_branch_cycle(n):
+    """分支/树图 (scipy.dendrogram、sns.clustermap) 专用循环色。"""
+    return [OKABE_BRANCH[i % len(OKABE_BRANCH)] for i in range(max(0, int(n)))]
+
+
+def okabe_shade(hex_color, white_frac):
+    """把 Okabe 基色按 white_frac 向白色混合, 生成同色相的浅色 (用于固定/主要/次要分级)。
+    R 模板的 OncoPrint 需要 12 个状态色, Okabe 只有 7 个基色, 故按
+    「功能类别定色相 + 频率定深浅」展开, 与 alter_fun 的矩形高度编码互相印证。"""
+    h = str(hex_color).lstrip("#")
+    r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+    f = max(0.0, min(1.0, float(white_frac)))
+    mix = lambda c: int(round(c + (255 - c) * f))
+    return "#%02X%02X%02X" % (mix(r), mix(g), mix(b))
+
+
+# clustermap 的行列树状图分支颜色取自 matplotlib 默认色环 'C0'..'C9',
+# 必须在 sns.set_theme 之后再接管, 否则会退回 tab10。
+# 2026-10-11: 改用 okabe_branch_cycle (排除浅黄 #F0E442 / 浅蓝 #56B4E9), 提升细线分支可读性。
+plt.rcParams["axes.prop_cycle"] = plt.cycler(color=okabe_branch_cycle(10))
+
 # ==========================================
 # 核心质控参数与辅助函数
 # ==========================================
@@ -146,9 +194,16 @@ def export_statistical_matrices(df, outdir):
     onco_matrix = df.pivot_table(index='Variant_ID', columns='Sample', values='Onco_State',
         aggfunc=lambda x: ';'.join(set(str(v) for v in x if pd.notna(v) and str(v).strip() != "")),
         fill_value="")
-    min_occ = max(2, int(df['Sample'].nunique() * 0.03))
+    # P2-17: 单样本时 nunique=1 -> max(2, 0)=2 会要求同一变异出现 >=2 个样本,
+    # Matrix_06 必空 -> R oncoPrint 静默失败; n<2 时按 min_occ=1 保留该样本全部变异
+    n_samples = df['Sample'].nunique()
+    min_occ = 1 if n_samples < 2 else max(2, int(n_samples * 0.03))
     valid_vars = hotspots[hotspots['Sample_Count'] >= min_occ]['Variant_ID']
     onco_out = onco_matrix.loc[onco_matrix.index.intersection(valid_vars)]
+    if onco_out.empty:
+        print(f"   -> ⚠️ Matrix_06 (OncoPrint) 为空: 无变异达到 min_occ={min_occ} (样本数={n_samples})。")
+    else:
+        print(f"   -> 📄 Matrix_06 (OncoPrint): {len(onco_out)} 变异 x {onco_out.shape[1]} 样本 (min_occ={min_occ})。")
     onco_out.to_csv(os.path.join(outdir, "Matrix_06_Ultimate_OncoPrint_State.csv"))
     
     return hotspots
@@ -162,7 +217,7 @@ def render_core_figures(df, hotspots, outdir):
     # --- 图 1：突变全景曼哈顿图 ---
     plt.figure(figsize=(14, 6))
     pos_stats = df.groupby(['POS', 'IMPACT']).agg(Samples=('Sample','nunique'), MeanAF=('AF','mean')).reset_index()
-    pal_imp = {'HIGH': '#d73027', 'MODERATE': '#fc8d59', 'LOW': '#91bfdb', 'MODIFIER': '#4575b4', 'UNKNOWN': 'gray'}
+    pal_imp = {'HIGH': VERM, 'MODERATE': ORANGE, 'LOW': SKY, 'MODIFIER': BLUE, 'UNKNOWN': GREY}
     
     sns.scatterplot(data=pos_stats, x='POS', y='Samples', size='MeanAF', sizes=(20,250), hue='IMPACT', palette=pal_imp, alpha=0.8)
     plt.title("Figure 1: Genomic Mutational Landscape of Viral Quasispecies", fontweight='bold')
@@ -170,8 +225,8 @@ def render_core_figures(df, hotspots, outdir):
     plt.ylabel("Number of Affected Hosts")
     plt.legend(bbox_to_anchor=(1.01, 1), loc='upper left')
     plt.tight_layout()
-    plt.savefig(os.path.join(outdir, "Figure_1_Manhattan_Mut_Landscape.pdf"), dpi=300)
-    plt.savefig(os.path.join(outdir, "Figure_1_Manhattan_Mut_Landscape.png"), dpi=300)
+    plt.savefig(os.path.join(outdir, "Figure_1_Manhattan_Mut_Landscape.pdf"), dpi=300, bbox_inches='tight')
+    plt.savefig(os.path.join(outdir, "Figure_1_Manhattan_Mut_Landscape.png"), dpi=300, bbox_inches='tight')
     plt.close()
     
     # --- 图 2：突变效应载荷对比 (添加类病毒判定防空图) ---
@@ -198,7 +253,7 @@ def render_core_figures(df, hotspots, outdir):
         div_stats = div_stats[div_stats['Tot'] > 2].sort_values('Tot', ascending=False).head(50).drop(columns=['Tot'])
         if not div_stats.empty:
             fig, ax = plt.subplots(figsize=(16, 6))
-            c_map = {'Consensus(>80%)': '#af8dc3', 'iSNV(5-80%)': '#7fbf7b'}
+            c_map = {'Consensus(>80%)': PURPLE, 'iSNV(5-80%)': GREEN}
             colors_used =[c_map.get(c, 'grey') for c in div_stats.columns]
             div_stats.plot(kind='bar', stacked=True, color=colors_used, ax=ax, edgecolor='white')
             plt.title("Figure 3: Intra-host Dynamics (Quasispecies iSNVs vs Consensus)", fontweight='bold')
@@ -216,11 +271,21 @@ def render_core_figures(df, hotspots, outdir):
         heatmap_df = missense_df[missense_df['Variant_ID'].isin(valid_mrk)].pivot_table(index='Sample', columns='Variant_ID', values='AF', fill_value=0)
         heatmap_df = heatmap_df.loc[(heatmap_df != 0).any(axis=1)] 
         if heatmap_df.shape[0] >= 2 and heatmap_df.shape[1] >= 2:
-            cm = sns.clustermap(heatmap_df, cmap='flare', figsize=(12, 10), metric='euclidean', method='ward',
-                                xticklabels=True, yticklabels=False, cbar_kws={'label':'Allele Frequency'})
+            n_col = heatmap_df.shape[1]
+            fig_w = max(12.0, min(40.0, 4.0 + n_col * 0.22))
+            cm = sns.clustermap(heatmap_df, cmap=CMAP_SEQ, figsize=(fig_w, 10), metric='euclidean', method='ward',
+                                xticklabels=True, yticklabels=False, dendrogram_ratio=0.10,
+                                cbar_kws={'label':'Allele Frequency'})
+            cm.ax_heatmap.set_xlabel("Shared missense variant", fontweight='bold')
+            cm.ax_heatmap.set_ylabel("Sample", fontweight='bold')
+            # 列数多时逐列标签会糊成黑带 -> 字号随列数收缩并旋转 90 度
+            plt.setp(cm.ax_heatmap.get_xticklabels(), rotation=90,
+                     fontsize=max(4, min(9, int(300.0 / max(n_col, 1)))))
             cm.fig.suptitle("Figure 4: Unsupervised Lineage Clustering via Shared Missense Mutations", fontweight='bold', y=1.02)
-            plt.savefig(os.path.join(outdir, "Figure_4_Lineage_Clustermap.pdf"), dpi=300)
-            plt.savefig(os.path.join(outdir, "Figure_4_Lineage_Clustermap.png"), dpi=300)
+            # 必须用 clustermap 自带的 fig 保存并带 bbox_inches:
+            # 旧版 plt.savefig(无 bbox_inches) -> suptitle 被裁掉
+            cm.fig.savefig(os.path.join(outdir, "Figure_4_Lineage_Clustermap.pdf"), dpi=300, bbox_inches='tight')
+            cm.fig.savefig(os.path.join(outdir, "Figure_4_Lineage_Clustermap.png"), dpi=300, bbox_inches='tight')
             plt.close()
     else:
         print("   -> ⚠️ 无足够多错义突变参与分组，自动跳过 Figure 4 (错义分支聚类图)。")
@@ -235,6 +300,26 @@ def inject_and_run_r_script(outdir):
     out_pdf = f"{outdir_safe}/Figure_5_Ultimate_Quasispecies_OncoPrint.pdf"
     out_png = f"{outdir_safe}/Figure_5_Ultimate_Quasispecies_OncoPrint.png"
 
+    # P2-17: Matrix_06 为空 (或缺失) 时 R 的 read.csv/oncoPrint 必然失败且原先静默:
+    # 这里显式跳过并说明原因, 不再拉起注定失败的 R 进程
+    try:
+        if not os.path.isfile(onco_csv) or pd.read_csv(onco_csv, index_col=0).empty:
+            print("   -> ⚠️ 跳过 Figure 5 (OncoPrint): Matrix_06 为空 (无变异达到 min_occ 阈值)。")
+            return
+    except Exception as e:
+        print(f"   -> ⚠️ 跳过 Figure 5 (OncoPrint): Matrix_06 读取失败 ({e})。")
+        return
+
+    # OncoPrint 12 状态色 (Okabe 色相): 功能类别定色相, 频率定深浅 (Fixed 最深 -> Minor 最浅),
+    # 与 alter_fun 的矩形高度编码 (h / 0.75h / 0.4h) 互相印证。
+    _onco_base = {"Missense": VERM, "Synonymous": BLUE,
+                  "Regulatory": GREEN, "Truncating": BLACK}
+    _onco_state_colors = {}
+    for _imp, _base in _onco_base.items():
+        for _freq, _frac in (("Fixed", 0.0), ("Major", 0.30), ("Minor", 0.55)):
+            _onco_state_colors[f"{_freq}_{_imp}"] = okabe_shade(_base, _frac)
+    _col_map_r = ",\n".join(f'    "{k}" = "{v}"' for k, v in _onco_state_colors.items())
+
     r_code = f"""
 options(warn=-1)
 suppressPackageStartupMessages(library(ComplexHeatmap))
@@ -242,13 +327,15 @@ suppressPackageStartupMessages(library(grid))
 
 onco_file <- "{onco_csv}"
 onco_mat <- as.matrix(read.csv(onco_file, row.names=1, check.names=FALSE))
-if (nrow(onco_mat) > 200) onco_mat <- onco_mat[1:200, , drop=FALSE]
+# 过绘守卫: 行(变异) 与 列(样本) 双向封顶; 旧版只封行, 200+ 样本 x 200+ 变异时格子全糊
+if (nrow(onco_mat) > 120) onco_mat <- onco_mat[1:120, , drop=FALSE]
+if (ncol(onco_mat) > 200) onco_mat <- onco_mat[, 1:200, drop=FALSE]
+row_fs <- max(5, min(10, round(900 / max(nrow(onco_mat), 1))))
+fig_h <- max(6, min(18, 3 + nrow(onco_mat) * 0.06))
+fig_w <- max(10, min(30, 4 + ncol(onco_mat) * 0.10))
 
 col_map <- c(
-    "Fixed_Missense" = "#E31A1C",   "Major_Missense" = "#FC4E2A",   "Minor_Missense" = "#FD8D3C",
-    "Fixed_Synonymous" = "#1F78B4", "Major_Synonymous"="#41B6C4",   "Minor_Synonymous" = "#A1DAB4",
-    "Fixed_Regulatory" = "#33A02C", "Major_Regulatory"="#74C476",   "Minor_Regulatory" = "#C7E9C0",
-    "Fixed_Truncating" = "#000000", "Major_Truncating"="#444444",   "Minor_Truncating" = "#888888"
+{_col_map_r}
 )
 
 alter_fun = list(
@@ -274,16 +361,16 @@ ht = oncoPrint(onco_mat,
                alter_fun = alter_fun, col = col_map,
                remove_empty_columns = TRUE, remove_empty_rows = TRUE,
                show_column_names = FALSE,
-               row_names_gp = gpar(fontsize = 9),
+               row_names_gp = gpar(fontsize = row_fs),
                pct_side = "right", row_names_side = "left",
                column_title = "Figure 5: Mutational Waterfall Landscape of Viral Isolates",
                heatmap_legend_param = list(title = "Fixation State", at=names(col_map)))
 
-pdf(out_pdf, width=16, height=10)
+pdf(out_pdf, width=fig_w, height=fig_h)
 draw(ht)
 invisible(dev.off())
 
-png(out_png, width=16, height=10, units="in", res=300)
+png(out_png, width=fig_w, height=fig_h, units="in", res=300)
 draw(ht)
 invisible(dev.off())
 """

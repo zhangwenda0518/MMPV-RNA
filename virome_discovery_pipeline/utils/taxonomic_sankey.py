@@ -17,6 +17,12 @@ import math
 
 # 预定义颜色调色板 - 完全独立版本，不依赖Plotly
 COLOR_PALETTES = {
+    # ── 全项目统一 SCI 配色（唯一真源 = virome_discovery_pipeline/utils/
+    #    sci_palette.py 的 OKABE_ITO；此处字面量镜像，改动请同步两处） ──
+    'okabe_ito': [
+        '#E69F00', '#56B4E9', '#009E73', '#F0E442', '#0072B2',
+        '#D55E00', '#CC79A7', '#000000', '#999999'
+    ],
     # 分类调色板 (适用于分类数据)
     'set2': [
         '#66c2a5', '#fc8d62', '#8da0cb', '#e78ac3',
@@ -382,7 +388,7 @@ def list_color_palettes():
     print("=" * 80)
     
     categories = {
-        '分类调色板 (Categorical)': ['set2', 'set3', 'pastel1', 'pastel2', 'dark2', 
+        '分类调色板 (Categorical)': ['okabe_ito', 'set2', 'set3', 'pastel1', 'pastel2', 'dark2', 
                                   'bold', 'vivid', 'prism', 'paired', 'set1',
                                   'tab10', 'tab20'],
         '连续调色板 (Sequential)': ['viridis', 'plasma', 'inferno', 'magma', 'cividis',

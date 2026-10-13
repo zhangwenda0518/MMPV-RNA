@@ -15,7 +15,9 @@ panvirome_novel_known_report.py — 新病毒判定报告生成器
 
 import argparse
 import csv
+import json
 from collections import Counter
+from pathlib import Path
 
 # 判定类别 -> 颜色（深色 SCI 配色）
 JUDGE_COLORS = {
@@ -33,6 +35,20 @@ JUDGE_COLORS = {
 
 NOVEL_CLASSES = {"新种候选", "新种候选(蛋白)", "新属/远缘候选", "远缘新病毒候选"}
 
+# 图内文字英文化: 仅用于图表标签显示 (数据列 final_judge 原值不改, 表格仍用原值)
+JUDGE_EN = {
+    "已知病毒": "Known virus",
+    "已知病毒(蛋白)": "Known virus (protein)",
+    "新种候选": "Novel species candidate",
+    "新种候选(蛋白)": "Novel species candidate (protein)",
+    "新属/远缘候选": "Novel genus / distant candidate",
+    "远缘新病毒候选": "Distant novel virus candidate",
+    "非病毒(噬菌体)": "Non-viral (phage)",
+    "非病毒(宿主)": "Non-viral (host)",
+    "远缘未定": "Distant, undetermined",
+    "未定": "Undetermined",
+}
+
 
 def parse_args():
     p = argparse.ArgumentParser(description="新病毒判定报告生成器")
@@ -46,18 +62,43 @@ def esc(v):
     return (v or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
+def fnum(v, default=0.0):
+    """容错 float: novel_vs_known_final.tsv 用 "-" 占位表示无命中, 直接 float() 会崩。"""
+    try:
+        if v is None or str(v).strip() in ("", "-", "NA", "N/A", "nan", "."):
+            return default
+        return float(v)
+    except (TypeError, ValueError):
+        return default
+
+
+def load_chart_js_inline():
+    """离线自包含: 复用仓库内已有 Chart.js (virome_discovery_pipeline/utils/chart.min.js)。
+
+    report_pipeline.py 用同一份 js 内联; 找不到时返回 "" -> 报告降级为表格, 绝不引 CDN。
+    """
+    cand = Path(__file__).resolve().parent.parent / "virome_discovery_pipeline" / "utils" / "chart.min.js"
+    if cand.is_file():
+        try:
+            return cand.read_text(encoding="utf-8")
+        except Exception:
+            return ""
+    return ""
+
+
 def main():
     args = parse_args()
     rows = list(csv.DictReader(open(args.tsv, encoding="utf-8"), delimiter="\t"))
 
     judge_cnt = Counter(r["final_judge"] for r in rows)
     novel = [r for r in rows if r["final_judge"] in NOVEL_CLASSES]
-    novel.sort(key=lambda r: -(float(r["blast_pident"]) if r.get("blast_pident") else 0))
+    novel.sort(key=lambda r: -fnum(r.get("blast_pident")))
 
-    # 判定分布
-    labels = list(judge_cnt.keys())
-    data = [judge_cnt[k] for k in labels]
-    colors = [JUDGE_COLORS.get(k, "#9e9e9e") for k in labels]
+    # 判定分布 (图表标签走 JUDGE_EN 英文化; 颜色/计数仍按原值取)
+    judge_keys = list(judge_cnt.keys())
+    labels = [JUDGE_EN.get(k, k) for k in judge_keys]
+    data = [judge_cnt[k] for k in judge_keys]
+    colors = [JUDGE_COLORS.get(k, "#9e9e9e") for k in judge_keys]
 
     # 新病毒候选表格
     table_rows = []
@@ -69,18 +110,43 @@ def main():
             f"<td>{esc(short)}</td>"
             f"<td>{esc(r['final_judge'])}</td>"
             f"<td>{esc(r.get('aa_species','')[:40])}</td>"
-            f"<td>{r.get('cdd_top','')[:48]}</td>"
-            f"<td>{r.get('blast_pident','-')}</td>"
-            f"<td>{r.get('blast_alnlen','-')}</td>"
+            f"<td>{esc(r.get('cdd_top','')[:48])}</td>"
+            f"<td>{esc(r.get('blast_pident','-'))}</td>"
+            f"<td>{esc(r.get('blast_alnlen','-'))}</td>"
             f"<td>{esc(r.get('identify_tools','-'))}</td>"
             f"<td>{esc(r.get('classify_tool','-'))}</td>"
             f"</tr>"
         )
 
+    # 离线自包含: 内联仓库自带 Chart.js; 缺失则降级为表格 (不引 CDN, 无网络时不再白图)
+    chart_js = load_chart_js_inline()
+    if chart_js:
+        head_js = "<script>\n" + chart_js + "\n</script>"
+        dist_html = '<div class="chartbox"><canvas id="dist"></canvas></div>'
+        _opts = {
+            "type": "bar",
+            "data": {"labels": labels,
+                     "datasets": [{"label": "vOTUs", "data": data, "backgroundColor": colors}]},
+            "options": {"indexAxis": "y", "responsive": True, "plugins": {"legend": {"display": False}},
+                        "scales": {"x": {"ticks": {"color": "#9aa0a6"}, "grid": {"color": "#262c35"}},
+                                   "y": {"ticks": {"color": "#e8eaed"}, "grid": {"color": "#262c35"}}}},
+        }
+        chart_block = ("<script>\nnew Chart(document.getElementById('dist'), "
+                       + json.dumps(_opts, ensure_ascii=False) + ");\n</script>")
+    else:
+        head_js = ""
+        _rows_html = "".join(f"<tr><td>{esc(k)}</td><td>{judge_cnt[k]}</td></tr>" for k in judge_keys)
+        dist_html = ('<div class="note">Local inline Chart.js not found '
+                     '(<code>virome_discovery_pipeline/utils/chart.min.js</code>); '
+                     'offline runs do not load the CDN, so the verdict distribution is shown as a table instead:</div>'
+                     '<table style="max-width:520px"><thead><tr><th>Verdict</th><th>Count</th></tr></thead>'
+                     f'<tbody>{_rows_html}</tbody></table>')
+        chart_block = ""
+
     html = f"""<!DOCTYPE html>
-<html lang="zh"><head><meta charset="utf-8">
+<html lang="en"><head><meta charset="utf-8">
 <title>{esc(args.title)}</title>
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+{head_js}
 <style>
 :root {{ --bg:#111418; --card:#1a1f26; --ink:#e8eaed; --ink2:#9aa0a6; --accent:#42a5f5; }}
 body {{ background:var(--bg); color:var(--ink); font-family:-apple-system,'Segoe UI',Roboto,sans-serif; margin:0; padding:24px; }}
@@ -96,34 +162,27 @@ tr:hover td {{ background:#232a33; }}
 .note {{ color:var(--ink2); font-size:12px; line-height:1.6; }}
 </style></head><body>
 <h1>{esc(args.title)}</h1>
-<div class="sub">共 {len(rows)} 条 rescue vOTU · 新病毒候选 {len(novel)} 条</div>
+<div class="sub">{len(rows)} rescue vOTUs &middot; {len(novel)} novel virus candidates</div>
 
-<div class="card"><h2>判定分布</h2>
-<div class="chartbox"><canvas id="dist"></canvas></div></div>
+<div class="card"><h2>Verdict Distribution</h2>
+{dist_html}</div>
 
-<div class="card"><h2>新病毒候选清单（{len(novel)} 条）</h2>
+<div class="card"><h2>Novel Virus Candidate List ({len(novel)})</h2>
 <div style="max-height:520px;overflow:auto">
 <table>
-<thead><tr><th>contig</th><th>判定</th><th>蛋白命中</th><th>CDD 结构域</th><th>02blast%</th><th>alnlen</th><th>鉴定工具</th><th>分类工具</th></tr></thead>
+<thead><tr><th>contig</th><th>Verdict</th><th>Protein hit</th><th>CDD domain</th><th>02blast%</th><th>alnlen</th><th>Identification tool</th><th>Classification tool</th></tr></thead>
 <tbody>{''.join(table_rows)}</tbody>
 </table></div></div>
 
-<div class="card"><h2>判定方法</h2>
+<div class="card"><h2>Verdict Rules</h2>
 <div class="note">
-<b>三层证据</b>：核酸 identity（blastn 对 nt 病毒库）→ 蛋白 identity（mmseqs 对 ICTV 蛋白库）→ CDD 结构域（区分 RdRp/RT vs 宿主结构域）。<br>
-<b>判定规则</b>：核酸 identity ≥85% 且覆盖 ≥50% = 已知病毒；50~85% = 新种候选；核酸无命中时看蛋白（≥70% 已知，50~70% 新种）；蛋白也弱时看 CDD（有 RdRp/RT = 新属/远缘候选，仅宿主结构域 = 非病毒）。<br>
-<b>溯源</b>：blast_* 为 02 鉴定阶段 diamond 对 RVDB 病毒库的 best-hit；identify_tools 为 02 阶段判成病毒的工具；classify_tool 为 05 分类阶段 primary_tool。<br>
-<b>注意</b>：CDD 结构域是戳穿"分类工具误标宿主基因为病毒"的硬证据（例：blast alnlen 极短 + CDD 显示宿主酶 = 假命中）。
+<b>Three-layer evidence</b>: nucleic acid identity (blastn vs nt virus DB) &rarr; protein identity (mmseqs vs ICTV protein DB) &rarr; CDD domains (distinguishing RdRp/RT from host domains).<br>
+<b>Decision rules</b>: nt identity &ge;85% with coverage &ge;50% = known virus; 50-85% = novel species candidate; when there is no nt hit, use protein (&ge;70% known, 50-70% novel species); when protein is also weak, use CDD (RdRp/RT present = novel genus/distant candidate; host domains only = non-viral).<br>
+<b>Provenance</b>: blast_* are the best hits of diamond vs the RVDB virus database at stage 02 (Identification); identify_tools are the tools that called it viral at stage 02; classify_tool is the primary_tool at stage 05 (Taxonomy).<br>
+<b>Note</b>: CDD domains are hard evidence against taxonomy tools mislabelling a host gene as a virus (e.g. an extremely short blast alnlen plus a host enzyme in CDD = false hit).
 </div></div>
 
-<script>
-new Chart(document.getElementById('dist'), {{
-  type:'bar',
-  data:{{ labels:{labels}, datasets:[{{ label:'vOTUs', data:{data}, backgroundColor:{colors} }}] }},
-  options:{{ indexAxis:'y', responsive:true, plugins:{{ legend:{{display:false}} }},
-    scales:{{ x:{{ ticks:{{color:'#9aa0a6'}}, grid:{{color:'#262c35'}} }}, y:{{ ticks:{{color:'#e8eaed'}}, grid:{{color:'#262c35'}} }} }} }}
-}});
-</script>
+{chart_block}
 </body></html>"""
 
     with open(args.out, "w", encoding="utf-8") as f:

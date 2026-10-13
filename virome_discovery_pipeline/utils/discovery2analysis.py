@@ -60,6 +60,7 @@ def parse_args():
 def load_taxonomy(taxonomy_path):
     """加载分类 TSV, 返回 {contig_id: {Realm..Species, completeness}}"""
     tax_map = {}
+    warned_completeness = False
     with open(taxonomy_path, 'r', encoding='utf-8') as f:
         header = None
         for line in f:
@@ -75,7 +76,16 @@ def load_taxonomy(taxonomy_path):
             if not contig_id:
                 continue
 
-            completeness = float(row.get('completeness', 0) or 0)
+            # completeness 可能是工具产物里的 'NA'/'-' 等非数值 → 回 0 继续,
+            # 不让桥接整段崩溃 (只告警一次)
+            try:
+                completeness = float(row.get('completeness', 0) or 0)
+            except (TypeError, ValueError):
+                if not warned_completeness:
+                    print("[WARN] taxonomy 含非数值 completeness (如 'NA'), 已按 0 处理",
+                          file=sys.stderr)
+                    warned_completeness = True
+                completeness = 0.0
             tax_map[contig_id] = {
                 'Realm': row.get('Realm', ''),
                 'Kingdom': row.get('Kingdom', ''),

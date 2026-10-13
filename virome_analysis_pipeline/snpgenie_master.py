@@ -44,6 +44,37 @@ except ImportError:
 warnings.filterwarnings('ignore')
 
 # ================================
+# 统一配色 (SCI 发表级 / Okabe-Ito 色盲友好)
+#   与 virome_analysis_pipeline/virus_metadata_plot.py 的 OKABE_ITO 同序同成员。
+#   2026-10-11: 原文件混用 ColorBrewer Reds/Blues、Set2/Set3、flare 与杂牌 hex。
+# ================================
+OKABE_ITO = ["#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2",
+             "#D55E00", "#CC79A7", "#000000", "#999999"]
+ORANGE, SKY, GREEN, YELLOW, BLUE, VERM, PURPLE = OKABE_ITO[:7]
+BLACK, GREY = "#000000", "#999999"
+CMAP_SEQ = "viridis"        # 深(低) -> 浅(高); 原 flare 走这支
+CMAP_SEQ_R = "viridis_r"    # 浅(低) -> 深(高); 原 YlOrRd 走这支
+CMAP_DIV = "RdBu_r"         # 发散型: 蓝(低) - 白(中) - 红(高)
+
+
+def okabe_cycle(n):
+    """返回 n 个 Okabe-Ito 循环色 (n > 7 时自动循环)。"""
+    return [OKABE_ITO[i % 7] for i in range(max(0, int(n)))]
+
+
+# 分支/树图专用色序: 只用中深色, 排除最浅的 YELLOW(#F0E442) 与 SKY(#56B4E9)。
+# 原因: 152 样本 + color_threshold=0.7*max 会产生十几个簇, 颜色循环后大量落在
+# 橙/黄/浅蓝上, 白底细线分支对比度严重不足(视觉"发虚")。
+# 保留的 5 色 (深蓝/朱红/深绿/橙/玫红) 仍全部是 Okabe-Ito 成员, 色盲友好不变。
+OKABE_BRANCH = [BLUE, VERM, GREEN, ORANGE, PURPLE]
+
+
+def okabe_branch_cycle(n):
+    """分支/树图 (scipy.dendrogram、sns.clustermap) 专用循环色。"""
+    return [OKABE_BRANCH[i % len(OKABE_BRANCH)] for i in range(max(0, int(n)))]
+
+
+# ================================
 # 全局审美基建 (Publication Ready)
 # ================================
 def setup_plot_style():
@@ -54,6 +85,10 @@ def setup_plot_style():
     plt.rcParams['figure.dpi'] = 300
     plt.rcParams['savefig.dpi'] = 300
     plt.rcParams['axes.labelweight'] = 'bold'
+    # 默认离散色环也统一到 Okabe-Ito: 未显式指定颜色的图 (含 scipy/seaborn
+    # 树状图分支的 'C0'..'C9') 不再落到 matplotlib 默认 tab10
+    # 2026-10-11: 改用 okabe_branch_cycle (排除浅黄 #F0E442 / 浅蓝 #56B4E9)。
+    plt.rcParams['axes.prop_cycle'] = plt.cycler(color=okabe_branch_cycle(10))
 
 def P_to_stars(p):
     if p < 0.001: return "***"
@@ -138,8 +173,8 @@ def plot_vaf_spectrum(df_filtered, output_dir):
     print("  -> Fig 1: 绘制 VAF 等位基因频数谱...")
     if df_filtered.empty: return
     plt.figure(figsize=(10, 6))
-    sns.histplot(data=df_filtered, x='VAF', bins=50, kde=True, color='#8da0cb', edgecolor='black')
-    plt.axvline(x=0.05, color='red', linestyle='--', label='Rare Variants (5%)')
+    sns.histplot(data=df_filtered, x='VAF', bins=50, kde=True, color=SKY, edgecolor='black')
+    plt.axvline(x=0.05, color=VERM, linestyle='--', label='Rare Variants (5%)')
     plt.title('Fig 1: Variant Allele Frequency (VAF) Spectrum of iSNVs', fontsize=14, fontweight='bold')
     plt.xlabel('Minor Allele Frequency (VAF)', fontweight='bold')
     plt.ylabel('Density', fontweight='bold')
@@ -173,7 +208,10 @@ def calculate_adjusted_n_per_kb(df_site_filtered, df_prod, output_dir):
         df_m['n_per_kb_adjusted'] = df_m['n_per_kb']
         
     plt.figure(figsize=(10, 6))
-    sns.boxplot(data=df_m, x='product', y='n_per_kb_adjusted', palette='Pastel1', showfliers=False)
+    # saturation=1: seaborn 默认 0.75 会把 Okabe 色去饱和 (实测 #E69F00 -> #C9941D),
+    # 渲染出的就不是精确 Okabe-Ito 了。
+    sns.boxplot(data=df_m, x='product', y='n_per_kb_adjusted', saturation=1,
+                palette=okabe_cycle(df_m['product'].nunique()), showfliers=False)
     sns.stripplot(data=df_m, x='product', y='n_per_kb_adjusted', color='black', alpha=0.5, jitter=True)
     plt.title('Fig 2: Depth-Adjusted iSNV Density Across Viral Genes', fontsize=14, fontweight='bold')
     plt.xlabel('Viral Product', fontweight='bold'); plt.ylabel('Adjusted # iSNVs per Kb', fontweight='bold')
@@ -195,8 +233,8 @@ def plot_joint_dynamics(df_pop, output_dir):
     df_inter = df_pop.dropna(subset=_cols_dnds).copy()
     if not df_inter.empty:
         g = sns.JointGrid(data=df_inter, x='mean_dS_vs_ref', y='mean_dN_vs_ref', height=6)
-        g.plot_joint(sns.scatterplot, alpha=0.7, color='#2b83ba', s=60, edgecolor='white')
-        g.plot_marginals(sns.histplot, kde=True, color='#2b83ba', alpha=0.6)
+        g.plot_joint(sns.scatterplot, alpha=0.7, color=BLUE, s=60, edgecolor='white')
+        g.plot_marginals(sns.histplot, kde=True, color=BLUE, alpha=0.6)
         m_x = df_inter['mean_dS_vs_ref'].max() * 1.1
         m_y = df_inter['mean_dN_vs_ref'].max() * 1.2
         m_max = min(m_x, m_y)
@@ -212,8 +250,8 @@ def plot_joint_dynamics(df_pop, output_dir):
     df_intra = df_pop[(df_pop.get('piN', 0) > 0) | (df_pop.get('piS', 0) > 0)].dropna(subset=['piN', 'piS']).copy()
     if not df_intra.empty:
         g2 = sns.JointGrid(data=df_intra, x='piS', y='piN', height=6)
-        g2.plot_joint(sns.scatterplot, alpha=0.7, color='#d7191c', s=60, edgecolor='white')
-        g2.plot_marginals(sns.histplot, kde=True, color='#d7191c', alpha=0.6)
+        g2.plot_joint(sns.scatterplot, alpha=0.7, color=VERM, s=60, edgecolor='white')
+        g2.plot_marginals(sns.histplot, kde=True, color=VERM, alpha=0.6)
         m_x2 = df_intra['piS'].max() * 1.1
         m_y2 = df_intra['piN'].max() * 1.2
         m_max2 = min(m_x2, m_y2)
@@ -249,19 +287,42 @@ def plot_gene_dnds_with_stats(df_prod, output_dir):
     df_valid['dNdS'] = pd.to_numeric(df_valid['mean_dN_vs_ref']) / pd.to_numeric(df_valid['mean_dS_vs_ref'])
     
     plt.figure(figsize=(11, 6))
-    sns.violinplot(data=df_valid, x='product', y='dNdS', inner="box", palette="Set3")
-    sns.stripplot(data=df_valid, x='product', y='dNdS', color='black', alpha=0.3, jitter=True)
-    plt.axhline(y=1, color='#d73027', linestyle='--', label='Neutral Selection')
-    
-    y_max = df_valid['dNdS'].max()
+    ax = plt.gca()
+    sns.violinplot(data=df_valid, x='product', y='dNdS', hue='product', saturation=1,
+                   inner="box", palette=okabe_cycle(df_valid['product'].nunique()),
+                   legend=False, ax=ax)
+    sns.stripplot(data=df_valid, x='product', y='dNdS', color='black', alpha=0.3, jitter=True, ax=ax)
+    plt.axhline(y=1, color=VERM, linestyle='--', label='Neutral Selection')
+
+    # 稳健量纲 + 离群隔离: 实测单个基因 (G) 的 dN/dS 可达 ~30, 既把其余 5 个基因
+    # 压成平线, 又会把小提琴 KDE 的带宽撑爆 -> G 整根变成矩形。故:
+    #   ① 以 99 分位定显示上限 (只收缩量纲, 不删数据)
+    #   ② 小提琴/散点只画未越界数据, 越界点以文字说明个数与最大值
+    y_max = float(df_valid['dNdS'].max())
+    q99 = float(np.nanpercentile(df_valid['dNdS'].dropna(), 99)) if len(df_valid) else y_max
+    y_top = min(y_max * 1.20, max(q99 * 1.6, 1.5))
+    df_plot = df_valid[df_valid['dNdS'] <= y_top]
+    n_clip = int(len(df_valid) - len(df_plot))
+
+    plt.figure(figsize=(11, 6))
+    ax = plt.gca()
+    sns.violinplot(data=df_plot, x='product', y='dNdS', hue='product', saturation=1,
+                   inner="box", palette=okabe_cycle(df_plot['product'].nunique()),
+                   legend=False, ax=ax)
+    sns.stripplot(data=df_plot, x='product', y='dNdS', color='black', alpha=0.3, jitter=True, ax=ax)
+    plt.axhline(y=1, color=VERM, linestyle='--', label='Neutral Selection')
+
+    # 顶部留出注记带; 星号/KW 文本都放进坐标区内, 避免像旧版那样被甩出画布并压住标题
+    ax.set_ylim(0, y_top * 1.18)
     for i, gene in enumerate(df_valid['product'].unique()):
         g_d = df_valid[df_valid['product'] == gene]['dNdS'].dropna()
         if len(g_d) >= 3:
             try:
                 _, p_val = stats.wilcoxon([x - 1.0 for x in g_d], alternative='two-sided')
-                plt.text(i, y_max * 1.02, P_to_stars(p_val), ha='center', va='bottom', fontsize=14, color='darkred', fontweight='bold')
+                ax.text(i, 0.880, P_to_stars(p_val), ha='center', va='bottom', fontsize=14,
+                        color=VERM, fontweight='bold', transform=ax.get_xaxis_transform())
             except Exception: pass
-    
+
     # Kruskal-Wallis: compare dN/dS distributions across genes
     gene_groups = [g.dropna().values for _, g in df_valid.groupby('product')['dNdS']]
     gene_groups = [g for g in gene_groups if len(g) >= 3]
@@ -270,11 +331,13 @@ def plot_gene_dnds_with_stats(df_prod, output_dir):
         try:
             kw_h, kw_p = stats.kruskal(*gene_groups)
             kw_text = f"Kruskal-Wallis H={kw_h:.2f}, p={kw_p:.2e}" if kw_p < 0.001 else f"Kruskal-Wallis H={kw_h:.2f}, p={kw_p:.4f}"
-            plt.text(0.5, y_max * 1.08, kw_text, ha='center', va='bottom', fontsize=10,
-                     color='darkblue', fontweight='bold', transform=plt.gca().get_xaxis_transform())
+            ax.text(0.5, 0.945, kw_text, ha='center', va='bottom', fontsize=10,
+                    color=BLUE, fontweight='bold', transform=ax.get_xaxis_transform())
         except Exception: pass
 
-    plt.ylim(0, y_max * 1.20)
+    if n_clip:
+        ax.text(0.005, 0.995, f"▲ {n_clip} point(s) above axis (max dN/dS = {y_max:.1f})",
+                transform=ax.transAxes, ha='left', va='top', fontsize=8, color=GREY)
     plt.title('Fig 5: Selection Pressures (Wilcoxon per-gene + Kruskal-Wallis across genes)', fontsize=13, fontweight='bold')
     plt.xlabel('Viral Gene', fontweight='bold')
     plt.ylabel('dN/dS Ratio', fontweight='bold')
@@ -347,10 +410,10 @@ def perform_10000x_bootstrap_dnds(df_prod, output_dir, bs=10000):
     yerr_upper = np.maximum(0, df_res['CI_U'] - df_res['Real'])
     
     plt.errorbar(x, df_res['Real'], yerr=[yerr_lower, yerr_upper],
-                 fmt='o', color='#E31A1C', ecolor='black', elinewidth=2, capsize=5, markersize=8)
-    plt.axhline(1.0, color='grey', linestyle='--')
+                 fmt='o', color=VERM, ecolor='black', elinewidth=2, capsize=5, markersize=8)
+    plt.axhline(1.0, color=GREY, linestyle='--')
     plt.xticks(x, df_res['Gene'])
-    for i, r in df_res.iterrows(): plt.text(i, r['CI_U']+0.05, r['Sig'], ha='center', fontweight='bold', color='darkblue')
+    for i, r in df_res.iterrows(): plt.text(i, r['CI_U']+0.05, r['Sig'], ha='center', fontweight='bold', color=BLUE)
     plt.title('Fig 6: 10,000x Bootstrapping Purifying Selection Validation', fontsize=14, fontweight='bold')
     plt.ylabel('dNdS with 95% Bootstrap CI', fontweight='bold')
     sns.despine(); plt.tight_layout()
@@ -361,42 +424,77 @@ def perform_10000x_bootstrap_dnds(df_prod, output_dir, bs=10000):
 # ==========================================
 # [Fig 7 & 8] 突变频谱与标数高频靶点
 # ==========================================
+def _alt_nt_from_counts(row, ref_nt):
+    """从 SNPGenie site_results 的 A/C/G/T 计数列取「非参考碱基中计数最高者」。
+
+    为什么必须用它：SNPGenie 的 maj_nt 是位点上的**多数碱基**，不是变异碱基。
+    位点不变时 maj_nt == ref_nt，若直接用 ref_nt->maj_nt 当替换标签，
+    就会产出 A->A / T->T 这类不存在的替换（历史 bug）。
+    返回大写碱基；若无任何非参考碱基（即不变位点）则返回 None。
+    """
+    ref = str(ref_nt).strip().upper()
+    best, best_n = None, 0.0
+    for b in ('A', 'C', 'G', 'T'):
+        if b == ref:
+            continue
+        try:
+            n = float(row.get(b, 0) or 0)
+        except (TypeError, ValueError):
+            n = 0.0
+        if n > best_n:
+            best, best_n = b, n
+    return best
+
+
 def plot_signatures_and_hotspots(df_site_filtered, df_site_all, output_dir):
-    print("  -> Fig 7 & 8: 免疫无代码崩溃防线，输出异常碱基偏移与变异热刺...")
+    print("  -> Fig 7 & 8: 输出真实替换频谱与变异热点...")
     # -- Fig 7 (突变频谱) --
-    if df_site_all.empty or not all(c in df_site_all.columns for c in ['ref_nt', 'maj_nt']):
-        print("    -> [跳过 Fig 7] site_results 缺少 ref_nt/maj_nt 列")
-        return
-    df_mut = df_site_all[df_site_all['ref_nt'].isin(list('ACGT')) & df_site_all['maj_nt'].isin(list('ACGT'))].copy()
-    if not df_mut.empty:
-        # [防崩溃补丁] 安全降级转换类型
-        df_mut['pos'] = pd.to_numeric(df_mut.get('position_in_codon', np.nan), errors='coerce')
-        df_mut = df_mut.dropna(subset=['pos'])
-        df_mut['pos'] = df_mut['pos'].astype(int)
-        
-        df_mut['Type'] = df_mut['ref_nt'] + "->" + df_mut['maj_nt']
-        pivot = df_mut.groupby(['Type', 'pos']).size().unstack(fill_value=0)
-        
-        plot_cols = [c for c in [1, 2, 3] if c in pivot.columns]
-        if plot_cols:
-            pivot = pivot[plot_cols]
-            pivot = pivot.loc[pivot.sum(axis=1).sort_values(ascending=False).index]
-            plt.figure(figsize=(10, 6))
-            pivot.plot(kind='bar', stacked=True, color=['#66c2a5', '#fc8d62', '#8da0cb'][:len(pivot.columns)], ax=plt.gca(), edgecolor='black')
-            plt.title('Fig 7: Mutational Spectrum & Codon Buffer Bias', fontsize=14, fontweight='bold')
-            plt.legend(title='Codon Pos'); plt.xlabel('Substitution Motif', fontweight='bold'); plt.ylabel('Occurrences', fontweight='bold')
-            sns.despine(); plt.tight_layout()
-            plt.savefig(os.path.join(output_dir, "Fig07_Mutational_Spectrum.png"))
-            plt.savefig(os.path.join(output_dir, "Fig07_Mutational_Spectrum.pdf")); plt.close()
+    # 只统计「真实存在的替换」：优先 QC 过滤后的多态位点，为空时退回全量但仍排除不变位点；
+    # 替换标签一律由 A/C/G/T 计数列推出真实变异等位基因（不再用 maj_nt）。
+    needed = ['ref_nt', 'A', 'C', 'G', 'T']
+    base = df_site_filtered if not df_site_filtered.empty else (
+        df_site_all if df_site_all is not None and not df_site_all.empty else df_site_filtered)
+    if base.empty or not all(c in base.columns for c in needed):
+        print("    -> [跳过 Fig 7] site_results 缺少 ref_nt 或 A/C/G/T 计数列")
+    else:
+        df_mut = base[base['ref_nt'].astype(str).str.upper().isin(list('ACGT'))].copy()
+        df_mut['alt_nt'] = df_mut.apply(lambda r: _alt_nt_from_counts(r, r['ref_nt']), axis=1)
+        df_mut = df_mut.dropna(subset=['alt_nt'])
+        df_mut['ref_nt'] = df_mut['ref_nt'].astype(str).str.upper()
+        df_mut = df_mut[df_mut['ref_nt'] != df_mut['alt_nt']]   # 双保险：排除不变位点
+        if not df_mut.empty:
+            # [防崩溃补丁] 安全降级转换类型
+            df_mut['pos'] = pd.to_numeric(df_mut.get('position_in_codon', np.nan), errors='coerce')
+            df_mut = df_mut.dropna(subset=['pos'])
+            df_mut['pos'] = df_mut['pos'].astype(int)
+
+            df_mut['Type'] = df_mut['ref_nt'] + "->" + df_mut['alt_nt']
+            pivot = df_mut.groupby(['Type', 'pos']).size().unstack(fill_value=0)
+
+            plot_cols = [c for c in [1, 2, 3] if c in pivot.columns]
+            if plot_cols:
+                pivot = pivot[plot_cols]
+                pivot = pivot.loc[pivot.sum(axis=1).sort_values(ascending=False).index]
+                plt.figure(figsize=(10, 6))
+                pivot.plot(kind='bar', stacked=True, color=okabe_cycle(len(pivot.columns)), ax=plt.gca(), edgecolor='black')
+                plt.title('Fig 7: Mutational Spectrum & Codon Buffer Bias', fontsize=14, fontweight='bold')
+                plt.legend(title='Codon Pos'); plt.xlabel('Substitution Motif', fontweight='bold'); plt.ylabel('Occurrences', fontweight='bold')
+                sns.despine(); plt.tight_layout()
+                plt.savefig(os.path.join(output_dir, "Fig07_Mutational_Spectrum.png"))
+                plt.savefig(os.path.join(output_dir, "Fig07_Mutational_Spectrum.pdf")); plt.close()
 
     # -- Fig 8 (趋同热点靶点) --
-    if 'class_vs_ref' in df_site_filtered.columns:
-        df_hot = df_site_filtered[df_site_filtered['class_vs_ref'] == 'Nonsynonymous']
+    if 'class_vs_ref' in df_site_filtered.columns and all(c in df_site_filtered.columns for c in needed):
+        df_hot = df_site_filtered[df_site_filtered['class_vs_ref'] == 'Nonsynonymous'].copy()
+        df_hot['alt_nt'] = df_hot.apply(lambda r: _alt_nt_from_counts(r, r['ref_nt']), axis=1)
+        df_hot = df_hot.dropna(subset=['alt_nt'])
+        df_hot['ref_nt'] = df_hot['ref_nt'].astype(str).str.upper()
+        df_hot = df_hot[df_hot['ref_nt'] != df_hot['alt_nt']]   # 排除不变位点
         if not df_hot.empty:
-            tc = df_hot.groupby(['product', 'site', 'ref_nt', 'maj_nt']).size().reset_index(name='n').sort_values('n', ascending=False).head(12)
-            tc['L'] = tc.apply(lambda x: f"{x['product']}:{x['site']} ({x['ref_nt']}->{x['maj_nt']})", axis=1)
+            tc = df_hot.groupby(['product', 'site', 'ref_nt', 'alt_nt']).size().reset_index(name='n').sort_values('n', ascending=False).head(12)
+            tc['L'] = tc.apply(lambda x: f"{x['product']}:{x['site']} ({x['ref_nt']}->{x['alt_nt']})", axis=1)
             plt.figure(figsize=(10, 6))
-            ax = sns.barplot(data=tc, x='n', y='L', palette='flare', edgecolor='black')
+            ax = sns.barplot(data=tc, x='n', y='L', palette=CMAP_SEQ, edgecolor='black')
             for c in ax.containers: ax.bar_label(c, padding=4, fontsize=10, fontweight='bold')
             plt.title('Fig 8: Top Nonsynonymous Hotspots (QC Passed)', fontsize=14, fontweight='bold')
             plt.xlim(0, tc['n'].max() * 1.15)
@@ -424,9 +522,9 @@ def plot_dual_track_window(df_site_all, output_dir, window=50):
     mr_s = pd.merge(all_s, m_sy, how='left').fillna(0)['pi'].rolling(window=window, center=True).mean().fillna(0)
     
     plt.figure(figsize=(14, 5))
-    plt.plot(all_s['site'], mr_s, color='#3182bd', lw=1.5, label='Synonymous (\u03C0S)')
-    plt.plot(all_s['site'], mr_n, color='#d73027', lw=1.5, label='Nonsynonymous (\u03C0N)')
-    plt.fill_between(all_s['site'], mr_n, color='#d73027', alpha=0.2)
+    plt.plot(all_s['site'], mr_s, color=BLUE, lw=1.5, label='Synonymous (\u03C0S)')
+    plt.plot(all_s['site'], mr_n, color=VERM, lw=1.5, label='Nonsynonymous (\u03C0N)')
+    plt.fill_between(all_s['site'], mr_n, color=VERM, alpha=0.2)
     plt.title(f'Fig 9: Dual-Track Diversity Landscape (w={window}nt)', fontsize=15, fontweight='bold')
     plt.xlabel('Genomic Position', fontweight='bold'); plt.ylabel('Smoothed \u03C0', fontweight='bold')
     plt.legend()
@@ -509,25 +607,25 @@ def plot_trinity_landscape(df_site, df_prod, output_dir, window=50, ref_acc=""):
 
     a1.plot([1, max_l],[0, 0], color='black', lw=1.5, zorder=1)
     a1.set_ylim(-0.8, 0.8); a1.axis('off')
-    cs =['#A6CEE3','#B2DF8A','#FB9A99','#FDBF6F','#CAB2D6','#FFFF99']
+    cs = okabe_cycle(6)
     for i, r in spans.iterrows():
         a1.add_patch(patches.Rectangle((r['st'], -0.4), r['ed']-r['st'], 0.8, facecolor=cs[i%len(cs)], ec='black', lw=1.2))
         a1.text(r['st']+(r['ed']-r['st'])/2, 0, r['product'], ha='center', va='center', fontweight='bold', fontsize=12)
     a1.set_title(f"Fig 10: The Trinity Evolutionary Pan-Landscape ({ref_acc})", fontsize=16, fontweight='bold')
 
-    a2.plot(np.arange(max_l+1), r_snp, color='#41B6C4', lw=1.5, label='SNPs')
-    a2.fill_between(np.arange(max_l+1), r_snp, color='#41B6C4', alpha=0.25)
-    a2.set_ylabel(f'SNP Counts (w={window})', color='#41B6C4', fontweight='bold')
+    a2.plot(np.arange(max_l+1), r_snp, color=SKY, lw=1.5, label='SNPs')
+    a2.fill_between(np.arange(max_l+1), r_snp, color=SKY, alpha=0.25)
+    a2.set_ylabel(f'SNP Counts (w={window})', color=SKY, fontweight='bold')
     a2_t = a2.twinx()
-    a2_t.plot(np.arange(max_l+1), r_pi, color='#737373', ls='--', lw=1.5, label='Pi')
-    a2_t.set_ylabel(r'Diversity ($\pi$)', color='#737373', fontweight='bold')
+    a2_t.plot(np.arange(max_l+1), r_pi, color=GREY, ls='--', lw=1.5, label='Pi')
+    a2_t.set_ylabel(r'Diversity ($\pi$)', color=GREY, fontweight='bold')
 
-    a3.axhline(1.0, color='#969696', ls='--')
+    a3.axhline(1.0, color=GREY, ls='--')
     for i, r in spans.iterrows():
         dr = d_sum[d_sum['product'] == r['product']]
         if not dr.empty:
             dv = min(dr['dNdS'].values[0], 10.0)
-            c = '#E31A1C' if dv > 1.0 else '#74C476'
+            c = VERM if dv > 1.0 else GREEN
             a3.bar(r['st']+(r['ed']-r['st'])/2, dv, width=r['ed']-r['st'], facecolor=c, ec='black', alpha=0.8)
             a3.text(r['st']+(r['ed']-r['st'])/2, dv + ytop*0.05, f"{dv:.3f}", ha='center', fontsize=9, fontweight='bold')
     
@@ -590,7 +688,7 @@ def plot_ml_clusters(df_pop, output_dir, metadata_file=None):
             print(f"    -> [警告] 元数据融合失败: {e}，回退至 AI 自动聚类着色。")
 
     df.to_csv(os.path.join(output_dir, "Matrix_ML_Clusters_3D.csv"), index=False)
-    palette = sns.color_palette("Set2", n_colors=len(df[color_col].unique()))
+    palette = okabe_cycle(len(df[color_col].unique()))
 
     # ================= 2D PCA =================
     fig, ax2d = plt.subplots(figsize=(9, 7))
@@ -604,11 +702,13 @@ def plot_ml_clusters(df_pop, output_dir, metadata_file=None):
     ax2d.set_title(f'Fig 11a: PCA of Evolutionary Dynamics {title_suffix}', fontsize=14, fontweight='bold')
     ax2d.set_xlabel(f"PC1 ({pca.explained_variance_ratio_[0]*100:.1f}%)", fontweight='bold')
     ax2d.set_ylabel(f"PC2 ({pca.explained_variance_ratio_[1]*100:.1f}%)", fontweight='bold')
-    ax2d.legend(title=color_col, loc='upper left')
+    # 图例标题不暴露内部列名/方法学标签 (旧版直接显示 "ML_Cluster", 投稿时属术语错位)
+    legend_title = 'Evolutionary class' if color_col == 'ML_Cluster' else color_col
+    ax2d.legend(title=legend_title, loc='upper left')
 
     # Cluster center profiling (piN, piS, dN)
     cc = df.groupby('ML_Cluster')[feats].mean()
-    txt = "AI Cluster Profiling:\n"
+    txt = "Cluster profiling (mean):\n"
     for cl in sorted(cc.index):
         txt += f"  {cl}: piN={cc.loc[cl,'piN']:.4f}, piS={cc.loc[cl,'piS']:.4f} | dN={cc.loc[cl,'mean_dN_vs_ref']:.4f}\n"
 
@@ -640,7 +740,7 @@ def plot_ml_clusters(df_pop, output_dir, metadata_file=None):
 
     ax3d.view_init(elev=20, azim=45)
     ax3d.grid(True, linestyle=':', alpha=0.6)
-    ax3d.legend(title=color_col, bbox_to_anchor=(1.15, 0.8), loc='upper left')
+    ax3d.legend(title=legend_title, bbox_to_anchor=(1.15, 0.8), loc='upper left')
 
     plt.tight_layout()
     plt.savefig(os.path.join(output_dir, "Fig11b_PCA_3D.png"), bbox_inches='tight')
@@ -680,7 +780,8 @@ def main():
         plot_joint_dynamics(df_pop, args.output)                           # 3 & 4
         plot_gene_dnds_with_stats(df_prod, args.output)                    # 5
         perform_10000x_bootstrap_dnds(df_prod, args.output)                # 6
-        plot_signatures_and_hotspots(df_site_filtered, df_site, args.output)# 7 & 8
+        # 7 & 8: Fig7 主用 QC 过滤后的多态位点，df_site 仅作兜底（仍排除不变位点）
+        plot_signatures_and_hotspots(df_site_filtered, df_site, args.output)
         plot_dual_track_window(df_site, args.output)                       # 9
         if args.ref:
             plot_trinity_landscape(df_site, df_prod, args.output, ref_acc=args.ref) # 10

@@ -104,6 +104,14 @@ def is_valid(fp):
 def check_dependencies(tools):
     return [tool for tool in tools if shutil.which(tool) is None]
 
+# [P2-24g] 缺失/失败的可选工具告警去重 (批处理下逐样本重复刷屏)
+_WARNED_ONCE = set()
+
+def warn_once(logger, key, msg):
+    if key not in _WARNED_ONCE:
+        _WARNED_ONCE.add(key)
+        logger.warning(msg)
+
 def is_fastq(filepath):
     return any(str(filepath).lower().endswith(ext) for ext in ['.fq', '.fastq', '.fq.gz', '.fastq.gz'])
 
@@ -775,6 +783,10 @@ def run_pipeline(sample, sample_data, orig_ref, ref_len, out_root, active_tools,
         return is_perf
 
     def finish_pipeline(msg, is_perfect_early=False, final_eval_file=None):
+        # [P1-11] 汇总表增加 Origin 列: de_novo / fast_track / ref_fallback
+        # (ref_fallback = de novo 组装全失败, Step4 用参考基因组本体顶替骨架)
+        for st in stats_history:
+            st['Origin'] = origin
         pd.DataFrame(stats_history).to_csv(f13_stats, sep='\t', index=False)
       
         if CAN_PLOT:
@@ -819,14 +831,25 @@ def run_pipeline(sample, sample_data, orig_ref, ref_len, out_root, active_tools,
         if not getattr(args, 'keep_tmp', False):
             cleanup_temp_files(sample_dir, logger, sample)
 
-        is_ok = is_perfect_early
-        if final_eval_file and not is_ok:
+        # [P1-11] de novo 组装证据校验: f2(初步合并) / f3(净化骨架) 任一无效(0 字节/缺失)
+        # 说明 de novo 全程无有效产物, 终产物由参考顶替而来 → 绝不允许判定"完美", 不写 Fully-assembled.ok
+        de_novo_valid = is_valid(f2_asm) and is_valid(f3_clean)
+
+        is_ok = is_perfect_early and de_novo_valid
+        if final_eval_file and not is_ok and de_novo_valid:
             is_ok, _, _, _, _ = check_assembly_quality(str(final_eval_file), ref_len, args.chk_len, args.chk_n50)
-      
+
+        if not de_novo_valid:
+            is_ok = False
+            logger.warning(f"[{sample}] de novo 组装无有效产物 (f2/f3 为空或缺失)，"
+                           f"origin={origin}，已跳过 Fully-assembled.ok 写入")
+
         if is_ok:
             open(f_ok, 'a').close()
             return True, f"{msg} (达到完美阈值 Fully-assembled.ok)", sample, stats_history
         else:
+            if not de_novo_valid:
+                return True, f"{msg} (失败: de novo 组装无有效产物, origin={origin}, 未写 Fully-assembled.ok)", sample, stats_history
             return True, f"{msg} (流程结束，但未能达到设定完美阈值)", sample, stats_history
 
     # ==========================
@@ -834,17 +857,25 @@ def run_pipeline(sample, sample_data, orig_ref, ref_len, out_root, active_tools,
     # ==========================
     fast_track_source = None
     is_perfect_early = False
+    # [P1-11] 组装来源标记 (随 13/Global Evolution_Stats 的 Origin 列输出):
+    # de_novo = 正常 de novo 融合路径; fast_track = 快车道; ref_fallback = de novo 失败, 参考基因组顶替
+    origin = 'de_novo'
 
     def _standard_build_track():
         """Steps 4-8: Full de novo build with PVGA extension + Divine Fusion.
         Only runs when fast track is NOT triggered."""
-        nonlocal fast_track_source, is_perfect_early
+        nonlocal fast_track_source, is_perfect_early, origin
 
         # --- Step 4: Ref Merge 1 ---
         d4_ref_m1.mkdir(exist_ok=True)
         if not is_valid(f4_ref_m1):
             if is_valid(f3_clean): divine_fusion_shiver_style(orig_ref, str(f3_clean), None, str(f4_ref_m1), args.threads, args.split_gap_size, args.min_contig_len, args.mafft_args, logger, sample)
-            else: shutil.copy(orig_ref, f4_ref_m1)
+            else:
+                # [P1-11] de novo 产物无效 → 走参考基因组顶替兜底: 标记 ref_fallback,
+                # 后续 Step 5-11 均基于参考序列, 终产物不得判 100% 完美 (finish_pipeline 强制不写 ok)
+                logger.warning(f"[{sample}] De novo 组装无有效 contig (f3_clean 无效)，使用参考基因组本体顶替融合骨架 (origin=ref_fallback)")
+                shutil.copy(orig_ref, f4_ref_m1)
+                origin = 'ref_fallback'
 
         # --- Step 5: PVGA 延伸 & 评估打断 ---
         d5_pvga.mkdir(exist_ok=True)
@@ -877,6 +908,8 @@ def run_pipeline(sample, sample_data, orig_ref, ref_len, out_root, active_tools,
         if log_stat('2.PVGA_Extension', f5_pvga_cut):
             fast_track_source = f5_pvga_cut
             is_perfect_early = True
+            if origin != 'ref_fallback':  # [P1-11] 参考顶替标记优先级最高, 不被 fast_track 覆盖
+                origin = 'fast_track'
             logger.info(f"[{sample}] 快车道：PVGA延伸骨架已达完美标准，跳过后续融合，直接进入 Step 9 迭代抛光！")
             return  # 快车道触发，跳过 Step 6-8
 
@@ -939,10 +972,18 @@ def run_pipeline(sample, sample_data, orig_ref, ref_len, out_root, active_tools,
                 if split_fa: contig_files.append(split_fa)
         if 'spades' in active_tools:
             sp_out = d1_asm / "spades"
-            cmd_sp = ['rnaviralspades.py', '-t', str(args.threads), '-o', str(sp_out)] + (['-s', asm_r1] if asm_is_single else ['-1', asm_r1, '-2', asm_r2])
-            if run_cmd(cmd_sp, cwd=d1_asm, log_file=d1_asm/"sp.log", logger=logger, sample_name=sample) and (sp_out/"contigs.fasta").exists():
-                split_fa = run_refinec_split(sp_out/"contigs.fasta", d1_asm, "spades", args.threads, args.refineC_frag, logger, sample)
-                if split_fa: contig_files.append(split_fa)
+            if shutil.which('rnaviralspades.py') is None:
+                # [P2-24g] 缺 rnaviralspades.py 时显式告警 (不再静默跳过 spades 分支)
+                warn_once(logger, 'rnaviralspades.missing',
+                          "[SYS] 未找到可选工具 rnaviralspades.py，spades 组装分支将被跳过 (仅提示一次)")
+            else:
+                cmd_sp = ['rnaviralspades.py', '-t', str(args.threads), '-o', str(sp_out)] + (['-s', asm_r1] if asm_is_single else ['-1', asm_r1, '-2', asm_r2])
+                if run_cmd(cmd_sp, cwd=d1_asm, log_file=d1_asm/"sp.log", logger=logger, sample_name=sample) and (sp_out/"contigs.fasta").exists():
+                    split_fa = run_refinec_split(sp_out/"contigs.fasta", d1_asm, "spades", args.threads, args.refineC_frag, logger, sample)
+                    if split_fa: contig_files.append(split_fa)
+                else:
+                    warn_once(logger, 'rnaviralspades.failed',
+                              f"[{sample}] [SYS] spades (rnaviralspades.py) 组装失败或无 contigs.fasta 输出，跳过该工具 (仅提示一次)")
         if 'penguin' in active_tools:
             pg_out, pg_tmp = d1_asm / "penguin", d1_asm / "pg_tmp"
             cmd_pg = ['penguin', 'guided_nuclassemble'] + ([asm_r1] if asm_is_single else [asm_r1, asm_r2]) + ['--threads', str(args.threads), str(pg_out), str(pg_tmp), '--min-contig-len', str(args.min_contig_len)]
@@ -970,6 +1011,7 @@ def run_pipeline(sample, sample_data, orig_ref, ref_len, out_root, active_tools,
     if log_stat('1.DeNovo_Cleaned', f3_clean):
         fast_track_source = f3_clean
         is_perfect_early = True
+        origin = 'fast_track'  # [P1-11] 快车道来源标记
         logger.info(f"[{sample}] 快车道：初步净化骨架已达完美标准，跳过后续延伸融合，直接进入 Step 9 迭代抛光！")
 
     # ── 分支执行 ──
@@ -1155,6 +1197,9 @@ def main():
     if shutil.which('bbmerge.sh') is None and shutil.which('reformat.sh') is None: required_tools.append('bbmap(缺失)')
     missing = check_dependencies(required_tools)
     if missing: sys.exit(logger.error(f"[致命错误] 缺失依赖: {', '.join(missing)}"))
+    # [P2-24g] 可选依赖: rnaviralspades.py 缺失仅 warning 不阻断 (spades 分支自动跳过, 见 Step1&2)
+    if shutil.which('rnaviralspades.py') is None:
+        logger.warning("[提示] 未找到可选依赖 rnaviralspades.py，spades 组装分支将自动跳过。")
     if not CAN_PLOT: logger.warning("[提示] 未安装 matplotlib，将跳过绘图模块。")
 
     active_tools = {'megahit', 'spades', 'penguin'} if 'all' in args.assembly_tools.lower() else set(t.strip().lower() for t in args.assembly_tools.split(','))
@@ -1184,7 +1229,11 @@ def main():
             try:
                 success, msg, _, stats = future.result()
                 if success:
-                    logger.info(f"✓ [{s_name}] {msg}")
+                    # [P1-11] origin=ref_fallback (de novo 失败, 参考顶替) 用 ✗ 明示, 避免被批量脚本当成功
+                    if stats and stats[0].get('Origin') == 'ref_fallback':
+                        logger.error(f"✗ [{s_name}] {msg}")
+                    else:
+                        logger.info(f"✓ [{s_name}] {msg}")
                     for st in stats: st['Sample'] = s_name
                     all_stats.extend(stats)
             except Exception as exc: logger.error(f"✗ [{s_name}] 运行时崩溃: {str(exc)}")

@@ -5,13 +5,18 @@
 # 功能：修复 NA% 错误，新增单图无缝拼接拼接，以及唯一的全基因组坐标棒棒糖总图
 # =========================================================
 
+# [离线集群修复] 不再运行时自动联网装包 (install.packages / BiocManager::install 在无网环境会挂起/失败);
+# 包缺失时明确提示手动安装并以非零码退出 (停在该功能, 不静默降级)
+check_pkg <- function(pkg) {
+  if (!requireNamespace(pkg, quietly = TRUE)) {
+    message(sprintf("[ERROR] R package '%s' is not installed. Install it manually, e.g.:\n  install.packages(\"%s\")   # or BiocManager::install(\"%s\") for Bioconductor packages", pkg, pkg, pkg))
+    quit(status = 1)
+  }
+}
+
 suppressPackageStartupMessages({
-  if (!require("optparse", quietly = TRUE)) { install.packages("optparse", repos="https://mirrors.westlake.edu.cn/CRAN/", quiet=TRUE); library(optparse) }
-  if (!require("data.table", quietly = TRUE)) { install.packages("data.table", repos="https://mirrors.westlake.edu.cn/CRAN/", quiet=TRUE); library(data.table) }
-  if (!require("maftools", quietly = TRUE)) { BiocManager::install("maftools", ask=FALSE, quiet=TRUE); library(maftools) }
-  if (!require("ggplot2", quietly = TRUE)) { install.packages("ggplot2", repos="https://mirrors.westlake.edu.cn/CRAN/", quiet=TRUE); library(ggplot2) }
-  if (!require("ggrepel", quietly = TRUE)) { install.packages("ggrepel", repos="https://mirrors.westlake.edu.cn/CRAN/", quiet=TRUE); library(ggrepel) }
-  if (!require("patchwork", quietly = TRUE)) { install.packages("patchwork", repos="https://mirrors.westlake.edu.cn/CRAN/", quiet=TRUE); library(patchwork) }
+  invisible(lapply(c("optparse", "data.table", "maftools", "ggplot2", "ggrepel", "patchwork"), check_pkg))
+  library(optparse); library(data.table); library(maftools); library(ggplot2); library(ggrepel); library(patchwork)
 })
 
 option_list <- list(

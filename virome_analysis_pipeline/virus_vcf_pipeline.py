@@ -17,6 +17,7 @@ All modules accessible via CLI flags; default behavior is v1-compatible.
 
 import os
 import sys
+import re
 import glob
 import math
 import subprocess
@@ -59,6 +60,49 @@ try:
     HAS_SKLEARN = True
 except ImportError:
     HAS_SKLEARN = False
+
+
+# ============================================================
+# 统一配色 (SCI 发表级 / Okabe-Ito 色盲友好)
+#   与 virome_analysis_pipeline/virus_metadata_plot.py 的 OKABE_ITO 同序同成员,
+#   保证全项目离散色只有一个来源。离散色一律引用下面的语义常量;
+#   连续色走 CMAP_* 常量 (顺序型 viridis 族; 发散型保持红-白-蓝)。
+#   2026-10-11: 原文件混用 Flat UI 高饱和色 (#e74c3c/#2980b9/#2ECC71/#9B59B6...)
+#   与 seaborn Set/Dark 调色板, 投稿时颜色不统一且对色觉障碍不友好。
+# ============================================================
+OKABE_ITO = ["#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2",
+             "#D55E00", "#CC79A7", "#000000", "#999999"]
+ORANGE, SKY, GREEN, YELLOW, BLUE, VERM, PURPLE = OKABE_ITO[:7]
+BLACK, GREY = "#000000", "#999999"
+# 连续色标: 顺序型统一 viridis 族 (低值->高值 与 浅->深 的对应关系保持不变)
+CMAP_SEQ = "viridis"        # 深(低) -> 浅(高); 原 YlOrRd_r / flare 走这支
+CMAP_SEQ_R = "viridis_r"    # 浅(低) -> 深(高); 原 YlOrRd 走这支
+CMAP_DIV = "RdBu_r"         # 发散型: 蓝(低) - 白(中) - 红(高)
+
+
+def okabe_cycle(n):
+    """返回 n 个 Okabe-Ito 循环色 (n > 7 时自动循环, 避免 seaborn 调色板长度不足)。"""
+    return [OKABE_ITO[i % 7] for i in range(max(0, int(n)))]
+
+
+# 分支/树图专用色序: 只用中深色, 排除最浅的 YELLOW(#F0E442) 与 SKY(#56B4E9)。
+# 原因: 152 样本 + color_threshold=0.7*max 会产生十几个簇, 颜色循环后大量落在
+# 橙/黄/浅蓝上, 白底细线分支对比度严重不足(视觉"发虚")。
+# 保留的 5 色 (深蓝/朱红/深绿/橙/玫红) 仍全部是 Okabe-Ito 成员, 色盲友好不变。
+OKABE_BRANCH = [BLUE, VERM, GREEN, ORANGE, PURPLE]
+
+
+def okabe_branch_cycle(n):
+    """分支/树图 (scipy.dendrogram、sns.clustermap) 专用循环色。"""
+    return [OKABE_BRANCH[i % len(OKABE_BRANCH)] for i in range(max(0, int(n)))]
+
+
+if HAS_VIZ:
+    # 树状图 (scipy.dendrogram / seaborn.clustermap 的分支) 颜色取自 matplotlib
+    # 默认色环 'C0'..'C9' —— 不接管这里, 树图就会一直用 tab10
+    # (#1f77b4/#ff7f0e/#2ca02c/#d62728), 与全项目 Okabe-Ito 不统一。
+    # 2026-10-11: 分支色改用 okabe_branch_cycle (排除浅黄 #F0E442 / 浅蓝 #56B4E9)。
+    plt.rcParams["axes.prop_cycle"] = plt.cycler(color=okabe_branch_cycle(10))
 
 
 # ============================================================
@@ -584,8 +628,16 @@ def mantel_test(D_gen, D_geo, n_permutations=9999):
     g_flat, e_flat = g_flat[mask], e_flat[mask]
     if len(g_flat) < 10:
         return None, None, f"only {len(g_flat)} valid pairs"
+    # 零方差守卫: 任一侧距离全等时 Pearson r 无定义 (np.corrcoef 返回 nan),
+    # 旧版会把 nan 一路带到标题里并配一个假的 "显著" p 值。
+    if np.nanmax(g_flat) - np.nanmin(g_flat) == 0.0:
+        return None, None, "genetic distance zero variance"
+    if np.nanmax(e_flat) - np.nanmin(e_flat) == 0.0:
+        return None, None, "geographic distance zero variance"
     # observed correlation
     r_obs = np.corrcoef(g_flat, e_flat)[0, 1]
+    if not np.isfinite(r_obs):
+        return None, None, "r undefined (non-finite)"
     # permutation
     count = 0
     rng = np.random.RandomState(42)
@@ -600,18 +652,74 @@ def mantel_test(D_gen, D_geo, n_permutations=9999):
     return r_obs, p_val, n_permutations
 
 
+_RUN_ID_RE = re.compile(r"^(?:sample_)?((?:SRR|CRR|ERR|DRR)\d+)(?=[._-]|$)")
+
+
+def mantel_degeneracy(r_val, g_flat, e_flat, mask):
+    """判定 Mantel 结果是否退化 (p 值无意义, 不得报显著 IBD)。
+
+    返回 (is_degenerate: bool, reason: str)。
+    触发条件: r 非有限 / 无有效配对 / 遗传或地理距离零方差。
+    2026-10-11: 实测 known_virus_all_v2 的 mantel_ibd.png 出现
+    "r=nan, p=0.0001, N=16202" —— 遗传距离全 0 时 r 无定义, 却仍写出 p 值并作图。
+    """
+    if not np.isfinite(r_val):
+        return True, "r undefined"
+    if mask is None or int(np.sum(mask)) == 0:
+        return True, "no valid pairs"
+    g = np.asarray(g_flat)[mask]
+    e = np.asarray(e_flat)[mask]
+    if g.size == 0 or e.size == 0:
+        return True, "no valid pairs"
+    if float(np.nanmax(g) - np.nanmin(g)) == 0.0:
+        return True, "genetic distance zero variance"
+    if float(np.nanmax(e) - np.nanmin(e)) == 0.0:
+        return True, "geographic distance zero variance"
+    return False, ""
+
+
 def compute_geo_distance(meta_df, samples):
     """
     从元数据计算样本间地理距离。
     meta_df: 含 Sample, Latitude, Longitude (或 Province/Country)
     samples: 样本名列表
     返回: (n×n 地理距离矩阵, labels)
+
+    样本名匹配: 先按索引精确匹配; 未命中则按 SRA run 号匹配
+    (管线样本名形如 <Run>_<Acc>, 而元数据索引通常只有 <Run>)。
+    2026-10-09 barbarum: 修复前恒不命中, Mantel 检验被静默跳过。
     """
-    common = [s for s in samples if s in meta_df.index]
-    if len(common) < 5:
+    coord, run_to_key = {}, {}
+    for _key, _row in meta_df.iterrows():
+        _k = str(_key)
+        if _k in coord:
+            continue
+        try:
+            _la = float(_row["Latitude"])
+            _lo = float(_row["Longitude"])
+        except Exception:
+            continue
+        if not (np.isfinite(_la) and np.isfinite(_lo)):
+            continue
+        coord[_k] = (_la, _lo)
+        _m = _RUN_ID_RE.match(_k)
+        if _m:
+            run_to_key.setdefault(_m.group(1), _k)
+
+    pairs = []
+    for s in samples:
+        _k = str(s)
+        if _k not in coord:
+            _m = _RUN_ID_RE.match(_k)
+            if _m:
+                _k = run_to_key.get(_m.group(1))
+        if _k is not None and _k in coord:
+            pairs.append((s, coord[_k]))
+    if len(pairs) < 5:
         return None, None
-    lat = meta_df.loc[common, "Latitude"].values.astype(float)
-    lon = meta_df.loc[common, "Longitude"].values.astype(float)
+    common = [s for s, _ in pairs]
+    lat = np.array([p[0] for _, p in pairs], dtype=float)
+    lon = np.array([p[1] for _, p in pairs], dtype=float)
     n = len(common)
     D_geo = np.zeros((n, n))
     for i in range(n):
@@ -626,15 +734,29 @@ def compute_geo_distance(meta_df, samples):
 
 
 def plot_mantel(g_flat, e_flat, r_val, p_val, out_path):
-    """Mantel test 散点图: 遗传距离 vs 地理距离"""
+    """Mantel test 散点图: 遗传距离 vs 地理距离。
+
+    守卫: 输入含非有限值 / 任一侧零方差 / r 或 p 非有限 -> 直接跳过作图,
+    不产出 "r=nan, p=0.0001" 这种自相矛盾的图。
+    """
     assert HAS_VIZ, "需要 matplotlib"
+    g_flat = np.asarray(g_flat, dtype=float)
+    e_flat = np.asarray(e_flat, dtype=float)
+    if (not np.isfinite(r_val)) or (not np.isfinite(p_val)):
+        print("[Mantel] 跳过作图: r/p 非有限 (退化矩阵)")
+        return
+    if len(g_flat) < 3 or (np.nanmax(g_flat) - np.nanmin(g_flat)) == 0.0 \
+            or (np.nanmax(e_flat) - np.nanmin(e_flat)) == 0.0:
+        print("[Mantel] 跳过作图: 有效配对不足或距离零方差")
+        return
+
     plt.figure(figsize=(8, 7))
-    plt.scatter(e_flat, g_flat, alpha=0.5, s=20, c="#4A90E2", edgecolors="none")
+    plt.scatter(e_flat, g_flat, alpha=0.5, s=20, c=BLUE, edgecolors="none")
     # 趋势线
     if len(g_flat) > 3:
         z = np.polyfit(e_flat, g_flat, 1)
         x_line = np.linspace(e_flat.min(), e_flat.max(), 100)
-        plt.plot(x_line, np.polyval(z, x_line), "r--", linewidth=2, alpha=0.7)
+        plt.plot(x_line, np.polyval(z, x_line), "--", color=VERM, linewidth=2, alpha=0.7)
     plt.xlabel("Geographic Distance (km)", fontsize=13, fontweight="bold")
     plt.ylabel("Genetic Distance (Jaccard)", fontsize=13, fontweight="bold")
     p_str = f"p={p_val:.4f}" if p_val >= 0.0001 else f"p<0.0001"
@@ -680,6 +802,30 @@ def compute_ibs_kinship(M):
     return K, n
 
 
+# 逐点样本标签的样本数上限: 超过此值逐点标注会叠成黑块 (实测 150+ 样本 PCA)
+PCA_LABEL_MAX = 30
+# 超过上限时改为只标注的离群点个数
+PCA_LABEL_OUTLIERS = 15
+
+
+def _label_indices(xs, ys, n_samples, tag=""):
+    """返回该标注标签的样本下标。
+
+    n <= PCA_LABEL_MAX  -> 全部标注;
+    n >  PCA_LABEL_MAX  -> 只标注离群点(距质心最远的前 PCA_LABEL_OUTLIERS 个)。
+    2026-10-11 修正: 先前直接"全关"会丢失全部样本身份(实测 120 样本 PCA 一个都认不出),
+    属过度收缩; 只标离群点既避开黑块, 又保留可定位的样本。
+    """
+    if n_samples <= PCA_LABEL_MAX:
+        return list(range(n_samples))
+    cx, cy = float(np.nanmean(xs)), float(np.nanmean(ys))
+    d = np.hypot(xs - cx, ys - cy)
+    n_lab = min(PCA_LABEL_OUTLIERS, n_samples)
+    idx = np.argsort(d)[-n_lab:]
+    print(f"[PCA图-{tag}] {n_samples} 个样本 > {PCA_LABEL_MAX}, 只标注 {n_lab} 个离群点")
+    return list(idx)
+
+
 def pca_from_kinship(K, samples, out_path):
     """
     从 IBS Kinship 矩阵做特征分解 → PCA (等价于 VCF2PCACluster 默认方法)。
@@ -705,9 +851,10 @@ def pca_from_kinship(K, samples, out_path):
 
     # 画图
     plt.figure(figsize=(8, 7))
-    plt.scatter(pc1, pc2, s=80, c="#2b83ba", edgecolors="black", alpha=0.85)
-    for i, s_name in enumerate(samples):
-        plt.annotate(s_name, (pc1[i], pc2[i]), fontsize=7, alpha=0.7,
+    plt.scatter(pc1, pc2, s=80, c=BLUE, edgecolors="black", alpha=0.85)
+    # 样本标签: 数量可控时全标; 过多时只标离群点 (见 _label_indices)
+    for i in _label_indices(np.asarray(pc1), np.asarray(pc2), len(samples), "IBS"):
+        plt.annotate(samples[i], (pc1[i], pc2[i]), fontsize=7, alpha=0.85,
                      textcoords="offset points", xytext=(4, 4))
     plt.xlabel(f"PC1 ({r1:.1f}%)", fontsize=12, fontweight="bold")
     plt.ylabel(f"PC2 ({r2:.1f}%)", fontsize=12, fontweight="bold")
@@ -739,9 +886,10 @@ def pca_from_genotypes(M, samples, out_path):
     var_r = pca.explained_variance_ratio_
 
     plt.figure(figsize=(8, 7))
-    plt.scatter(X_pc[:, 0], X_pc[:, 1], s=80, c="#e74c3c", edgecolors="black", alpha=0.85)
-    for i, s_name in enumerate(samples):
-        plt.annotate(s_name, (X_pc[i, 0], X_pc[i, 1]), fontsize=7, alpha=0.7,
+    plt.scatter(X_pc[:, 0], X_pc[:, 1], s=80, c=VERM, edgecolors="black", alpha=0.85)
+    # 同 IBS 版: 数量可控时全标; 过多时只标离群点
+    for i in _label_indices(X_pc[:, 0], X_pc[:, 1], len(samples), "Genotype"):
+        plt.annotate(samples[i], (X_pc[i, 0], X_pc[i, 1]), fontsize=7, alpha=0.85,
                      textcoords="offset points", xytext=(4, 4))
     plt.xlabel(f"PC1 ({var_r[0]*100:.1f}%)", fontsize=12, fontweight="bold")
     plt.ylabel(f"PC2 ({var_r[1]*100:.1f}%)", fontsize=12, fontweight="bold")
@@ -766,6 +914,23 @@ def plot_pca(M, samples, out_path, method="kinship"):
         pca_from_genotypes(M, samples, out_path)
 
 
+def _skip_and_clean(out_path, reason):
+    """退化守卫辅助: 跳过作图, 并删掉上一轮遗留的同名旧图。
+
+    背景 (2026-10-11): Apple_ourmia-like_virus_1_MN386961.1 只有 2 个样本, 且两样本
+    变异特征完全一致 -> Jaccard 距离矩阵全 0 -> `mask = isnan(D) | (D == 0)` 把整张
+    热图遮成空白, 仍照常写出 84 KB 的空白 PNG。按项目"退化守卫"约定: 统计量算不出来
+    时跳过作图、不产图; 同时清掉旧图, 避免空白图混在结果目录里被误引用。
+    """
+    print(f"{reason}, 跳过作图。")
+    try:
+        if out_path and os.path.exists(out_path):
+            os.remove(out_path)
+            print(f"  -> 已删除上一轮遗留旧图: {out_path}")
+    except OSError as e:
+        print(f"  -> 删除旧图失败 (忽略): {e}")
+
+
 def plot_distance_heatmap(D, samples, out_path, title="Sample Distance Heatmap"):
     """距离矩阵热图 + 层次聚类树"""
     assert HAS_VIZ, "需要 matplotlib + seaborn"
@@ -775,6 +940,18 @@ def plot_distance_heatmap(D, samples, out_path, title="Sample Distance Heatmap")
     # 转 condensed 并处理 NaN
     n = len(samples)
     iu = np.triu_indices(n, k=1)
+
+    # ---- 退化守卫 (2026-10-11) --------------------------------------
+    # (a) 样本 < 3: 2x2 热图无结构可言; (b) 两两距离全为 0: 会被 mask 成全白。
+    # 两种情况都不产图 (实测 Apple_ourmia n=2 且全 0 -> 84 KB 空白图)。
+    if n < 3:
+        _skip_and_clean(out_path, f"[热图] 样本数 n={n} < 3, 距离热图无意义")
+        return
+    _off = D[iu]
+    if not np.any(np.isfinite(_off) & (_off > 0)):
+        _skip_and_clean(out_path, f"[热图] {n} 个样本两两距离全为 0 (变异特征完全一致)")
+        return
+
     condensed = D[iu].copy()
     condensed = np.nan_to_num(condensed, nan=np.nanmax(condensed[np.isfinite(condensed)]) if np.any(np.isfinite(condensed)) else 1.0)
     # 确保 condensed 长度正确
@@ -794,12 +971,23 @@ def plot_distance_heatmap(D, samples, out_path, title="Sample Distance Heatmap")
     D_plot[np.isnan(D_plot)] = np.nanmax(D_plot[np.isfinite(D_plot)]) if np.any(np.isfinite(D_plot)) else 1.0
     mask = np.isnan(D) | (D_plot == 0)
 
-    g = sns.clustermap(D_plot, cmap="YlOrRd_r",
+    # 样本过多时行列标签会糊成一片 -> 超过阈值就关闭标签
+    show_ticks = n <= 60
+    g = sns.clustermap(D_plot, cmap=CMAP_SEQ,
                        row_linkage=Z, col_linkage=Z,
                        linewidths=0.5, figsize=(max(10, n * 0.4), max(8, n * 0.4)),
-                       mask=mask, cbar_kws={"label": "Distance"})
+                       mask=mask, cbar_kws={"label": "Distance"},
+                       xticklabels=show_ticks, yticklabels=show_ticks,
+                       dendrogram_ratio=0.12)
     g.ax_heatmap.set_title(title, fontsize=14, fontweight="bold", pad=20)
-    plt.savefig(out_path, dpi=300, bbox_inches="tight")
+    g.ax_heatmap.set_xlabel("Sample", fontsize=12, fontweight="bold")
+    g.ax_heatmap.set_ylabel("Sample", fontsize=12, fontweight="bold")
+    if show_ticks:
+        plt.setp(g.ax_heatmap.get_xticklabels(), rotation=90, fontsize=7)
+        plt.setp(g.ax_heatmap.get_yticklabels(), fontsize=7)
+    else:
+        print(f"[热图] {n} 个样本 > 60, 关闭行列标签以免糊成一片")
+    g.fig.savefig(out_path, dpi=300, bbox_inches="tight")
     plt.close()
     print(f"[热图] 已保存: {out_path}")
 
@@ -816,13 +1004,13 @@ def plot_afs(M, out_path):
         return
 
     plt.figure(figsize=(8, 5))
-    plt.hist(freqs, bins=30, color="#8da0cb", edgecolor="black", alpha=0.8)
+    plt.hist(freqs, bins=30, color=SKY, edgecolor="black", alpha=0.8)
     plt.xlabel("Alternate Allele Frequency", fontsize=12, fontweight="bold")
     plt.ylabel("Number of Sites", fontsize=12, fontweight="bold")
     plt.title("Allele Frequency Spectrum (AFS)", fontsize=14, fontweight="bold")
 
     # 标记稀有变异区
-    plt.axvline(x=0.05, color="red", linestyle="--", alpha=0.6, label="Rare (5%)")
+    plt.axvline(x=0.05, color=VERM, linestyle="--", alpha=0.6, label="Rare (5%)")
     plt.legend()
     plt.tight_layout()
     plt.savefig(out_path, dpi=300, bbox_inches="tight")
@@ -831,12 +1019,41 @@ def plot_afs(M, out_path):
 
 
 def plot_dendrogram(Z, samples, out_path, title="Hierarchical Clustering"):
-    """层次聚类树状图"""
+    """层次聚类树状图。
+
+    旧版固定 height=6 而 width 随样本数线性增长 (153 样本 -> 45.9 x 6 in),
+    叶标签在超扁画布上必然重叠 -> 改为高度随样本数增长 + 标签自适应缩小/旋转。
+    """
     assert HAS_VIZ, "需要 matplotlib"
 
-    plt.figure(figsize=(max(8, len(samples)*0.3), 6))
-    dendrogram(Z, labels=list(samples), leaf_font_size=9,
+    n = len(samples)
+
+    # ---- 退化守卫 (2026-10-11) --------------------------------------
+    # 样本 < 3, 或所有合并高度为 0 (样本两两完全相同) -> 树图退化成一条平线。
+    # 实测 Apple_ourmia n=2 距离全 0: 产出一张只有一条 y=0 水平线的"树图"。
+    if n < 3:
+        _skip_and_clean(out_path, f"[树图] 样本数 n={n} < 3, 层次聚类树无意义")
+        return
+    try:
+        _z = np.asarray(Z, dtype=float)
+        if _z.size and float(np.nanmax(_z[:, 2])) <= 0:
+            _skip_and_clean(out_path, "[树图] 所有样本两两距离为 0, 聚类树退化为平线")
+            return
+    except Exception:
+        pass
+
+    fig_w = max(8.0, n * 0.30)
+    fig_h = max(6.0, min(16.0, 3.0 + n * 0.06))
+    leaf_fs = 9 if n <= 40 else (7 if n <= 90 else 5)
+
+    plt.figure(figsize=(fig_w, fig_h))
+    dendrogram(Z, labels=list(samples), leaf_font_size=leaf_fs,
                color_threshold=0.7 * max(Z[:, 2]))
+    # 分支线加粗: 152 样本时默认细线在 300 dpi 下显得发虚 (2026-10-11)
+    for _c in plt.gca().collections:
+        _c.set_linewidth(1.4)
+    if n > 40:
+        plt.xticks(rotation=90)
     plt.title(title, fontsize=14, fontweight="bold")
     plt.xlabel("Sample", fontsize=12)
     plt.ylabel("Distance", fontsize=12)
@@ -919,15 +1136,15 @@ def plot_epistatic_network(df_pairs, site_labels, positions, out_path):
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
     if pts:
         xs, ys, cs, ss = zip(*[(x, y, c, max(3, c * 20)) for x, y, c in pts])
-        sc = ax1.scatter(xs, ys, c=cs, s=ss, cmap="YlOrRd",
+        sc = ax1.scatter(xs, ys, c=cs, s=ss, cmap=CMAP_SEQ_R,
                          edgecolors="grey", linewidth=0.5, alpha=0.8)
         ax1.plot([min(xs + ys), max(xs + ys)], [min(xs + ys), max(xs + ys)],
-                 '--', color='grey', alpha=0.3)
+                 '--', color=GREY, alpha=0.3)
         plt.colorbar(sc, ax=ax1, shrink=0.8).set_label("R²", fontsize=11)
     ax1.set_xlabel("Site 1 Position"); ax1.set_ylabel("Site 2 Position")
     ax1.set_title(f"Epistatic Co-mutation Network ({len(pts)} pairs)", fontweight="bold")
 
-    ax2.hist(df_pairs["R_squared"], bins=20, color="#E74C3C", edgecolor="white")
+    ax2.hist(df_pairs["R_squared"], bins=20, color=VERM, edgecolor="white")
     ax2.axvline(0.5, color="black", linestyle="--", label="threshold")
     ax2.set_xlabel("R²"); ax2.set_ylabel("Count")
     ax2.set_title("R² Distribution", fontweight="bold"); ax2.legend()
@@ -961,7 +1178,7 @@ def plot_ld_triangle_heatmap(df_pairs, site_labels, out_path, min_r2=0.5):
               "        (r² 数据已完整存于 epistatic_co_mutations.tsv 与网络图)。")
         return
     fig, ax = plt.subplots(figsize=(max(6, n * 0.45), max(5, n * 0.38)))
-    im = ax.imshow(Rm, cmap="YlOrRd", vmin=min_r2, vmax=1.0, aspect="equal")
+    im = ax.imshow(Rm, cmap=CMAP_SEQ_R, vmin=min_r2, vmax=1.0, aspect="equal")
     for k in range(n):
         ax.axhline(k - 0.5, color="white", lw=0.9)
         ax.axvline(k - 0.5, color="white", lw=0.9)
@@ -1013,7 +1230,7 @@ def plot_ld_diamond_heatmap(df_pairs, site_labels, out_path, min_r2=0.5):
         i, j = idx[r["Site_1"]], idx[r["Site_2"]]
         v = float(r["R_squared"])
         R[i, j] = R[j, i] = v
-    cmap = plt.get_cmap("YlOrRd")
+    cmap = plt.get_cmap(CMAP_SEQ_R)
     norm = Normalize(vmin=min_r2, vmax=1.0)
     fig, ax = plt.subplots(figsize=(max(6, n * 0.45), max(4, n * 0.30)))
     for i in range(n):
@@ -1072,7 +1289,7 @@ def plot_gene_variant_links(positions, site_labels, gene_spans, out_path, tag=""
         gridspec_kw={"height_ratios": [1.0, 1.5], "hspace": 0.10})
     # ---- 基因面板 (同一骨架线, CDS 块) ----
     axg.hlines(0, lo, hi, color="black", lw=1.4, zorder=1)
-    colors = ["#4DBEEE", "#E69F00", "#009E73", "#D55E00", "#56B4E9", "#CC79A7"]
+    colors = okabe_cycle(6)
     for k, g in enumerate(gnames):
         s, e = gene_spans[g]
         axg.add_patch(Rectangle((s, -0.13), max(1, e - s), 0.26,
@@ -1090,7 +1307,7 @@ def plot_gene_variant_links(positions, site_labels, gene_spans, out_path, tag=""
         axg.spines[side].set_visible(False)
     # ---- 位点面板 + 连线 ----
     for i, p in enumerate(positions):
-        axv.vlines(p, 0, 0.85, color="#D55E00", lw=1.0, zorder=3)
+        axv.vlines(p, 0, 0.85, color=VERM, lw=1.0, zorder=3)
         y_t = 0.95 + 0.08 * (i % 6)
         con = ConnectionPatch(xyA=(p, y_t), coordsA=axv.transData,
                               xyB=(p, -0.28), coordsB=axg.transData,
@@ -1218,14 +1435,14 @@ def plot_popgen_windows(df_popgen, out_path):
 
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 8), sharex=True)
 
-    ax1.plot(df["BIN_MID"], df["PI"], color="#e74c3c", linewidth=1.5)
-    ax1.fill_between(df["BIN_MID"], 0, df["PI"], color="#e74c3c", alpha=0.15)
+    ax1.plot(df["BIN_MID"], df["PI"], color=VERM, linewidth=1.5)
+    ax1.fill_between(df["BIN_MID"], 0, df["PI"], color=VERM, alpha=0.15)
     ax1.set_ylabel("Nucleotide Diversity (π)", fontsize=12, fontweight="bold")
     ax1.set_title("Sliding Window Population Genetics", fontsize=14, fontweight="bold")
     ax1.grid(True, linestyle="--", alpha=0.4)
 
-    ax2.plot(df["BIN_MID"], df["TAJIMA_D"], color="#2980b9", linewidth=1.5)
-    ax2.fill_between(df["BIN_MID"], 0, df["TAJIMA_D"], color="#2980b9", alpha=0.15)
+    ax2.plot(df["BIN_MID"], df["TAJIMA_D"], color=BLUE, linewidth=1.5)
+    ax2.fill_between(df["BIN_MID"], 0, df["TAJIMA_D"], color=BLUE, alpha=0.15)
     ax2.axhline(y=0, color="black", linestyle="--", linewidth=1, alpha=0.6)
     ax2.set_ylabel("Tajima's D", fontsize=12, fontweight="bold")
     ax2.set_xlabel("Genomic Position (bp)", fontsize=12, fontweight="bold")
@@ -1410,7 +1627,7 @@ def plot_per_gene_variants(gene_df, out_path):
         return
 
     plt.figure(figsize=(8, max(4, len(df) * 0.3)))
-    colors = ["#e74c3c" if row["mean_af"] > 0.5 else "#3498db" for _, row in df.iterrows()]
+    colors = [VERM if row["mean_af"] > 0.5 else BLUE for _, row in df.iterrows()]
     plt.barh(df["gene"], df["n_sites"], color=colors, edgecolor="black")
 
     for i, (_, row) in enumerate(df.iterrows()):
@@ -1446,15 +1663,15 @@ def plot_popgen_with_genes(df_popgen, gene_spans, out_path):
                                          sharex=True)
 
     # Panel A: π
-    ax1.plot(df["BIN_MID"], df["PI"], color="#e74c3c", linewidth=1.2)
-    ax1.fill_between(df["BIN_MID"], 0, df["PI"], color="#e74c3c", alpha=0.12)
+    ax1.plot(df["BIN_MID"], df["PI"], color=VERM, linewidth=1.2)
+    ax1.fill_between(df["BIN_MID"], 0, df["PI"], color=VERM, alpha=0.12)
     ax1.set_ylabel("Nucleotide Diversity (π)", fontsize=11, fontweight="bold")
     ax1.set_title("Sliding Window Population Genetics", fontsize=14, fontweight="bold")
     ax1.grid(True, linestyle="--", alpha=0.3)
 
     # Panel B: Tajima's D
-    ax2.plot(df["BIN_MID"], df["TAJIMA_D"], color="#2980b9", linewidth=1.2)
-    ax2.fill_between(df["BIN_MID"], 0, df["TAJIMA_D"], color="#2980b9", alpha=0.12)
+    ax2.plot(df["BIN_MID"], df["TAJIMA_D"], color=BLUE, linewidth=1.2)
+    ax2.fill_between(df["BIN_MID"], 0, df["TAJIMA_D"], color=BLUE, alpha=0.12)
     ax2.axhline(y=0, color="black", linestyle="--", linewidth=1, alpha=0.5)
     ax2.set_ylabel("Tajima's D", fontsize=11, fontweight="bold")
     ax2.grid(True, linestyle="--", alpha=0.3)
@@ -1469,8 +1686,7 @@ def plot_popgen_with_genes(df_popgen, gene_spans, out_path):
     ax3.spines['left'].set_visible(False)
     ax3.spines['right'].set_visible(False)
 
-    gene_colors = ['#FF9F1C', '#2ECC71', '#3498DB', '#9B59B6', '#E74C3C', '#F1C40F',
-                   '#1ABC9C', '#E67E22', '#2980B9', '#8E44AD']
+    gene_colors = okabe_cycle(7)
     sorted_genes = sorted(gene_spans.items(), key=lambda x: x[1][0])
 
     for gi, (gname, (gs, ge)) in enumerate(sorted_genes):
@@ -1523,7 +1739,7 @@ def plot_annotated_snp_heatmap(M, site_labels, site_annotations, samples, out_pa
     df = df.fillna(0.5)  # missing → grey
 
     # 行聚类
-    g = sns.clustermap(df, cmap="RdBu_r", center=0.5,
+    g = sns.clustermap(df, cmap=CMAP_DIV, center=0.5,
                        row_cluster=True, col_cluster=False,
                        figsize=(max(12, len(heatmap_labels) * 0.2),
                                 max(8, len(samples) * 0.3)),
@@ -1914,14 +2130,21 @@ def main():
                                 if r_val is not None:
                                     print(f"[Mantel] r={r_val:.4f}, p={p_val:.6f} (permutations={n_perm}), N={len(common_samples)}")
                                     mantel_out = os.path.join(stats_dir, "mantel_test.tsv")
+                                    iu = np.triu_indices(len(common_samples), k=1)
+                                    g_flat = D_gen_sub[iu]; e_flat = D_geo_sub[iu]
+                                    mask = np.isfinite(g_flat) & np.isfinite(e_flat)
+                                    # 退化保护: r 无定义 / 有效配对不足 / 任一侧零方差 -> p 值无意义,
+                                    # 不得呈现为显著 IBD (实测: 遗传距离全 0 时 r=nan 却仍报 p=0.0001)
+                                    _degenerate, _why = mantel_degeneracy(r_val, g_flat, e_flat, mask)
                                     with open(mantel_out, "w") as mf:
                                         mf.write(f"r\tp_value\tpermutations\tn_samples\tn_pairs\n")
-                                        iu = np.triu_indices(len(common_samples), k=1)
-                                        g_flat = D_gen_sub[iu]; e_flat = D_geo_sub[iu]
-                                        mask = np.isfinite(g_flat) & np.isfinite(e_flat)
-                                        mf.write(f"{r_val:.6f}\t{p_val:.6f}\t{n_perm}\t{len(common_samples)}\t{mask.sum()}\n")
-                                    # scatter plot
-                                    if HAS_VIZ:
+                                        if _degenerate:
+                                            mf.write(f"nan\tnan\t{n_perm}\t{len(common_samples)}\t{mask.sum()}\n")
+                                        else:
+                                            mf.write(f"{r_val:.6f}\t{p_val:.6f}\t{n_perm}\t{len(common_samples)}\t{mask.sum()}\n")
+                                    if _degenerate:
+                                        print(f"[Mantel] skipped: degenerate distance matrix ({_why}) -> r undefined, 不输出 IBD 图")
+                                    elif HAS_VIZ:
                                         plot_mantel(g_flat[mask], e_flat[mask], r_val, p_val,
                                                     os.path.join(fig_dir, "mantel_ibd.png"))
                                 else:

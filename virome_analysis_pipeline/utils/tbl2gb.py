@@ -119,9 +119,13 @@ def build_gb_record(contig_id, seq, features, taxonomy_info=None):
 
     for feat_data in features:
         start, end = feat_data['location']
-        # 五列表规范: 互补链特征用"反转区间"(列1>列2)表示 → 解析出 start>end 即负链
+        # 五列表规范: 互补链特征用"反转区间"(列1>列2)表示 → 解析出 start>end 即负链。
+        # 解析时列1(-1 后为 start)在负链情形下其实是 1-based 终点, 故负链需重新归一:
+        #   start=E-1, end=S  (E>S, 1-based 闭区间 [S, E])
+        #   正确的 0-based 半开区间 = [S-1, E) = [min(start,end)-1, max(start,end)+1)
+        # 原实现 FeatureLocation(end, start) 得 [S, E-1): 两端各缩 1bp, 负链 CDS 全部错位 (P1-20)。
         if start > end:
-            location = FeatureLocation(end, start, strand=-1)
+            location = FeatureLocation(min(start, end) - 1, max(start, end) + 1, strand=-1)
         else:
             location = FeatureLocation(start, end, strand=1)
         qualifiers = {k: v for k, v in feat_data['qualifiers'].items()}

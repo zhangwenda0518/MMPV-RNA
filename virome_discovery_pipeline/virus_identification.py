@@ -444,6 +444,37 @@ def get_file_list(args):
                     tasks.append((filepath, extract_sample_name(filepath, args)))
     return tasks
 
+def merge_tasks_by_sample(tasks, args):
+    """同样本多个 contig 文件 (多组装工具) 合并为单任务 (P2-20c)。
+
+    原实现每文件一个任务: 同名样本的多个任务并发写同一 output/{sample}/ 目录,
+    产生写竞态 (consolidate 重写 all.candidate.fasta / 后置过滤 / done flag 互相覆盖,
+    且二次 consolidate 会覆写掉另一组装器 contig 的候选序列)。合并输入后每样本只保留
+    一个任务, 工具结果 union 口径不变 (多组装 contig 同文件鉴定后一次 union)。
+    """
+    by_sample = {}
+    for fp, smp in tasks:
+        by_sample.setdefault(smp, []).append(fp)
+    if all(len(fps) == 1 for fps in by_sample.values()):
+        return tasks
+    if args.dry_run:
+        return tasks  # dry-run 不落盘
+    merged_dir = os.path.join(args.output, "_merged_inputs")
+    os.makedirs(merged_dir, exist_ok=True)
+    merged_tasks = []
+    for smp, fps in by_sample.items():
+        if len(fps) == 1:
+            merged_tasks.append((fps[0], smp))
+            continue
+        mpath = os.path.join(merged_dir, f"{smp}{args.extension}")
+        with open(mpath, 'w') as out:
+            for fp in fps:
+                with open(fp) as fin:
+                    out.write(fin.read())
+        safe_print(f"  [{smp}] 多组装输入合并: {len(fps)} 文件 → {mpath}")
+        merged_tasks.append((mpath, smp))
+    return merged_tasks
+
 def run_seqkit_filtering(input_fasta, base_dir, sample, threads, dry_run=False):
     """SeqKit 长度拆分"""
     virus_out = os.path.join(base_dir, f"{sample}.virus.candidate.fasta")
@@ -486,6 +517,11 @@ def consolidate_virus_results(input_original, result_files, sample, base_dir):
         except Exception as e:
             safe_print(f"  [{sample}] consolidate FASTA failed: {e}, falling back to seqkit")
             os.system(f"seqkit grep -f '{all_ids_file}' '{input_original}' -w 0 -o '{final_fasta}' 2>&1")
+    else:
+        # 合并结果为空 → 删除上一轮 stale 候选 fasta (P2-20a): --force 重跑后
+        # 若本轮无任何命中, 旧 all.candidate.fasta 仍留在目录里会被下游 (filter/COBRA)
+        # 误消费; all.result.id 仍照写空文件标记"本轮已产出"。
+        Path(final_fasta).unlink(missing_ok=True)
 
 def read_virus_taxid_file(path):
     t = set()
@@ -1336,24 +1372,50 @@ def main():
     print("🚀 所有前置检查通过，开始执行鉴定流水线...")
     print("-" * 70)
 
+    # 同样本多组装输入去重: 合并为单任务, 避免并发写同一 output/{sample}/ 目录 (P2-20c)
+    tasks = merge_tasks_by_sample(tasks, args)
+
+    # 逐任务失败收集 (P1-5a: 全部失败 → 非零退出; 部分失败仅 warning)
+    failed_samples = []
+
     if args.jobs > 1 and len(tasks) > 1:
         with ProcessPoolExecutor(max_workers=args.jobs) as executor:
             future_to_sample = {executor.submit(process_sample, fp, smp, args): smp for fp, smp in tasks}
             with tqdm(total=len(tasks), desc="总进度", colour="cyan") as pbar:
                 for future in as_completed(future_to_sample):
+                    smp = future_to_sample[future]
                     try:
-                        _, _, msg = future.result()
+                        _, ok, msg = future.result()
                         pbar.set_postfix_str(msg)
-                    except Exception as e: safe_print(f"\n❌ 任务异常: {e}")
+                        if not ok:
+                            failed_samples.append(smp)
+                    except Exception as e:
+                        safe_print(f"\n❌ 任务异常: {e}")
+                        failed_samples.append(smp)
                     pbar.update(1)
     else:
         for fp, smp in tqdm(tasks, desc="总进度", colour="cyan"):
-            process_sample(fp, smp, args)
+            try:
+                _, ok, _msg = process_sample(fp, smp, args)
+                if not ok:
+                    failed_samples.append(smp)
+            except Exception as e:
+                # 串行分支补 try/except: 单样本失败不中断整批 (与并行分支同口径, P2-20b)
+                safe_print(f"\n❌ 任务异常: {e}")
+                failed_samples.append(smp)
     
     if not args.skip_plots:
         generate_final_summary_plots(args.output)
 
     save_resource_summary(args.output)
+
+    # P1-5a: 本轮样本全部失败 → 非零退出 (virome_pipeline main 循环记入 failed_stages
+    # 且不写 .ok); 部分失败维持 warning, 资源汇总照写 (已完成于上方)。
+    if failed_samples:
+        safe_print(f"\n⚠️ 失败样本 ({len(failed_samples)}/{len(tasks)}): {', '.join(failed_samples)}")
+    if failed_samples and len(failed_samples) >= len(tasks):
+        safe_print("❌ 全部样本失败, 以非零状态退出")
+        sys.exit(1)
 
     print(f"\n✅ 流水线运行结束，结果已保存在: {args.output}")
 

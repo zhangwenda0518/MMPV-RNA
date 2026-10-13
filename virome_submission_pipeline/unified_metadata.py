@@ -37,6 +37,7 @@ unified_metadata.py — 统一元数据模板生成器 v1.0
 """
 
 import argparse
+import hashlib
 import os
 import sys
 import csv
@@ -176,14 +177,12 @@ def load_metadata(meta_file, log=None):
         if not run or run.lower() in ('nan', 'not_provided', ''):
             continue
 
-        # Location 可能是空的 (GSA 数据), 用 Source + CenterName 推断
+        # Location 可能是空的 (GSA 数据): 留空, 不臆造
+        # (机构 (CenterName) ≠ 采样地 —— 曾用 'Beijing'/'China' 字样把机构推成
+        #  采样国 'China', 属臆造来源, 已删除; CenterName 仍作为 collected_by 使用)
         loc = str(row.get('Location', '')) if pd.notna(row.get('Location')) else ''
-        if not loc or loc.lower() in ('nan', 'not_provided', ''):
-            center = str(row.get('CenterName', ''))
-            if 'Beijing' in center or 'China' in center:
-                loc = 'China'
-            elif center and center.lower() not in ('nan', 'not_provided', ''):
-                loc = center
+        if loc.lower() in ('nan', 'not_provided'):
+            loc = ''
 
         lookup[run] = {
             'collection_date': str(row.get('CollectionDate', '')) if pd.notna(row.get('CollectionDate')) else '',
@@ -195,6 +194,9 @@ def load_metadata(meta_file, log=None):
             'tissue': str(row.get('Tissue', '')) if pd.notna(row.get('Tissue')) else '',
             'source': str(row.get('Source', '')) if pd.notna(row.get('Source')) else '',
             'center': str(row.get('CenterName', '')) if pd.notna(row.get('CenterName')) else '',
+            # Core14 额外两列: generate_metadata_csv 读 age_stage (→ dev_stage) 与 taxid (→ samp_taxon)
+            'age_stage': str(row.get('Age_GrowthStage', '')) if pd.notna(row.get('Age_GrowthStage')) else '',
+            'taxid': str(row.get('TaxID', '')) if pd.notna(row.get('TaxID')) else '',
         }
 
     if log:
@@ -314,6 +316,7 @@ def generate_metadata_csv(seqs, meta_lookup, species_map, args, log):
     sub_bp = args.submission_bioproject or args.bioproject or ''
     sub_bs = args.submission_biosample_prefix or ''
 
+    isolate_seen = {}   # isolate → (taxonomy, sra); 同组共享同一 isolate (分段归组)
     rows = []
     for s in seqs:
         contig = s['contig']
@@ -365,7 +368,13 @@ def generate_metadata_csv(seqs, meta_lookup, species_map, args, log):
             note_parts.append(f"original_BioSample={ref_bs}")
         note = '; '.join(note_parts) if note_parts else ''
 
+        # 分段病毒归组: 同 (物种, 样本) 的多条 contig (各片段) 共享同一 isolate —
+        # NCBI/suvtk 按 Isolate 归组分段病毒; 不同组若清洗后撞名才加短哈希消歧
         isolate = f"{sanitize_filename(taxonomy)}_{sra}"
+        group = (taxonomy, sra)
+        if isolate_seen.get(isolate, group) != group:
+            isolate = f"{isolate}_{hashlib.md5(f'{taxonomy}|{sra}'.encode('utf-8')).hexdigest()[:6]}"
+        isolate_seen[isolate] = group
 
         # ── Lat_Lon: 只接受 --lat-lon 或已知城市匹配; 匹配不到留空占位并告警 ──
         latlon_auto = geo_to_latlon(geo_loc)
@@ -559,11 +568,28 @@ def create_authorset_sbt(config_dict, out_dir, metadata_df, log):
         f.write(f"        country \"{addr.get('Country', 'Country')}\",\n")
         f.write(f"        street \"{addr.get('Street', '')}\"\n")
         f.write("      }\n")
-        f.write("    },\n")
-        f.write(f"    title \"{config_dict.get('Publication_Title', 'Viral genome sequencing and assembly')}\",\n")
-        f.write(f"    status \"{config_dict.get('Publication_Status', 'Unpublished')}\"\n")
-        f.write("  }\n")
+        f.write("    }\n")
+        f.write("  },\n")
+        # cit 块内不接受 title/status (ASN.1 加载失败, table2asn 实测 rc=1);
+        # 标题走 Seqdesc ::= pub, 与 NCBI 官方 .sbt 模板/平台 store.generate_sbt 同构
+        f.write("  subtype new\n")
         f.write("}\n")
+        title_text = str(config_dict.get('Publication_Title',
+                                         'Viral genome sequencing and assembly'))
+        first_last, first_first = (author_list[0] if author_list else ('Zhang', 'Wenda'))
+        email = str((config_dict.get('Submitter') or {}).get('Email', '') or '')
+        f.write('Seqdesc ::= pub {\n  pub {\n    gen {\n      cit "unpublished",\n')
+        f.write('      authors {\n        names std {\n')
+        f.write('          { name name { last "%s", first "%s", middle "", '
+                'initials "", suffix "", title "" } } }\n' % (first_last, first_first))
+        f.write('      },\n      title "%s" } } }\n' % title_text)
+        if email:
+            f.write('Seqdesc ::= user { type str "Submission",\n'
+                    '  data { { label str "AdditionalComment", data str "ALT EMAIL:%s" } } }\n'
+                    % email)
+        f.write('Seqdesc ::= user { type str "Submission",\n'
+                '  data { { label str "AdditionalComment", data str "Submission Title:%s" } } }\n'
+                % title_text)
     log.info("  → %s", sbt_path)
 
 
@@ -599,11 +625,11 @@ def load_config(config_path):
     if config_path and os.path.exists(config_path):
         if config_path.endswith('.yaml') or config_path.endswith('.yml'):
             import yaml
-            with open(config_path) as f:
+            with open(config_path, encoding='utf-8') as f:
                 user_config = yaml.safe_load(f)
         elif config_path.endswith('.json'):
             import json
-            with open(config_path) as f:
+            with open(config_path, encoding='utf-8') as f:
                 user_config = json.load(f)
         else:
             return config
@@ -726,7 +752,7 @@ def export_miuvig_assembly(out_dir, log, assembler, sequencer, enrichment,
             seen.add(k)
             unique_fields.append((k, v))
 
-    with open(miuvig_path, 'w') as f:
+    with open(miuvig_path, 'w', encoding='utf-8') as f:
         f.write("MIUVIG_parameter\tvalue\n")
         n_written, n_omitted = 0, 0
         ph_re = re.compile(PLACEHOLDER_RE)
@@ -742,7 +768,7 @@ def export_miuvig_assembly(out_dir, log, assembler, sequencer, enrichment,
              n_written, n_omitted)
 
     asm_path = Path(out_dir) / "assembly.tsv"
-    with open(asm_path, 'w') as f:
+    with open(asm_path, 'w', encoding='utf-8') as f:
         f.write("Assembly_parameter\tvalue\n")
         f.write("StructuredCommentPrefix\tAssembly-Data\n")
         f.write(f"Assembly Method\t{assembler}\n")
@@ -772,27 +798,28 @@ def validate_csv(df, out_dir, log):
             check_cols.append(c)
     for col in check_cols:
         if col not in df.columns:
-            issues.append(f"  [MISSING] 缺少必填列: {col}")
+            issues.append(f"  [MISSING] required column not found: {col}")
             continue
         missing = df[col].isna() | (df[col].astype(str).str.strip() == '') | \
                   df[col].astype(str).str.contains(PLACEHOLDER_RE, regex=True)
         if missing.any():
             seqs = df.loc[missing, 'sequence_name'].tolist()
-            issues.append(f"  [EMPTY] {col}: {len(seqs)} 条序列未填 ({seqs[:3]}...)")
+            issues.append(f"  [EMPTY] {col}: {len(seqs)} sequence(s) missing a value ({seqs[:3]}...)")
 
-    with open(report_path, 'w') as f:
-        f.write("元数据验证报告\n")
-        f.write(f"生成: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-        f.write(f"总序列: {len(df)}\n")
-        f.write(f"必填列: {len(REQUIRED_COLS)}\n")
+    # encoding 必标: 正文含 ⚠️/✓ 符号, Windows 默认 cp936 会 UnicodeEncodeError
+    with open(report_path, 'w', encoding='utf-8') as f:
+        f.write("Metadata Validation Report\n")
+        f.write(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+        f.write(f"Total sequences: {len(df)}\n")
+        f.write(f"Required columns: {len(REQUIRED_COLS)}\n")
         f.write("─" * 50 + "\n")
         if issues:
-            f.write(f"⚠️  发现 {len(issues)} 个问题:\n")
+            f.write(f"⚠️  {len(issues)} issue(s) found:\n")
             for i in issues:
                 f.write(i + "\n")
-            f.write("\n提交前请修复以上问题!\n")
+            f.write("\nFix the issues above before submission!\n")
         else:
-            f.write("✓ 所有必填字段已填写, 可以提交\n")
+            f.write("✓ All required fields filled — ready to submit\n")
 
     if issues:
         log.warning("  验证: %d 个问题 → %s", len(issues), report_path)
@@ -860,8 +887,12 @@ def main():
 
     # 加载数据
     seqs = load_taxonomy(args.taxonomy)
-    meta_lookup = load_metadata(args.metadata) if args.metadata else {}
-    log.info("  序列: %d, 元数据映射: %d", len(seqs), len(meta_lookup))
+    # --reference-metadata: 编排器 (submission_pipeline) 传 Core14.tsv 时作为元数据源
+    # (旧版只读 args.metadata, 该参数是死参, 自动回填静默失效)
+    meta_src = args.metadata or getattr(args, 'ref_meta', None)
+    meta_lookup = load_metadata(meta_src) if meta_src else {}
+    log.info("  序列: %d, 元数据映射: %d (源: %s)",
+             len(seqs), len(meta_lookup), meta_src or '(无)')
 
     # 生成统一 CSV
     species_map = {}
@@ -882,6 +913,39 @@ def main():
 
     df = generate_metadata_csv(seqs, meta_lookup, species_map, args, log)
     csv_path = out_dir / "unified_metadata.csv"
+    if csv_path.exists():
+        # 官方指引是 "编辑 unified_metadata.csv 后重跑" — 重跑不得静默覆盖用户编辑:
+        # 备份旧表, 并把旧表中非占位符的单元格回填到新表对应行的空/占位符格
+        import shutil
+        _bak = csv_path.with_name(csv_path.name + '.bak')
+        shutil.copy2(csv_path, _bak)
+        log.info("  旧表已备份 → %s (重跑不覆盖已编辑的值)", _bak.name)
+        try:
+            old = pd.read_csv(csv_path, encoding='utf-8-sig', dtype=str)
+        except Exception as _e:
+            log.warning("  旧表读取失败 (%s), 按全新生成处理", _e)
+            old = None
+        if old is not None and not old.empty:
+            keycol = 'sequence_name' if 'sequence_name' in old.columns else old.columns[0]
+            newkey = 'sequence_name' if 'sequence_name' in df.columns else df.columns[0]
+            oldmap = {str(r[keycol]).strip(): r for _, r in old.iterrows()}
+            ph_re = re.compile(r'XXXX|YYYY|PRJNAXXXX|SAMNXXXXXXXX|Country:Region|'
+                               r'Author list|Last,\s*First|^nan$', re.I)
+            n_keep = 0
+            for idx in df.index:
+                o = oldmap.get(str(df.at[idx, newkey]).strip())
+                if o is None:
+                    continue
+                for col in df.columns:
+                    if col not in o.index:
+                        continue
+                    cur = '' if pd.isna(df.at[idx, col]) else str(df.at[idx, col])
+                    prev = '' if pd.isna(o[col]) else str(o[col])
+                    if (not cur.strip() or ph_re.search(cur)) and prev.strip() \
+                            and not ph_re.search(prev):
+                        df.at[idx, col] = prev
+                        n_keep += 1
+            log.info("  从旧表回填用户编辑: %d 个单元格", n_keep)
     df.to_csv(csv_path, index=False, encoding='utf-8-sig')
     log.info("  → %s (%d 行 × %d 列)", csv_path, len(df), len(df.columns))
 

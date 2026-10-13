@@ -421,11 +421,10 @@ class TestReadPairMatching(unittest.TestCase):
 class TestFilterAdjudicationEnd2End(unittest.TestCase):
     """adjudicate_sample 三场景回归 (新主链 filter→graph, 合成布局)。"""
 
-    def _mk_layout(self, td):
+    def _mk_layout(self, td, with_cdd=True):
         out_root = td / "d_graph"
         sdir = td / "d_filter" / "ERR1"
         (sdir / "uniprot" / "diamond_uniprot").mkdir(parents=True, exist_ok=True)
-        (sdir / "cdd").mkdir(exist_ok=True)
         (out_root / "ERR1").mkdir(parents=True, exist_ok=True)
         # graph verdicts
         (out_root / "ERR1" / "ERR1.graph_verdict.tsv").write_text(
@@ -439,8 +438,10 @@ class TestFilterAdjudicationEnd2End(unittest.TestCase):
         # filter 最终链 (uniprot 真实文件: a,b,c; b 为零证据, d 已被丢)
         chain = sdir / "ERR1.virus.candidate_filtered.fasta"
         chain.write_text(">a\nAC\n>b\nAC\n>c\nAC\n")
-        (sdir / "cdd" / "cdd_calls.tsv").write_text(
-            "contig\tcall\na\tviral\nb\tunclassified\nc\tunclassified\nd\tnon_viral_plant\n")
+        if with_cdd:
+            (sdir / "cdd").mkdir(exist_ok=True)
+            (sdir / "cdd" / "cdd_calls.tsv").write_text(
+                "contig\tcall\na\tviral\nb\tunclassified\nc\tunclassified\nd\tnon_viral_plant\n")
         (sdir / "uniprot" / "diamond_uniprot" / "blastx.tsv").write_text("a\tvirus\t100\n")
         return out_root, sdir, ident
 
@@ -487,6 +488,55 @@ class TestFilterAdjudicationEnd2End(unittest.TestCase):
             fin = out_root / "ERR1" / "ERR1.virus.candidate.final.fasta"
             self.assertEqual([l[1:] for l in fin.read_text().splitlines()
                               if l.startswith(">")], ["a", "c"])
+
+    # ── P1-6: CDD 层移除后 demote 数据源回退 uniprot unclassified 清单 ──
+
+    def test_demote_from_uniprot_unclassified_fallback(self):
+        """cdd_calls.tsv 缺失 (CDD 层移除后的常态) 时必须回退读 uniprot
+        unclassified 清单 (merged 拆分形态: {sv}/uniprot/uniprot.unclassified.id),
+        demote 语义与旧 cdd 源完全一致 — 修复前该文件源恒缺 → demote 集恒空。"""
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            out_root, sdir, ident = self._mk_layout(Path(td), with_cdd=False)
+            (sdir / "uniprot" / "uniprot.unclassified.id").write_text("b\nc\n")
+            r = gp.adjudicate_sample("ERR1", str(out_root), str(sdir.parent),
+                                     str(ident))
+            self.assertEqual(r, (3, 1, 1))           # b 降级 (零证据), d 救回
+            mirror = sdir.parent / "candidates" / "ERR1" / \
+                "ERR1_virus.all.candidate.fasta"
+            self.assertEqual([l[1:] for l in mirror.read_text().splitlines()
+                              if l.startswith(">")], ["a", "c", "d"])
+            audit = out_root / "ERR1" / "ERR1.graph_adjust_calls.tsv"
+            self.assertIn("b\tunclassified\tno\tgraph_nonviral\tdemoted",
+                          audit.read_text())
+
+    def test_demote_from_uniprot_unclassified_single_sample_name(self):
+        """单样本直跑形态 — uniprot 清单名为 {base}_uniprot.unclassified.id
+        (base≈{sv}_virus.all.candidate), 也须被回退源读到。"""
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            out_root, sdir, ident = self._mk_layout(Path(td), with_cdd=False)
+            (sdir / "uniprot" /
+             "ERR1_virus.all.candidate_uniprot.unclassified.id").write_text("b\n")
+            r = gp.adjudicate_sample("ERR1", str(out_root), str(sdir.parent),
+                                     str(ident))
+            self.assertEqual(r, (3, 1, 1))           # b 降级, d 救回
+
+    def test_cdd_source_takes_precedence_when_present(self):
+        """旧数据兼容: cdd_calls.tsv 存在时优先于 uniprot 清单 —
+        cdd 判 viral 的 b 即使出现在 uniprot unclassified 清单里也不得被 demote。"""
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            out_root, sdir, ident = self._mk_layout(Path(td))
+            # cdd 源: b 判 viral (非 unclassified); uniprot 清单却列了 a,b
+            (sdir / "cdd" / "cdd_calls.tsv").write_text(
+                "contig\tcall\na\tviral\nb\tviral\nc\tunclassified\nd\tnon_viral_plant\n")
+            (sdir / "uniprot" / "uniprot.unclassified.id").write_text("a\nb\n")
+            r = gp.adjudicate_sample("ERR1", str(out_root), str(sdir.parent),
+                                     str(ident))
+            # cdd 优先: b 不在 unclassified → demote 不触发, 仅 d 救回
+            # (若误读 uniprot 源会得 (3,1,1), 该断言可判别优先级)
+            self.assertEqual(r, (4, 0, 1))
 
 
 if __name__ == "__main__":

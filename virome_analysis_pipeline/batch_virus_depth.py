@@ -774,6 +774,9 @@ class UnifiedVirusPipeline:
 
     def run_pipeline(self):
         pipeline_start_time = time.time()
+        # [P2-24e] 本轮进程启动时间戳: mtime 早于此的 batch_*.parquet 均视为上一轮残留
+        # (批次编号↔样本的对应关系依赖本轮 samples 顺序, 旧残留复用会把陈旧样本混进汇总)
+        run_start_ts = pipeline_start_time
         self.logger.info("=" * 60)
         self.logger.info("🚀 V42.4 Smart-Index & Resource Monitor Pipeline 启动")
         self.logger.info("=" * 60)
@@ -783,8 +786,15 @@ class UnifiedVirusPipeline:
         
         for i, batch in enumerate(batches):
             batch_idx = i + 1; batch_file = self.output_dir / 'batches' / f'batch_{batch_idx:04d}.parquet'
-            if self.args.resume and batch_file.exists(): 
-                self.logger.info(f"⏭️ 批次断点触发: [批次 {batch_idx}/{len(batches)}] 已完成，整体跳过..."); continue
+            if self.args.resume and batch_file.exists():
+                if batch_file.stat().st_mtime >= run_start_ts:
+                    self.logger.info(f"⏭️ 批次断点触发: [批次 {batch_idx}/{len(batches)}] 已完成，整体跳过..."); continue
+                # [P2-24e] 残留旧文件不作断点依据 (样本列表可能已变): 删除后本批重算
+                self.logger.warning(f"⚠️ 批次 {batch_idx} 断点文件为上一轮残留 (mtime 早于本轮启动)，忽略并重算: {batch_file.name}")
+                try:
+                    batch_file.unlink()
+                except OSError as e:
+                    self.logger.warning(f"⚠️ 无法删除残留批次文件 {batch_file.name}: {e} (本批重算后覆盖写入)")
             
             self.logger.info(f"📦 开始计算 [批次 {batch_idx}/{len(batches)}] (内含 {len(batch)} 个样本)...")
             res_list = []
@@ -800,10 +810,23 @@ class UnifiedVirusPipeline:
                 else:
                     for future in as_completed(futures):
                         if (result := future.result()): res_list.extend(result)
-            pl.DataFrame(res_list, schema=METRICS_SCHEMA).write_parquet(batch_file) if res_list else pl.DataFrame(schema=METRICS_SCHEMA).write_parquet(batch_file)
+            # [P2-24e] 批次仅在非空且成功时写 parquet (原实现 else 分支也写空表, 与"成功批次"无法区分)
+            if res_list:
+                pl.DataFrame(res_list, schema=METRICS_SCHEMA).write_parquet(batch_file)
+            else:
+                self.logger.warning(f"⚠️ 批次 {batch_idx} 无有效结果 (res_list 为空)，不写 {batch_file.name}")
             
         self.logger.info("🧩 所有批次处理完成，正在合并数据并执行分类学与全局丰度重整...")
-        all_batch_files = list((self.output_dir / 'batches').glob('batch_*.parquet'))
+        # [P2-24e] 汇总 concat 前清理上一轮残留 (如样本变少后遗留的高编号批次), 防陈旧样本混入汇总
+        _batches_dir = self.output_dir / 'batches'
+        for _stale in sorted(_batches_dir.glob('batch_*.parquet')):
+            try:
+                if _stale.stat().st_mtime < run_start_ts:
+                    self.logger.warning(f"🧹 清理上一轮残留批次: {_stale.name} (mtime 早于本轮启动)")
+                    _stale.unlink()
+            except OSError:
+                pass
+        all_batch_files = list(_batches_dir.glob('batch_*.parquet'))
         if all_batch_files: self.summarize_results_polars(pl.concat([pl.read_parquet(f) for f in all_batch_files]))
         
         # 🟢 导出每个样本的资源消耗 TSV

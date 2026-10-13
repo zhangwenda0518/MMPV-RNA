@@ -5,14 +5,20 @@
 #   3. 剔除参考序列 (NC_/PV_/HM_ 等 accession, 不可提交)
 #   4. 序列 ID 加 lcl| 前缀 (table2asn 要求本地 ID 格式)
 #   5. 重跑 suvtk table2asn → submission.sqn
+import hashlib
 import os
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
 from datetime import datetime
 
 from Bio import SeqIO
+
+# bash 解析: Linux= /bin/bash; Windows(Git Bash) 经 shutil.which 找到 bash.exe。
+# Git 常装在带空格路径, 故用 [BASH, '-c', cmd] 列表式调用 (shell=True+executable 会断)。
+BASH = shutil.which('bash') or '/bin/bash'
 
 # 跨管线统一 I/O 布局 (mmpv_common/, 仓库根): ③ 输出目录名随 MMPV_IO_LAYOUT 解析
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -218,7 +224,10 @@ def process(name, out_root, meta_all):
         bp = md.get('BioProject', '')
         bs = md.get('BioSample', '')
         host = md.get('ScientificName', '') or HOST_MAP.get(name, 'plant')
-        iso = f'NXGQ{i:03d}'
+        # isolate = (物种, 样本) 组哈希: 同物种同样本的多条 contig (分段病毒各片段)
+        # 共享同一 isolate → NCBI/suvtk 按 Isolate 归组; 哈希与 FASTA 行序无关
+        # (修复旧 NXGQ### 顺序漂移), 跨数据集合并也不重名
+        iso = 'NXGQ' + hashlib.md5(f'{org}|{sra or r.id}'.encode('utf-8')).hexdigest()[:5].upper()
         src_lines.append('\t'.join([
             r.id, org, iso, date, geo, '', bp, bs, sra, '',
             'TRUE', 'plant virome', host]))
@@ -291,11 +300,16 @@ def process(name, out_root, meta_all):
     rewrite_sbt(sbt, name)
 
     # table2asn
-    r = subprocess.run(
-        f'cd {sv} && suvtk table2asn -i {sub}/id_norm/sequences_norm.fna '
-        f'-o {sv}/submission -s {sub}/id_norm/source_norm.src '
-        f'-f {sub}/id_norm/featuretable_norm.tbl -t {sbt} -c {sub}/id_norm/comments_norm.cmt',
-        shell=True, executable='/bin/bash', capture_output=True, text=True)
+    try:
+        r = subprocess.run(
+            [BASH, '-c',
+             f'cd {sv} && suvtk table2asn -i {sub}/id_norm/sequences_norm.fna '
+             f'-o {sv}/submission -s {sub}/id_norm/source_norm.src '
+             f'-f {sub}/id_norm/featuretable_norm.tbl -t {sbt} -c {sub}/id_norm/comments_norm.cmt'],
+            capture_output=True, text=True)
+    except OSError as e:
+        print(f'[{name}] ✗ 无法执行 table2asn (shell/bash 未找到: {e})')
+        return
     sqn = sv / 'submission.sqn'
     if sqn.exists() and sqn.stat().st_size > 0:
         print(f'[{name}] ✓ .sqn 生成 ({sqn.stat().st_size // 1024} KB) | 保留 {len(kept)} 条, '

@@ -5,7 +5,7 @@
 SDT Genus Matrix — ACVirus 结果驱动的属级全基因组相似度矩阵
 ===============================================================================
 适配无参考 GenBank 场景：
-  输入不是参考 GenBank + 序列目录，而是 09b_ACVirus_Analysis 的分类结果。
+  输入不是参考 GenBank + 序列目录，而是 09b_Analysis_Verify 的分类结果。
   用户 contigs 的属级归属直接取自 acvirus_classify/final_result_with_confidence.tsv，
   参考序列按 virus.tree.py 的抽样逻辑从 acvirus_db 取同属/同科代表。
 
@@ -212,7 +212,7 @@ def build_argparser():
                     "(no reference GenBank needed)",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     p.add_argument("--analysis_dir", required=True,
-                   help="09b_ACVirus_Analysis directory")
+                   help="09b_Analysis_Verify directory")
     p.add_argument("--genus", help="target genus (e.g. Cilevirus)")
     p.add_argument("--species", help="target species (lineage mode)")
     p.add_argument("--db", default=os.path.expanduser("~/database/virus-db/acvirus_db"),

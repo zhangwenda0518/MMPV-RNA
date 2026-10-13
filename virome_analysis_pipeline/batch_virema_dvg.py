@@ -506,6 +506,10 @@ class BatchViReMaPipeline:
                         fail += 1; logger.error(f"CRASH: {s}/{v} - {e}")
                     pbar.update(1); pbar.set_postfix_str(f"OK:{ok} FAIL:{fail}")
         logger.info(f"ViReMa: {ok} OK, {fail} failed")
+        # [P2-24h] 全部任务失败: 写 run.partial 标记 + 日志明示 (原实现静默继续, 阶段无从区分全败)
+        if fail and ok == 0:
+            logger.error(f"ViReMa: 全部 {fail} 个任务失败，本阶段未完成 (写 run.partial 标记)")
+            self._mark_partial(f"ViReMa: 0 OK, {fail} failed")
 
     def run_ditector(self):
         ditector_path = Path(self.args.virema_script).parent / "DI-tector_06.py"
@@ -536,6 +540,10 @@ class BatchViReMaPipeline:
                         fail += 1; logger.error(f"CRASH: {s}/{v} - {e}")
                     pbar.update(1); pbar.set_postfix_str(f"OK:{ok} FAIL:{fail}")
         logger.info(f"DI-tector: {ok} OK, {fail} failed")
+        # [P2-24h] 同上: 全失败写 run.partial 标记
+        if fail and ok == 0:
+            logger.error(f"DI-tector: 全部 {fail} 个任务失败，本阶段未完成 (写 run.partial 标记)")
+            self._mark_partial(f"DI-tector: 0 OK, {fail} failed")
 
     def run_arc_diagrams(self):
         """Generate arc diagrams + bar charts for each virus (from visualize.py)."""
@@ -561,20 +569,48 @@ class BatchViReMaPipeline:
             logger.warning("virema_summary_report.R not found, skipping Circos")
             return
 
-        logger.info("Running Circos report (R)...")
+        # [P2-24m] 平铺汇集防同名覆盖: 文件名已含 {sample}_{virus} 前缀的保持原名 (下游 R 脚本按名解析),
+        # 未含的补上所属 {sample}_{virus} 目录名前缀, 保证 all_gathered_beds 内唯一
+        # (无论 Rscript 是否可用都先汇集: 产物可留待手动跑 R)
         for pattern in ["bed_results/*.bed", "bed_results/*.bedgraph", "bed_results/*.txt"]:
             for f in self.d_results.rglob(pattern):
-                shutil.copy(f, self.d_all_beds / f.name)
+                tag = f.parent.parent.name
+                dst = self.d_all_beds / (f"{tag}_{f.name}" if tag and tag not in f.name else f.name)
+                shutil.copy(f, dst)
 
+        # [P2-24h] 预检 Rscript: 缺失时直接跳过 Circos 段 (原实现 subprocess 抛 FileNotFoundError
+        # 打断整个阶段, 已算完的 ViReMa 结果无法收尾)
+        if shutil.which("Rscript") is None:
+            logger.warning("Rscript not found in PATH, skipping Circos execution "
+                           f"(beds gathered at {self.d_all_beds}, 可手动跑 R)")
+            return
+
+        logger.info("Running Circos report (R)...")
         r_out = self.out / "Summary_Analysis_Report"
-        run_cmd(["Rscript", str(r_script), "-i", str(self.d_all_beds), "-o", str(r_out), "--auto_annotate"],
-                log_path=str(self.out / "r_summary_run.log"), check=False)
+        try:
+            run_cmd(["Rscript", str(r_script), "-i", str(self.d_all_beds), "-o", str(r_out), "--auto_annotate"],
+                    log_path=str(self.out / "r_summary_run.log"), check=False)
+        except FileNotFoundError:
+            # 双保险: which 通过但执行期仍缺文件 (损坏安装等)
+            logger.warning("Rscript execution failed (FileNotFoundError), skipping Circos report")
+            return
         logger.info(f"Circos report -> {r_out}")
+
+    def _mark_partial(self, msg: str):
+        """[P2-24h] 全部任务失败: 写 {dvg_dir}/run.partial 标记, 明示阶段未完整完成"""
+        try:
+            (self.out / "run.partial").write_text(msg + "\n", encoding="utf-8")
+        except OSError:
+            pass
 
 
 if __name__ == "__main__":
     if sys.platform == "win32":
-        import colorama; colorama.init()
+        # colorama 非声明依赖: 缺包时降级 (ANSI 颜色在 Windows 老终端可能不显示, 不影响功能)
+        try:
+            import colorama; colorama.init()
+        except ImportError:
+            pass
 
     parser = argparse.ArgumentParser(description="Batch ViReMa/DI-tector DVG Pipeline")
     parser.add_argument("-s", "--summary", required=True)

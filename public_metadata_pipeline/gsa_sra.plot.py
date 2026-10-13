@@ -34,8 +34,10 @@ import matplotlib as mpl
 # ==========================================
 mpl.rcParams['pdf.fonttype'] = 42
 mpl.rcParams['ps.fonttype'] = 42
-mpl.rcParams['font.sans-serif'] = ["Arial", "Helvetica", "DejaVu Sans", "sans-serif"]
+# CJK 字体置前 (机构/部位等类目含中文), 原西文字体保留作回退
+mpl.rcParams['font.sans-serif'] = ["Microsoft YaHei", "SimHei", "Arial", "Helvetica", "DejaVu Sans", "sans-serif"]
 mpl.rcParams['font.family'] = "sans-serif"
+mpl.rcParams['axes.unicode_minus'] = False
 mpl.rcParams['axes.spines.right'] = False
 mpl.rcParams['axes.spines.top'] = False
 
@@ -46,6 +48,29 @@ def clean_series(series):
 
 def wrap_labels(labels, width=35):
     return [textwrap.fill(str(label), width=width) for label in labels]
+
+def wrap_labels_capped(labels, width=26, max_lines=2, fontsize=10):
+    """行数封顶的标签包装：前 max_lines-1 行取整行，末行按词截断加 …。
+
+    2026-10-12 修复（与本地平台 landscape_plot 对拍发现）：C~F 面板把
+    机构名等长类目不换行直接放进 y 轴，tight_layout 会把整列宽度让给
+    单行标签，六个子图被压成 ~1.3in 小条（Panel A 刻度互叠、Panel B
+    环形图缩成小点）。注意不能用 shorten(width×max_lines) 预截——按词
+    折行的边界损耗仍可能折出第 3 行，必须按折行结果强制截断末行。
+    """
+    out = []
+    for s in labels:
+        s = str(s).strip() or '(unknown)'
+        lines = textwrap.wrap(s, width=width)
+        if len(lines) > max_lines:
+            kept = lines[:max_lines - 1]
+            rest = s[len(' '.join(kept)):].strip()
+            if len(rest) > width - 1:
+                rest = rest[:width - 2].rstrip() + '…'
+            lines = kept + [rest]
+        out.append('\n'.join(lines))
+    need_small = any(l.count('\n') >= max_lines for l in out)
+    return out, (fontsize - 1 if need_small else fontsize)
 
 def add_bar_labels(ax, values, is_horizontal=True):
     max_val = max(values) if len(values) > 0 else 1
@@ -70,9 +95,17 @@ def plot_sci_landscape(csv_path, output_dir="SCI_Figures_Output"):
     elif 'Organization_CenterName' not in df.columns:
         df['Organization_CenterName'] = pd.NA
 
+    # 必需列入口检查: 缺列只跳过对应面板并警告, 其余面板照出 (不整张图崩掉)
+    has_date = 'ReleaseDate' in df.columns
+    if not has_date:
+        print("⚠️ 输入缺少 ReleaseDate 列 → 跳过 Panel A (时间分布)")
+    if 'Database' not in df.columns:
+        print("⚠️ 输入缺少 Database / Run 列 → 跳过 Panel B (数据库比例)")
+
     # 1. 深度数据聚合与纠错清洗
-    df['ReleaseDate'] = pd.to_datetime(df['ReleaseDate'], errors='coerce')
-    df['Year'] = df['ReleaseDate'].dt.year.fillna(0).astype(int)
+    if has_date:
+        df['ReleaseDate'] = pd.to_datetime(df['ReleaseDate'], errors='coerce')
+        df['Year'] = df['ReleaseDate'].dt.year.fillna(0).astype(int)
     
     if 'Organization_CenterName' in df.columns:
         orgs = df['Organization_CenterName'].astype(str).str.strip().str.title()
@@ -116,8 +149,10 @@ def plot_sci_landscape(csv_path, output_dir="SCI_Figures_Output"):
     # ------------------------------------------
     print("📊 绘制 A: 时间分布趋势图...")
     ax = ax_list[plot_idx]
-    df_valid_years = df[df['Year'] > 2000] 
-    year_counts = df_valid_years['Year'].value_counts().sort_index()
+    year_counts = pd.Series(dtype=int)
+    if 'Year' in df.columns:
+        df_valid_years = df[df['Year'] > 2000]
+        year_counts = df_valid_years['Year'].value_counts().sort_index()
     
     # 使用经典科学蓝 (#0072B2)，并将数据点改为“白底蓝边”的空心样式，提升通透感
     ax.plot(year_counts.index, year_counts.values, marker='o', linestyle='-', linewidth=3.5, 
@@ -128,7 +163,11 @@ def plot_sci_landscape(csv_path, output_dir="SCI_Figures_Output"):
     
     for x, y in zip(year_counts.index, year_counts.values):
         ax.text(x, y + (max(year_counts.values)*0.03), str(y), ha='center', va='bottom', fontsize=13, fontweight='bold', color='#333333')
-        
+    # 数值标注头部空间：否则最大值的标注会顶进标题
+    # （2026-10-12 与本地平台对拍，check_figures 体检实抓 604px² 重叠）
+    if len(year_counts.values):
+        ax.set_ylim(0, max(year_counts.values) * 1.12)
+    
     ax.set_title('A. Temporal Distribution of Sequencing Data', loc='left', fontsize=18, fontweight='bold')
     ax.set_xlabel('Release Year', fontsize=14)
     ax.set_ylabel('Number of Runs', fontsize=14, labelpad=12,
@@ -143,35 +182,41 @@ def plot_sci_landscape(csv_path, output_dir="SCI_Figures_Output"):
     # ------------------------------------------
     print("📊 绘制 B: 数据库比例环形图...")
     ax = ax_list[plot_idx]
-    db_counts = df['Database'].value_counts()
+    db_counts = df['Database'].value_counts() if 'Database' in df.columns else pd.Series(dtype=int)
     total = db_counts.sum()
 
-    wedges, _ = ax.pie(
-        db_counts,
-        labels=None,
-        startangle=140,
-        colors=[colors_db.get(x, '#555555') for x in db_counts.index],
-        wedgeprops=dict(width=0.55, edgecolor='w', linewidth=3),
-        radius=1.0,
-    )
+    if total == 0:
+        # 0 行 CSV / 无有效 Database 值时 pie 会抛 "All wedge sizes are zero"
+        ax.axis('off')
+        ax.text(0.5, 0.5, 'No data', ha='center', va='center',
+                fontsize=16, color='#888888', transform=ax.transAxes)
+    else:
+        wedges, _ = ax.pie(
+            db_counts,
+            labels=None,
+            startangle=140,
+            colors=[colors_db.get(x, '#555555') for x in db_counts.index],
+            wedgeprops=dict(width=0.55, edgecolor='w', linewidth=3),
+            radius=1.0,
+        )
 
-    # Place labels at ring center, font size scaled to wedge arc
-    ring_center = 1.0 - 0.55 / 2
-    label_r = ring_center * 0.95
+        # Place labels at ring center, font size scaled to wedge arc
+        ring_center = 1.0 - 0.55 / 2
+        label_r = ring_center * 0.95
 
-    for i, wedge in enumerate(wedges):
-        ang = math.radians((wedge.theta1 + wedge.theta2) / 2)
-        arc_deg = abs(wedge.theta2 - wedge.theta1)
-        # Scale font: full size for >= 180°, minimum 9pt for thin wedges
-        fs = max(9, min(14, arc_deg * 0.06))
-        name = db_counts.index[i]
-        val = db_counts.values[i]
-        pct = val / total * 100
-        label = f"{name}\n{pct:.1f}%  (n={val})"
-        ax.text(label_r * math.cos(ang), label_r * math.sin(ang),
-                label, ha='center', va='center',
-                fontsize=fs, fontweight='bold', color='white',
-                linespacing=1.2)
+        for i, wedge in enumerate(wedges):
+            ang = math.radians((wedge.theta1 + wedge.theta2) / 2)
+            arc_deg = abs(wedge.theta2 - wedge.theta1)
+            # Scale font: full size for >= 180°, minimum 9pt for thin wedges
+            fs = max(9, min(14, arc_deg * 0.06))
+            name = db_counts.index[i]
+            val = db_counts.values[i]
+            pct = val / total * 100
+            label = f"{name}\n{pct:.1f}%  (n={val})"
+            ax.text(label_r * math.cos(ang), label_r * math.sin(ang),
+                    label, ha='center', va='center',
+                    fontsize=fs, fontweight='bold', color='white',
+                    linespacing=1.2)
 
     ax.set_title('B. Proportion of Data Origin', loc='left', fontsize=18, fontweight='bold', pad=30)
     plot_idx += 1
@@ -188,7 +233,8 @@ def plot_sci_landscape(csv_path, output_dir="SCI_Figures_Output"):
     for i, v in enumerate(org_counts.values):
         ax.text(v + max(org_counts.values)*0.02, i, str(v), va='center', fontsize=11)
     ax.set_yticks(list(y_pos))
-    ax.set_yticklabels(org_counts.index, fontsize=10, linespacing=1.4)
+    _lbls, _fs = wrap_labels_capped(org_counts.index, width=26, fontsize=10)
+    ax.set_yticklabels(_lbls, fontsize=_fs, linespacing=1.4)
     ax.set_title('C. Top 10 Contributing Organizations', loc='left', fontsize=16, fontweight='bold')
     ax.set_xlabel('Number of Runs', fontsize=14)
     ax.invert_yaxis()
@@ -210,7 +256,8 @@ def plot_sci_landscape(csv_path, output_dir="SCI_Figures_Output"):
             for i, v in enumerate(tissue_counts.values):
                 ax.text(v + max(tissue_counts.values)*0.02, i, str(v), va='center', fontsize=11)
             ax.set_yticks(list(y_pos))
-            ax.set_yticklabels(tissue_counts.index, fontsize=10)
+            _lbls, _fs = wrap_labels_capped(tissue_counts.index, width=30, fontsize=10)
+            ax.set_yticklabels(_lbls, fontsize=_fs)
             ax.invert_yaxis()
     ax.set_title('D. Top Investigated Biological Tissues', loc='left', fontsize=16, fontweight='bold')
     ax.set_xlabel('Number of Runs', fontsize=14)
@@ -230,7 +277,8 @@ def plot_sci_landscape(csv_path, output_dir="SCI_Figures_Output"):
             for i, v in enumerate(loc_counts.values):
                 ax.text(v + max(loc_counts.values)*0.02, i, str(v), va='center', fontsize=11)
             ax.set_yticks(list(y_pos))
-            ax.set_yticklabels(loc_counts.index, fontsize=10)
+            _lbls, _fs = wrap_labels_capped(loc_counts.index, width=24, fontsize=10)
+            ax.set_yticklabels(_lbls, fontsize=_fs)
             ax.invert_yaxis()
     ax.set_title('E. Top Sample Collection Regions', loc='left', fontsize=16, fontweight='bold')
     ax.set_xlabel('Number of Runs', fontsize=14)
@@ -251,7 +299,8 @@ def plot_sci_landscape(csv_path, output_dir="SCI_Figures_Output"):
             for i, v in enumerate(stage_counts.values):
                 ax.text(v + max(stage_counts.values)*0.02, i, str(v), va='center', fontsize=11)
             ax.set_yticks(list(y_pos))
-            ax.set_yticklabels(stage_counts.index, fontsize=10, linespacing=1.2)
+            _lbls, _fs = wrap_labels_capped(stage_counts.index, width=30, fontsize=10)
+            ax.set_yticklabels(_lbls, fontsize=_fs, linespacing=1.2)
             ax.invert_yaxis()
     ax.set_title('F. Top Developmental Stages / Ages', loc='left', fontsize=16, fontweight='bold')
     ax.set_xlabel('Number of Runs', fontsize=14)

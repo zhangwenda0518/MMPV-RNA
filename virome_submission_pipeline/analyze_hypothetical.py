@@ -67,11 +67,13 @@ class CdsEntry:
 
     start/end 恒为归一化坐标 (start <= end); strand=-1 时 to_tbl_lines
     按反转区间 (大坐标在前) 写出, 符合 NCBI 5 列 feature table 规范。
+    raw_loc: 原始位置行的坐标文本 (含 < > 部分标记) — 重写时原样回写;
+    否则 contig 边缘的部分 CDS 丢掉 partial 标记, table2asn 报缺起止密码子。
     """
     __slots__ = ('seq_id', 'start', 'end', 'strand',
-                 'cds_index', 'product', 'inferences', 'notes')
+                 'cds_index', 'product', 'inferences', 'notes', 'raw_loc')
 
-    def __init__(self, seq_id, start, end, strand, cds_index):
+    def __init__(self, seq_id, start, end, strand, cds_index, raw_loc=None):
         self.seq_id = seq_id
         self.start = start
         self.end = end
@@ -80,6 +82,7 @@ class CdsEntry:
         self.product = None
         self.inferences = []
         self.notes = []
+        self.raw_loc = raw_loc
 
     @property
     def coord_min(self):
@@ -96,8 +99,10 @@ class CdsEntry:
     def to_tbl_lines(self):
         """生成该 CDS 的 .tbl 文本行"""
         lines = []
-        # 位置行: 负链先写大坐标
-        if self.strand == -1:
+        # 位置行: 原样回写原始坐标文本 (保留 < > 部分标记); 无原始文本时按归一化坐标
+        if self.raw_loc:
+            lines.append(f"{self.raw_loc}\tCDS")
+        elif self.strand == -1:
             lines.append(f"{self.end}\t{self.start}\tCDS")
         else:
             lines.append(f"{self.start}\t{self.end}\tCDS")
@@ -289,6 +294,7 @@ def parse_featuretable(tbl_path):
     cds_total = 0
     n_legacy_complement = 0
     n_multi_id = 0
+    n_unparsed_loc = 0
 
     with open(tbl_path, 'r', encoding='utf-8') as f:
         pbar = tqdm(f, total=total_lines, desc="[1] 解析 featuretable.tbl",
@@ -331,9 +337,22 @@ def parse_featuretable(tbl_path):
                 s, e, strand = cds_span
                 start, end = (s, e) if s <= e else (e, s)
                 idx = len(records[current_seq]) + 1
-                current_cds = CdsEntry(current_seq, start, end, strand, idx)
+                # 原始坐标文本原样保留 (< > 部分标记), 重写时回写
+                raw_loc = f"{parts[0]}\t{parts[1]}" if len(parts) >= 2 else None
+                current_cds = CdsEntry(current_seq, start, end, strand, idx, raw_loc)
                 records[current_seq].append(current_cds)
                 cds_total += 1
+                continue
+
+            # 位置行但解析不了 (complement(join(...))/多行 location 等):
+            # 必须切断 current_cds — 否则其后的 product 等属性行会劫持上一条
+            # CDS (覆盖真实产物名, 旧版实测复现)
+            if (not line.startswith('\t') and not line.startswith('>Feature')
+                    and parts and parts[-1] == 'CDS'):
+                n_unparsed_loc += 1
+                current_cds = None
+                LOG.warning("  %s: CDS 位置行解析不了, 该 CDS 不入改写表: %s",
+                            current_seq or '?', stripped[:80])
                 continue
 
             # 特征属性行 (三个 tab 开头)
@@ -353,6 +372,9 @@ def parse_featuretable(tbl_path):
     if n_multi_id:
         LOG.warning("  ⚠️ 旧版语法: %d 个 >Feature 行含多个 ID (旧版 known_virus_submit 残留), "
                     "已按第一个 ID 归属; 建议重新生成 tbl: %s", n_multi_id, tbl_path)
+    if n_unparsed_loc:
+        LOG.warning("  ⚠️ %d 条 CDS 位置行解析不了 (join/complement(join) 等复合位置), "
+                    "未入改写表; 提交前请人工核对这些 CDS 的 product", n_unparsed_loc)
     LOG.info("[1] 解析 featuretable.tbl: %d 条序列, %d 个 CDS, %d 个 hypothetical",
              seq_count, cds_total, hypo_count)
     return records
