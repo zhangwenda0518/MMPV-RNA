@@ -1,0 +1,27 @@
+{
+  "source": "02a_Identification/<sample>/<sample>_resource.tsv (+ viroid mtime diff)",
+  "n_samples_resource": 395,
+  "n_samples_viroid": 436,
+  "resource_rows_total": 3011,
+  "dedup_rule": "last row per (sample, tool) — file is append-only, order = run order",
+  "viroid_method": "mtime(<sample>_viroids.result.id) - mtime(viroid_output/viroid_blastn.log)",
+  "viroid_absent_reason": "virus_identification.py:1282 只算 t0 不调 log_resource() → 永无行",
+  "tools_expected": [
+    "genomad",
+    "rdrpcatch",
+    "virbot",
+    "viralverify",
+    "metabuli",
+    "blast",
+    "viroid_blastn"
+  ],
+  "tools_present": [
+    "genomad",
+    "rdrpcatch",
+    "virbot",
+    "viralverify",
+    "metabuli",
+    "blast",
+    "viroid_blastn"
+  ]
+}

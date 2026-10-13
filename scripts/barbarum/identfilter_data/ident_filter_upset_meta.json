@@ -1,0 +1,40 @@
+{
+  "source_ident": "02a_Identification/{S}/{S}_virus.{tool}.result.id",
+  "source_union": "02a_Identification/{S}/{S}_virus.all.result.id",
+  "source_viroid": "02a_Identification/{S}/{S}_viroids.result.id",
+  "source_cdd": "02b_Filter/{S}/cdd/all_candidates_cdd_filter.fasta",
+  "source_uniprot": "02b_Filter/{S}/uniprot/all_candidates_uniprot.fasta",
+  "tool_order": [
+    "viralverify",
+    "metabuli",
+    "blast",
+    "genomad",
+    "virbot",
+    "rdrpcatch",
+    "viroid_blastn"
+  ],
+  "n_samples": 395,
+  "n_samples_no_filter": 5,
+  "samples_no_filter": [
+    "ERR3487367",
+    "SRR20722141",
+    "SRR25180700",
+    "SRR25180704",
+    "SRR9887612"
+  ],
+  "n_signatures": 64,
+  "n_sequences": 557466,
+  "sum_union": 556950,
+  "sum_viroid": 604,
+  "sum_retained": 94826,
+  "sum_cdd_kept": 473523,
+  "viroid_in_union": 88,
+  "retained_pct_of_union": 17.03,
+  "status_legend": {
+    "retained": "passed CDD + UniProt filter (final kept)",
+    "cdd_only": "passed CDD, removed by UniProt",
+    "removed": "removed by CDD",
+    "viroid": "viroid_blastn hit (separate track, outside the virus filter chain)",
+    "nofilter": "sample has no 02b UniProt output - filter outcome unknown"
+  }
+}

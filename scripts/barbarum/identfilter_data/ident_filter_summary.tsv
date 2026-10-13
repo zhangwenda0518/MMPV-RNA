@@ -1,0 +1,9 @@
+group	track	category	value
+Identification	virus	viralverify	452904
+Identification	virus	metabuli	144041
+Identification	virus	blast	95573
+Identification	virus	genomad	11526
+Identification	virus	virbot	3219
+Identification	virus	rdrpcatch	2229
+Identification	viroid	viroid_blastn	604
+Filtering	virus	Retained (02b_Filter)	94826

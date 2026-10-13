@@ -1,0 +1,38 @@
+{
+  "source_ident": "ident_summary.tsv (TOTAL 行)",
+  "source_filter": "filter_per_sample.tsv (Uniprot_Filtered 求和)",
+  "n_samples_ident": 438,
+  "n_samples_filter": 395,
+  "union_all_candidate": 556773,
+  "sum_virus_tools": 709492,
+  "overlap_virus_tools": 152719,
+  "viroid_blastn": 604,
+  "viroid_in_union": false,
+  "retained_uniprot": 94826,
+  "retained_pct_of_union": 17.03,
+  "cdd_filtered_not_shown": 473523,
+  "active_virus_tools": [
+    "genomad",
+    "blast",
+    "metabuli",
+    "viralverify",
+    "virbot",
+    "rdrpcatch"
+  ],
+  "zero_virus_tools": [
+    "virsorter2",
+    "virhunter",
+    "viralm"
+  ],
+  "per_tool_values": {
+    "genomad": 11526,
+    "blast": 95573,
+    "metabuli": 144041,
+    "virsorter2": 0,
+    "viralverify": 452904,
+    "virhunter": 0,
+    "virbot": 3219,
+    "viralm": 0,
+    "rdrpcatch": 2229
+  }
+}

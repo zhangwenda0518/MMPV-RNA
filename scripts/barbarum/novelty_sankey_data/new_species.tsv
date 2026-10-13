@@ -1,0 +1,22 @@
+new_species	genus	old_species_name	contig_id	family	length	nt_pident	nt_qcovs	genus_n_new
+Badnavirus-goji	Badnavirus	Badnavirus epsilonvirgamusae	CRR1126140_clean_NODE_3885_length_584_cov_3.054795	Caulimoviridae	584	92.7	58.0	1
+Begomovirus-goji	Begomovirus	Begomovirus solanumflavusvietnamense	SRR27880476_clean_NODE_162_length_1514_cov_11.394865	Geminiviridae	1514	73.4	69.0	1
+Betabotoulivirus-goji-1	Betabotoulivirus	Sanya botourmia-like virus 4	CRR527042_clean_NODE_452_length_2629_cov_7.050861	Botourmiaviridae	2629	85.1	81.0	1
+Betabotoulivirus-goji-2	Betabotoulivirus	Sanya botourmia-like virus 4	CRR527043_clean_NODE_2156_length_1651_cov_3.291508	Botourmiaviridae	1651	84.4	99.0	1
+Betacytorhabdovirus-goji-1	Betacytorhabdovirus	Betacytorhabdovirus lycii	CRR527049_clean_NODE_8_length_2837_cov_45.871925	Rhabdoviridae	2837	98.9	83.0	1
+Betacytorhabdovirus-goji-2	Betacytorhabdovirus	Betacytorhabdovirus lycii	SRR17208219_clean_NODE_1_length_15354_cov_1823.675152	Rhabdoviridae	15354	79.2	82.0	1
+Betacytorhabdovirus-goji-3	Betacytorhabdovirus	Betacytorhabdovirus lycii	SRR23759245_clean_NODE_186_length_1190_cov_3.619517	Rhabdoviridae	1190	70.6	74.0	1
+Betacytorhabdovirus-goji-4	Betacytorhabdovirus	Betacytorhabdovirus lycii	SRR8191322_clean_NODE_1_length_15174_cov_235.553142	Rhabdoviridae	15174	75.4	61.0	1
+Carlavirus-goji-1	Carlavirus	Carlavirus chisolani	SRR2344927_clean_NODE_49_length_827_cov_2.657360	Betaflexiviridae	827	79.3	99.0	0
+Carlavirus-goji-2	Carlavirus	Carlavirus chisolani	SRR2344930_clean_NODE_131_length_622_cov_3.660377	Betaflexiviridae	622	77.9	98.0	0
+Carlavirus-goji-3	Carlavirus	Carlavirus chisolani	SRR2344930_clean_NODE_2_length_2246_cov_3.883552	Betaflexiviridae	2246	75.7	99.0	0
+Dioscovirus-goji	Dioscovirus	Dioscovirus dioscoreae	CRR1126140_clean_NODE_131_length_3071_cov_3.536024	Caulimoviridae	3071	75.7	51.0	0
+Ilarvirus-goji	Ilarvirus	Ilarvirus SLV	CRR1126139_clean_NODE_29_length_2874_cov_22.006069	Bromoviridae	2874	88.3	78.0	1
+Magoulivirus-goji	Magoulivirus	Grapevine wood holobiome associated ourmia-like virus 11	CRR527043_clean_NODE_14380_length_618_cov_1.330275	Botourmiaviridae	618	83.4	93.0	1
+Marafivirus-goji	Marafivirus	Marafivirus syrahense	SRR23215179_clean_NODE_1_length_6852_cov_76.557752	Tymoviridae	6852	76.2	96.0	1
+Potyvirus-goji	Potyvirus	Potyvirus sacchari	CRR891455_clean_NODE_584_length_740_cov_2.017991	Potyviridae	740	89.9	83.0	0
+Stralarivirus-goji-1	Stralarivirus	Stralarivirus lychnis	SRR8191319_clean_NODE_5_length_3879_cov_4.421965	Secoviridae	3879	80.5	91.0	1
+Stralarivirus-goji-2	Stralarivirus	Stralarivirus lychnis	SRR8191323_clean_NODE_908_length_564_cov_1.054990	Secoviridae	564	83.5	97.0	1
+Tobravirus-goji	Tobravirus	Tobravirus tabaci	NC_003811.1	Virgaviridae	3855	95.1	63.0	1
+Trichovirus-goji	Trichovirus	Trichovirus necroacini	CRR527046_clean_NODE_14794_length_514_cov_1.360544	Betaflexiviridae	514	75.3	90.0	1
+Tymovirus-goji	Tymovirus	Tymovirus quitoense	SRR2344924_clean_NODE_24_length_1378_cov_5.286781	Tymoviridae	1378	77.7	91.0	1

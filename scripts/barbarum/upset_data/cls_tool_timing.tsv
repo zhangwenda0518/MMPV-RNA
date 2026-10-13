@@ -1,0 +1,8 @@
+sample	tool	wall_sec	cpu_sec	mem_mb	status
+Votus	ACVirus	786.0	174.2	27069.2	OK
+Votus	CAT	31.6	32.3	26815.2	OK
+Votus	VITAP	399.4	147.4	26819.4	OK
+Votus	diamond_lca	15.8	16.4	26815.1	OK
+Votus	genomad	221.7	108.1	27000.2	OK
+Votus	metabuli	47.3	38.3	26815.1	OK
+Votus	mmseqs	30.7	31.5	27000.2	OK

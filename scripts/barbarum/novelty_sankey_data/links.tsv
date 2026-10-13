@@ -1,0 +1,85 @@
+level	source	target	n
+0	已知	RNA	35
+0	已知	Viroid	5
+0	新	RNA	16
+0	新	DNA	5
+1	RNA	Betaflexiviridae	22
+1	RNA	Potyviridae	7
+1	RNA	Rhabdoviridae	3
+1	RNA	Bromoviridae	8
+1	Viroid	Pospiviroidae	4
+1	Viroid	(Unassigned)	1
+1	RNA	Virgaviridae	2
+1	DNA	Caulimoviridae	3
+1	DNA	Geminiviridae	1
+1	RNA	Botourmiaviridae	2
+1	RNA	Kitaviridae	1
+1	RNA	Closteroviridae	1
+1	RNA	Partitiviridae	1
+1	DNA	Draupnirviridae	1
+1	RNA	Tymoviridae	2
+1	RNA	Alphaflexiviridae	1
+1	RNA	Secoviridae	1
+2	Betaflexiviridae	Carlavirus	19
+2	Potyviridae	Potyvirus	7
+2	Rhabdoviridae	Betacytorhabdovirus	3
+2	Betaflexiviridae	Prunevirus	2
+2	Bromoviridae	Ilarvirus	3
+2	Bromoviridae	Cucumovirus	5
+2	Pospiviroidae	Apscaviroid	1
+2	Pospiviroidae	Pospiviroid	3
+2	(Unassigned)	(Unassigned)	1
+2	Virgaviridae	(Unassigned)	1
+2	Caulimoviridae	Badnavirus	1
+2	Geminiviridae	Begomovirus	1
+2	Botourmiaviridae	Betabotoulivirus	1
+2	Kitaviridae	Cilevirus	1
+2	Closteroviridae	Closterovirus	1
+2	Partitiviridae	Deltapartitivirus	1
+2	Caulimoviridae	Dioscovirus	1
+2	Botourmiaviridae	Magoulivirus	1
+2	Draupnirviridae	Malificivirus	1
+2	Tymoviridae	Marafivirus	1
+2	Alphaflexiviridae	Potexvirus	1
+2	Caulimoviridae	Soymovirus	1
+2	Secoviridae	Stralarivirus	1
+2	Virgaviridae	Tobravirus	1
+2	Betaflexiviridae	Trichovirus	1
+2	Tymoviridae	Tymovirus	1
+3	Carlavirus	Carlavirus chisolani	2
+3	Potyvirus	Potyvirus glycitessellati	2
+3	Betacytorhabdovirus	Betacytorhabdovirus lycii	2
+3	Carlavirus	Carlavirus sigmasolani	8
+3	Potyvirus	Potyvirus sacchari	2
+3	Prunevirus	Prunevirus unicamelliae	2
+3	Carlavirus	Carlavirus misolani	5
+3	Carlavirus	Carlavirus latenskalanchoe	3
+3	Ilarvirus	Ilarvirus SLV	2
+3	Cucumovirus	Cucumovirus CMV	5
+3	Potyvirus	Potyvirus pennisseti	2
+3	Apscaviroid	Apscaviroid cicatricimali	1
+3	Pospiviroid	Pospiviroid chloronani	1
+3	Pospiviroid	Pospiviroid exocortiscitri	1
+3	Pospiviroid	Pospiviroid fusituberis	1
+3	(Unassigned)	Rubber viroid India/2009	1
+3	(Unassigned)	Unassigned-goji-1	1
+3	Badnavirus	Badnavirus-goji-1	1
+3	Begomovirus	Begomovirus-goji-1	1
+3	Betabotoulivirus	Betabotoulivirus-goji-1	1
+3	Betacytorhabdovirus	Betacytorhabdovirus-goji-1	1
+3	Carlavirus	Carlavirus-goji-4	1
+3	Cilevirus	Cilevirus-goji	1
+3	Closterovirus	Closterovirus-goji	1
+3	Deltapartitivirus	Deltapartitivirus-goji	1
+3	Dioscovirus	Dioscovirus-goji-2	1
+3	Ilarvirus	Ilarvirus-goji	1
+3	Magoulivirus	Magoulivirus-goji-1	1
+3	Malificivirus	Malificivirus-goji	1
+3	Marafivirus	Marafivirus-goji-1	1
+3	Potexvirus	Potexvirus-goji-1	1
+3	Potyvirus	Potyvirus-goji-2	1
+3	Soymovirus	Soymovirus-goji-3	1
+3	Stralarivirus	Stralarivirus-goji-1	1
+3	Tobravirus	Tobravirus-goji-1	1
+3	Trichovirus	Trichovirus-goji	1
+3	Tymovirus	Tymovirus-goji-1	1

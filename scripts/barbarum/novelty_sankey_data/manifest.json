@@ -1,0 +1,234 @@
+{
+  "total": 61,
+  "tiers": {
+    "已知": 40,
+    "新": 21
+  },
+  "viroid_unit": "species",
+  "viroid_units": 5,
+  "viroid_note": "类病毒按物种去重，每个 species 算 1 个单位（604 条 BLAST 命中 → 5 个种）",
+  "drop_unassigned": true,
+  "n_dropped": 19,
+  "drop_rule": "剔除 `family == \"(Unassigned)\"` 的非类病毒记录（L2 基因组型未指派 + 仅科未定）；类病毒强制豁免，属/种层 (Unassigned) 占位保留",
+  "drop_other": true,
+  "n_dropped_other": 87,
+  "drop_other_rule": "剔除 tier == 「其他」的全部记录（宿主基因污染 / 昆虫·真菌病毒污染 / 未定）；L1 只剩 Known / Novel",
+  "drop_longtail": true,
+  "min_units": 2,
+  "longtail_scope": [
+    "species"
+  ],
+  "n_dropped_longtail": 65,
+  "longtail_rule": "**仅在 species 层**逐轮剔除单位数 < 2 的物种，直到收敛；类病毒与 21 条新种候选豁免。⚠ 科/属层**不剔除**（同属 Novel 去冗余名会把科压到 1 单位，若也剔会删掉真实新病毒）",
+  "longtail_dropped_sample": [
+    [
+      1,
+      "species",
+      "Alphanecrovirus-goji-1",
+      1
+    ],
+    [
+      1,
+      "species",
+      "Alphanecrovirus-goji-2",
+      1
+    ],
+    [
+      1,
+      "species",
+      "Alphanucleorhabdovirus-goji",
+      1
+    ],
+    [
+      1,
+      "species",
+      "Badnavirus betavirgamusae",
+      1
+    ],
+    [
+      1,
+      "species",
+      "Badnavirus-goji-2",
+      1
+    ],
+    [
+      1,
+      "species",
+      "Badnavirus-goji-3",
+      1
+    ],
+    [
+      1,
+      "species",
+      "Badnavirus-goji-4",
+      1
+    ],
+    [
+      1,
+      "species",
+      "Begomovirus-goji-2",
+      1
+    ],
+    [
+      1,
+      "species",
+      "Benyvirus-goji",
+      1
+    ],
+    [
+      1,
+      "species",
+      "Blunervirus-goji",
+      1
+    ],
+    [
+      1,
+      "species",
+      "Capillovirus-goji",
+      1
+    ],
+    [
+      1,
+      "species",
+      "Carlavirus-goji-5",
+      1
+    ]
+  ],
+  "novel_naming": "all",
+  "n_novel_renamed": 147,
+  "novel_naming_rule": "全部 Novel 记录的物种层改为 `<属>-goji[-N]`（不再显示源表最近已知物种名）；属内先排新种候选（每条 contig 一名），再排远缘（按源物种名去重），编号 1..N，N==1 不加序号",
+  "novel_dedup_per_genus": 1,
+  "n_novel_dedup_dropped": 64,
+  "novel_dedup_rule": "同属 Novel 去冗余：① 同一物种名(goji-N)只留 1 条（取发生率最高，并列取 contig_id 字典序最小）；② 若去重后仍 > N 条则按发生率砍到 N 条。Known 完全不动；命名不变（只下采样）。",
+  "novel_dedup_dropped_sample": [
+    [
+      "species",
+      "(Unassigned)",
+      "Unassigned-goji-2",
+      2
+    ],
+    [
+      "species",
+      "(Unassigned)",
+      "Unassigned-goji-1",
+      5
+    ],
+    [
+      "genus_cap",
+      "(Unassigned)",
+      "",
+      1
+    ],
+    [
+      "genus_cap",
+      "Betabotoulivirus",
+      "",
+      1
+    ],
+    [
+      "species",
+      "Betacytorhabdovirus",
+      "Betacytorhabdovirus-goji-5",
+      8
+    ],
+    [
+      "species",
+      "Betacytorhabdovirus",
+      "Betacytorhabdovirus-goji-6",
+      2
+    ],
+    [
+      "genus_cap",
+      "Betacytorhabdovirus",
+      "",
+      5
+    ],
+    [
+      "species",
+      "Carlavirus",
+      "Carlavirus-goji-4",
+      3
+    ],
+    [
+      "genus_cap",
+      "Carlavirus",
+      "",
+      3
+    ],
+    [
+      "species",
+      "Cilevirus",
+      "Cilevirus-goji",
+      2
+    ],
+    [
+      "species",
+      "Closterovirus",
+      "Closterovirus-goji",
+      3
+    ],
+    [
+      "species",
+      "Deltapartitivirus",
+      "Deltapartitivirus-goji",
+      4
+    ]
+  ],
+  "novel_detail_file": "novel_dedup_full.tsv",
+  "novel_detail_total": 85,
+  "novel_detail_shown": 21,
+  "genome_types": {
+    "RNA": 51,
+    "Viroid": 5,
+    "DNA": 5
+  },
+  "n_nodes": {
+    "tier": 2,
+    "genome_type": 3,
+    "family": 17,
+    "genus": 25,
+    "species": 37
+  },
+  "n_links": 84,
+  "new_species": 11,
+  "new_species_genera": {
+    "Badnavirus": 1,
+    "Begomovirus": 1,
+    "Betabotoulivirus": 1,
+    "Betacytorhabdovirus": 1,
+    "Carlavirus": 0,
+    "Dioscovirus": 0,
+    "Ilarvirus": 1,
+    "Magoulivirus": 1,
+    "Marafivirus": 1,
+    "Potyvirus": 0,
+    "Stralarivirus": 1,
+    "Tobravirus": 1,
+    "Trichovirus": 1,
+    "Tymovirus": 1
+  },
+  "species_singletons": 26,
+  "naming_rule": "<Genus>-goji-N（同属多条时按 contig_id 升序）",
+  "sources": [
+    "10_Reports/HQ_plant_viruses_info.tsv",
+    "09b_Analysis_Verify/virus_validation/rescue_evidence_scored.tsv",
+    "10_Reports/Viroid.all_info.tsv"
+  ],
+  "prevalence_denom": 312,
+  "prevalence_source": {
+    "virus": "10_Reports/frequency_table.tsv",
+    "viroid": "10_Reports/Viroid.species_info.tsv"
+  },
+  "prevalence_rule": "发生率 = n_samples / 312（**样本维度**）。病毒按 contig（frequency_table）、类病毒按 species（species_info）；L5 节点含多条 contig 时图上取 **max**。不参与任何几何计算（节点高仍 ∝ 单位数）",
+  "prevalence_missing": 0,
+  "tier_rule": {
+    "已知植物病毒": "已知",
+    "新种候选": "新",
+    "远缘病毒候选": "新",
+    "远缘(未定)": "新",
+    "宿主基因污染": "其他",
+    "昆虫病毒/污染": "其他",
+    "真菌病毒/污染": "其他",
+    "未定": "其他"
+  }
+}

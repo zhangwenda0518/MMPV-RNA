@@ -1,0 +1,86 @@
+contig_id	tier	category	genome_type	family	genus	species	raw_species	is_new_species	length	nt_pident	nt_qcovs	n_samples	prevalence_pct	shown_in_sankey
+CRR1440127_clean_NODE_327_length_2543_cov_2.888259	新	远缘病毒候选	RNA	Virgaviridae	(Unassigned)	Unassigned-goji-1	(Unassigned)	False	2543			31	9.94	True
+SRR33536649_clean_NODE_1416_length_1944_cov_27.481561	新	远缘病毒候选	RNA	Partitiviridae	(Unassigned)	Unassigned-goji-1	(Unassigned)	False	1944			3	0.96	False
+SRR23107136_clean_NODE_2035_length_3167_cov_5.896574	新	远缘病毒候选	DNA	Caulimoviridae	(Unassigned)	Unassigned-goji-1	(Unassigned)	False	3168			2	0.64	False
+CRR527046_clean_NODE_101_length_3111_cov_5.640224	新	远缘病毒候选	RNA	Aspiviridae	(Unassigned)	Unassigned-goji-1	(Unassigned)	False	3111			1	0.32	False
+CRR527046_clean_NODE_7451_length_682_cov_3.367816	新	远缘病毒候选	RNA	Tombusviridae	(Unassigned)	Unassigned-goji-1	(Unassigned)	False	682			1	0.32	False
+CRR1440136_clean_NODE_334_length_4103_cov_11.983375	新	远缘病毒候选	RNA	Virgaviridae	(Unassigned)	Unassigned-goji-2	Orius laevigatus virga-like virus 2	False	4103			3	0.96	False
+SRR33536650_clean_NODE_881_length_2296_cov_3.229420	新	远缘病毒候选	RNA	Virgaviridae	(Unassigned)	Unassigned-goji-2	Orius laevigatus virga-like virus 2	False	2296			3	0.96	False
+CRR1126140_clean_NODE_3885_length_584_cov_3.054795	新	新种候选	DNA	Caulimoviridae	Badnavirus	Badnavirus-goji-1	Badnavirus epsilonvirgamusae	True	584	92.7	58.0	2	0.64	True
+SRR27880476_clean_NODE_162_length_1514_cov_11.394865	新	新种候选	DNA	Geminiviridae	Begomovirus	Begomovirus-goji-1	Begomovirus solanumflavusvietnamense	True	1514	73.4	69.0	3	0.96	True
+CRR527042_clean_NODE_452_length_2629_cov_7.050861	新	新种候选	RNA	Botourmiaviridae	Betabotoulivirus	Betabotoulivirus-goji-1	Sanya botourmia-like virus 4	True	2629	85.1	81.0	5	1.6	True
+CRR527043_clean_NODE_2156_length_1651_cov_3.291508	新	新种候选	RNA	Botourmiaviridae	Betabotoulivirus	Betabotoulivirus-goji-2	Sanya botourmia-like virus 4	True	1651	84.4	99.0	1	0.32	False
+CRR527049_clean_NODE_8_length_2837_cov_45.871925	新	新种候选	RNA	Rhabdoviridae	Betacytorhabdovirus	Betacytorhabdovirus-goji-1	Betacytorhabdovirus lycii	True	2837	98.9	83.0	186	59.62	True
+SRR17208219_clean_NODE_1_length_15354_cov_1823.675152	新	新种候选	RNA	Rhabdoviridae	Betacytorhabdovirus	Betacytorhabdovirus-goji-2	Betacytorhabdovirus lycii	True	15354	79.2	82.0	146	46.79	False
+SRR23759245_clean_NODE_186_length_1190_cov_3.619517	新	新种候选	RNA	Rhabdoviridae	Betacytorhabdovirus	Betacytorhabdovirus-goji-3	Betacytorhabdovirus lycii	True	1190	70.6	74.0	37	11.86	False
+SRR8191322_clean_NODE_1_length_15174_cov_235.553142	新	新种候选	RNA	Rhabdoviridae	Betacytorhabdovirus	Betacytorhabdovirus-goji-4	Betacytorhabdovirus lycii	True	15174	75.4	61.0	10	3.21	False
+SRR15037478_clean_NODE_23_length_2090_cov_0.703520	新	远缘(未定)	RNA	Rhabdoviridae	Betacytorhabdovirus	Betacytorhabdovirus-goji-5	Betacytorhabdovirus lycii	False	2090	98.6	3.0	178	57.05	False
+CRR732640_clean_NODE_337_length_1148_cov_0.554419	新	远缘(未定)	RNA	Rhabdoviridae	Betacytorhabdovirus	Betacytorhabdovirus-goji-5	Betacytorhabdovirus lycii	False	1148			150	48.08	False
+CRR732635_clean_NODE_186_length_1442_cov_0.414171	新	远缘(未定)	RNA	Rhabdoviridae	Betacytorhabdovirus	Betacytorhabdovirus-goji-5	Betacytorhabdovirus lycii	False	1442			99	31.73	False
+contig_445	新	远缘(未定)	RNA	Rhabdoviridae	Betacytorhabdovirus	Betacytorhabdovirus-goji-5	Betacytorhabdovirus lycii	False	1487	71.2	32.0	47	15.06	False
+SRR24100143_clean_NODE_1458_length_679_cov_1.727869	新	远缘(未定)	RNA	Rhabdoviridae	Betacytorhabdovirus	Betacytorhabdovirus-goji-5	Betacytorhabdovirus lycii	False	679			2	0.64	False
+SRR24100145_clean_NODE_912_length_660_cov_1.637902	新	远缘(未定)	RNA	Rhabdoviridae	Betacytorhabdovirus	Betacytorhabdovirus-goji-5	Betacytorhabdovirus lycii	False	660			2	0.64	False
+SRR24100145_clean_NODE_95_length_1300_cov_2.708367	新	远缘(未定)	RNA	Rhabdoviridae	Betacytorhabdovirus	Betacytorhabdovirus-goji-5	Betacytorhabdovirus lycii	False	1300			2	0.64	False
+SRR24100145_clean_NODE_188_length_1086_cov_3.416912	新	远缘(未定)	RNA	Rhabdoviridae	Betacytorhabdovirus	Betacytorhabdovirus-goji-5	Betacytorhabdovirus lycii	False	1086			1	0.32	False
+CRR732637_clean_NODE_204_length_1175_cov_0.408348	新	远缘(未定)	RNA	Rhabdoviridae	Betacytorhabdovirus	Betacytorhabdovirus-goji-6	Betacytorhabdovirus sophorae	False	1175			80	25.64	False
+SRR23587957_clean_NODE_487_length_956_cov_0.403171	新	远缘(未定)	RNA	Rhabdoviridae	Betacytorhabdovirus	Betacytorhabdovirus-goji-6	Betacytorhabdovirus sophorae	False	956			8	2.56	False
+SRR2344927_clean_NODE_49_length_827_cov_2.657360	新	新种候选	RNA	Betaflexiviridae	Carlavirus	Carlavirus-goji-1	Carlavirus chisolani	True	827	79.3	99.0	4	1.28	False
+SRR2344930_clean_NODE_131_length_622_cov_3.660377	新	新种候选	RNA	Betaflexiviridae	Carlavirus	Carlavirus-goji-2	Carlavirus chisolani	True	622	77.9	98.0	5	1.6	False
+SRR2344930_clean_NODE_2_length_2246_cov_3.883552	新	新种候选	RNA	Betaflexiviridae	Carlavirus	Carlavirus-goji-3	Carlavirus chisolani	True	2246	75.7	99.0	4	1.28	False
+SRR2344927_clean_NODE_123_length_632_cov_2.112985	新	远缘病毒候选	RNA	Betaflexiviridae	Carlavirus	Carlavirus-goji-4	Carlavirus chisolani	False	632			5	1.6	True
+SRR2344930_clean_NODE_99_length_695_cov_1.623476	新	远缘病毒候选	RNA	Betaflexiviridae	Carlavirus	Carlavirus-goji-4	Carlavirus chisolani	False	695			4	1.28	False
+SRR2344930_clean_NODE_134_length_617_cov_1.712803	新	远缘病毒候选	RNA	Betaflexiviridae	Carlavirus	Carlavirus-goji-4	Carlavirus chisolani	False	617			3	0.96	False
+CRR1126135_clean_NODE_147_length_2253_cov_2.977064	新	远缘病毒候选	RNA	Kitaviridae	Cilevirus	Cilevirus-goji	Cilevirus passiflorae	False	2253			3	0.96	True
+CRR891450_clean_NODE_167_length_1271_cov_2.361436	新	远缘病毒候选	RNA	Virgaviridae	Cilevirus	Cilevirus-goji	Cilevirus passiflorae	False	1271			3	0.96	False
+CRR527046_clean_NODE_1_length_18125_cov_301.957512	新	远缘病毒候选	RNA	Closteroviridae	Closterovirus	Closterovirus-goji	Citrus virus B	False	18125			24	7.69	True
+CRR527043_clean_NODE_2_length_11851_cov_175.716930	新	远缘病毒候选	RNA	Closteroviridae	Closterovirus	Closterovirus-goji	Citrus virus B	False	16012			13	4.17	False
+contig_2396	新	远缘病毒候选	RNA	Closteroviridae	Closterovirus	Closterovirus-goji	Citrus virus B	False	17974			2	0.64	False
+contig_966	新	远缘(未定)	RNA	Partitiviridae	Deltapartitivirus	Deltapartitivirus-goji	Deltapartitivirus sp. 'yunanense'	False	2589			62	19.87	True
+CRR732653_clean_NODE_143_length_2504_cov_11.457906	新	远缘(未定)	RNA	Partitiviridae	Deltapartitivirus	Deltapartitivirus-goji	Deltapartitivirus sp. 'yunanense'	False	2504			59	18.91	False
+CRR732662_clean_NODE_87_length_2383_cov_8.742005	新	远缘(未定)	RNA	Partitiviridae	Deltapartitivirus	Deltapartitivirus-goji	Deltapartitivirus sp. 'yunanense'	False	2383			41	13.14	False
+SRR23215185_clean_NODE_2970_length_2176_cov_58.485972	新	远缘(未定)	RNA	Partitiviridae	Deltapartitivirus	Deltapartitivirus-goji	Deltapartitivirus sp. 'yunanense'	False	2176			24	7.69	False
+CRR1126140_clean_NODE_131_length_3071_cov_3.536024	新	新种候选	DNA	Caulimoviridae	Dioscovirus	Dioscovirus-goji-1	Dioscovirus dioscoreae	True	3071	75.7	51.0	3	0.96	False
+CRR1126140_clean_NODE_312_length_2126_cov_16.749148	新	远缘病毒候选	DNA	Caulimoviridae	Dioscovirus	Dioscovirus-goji-2	Dioscovirus dioscoreae	False	2126	98.9	25.0	6	1.92	True
+CRR1126140_clean_NODE_917_length_1246_cov_1.200341	新	远缘病毒候选	DNA	Caulimoviridae	Dioscovirus	Dioscovirus-goji-2	Dioscovirus dioscoreae	False	1246	94.6	42.0	2	0.64	False
+CRR1126139_clean_NODE_29_length_2874_cov_22.006069	新	新种候选	RNA	Bromoviridae	Ilarvirus	Ilarvirus-goji	Ilarvirus SLV	True	2874	88.3	78.0	194	62.18	True
+CRR527043_clean_NODE_14380_length_618_cov_1.330275	新	新种候选	RNA	Botourmiaviridae	Magoulivirus	Magoulivirus-goji-1	Grapevine wood holobiome associated ourmia-like virus 11	True	618	83.4	93.0	1	0.32	True
+CRR527042_clean_NODE_17018_length_532_cov_1.357298	新	远缘病毒候选	DNA	Draupnirviridae	Malificivirus	Malificivirus-goji	Malificivirus porcris	False	532			7	2.24	True
+CRR527046_clean_NODE_9350_length_621_cov_2.518248	新	远缘病毒候选	DNA	Draupnirviridae	Malificivirus	Malificivirus-goji	Malificivirus porcris	False	621			2	0.64	False
+SRR23215179_clean_NODE_1_length_6852_cov_76.557752	新	新种候选	RNA	Tymoviridae	Marafivirus	Marafivirus-goji-1	Marafivirus syrahense	True	6852	76.2	96.0	7	2.24	True
+CRR1440123_clean_NODE_3_length_7439_cov_1883.998099	新	远缘病毒候选	RNA	Alphaflexiviridae	Potexvirus	Potexvirus-goji-1	Potexvirus ecspotati	False	7439	77.9	3.0	162	51.92	True
+SRR24100148_clean_NODE_2_length_6551_cov_11.208732	新	远缘病毒候选	RNA	Alphaflexiviridae	Potexvirus	Potexvirus-goji-1	Potexvirus ecspotati	False	6551	79.1	1.0	3	0.96	False
+CRR891455_clean_NODE_584_length_740_cov_2.017991	新	新种候选	RNA	Potyviridae	Potyvirus	Potyvirus-goji-1	Potyvirus sacchari	True	740	89.9	83.0	1	0.32	False
+CRR527043_clean_NODE_200_length_3383_cov_13.140483	新	远缘(未定)	RNA	Potyviridae	Potyvirus	Potyvirus-goji-2	Potyvirus iristenuis	False	3383			34	10.9	True
+SRR24305226_clean_NODE_1245_length_5054_cov_272.716523	新	远缘(未定)	RNA	Potyviridae	Potyvirus	Potyvirus-goji-2	Potyvirus iristenuis	False	5092			17	5.45	False
+SRR23515442_clean_NODE_13_length_2442_cov_2.558886	新	远缘(未定)	RNA	Potyviridae	Potyvirus	Potyvirus-goji-2	Potyvirus iristenuis	False	2442			14	4.49	False
+SRR23215178_clean_NODE_113_length_4716_cov_22.212363	新	远缘(未定)	RNA	Potyviridae	Potyvirus	Potyvirus-goji-2	Potyvirus iristenuis	False	3203			11	3.53	False
+CRR1126135_clean_NODE_43_length_3245_cov_8.833859	新	远缘(未定)	RNA	Potyviridae	Potyvirus	Potyvirus-goji-2	Potyvirus iristenuis	False	3245			10	3.21	False
+SRR22742698_clean_NODE_137_length_2894_cov_3.401985	新	远缘(未定)	RNA	Potyviridae	Potyvirus	Potyvirus-goji-2	Potyvirus iristenuis	False	2894			7	2.24	False
+SRR23759246_clean_NODE_7_length_3163_cov_12.817152	新	远缘(未定)	RNA	Potyviridae	Potyvirus	Potyvirus-goji-2	Potyvirus iristenuis	False	3163			7	2.24	False
+CRR2703946_clean_NODE_298_length_3499_cov_12.124635	新	远缘(未定)	RNA	Potyviridae	Potyvirus	Potyvirus-goji-2	Potyvirus iristenuis	False	3499			5	1.6	False
+SRR23107139_clean_NODE_2103_length_2417_cov_10.549488	新	远缘(未定)	RNA	Potyviridae	Potyvirus	Potyvirus-goji-2	Potyvirus iristenuis	False	2417			5	1.6	False
+SRR23107135_clean_NODE_1766_length_2877_cov_13.620185	新	远缘(未定)	RNA	Potyviridae	Potyvirus	Potyvirus-goji-2	Potyvirus iristenuis	False	2877			4	1.28	False
+SRR23107141_clean_NODE_711_length_3165_cov_19.331177	新	远缘(未定)	RNA	Potyviridae	Potyvirus	Potyvirus-goji-2	Potyvirus iristenuis	False	3165			4	1.28	False
+SRR33536649_clean_NODE_454_length_2671_cov_7.427252	新	远缘(未定)	RNA	Potyviridae	Potyvirus	Potyvirus-goji-2	Potyvirus iristenuis	False	2671			4	1.28	False
+CRR1440135_clean_NODE_375_length_3569_cov_12.154176	新	远缘(未定)	RNA	Potyviridae	Potyvirus	Potyvirus-goji-2	Potyvirus iristenuis	False	3569			3	0.96	False
+SRR33536650_clean_NODE_413_length_2791_cov_4.206402	新	远缘(未定)	RNA	Potyviridae	Potyvirus	Potyvirus-goji-2	Potyvirus iristenuis	False	2791			3	0.96	False
+CRR2703948_clean_NODE_369_length_3130_cov_69.216552	新	远缘(未定)	RNA	Potyviridae	Potyvirus	Potyvirus-goji-2	Potyvirus iristenuis	False	3130			2	0.64	False
+SRR23107135_clean_NODE_1997_length_2780_cov_5.918729	新	远缘(未定)	RNA	Potyviridae	Potyvirus	Potyvirus-goji-2	Potyvirus iristenuis	False	2780			2	0.64	False
+SRR23107136_clean_NODE_2470_length_3010_cov_2.731018	新	远缘(未定)	RNA	Potyviridae	Potyvirus	Potyvirus-goji-2	Potyvirus iristenuis	False	3010			2	0.64	False
+SRR23107136_clean_NODE_2956_length_2865_cov_3.757880	新	远缘(未定)	RNA	Potyviridae	Potyvirus	Potyvirus-goji-2	Potyvirus iristenuis	False	2865			2	0.64	False
+SRR23107136_clean_NODE_3228_length_2796_cov_11.947852	新	远缘(未定)	RNA	Potyviridae	Potyvirus	Potyvirus-goji-2	Potyvirus iristenuis	False	2796			2	0.64	False
+SRR23107136_clean_NODE_4961_length_2473_cov_2.326250	新	远缘(未定)	RNA	Potyviridae	Potyvirus	Potyvirus-goji-2	Potyvirus iristenuis	False	2473			2	0.64	False
+SRR2344925_clean_NODE_39_length_2223_cov_4.994505	新	远缘(未定)	RNA	Potyviridae	Potyvirus	Potyvirus-goji-2	Potyvirus iristenuis	False	2223			1	0.32	False
+SRR25775933_clean_NODE_150_length_2452_cov_5.902480	新	远缘(未定)	RNA	Potyviridae	Potyvirus	Potyvirus-goji-2	Potyvirus iristenuis	False	2452			1	0.32	False
+SRR23561024_clean_NODE_20_length_2726_cov_2.343762	新	远缘(未定)	RNA	Potyviridae	Potyvirus	Potyvirus-goji-2	Potyvirus iristenuis	False	2726			0	0.0	False
+SRR24100142_clean_NODE_676_length_627_cov_1.817204	新	远缘(未定)	DNA	Caulimoviridae	Soymovirus	Soymovirus-goji-1	Soymovirus maculaglycinis	False	627			21	6.73	False
+CRR1440131_clean_NODE_5_length_5023_cov_167.943838	新	远缘病毒候选	DNA	Caulimoviridae	Soymovirus	Soymovirus-goji-1	Soymovirus maculaglycinis	False	3277			14	4.49	False
+CRR1440132_clean_NODE_112_length_2136_cov_1.819195	新	远缘病毒候选	DNA	Caulimoviridae	Soymovirus	Soymovirus-goji-2	Soymovirus malvae	False	2136			20	6.41	False
+CRR1440132_clean_NODE_231_length_1704_cov_1.760270	新	远缘(未定)	DNA	Caulimoviridae	Soymovirus	Soymovirus-goji-2	Soymovirus malvae	False	1704			14	4.49	False
+SRR27483481_clean_NODE_1806_length_625_cov_1.974638	新	远缘(未定)	DNA	Caulimoviridae	Soymovirus	Soymovirus-goji-3	Soymovirus hibisci	False	625			25	8.01	True
+CRR527055_clean_NODE_1903_length_897_cov_2.065534	新	远缘病毒候选	DNA	Caulimoviridae	Soymovirus	Soymovirus-goji-3	Soymovirus hibisci	False	897			7	2.24	False
+SRR8191319_clean_NODE_5_length_3879_cov_4.421965	新	新种候选	RNA	Secoviridae	Stralarivirus	Stralarivirus-goji-1	Stralarivirus lychnis	True	3879	80.5	91.0	1	0.32	True
+SRR8191323_clean_NODE_908_length_564_cov_1.054990	新	新种候选	RNA	Secoviridae	Stralarivirus	Stralarivirus-goji-2	Stralarivirus lychnis	True	564	83.5	97.0	1	0.32	False
+NC_003811.1	新	新种候选	RNA	Virgaviridae	Tobravirus	Tobravirus-goji-1	Tobravirus tabaci	True	3855	95.1	63.0	1	0.32	True
+CRR527046_clean_NODE_14794_length_514_cov_1.360544	新	新种候选	RNA	Betaflexiviridae	Trichovirus	Trichovirus-goji	Trichovirus necroacini	True	514	75.3	90.0	0	0.0	True
+SRR2344924_clean_NODE_24_length_1378_cov_5.286781	新	新种候选	RNA	Tymoviridae	Tymovirus	Tymovirus-goji-1	Tymovirus quitoense	True	1378	77.7	91.0	2	0.64	True

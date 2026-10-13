@@ -1,0 +1,16 @@
+Category	Total_Contigs	Classified	Low_Confidence	Percent_Classified
+Algae	1235	849	386	68.7%
+Animal_other	1570	1146	424	73.0%
+Arachnida	78	32	46	41.0%
+Archaea	18	3	15	16.7%
+Aves	360	233	127	64.7%
+Bacteria	1254	106	1148	8.5%
+Fungi	912	183	729	20.1%
+Human	2611	1922	689	73.6%
+Insecta	1481	675	806	45.6%
+Mammalia	1590	1031	559	64.8%
+Oomycetes	162	4	158	2.5%
+Plant	1065	724	341	68.0%
+Protist	7555	3404	4151	45.1%
+Unknown	1001	0	1001	0.0%
+TOTAL	20892	10312	10580	49.4%

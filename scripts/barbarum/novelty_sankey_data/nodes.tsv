@@ -1,0 +1,85 @@
+level	key	name	n
+0	tier	已知	40
+0	tier	新	21
+1	genome_type	RNA	51
+1	genome_type	Viroid	5
+1	genome_type	DNA	5
+2	family	Betaflexiviridae	22
+2	family	Potyviridae	7
+2	family	Rhabdoviridae	3
+2	family	Bromoviridae	8
+2	family	Pospiviroidae	4
+2	family	(Unassigned)	1
+2	family	Virgaviridae	2
+2	family	Caulimoviridae	3
+2	family	Geminiviridae	1
+2	family	Botourmiaviridae	2
+2	family	Kitaviridae	1
+2	family	Closteroviridae	1
+2	family	Partitiviridae	1
+2	family	Draupnirviridae	1
+2	family	Tymoviridae	2
+2	family	Alphaflexiviridae	1
+2	family	Secoviridae	1
+3	genus	Carlavirus	19
+3	genus	Potyvirus	7
+3	genus	Betacytorhabdovirus	3
+3	genus	Prunevirus	2
+3	genus	Ilarvirus	3
+3	genus	Cucumovirus	5
+3	genus	Apscaviroid	1
+3	genus	Pospiviroid	3
+3	genus	(Unassigned)	2
+3	genus	Badnavirus	1
+3	genus	Begomovirus	1
+3	genus	Betabotoulivirus	1
+3	genus	Cilevirus	1
+3	genus	Closterovirus	1
+3	genus	Deltapartitivirus	1
+3	genus	Dioscovirus	1
+3	genus	Magoulivirus	1
+3	genus	Malificivirus	1
+3	genus	Marafivirus	1
+3	genus	Potexvirus	1
+3	genus	Soymovirus	1
+3	genus	Stralarivirus	1
+3	genus	Tobravirus	1
+3	genus	Trichovirus	1
+3	genus	Tymovirus	1
+4	species	Carlavirus chisolani	2
+4	species	Potyvirus glycitessellati	2
+4	species	Betacytorhabdovirus lycii	2
+4	species	Carlavirus sigmasolani	8
+4	species	Potyvirus sacchari	2
+4	species	Prunevirus unicamelliae	2
+4	species	Carlavirus misolani	5
+4	species	Carlavirus latenskalanchoe	3
+4	species	Ilarvirus SLV	2
+4	species	Cucumovirus CMV	5
+4	species	Potyvirus pennisseti	2
+4	species	Apscaviroid cicatricimali	1
+4	species	Pospiviroid chloronani	1
+4	species	Pospiviroid exocortiscitri	1
+4	species	Pospiviroid fusituberis	1
+4	species	Rubber viroid India/2009	1
+4	species	Unassigned-goji-1	1
+4	species	Badnavirus-goji-1	1
+4	species	Begomovirus-goji-1	1
+4	species	Betabotoulivirus-goji-1	1
+4	species	Betacytorhabdovirus-goji-1	1
+4	species	Carlavirus-goji-4	1
+4	species	Cilevirus-goji	1
+4	species	Closterovirus-goji	1
+4	species	Deltapartitivirus-goji	1
+4	species	Dioscovirus-goji-2	1
+4	species	Ilarvirus-goji	1
+4	species	Magoulivirus-goji-1	1
+4	species	Malificivirus-goji	1
+4	species	Marafivirus-goji-1	1
+4	species	Potexvirus-goji-1	1
+4	species	Potyvirus-goji-2	1
+4	species	Soymovirus-goji-3	1
+4	species	Stralarivirus-goji-1	1
+4	species	Tobravirus-goji-1	1
+4	species	Trichovirus-goji	1
+4	species	Tymovirus-goji-1	1

@@ -1,0 +1,62 @@
+contig_id	tier	category	genome_type	family	genus	species	raw_species	is_new_species	length	nt_pident	nt_qcovs	n_samples	prevalence_pct
+NC_018175.1	已知	已知植物病毒	RNA	Betaflexiviridae	Carlavirus	Carlavirus chisolani	Carlavirus chisolani	False	8410	100.0	100.0	5	1.6
+SRR2344930_clean_NODE_191_length_536_cov_4.855131	已知	已知植物病毒	RNA	Betaflexiviridae	Carlavirus	Carlavirus chisolani	Carlavirus chisolani	False	536	85.1	95.0	5	1.6
+NC_013006.1	已知	已知植物病毒	RNA	Betaflexiviridae	Carlavirus	Carlavirus latenskalanchoe	Carlavirus latenskalanchoe	False	8517	100.0	100.0	4	1.28
+SRR22742705_clean_NODE_75_length_1711_cov_2.379731	已知	已知植物病毒	RNA	Betaflexiviridae	Carlavirus	Carlavirus latenskalanchoe	Carlavirus latenskalanchoe	False	1711	96.0	100.0	4	1.28
+SRR22742698_clean_NODE_9869_length_509_cov_1.233945	已知	已知植物病毒	RNA	Betaflexiviridae	Carlavirus	Carlavirus latenskalanchoe	Carlavirus latenskalanchoe	False	509	95.1	100.0	4	1.28
+NC_001361.2	已知	已知植物病毒	RNA	Betaflexiviridae	Carlavirus	Carlavirus misolani	Carlavirus misolani	False	8533	95.0	99.0	5	1.6
+SRR2344930_clean_NODE_46_length_922_cov_2.409966	已知	已知植物病毒	RNA	Betaflexiviridae	Carlavirus	Carlavirus misolani	Carlavirus misolani	False	922	97.8	100.0	5	1.6
+SRR2344930_clean_NODE_53_length_855_cov_1.984069	已知	已知植物病毒	RNA	Betaflexiviridae	Carlavirus	Carlavirus misolani	Carlavirus misolani	False	855	97.1	100.0	5	1.6
+SRR2344927_clean_NODE_134_length_622_cov_4.862779	已知	已知植物病毒	RNA	Betaflexiviridae	Carlavirus	Carlavirus misolani	Carlavirus misolani	False	622	98.9	99.0	5	1.6
+SRR2344934_clean_NODE_1531_length_511_cov_1.790254	已知	已知植物病毒	RNA	Betaflexiviridae	Carlavirus	Carlavirus misolani	Carlavirus misolani	False	511	96.0	100.0	1	0.32
+NC_007289.1	已知	已知植物病毒	RNA	Betaflexiviridae	Carlavirus	Carlavirus sigmasolani	Carlavirus sigmasolani	False	8478	100.0	100.0	5	1.6
+SRR2344935_clean_NODE_6_length_2228_cov_3.462768	已知	已知植物病毒	RNA	Betaflexiviridae	Carlavirus	Carlavirus sigmasolani	Carlavirus sigmasolani	False	2228	98.6	100.0	5	1.6
+SRR2344929_clean_NODE_508_length_1188_cov_2.815492	已知	已知植物病毒	RNA	Betaflexiviridae	Carlavirus	Carlavirus sigmasolani	Carlavirus sigmasolani	False	1188	96.3	99.0	5	1.6
+SRR2344929_clean_NODE_1111_length_866_cov_2.385732	已知	已知植物病毒	RNA	Betaflexiviridae	Carlavirus	Carlavirus sigmasolani	Carlavirus sigmasolani	False	866	97.0	100.0	4	1.28
+SRR2344935_clean_NODE_61_length_784_cov_2.965101	已知	已知植物病毒	RNA	Betaflexiviridae	Carlavirus	Carlavirus sigmasolani	Carlavirus sigmasolani	False	784	98.6	100.0	4	1.28
+SRR2344927_clean_NODE_103_length_672_cov_3.949447	已知	已知植物病毒	RNA	Betaflexiviridae	Carlavirus	Carlavirus sigmasolani	Carlavirus sigmasolani	False	672	96.0	99.0	4	1.28
+SRR2344935_clean_NODE_168_length_548_cov_2.125737	已知	已知植物病毒	RNA	Betaflexiviridae	Carlavirus	Carlavirus sigmasolani	Carlavirus sigmasolani	False	548	99.5	100.0	4	1.28
+SRR2344934_clean_NODE_1458_length_523_cov_2.068182	已知	已知植物病毒	RNA	Betaflexiviridae	Carlavirus	Carlavirus sigmasolani	Carlavirus sigmasolani	False	523	94.8	100.0	3	0.96
+NC_076655.1	已知	已知植物病毒	RNA	Betaflexiviridae	Prunevirus	Prunevirus unicamelliae	Prunevirus unicamelliae	False	7779	100.0	100.0	0	0.0
+SRR8293189_clean_NODE_868_length_642_cov_1.421793	已知	已知植物病毒	RNA	Betaflexiviridae	Prunevirus	Prunevirus unicamelliae	Prunevirus unicamelliae	False	642	95.6	99.0	0	0.0
+CRR2703947_clean_NODE_62_length_3305_cov_51.922339	已知	已知植物病毒	RNA	Bromoviridae	Cucumovirus	Cucumovirus CMV	Cucumovirus CMV	False	3305	99.1	100.0	1	0.32
+CRR2703948_clean_NODE_296_length_3302_cov_6.050170	已知	已知植物病毒	RNA	Bromoviridae	Cucumovirus	Cucumovirus CMV	Cucumovirus CMV	False	3302	94.8	100.0	1	0.32
+CRR2703947_clean_NODE_66_length_3277_cov_28.441323	已知	已知植物病毒	RNA	Bromoviridae	Cucumovirus	Cucumovirus CMV	Cucumovirus CMV	False	3277	99.1	90.0	2	0.64
+CRR2703948_clean_NODE_456_length_2949_cov_4.011822	已知	已知植物病毒	RNA	Bromoviridae	Cucumovirus	Cucumovirus CMV	Cucumovirus CMV	False	2949	89.4	100.0	1	0.32
+CRR2703948_clean_NODE_1115_length_2189_cov_8.020794	已知	已知植物病毒	RNA	Bromoviridae	Cucumovirus	Cucumovirus CMV	Cucumovirus CMV	False	2189	98.6	100.0	2	0.64
+CRR1126142_clean_NODE_2_length_3472_cov_19.349809	已知	已知植物病毒	RNA	Bromoviridae	Ilarvirus	Ilarvirus SLV	Ilarvirus SLV	False	3472	87.3	99.0	31	9.94
+SRR23107139_clean_NODE_984_length_3011_cov_100.912526	已知	已知植物病毒	RNA	Bromoviridae	Ilarvirus	Ilarvirus SLV	Ilarvirus SLV	False	3011	88.0	97.0	32	10.26
+HM590055.1	已知	已知植物病毒	RNA	Potyviridae	Potyvirus	Potyvirus glycitessellati	Potyvirus glycitessellati	False	9994	100.0	100.0	4	1.28
+NC_002634.1	已知	已知植物病毒	RNA	Potyviridae	Potyvirus	Potyvirus glycitessellati	Potyvirus glycitessellati	False	9588	99.5	99.0	5	1.6
+SRR23587957_clean_NODE_178_length_1285_cov_1.232673	已知	已知植物病毒	RNA	Potyviridae	Potyvirus	Potyvirus pennisseti	Potyvirus pennisseti	False	1285	92.3	100.0	6	1.92
+SRR23587948_clean_NODE_285_length_1031_cov_1.772443	已知	已知植物病毒	RNA	Potyviridae	Potyvirus	Potyvirus pennisseti	Potyvirus pennisseti	False	1031	94.6	100.0	6	1.92
+PV083582.1	已知	已知植物病毒	RNA	Potyviridae	Potyvirus	Potyvirus sacchari	Potyvirus sacchari	False	9706	100.0	100.0	6	1.92
+SRR22742700_clean_NODE_1_length_6157_cov_2.944280	已知	已知植物病毒	RNA	Potyviridae	Potyvirus	Potyvirus sacchari	Potyvirus sacchari	False	8571	99.1	100.0	5	1.6
+SRR23515444_clean_NODE_1_length_15960_cov_324.624976	已知	已知植物病毒	RNA	Rhabdoviridae	Betacytorhabdovirus	Betacytorhabdovirus lycii	Betacytorhabdovirus lycii	False	15960	97.0	93.0	198	63.46
+CRR1126139_clean_NODE_49_length_2200_cov_32.555712	已知	已知植物病毒	RNA	Rhabdoviridae	Betacytorhabdovirus	Betacytorhabdovirus lycii	Betacytorhabdovirus lycii	False	7550	99.2	99.0	123	39.42
+viroid::Rubber viroid India/2009	已知	(类病毒)	Viroid	(Unassigned)	(Unassigned)	Rubber viroid India/2009	Rubber viroid India/2009	False	360	100.0	n_hits=5	5	1.6
+viroid::Apscaviroid cicatricimali	已知	(类病毒)	Viroid	Pospiviroidae	Apscaviroid	Apscaviroid cicatricimali	Apscaviroid cicatricimali	False	330	100.0	n_hits=1	1	0.32
+viroid::Pospiviroid chloronani	已知	(类病毒)	Viroid	Pospiviroidae	Pospiviroid	Pospiviroid chloronani	Pospiviroid chloronani	False	361	100.0	n_hits=12	7	2.24
+viroid::Pospiviroid exocortiscitri	已知	(类病毒)	Viroid	Pospiviroidae	Pospiviroid	Pospiviroid exocortiscitri	Pospiviroid exocortiscitri	False	410	100.0	n_hits=208	101	32.37
+viroid::Pospiviroid fusituberis	已知	(类病毒)	Viroid	Pospiviroidae	Pospiviroid	Pospiviroid fusituberis	Pospiviroid fusituberis	False	363	100.0	n_hits=378	203	65.06
+CRR1126140_clean_NODE_3885_length_584_cov_3.054795	新	新种候选	DNA	Caulimoviridae	Badnavirus	Badnavirus-goji-1	Badnavirus epsilonvirgamusae	True	584	92.7	58.0	2	0.64
+CRR1126140_clean_NODE_312_length_2126_cov_16.749148	新	远缘病毒候选	DNA	Caulimoviridae	Dioscovirus	Dioscovirus-goji-2	Dioscovirus dioscoreae	False	2126	98.9	25.0	6	1.92
+SRR27483481_clean_NODE_1806_length_625_cov_1.974638	新	远缘(未定)	DNA	Caulimoviridae	Soymovirus	Soymovirus-goji-3	Soymovirus hibisci	False	625			25	8.01
+CRR527042_clean_NODE_17018_length_532_cov_1.357298	新	远缘病毒候选	DNA	Draupnirviridae	Malificivirus	Malificivirus-goji	Malificivirus porcris	False	532			7	2.24
+SRR27880476_clean_NODE_162_length_1514_cov_11.394865	新	新种候选	DNA	Geminiviridae	Begomovirus	Begomovirus-goji-1	Begomovirus solanumflavusvietnamense	True	1514	73.4	69.0	3	0.96
+CRR1440123_clean_NODE_3_length_7439_cov_1883.998099	新	远缘病毒候选	RNA	Alphaflexiviridae	Potexvirus	Potexvirus-goji-1	Potexvirus ecspotati	False	7439	77.9	3.0	162	51.92
+SRR2344927_clean_NODE_123_length_632_cov_2.112985	新	远缘病毒候选	RNA	Betaflexiviridae	Carlavirus	Carlavirus-goji-4	Carlavirus chisolani	False	632			5	1.6
+CRR527046_clean_NODE_14794_length_514_cov_1.360544	新	新种候选	RNA	Betaflexiviridae	Trichovirus	Trichovirus-goji	Trichovirus necroacini	True	514	75.3	90.0	0	0.0
+CRR527042_clean_NODE_452_length_2629_cov_7.050861	新	新种候选	RNA	Botourmiaviridae	Betabotoulivirus	Betabotoulivirus-goji-1	Sanya botourmia-like virus 4	True	2629	85.1	81.0	5	1.6
+CRR527043_clean_NODE_14380_length_618_cov_1.330275	新	新种候选	RNA	Botourmiaviridae	Magoulivirus	Magoulivirus-goji-1	Grapevine wood holobiome associated ourmia-like virus 11	True	618	83.4	93.0	1	0.32
+CRR1126139_clean_NODE_29_length_2874_cov_22.006069	新	新种候选	RNA	Bromoviridae	Ilarvirus	Ilarvirus-goji	Ilarvirus SLV	True	2874	88.3	78.0	194	62.18
+CRR527046_clean_NODE_1_length_18125_cov_301.957512	新	远缘病毒候选	RNA	Closteroviridae	Closterovirus	Closterovirus-goji	Citrus virus B	False	18125			24	7.69
+CRR1126135_clean_NODE_147_length_2253_cov_2.977064	新	远缘病毒候选	RNA	Kitaviridae	Cilevirus	Cilevirus-goji	Cilevirus passiflorae	False	2253			3	0.96
+contig_966	新	远缘(未定)	RNA	Partitiviridae	Deltapartitivirus	Deltapartitivirus-goji	Deltapartitivirus sp. 'yunanense'	False	2589			62	19.87
+CRR527043_clean_NODE_200_length_3383_cov_13.140483	新	远缘(未定)	RNA	Potyviridae	Potyvirus	Potyvirus-goji-2	Potyvirus iristenuis	False	3383			34	10.9
+CRR527049_clean_NODE_8_length_2837_cov_45.871925	新	新种候选	RNA	Rhabdoviridae	Betacytorhabdovirus	Betacytorhabdovirus-goji-1	Betacytorhabdovirus lycii	True	2837	98.9	83.0	186	59.62
+SRR8191319_clean_NODE_5_length_3879_cov_4.421965	新	新种候选	RNA	Secoviridae	Stralarivirus	Stralarivirus-goji-1	Stralarivirus lychnis	True	3879	80.5	91.0	1	0.32
+SRR23215179_clean_NODE_1_length_6852_cov_76.557752	新	新种候选	RNA	Tymoviridae	Marafivirus	Marafivirus-goji-1	Marafivirus syrahense	True	6852	76.2	96.0	7	2.24
+SRR2344924_clean_NODE_24_length_1378_cov_5.286781	新	新种候选	RNA	Tymoviridae	Tymovirus	Tymovirus-goji-1	Tymovirus quitoense	True	1378	77.7	91.0	2	0.64
+CRR1440127_clean_NODE_327_length_2543_cov_2.888259	新	远缘病毒候选	RNA	Virgaviridae	(Unassigned)	Unassigned-goji-1	(Unassigned)	False	2543			31	9.94
+NC_003811.1	新	新种候选	RNA	Virgaviridae	Tobravirus	Tobravirus-goji-1	Tobravirus tabaci	True	3855	95.1	63.0	1	0.32

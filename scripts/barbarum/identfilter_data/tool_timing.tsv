@@ -1,0 +1,8 @@
+tool	n	mean_sec	median_sec	min_sec	max_sec
+genomad	395	235.16	188.90	5.30	4238.40
+rdrpcatch	395	157.05	57.20	5.10	4282.50
+virbot	395	30.98	14.10	8.30	709.60
+viralverify	394	29.96	17.70	10.60	486.60
+metabuli	395	14.16	11.80	5.50	96.20
+blast	395	9.17	6.30	2.10	52.30
+viroid_blastn	436	7.52	6.00	1.00	94.00

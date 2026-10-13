@@ -1,0 +1,98 @@
+{
+ "Realm_agree": {
+  "zero_no_vote": 1903,
+  "agree_counts": {
+   "ACVirus": 8199,
+   "metabuli": 9084,
+   "mmseqs": 6144,
+   "CAT": 8469,
+   "diamond_lca": 8939,
+   "VITAP": 3584,
+   "genomad": 1359
+  }
+ },
+ "Kingdom_agree": {
+  "zero_no_vote": 1793,
+  "agree_counts": {
+   "ACVirus": 8183,
+   "metabuli": 9168,
+   "mmseqs": 6089,
+   "CAT": 8313,
+   "diamond_lca": 8776,
+   "VITAP": 3584,
+   "genomad": 1325
+  }
+ },
+ "Phylum_agree": {
+  "zero_no_vote": 1897,
+  "agree_counts": {
+   "ACVirus": 8173,
+   "metabuli": 8978,
+   "mmseqs": 5898,
+   "CAT": 8303,
+   "diamond_lca": 8751,
+   "VITAP": 3578,
+   "genomad": 1317
+  }
+ },
+ "Class_agree": {
+  "zero_no_vote": 1485,
+  "agree_counts": {
+   "ACVirus": 8354,
+   "metabuli": 9121,
+   "CAT": 8360,
+   "diamond_lca": 8828,
+   "mmseqs": 5446,
+   "VITAP": 3209,
+   "genomad": 1240
+  }
+ },
+ "Order_agree": {
+  "zero_no_vote": 3163,
+  "agree_counts": {
+   "ACVirus": 6943,
+   "metabuli": 8226,
+   "CAT": 7109,
+   "diamond_lca": 7549,
+   "mmseqs": 4589,
+   "VITAP": 1894,
+   "genomad": 750
+  }
+ },
+ "Family_agree": {
+  "zero_no_vote": 3423,
+  "agree_counts": {
+   "ACVirus": 6906,
+   "metabuli": 7632,
+   "CAT": 5771,
+   "diamond_lca": 6870,
+   "mmseqs": 3895,
+   "VITAP": 607,
+   "genomad": 654
+  }
+ },
+ "Genus_agree": {
+  "zero_no_vote": 6341,
+  "agree_counts": {
+   "ACVirus": 7067,
+   "metabuli": 5731,
+   "CAT": 2885,
+   "diamond_lca": 3320,
+   "VITAP": 663,
+   "mmseqs": 1591,
+   "genomad": 120
+  }
+ },
+ "Species_agree": {
+  "zero_no_vote": 3653,
+  "agree_counts": {
+   "ACVirus": 6539,
+   "metabuli": 7160,
+   "CAT": 3662,
+   "diamond_lca": 3934,
+   "VITAP": 604,
+   "mmseqs": 883,
+   "genomad": 13
+  }
+ }
+}
