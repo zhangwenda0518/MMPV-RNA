@@ -63,19 +63,10 @@ def card(x, y, w, h, title, tcolor, lines, tfs=7.0, bfs=6.1, dir_name=None,
 
 # ══════════════════ 交互层 ══════════════════
 band(4, 103, 182, 21, "#F2F6FA", "INTERACTIVE LAYER")
-card(30, 105.5, 62, 13.5, "Metadata GUI", "#3E5C76",
-     ["Search · edit · visualize unified metadata"],
-     tfs=7.2, bfs=6.0, dir_name="metadata_gui", center=True)
-card(98, 105.5, 62, 13.5, "Submission GUI", "#3E5C76",
-     ["Guided metadata entry · GenBank packaging"],
-     tfs=7.2, bfs=6.0, dir_name="submission_gui", center=True)
-
-for x0, x1, lab in ((61, 56, "metadata in"), (129, 169, "assists module 5")):
-    ax.add_patch(FancyArrowPatch((x0, 105.5), (x1, 96.5), arrowstyle="-|>",
-                 mutation_scale=7, linestyle=(0, (2.2, 1.6)), color="#9AA6B2",
-                 lw=0.8, shrinkA=0, shrinkB=0, zorder=2))
-    ax.text((x0 + x1) / 2 + 2.5, 101.2, lab, fontsize=4.8, color="#9AA6B2",
-            style="italic", ha="left", va="center", zorder=2)
+card(30, 105.5, 130, 13.5, "Desktop GUIs → external local platform (2026-10)", "#3E5C76",
+     ["Metadata & submission interactions moved out of this repo;",
+      "in-pipeline GUI: virome_submission_pipeline/submission_gui.py"],
+     tfs=7.2, bfs=6.0, center=True)
 
 # ══════════════════ 管线层 ══════════════════
 band(4, 22, 182, 75, "#FBFCFE", "PIPELINE LAYER · CORE WORKFLOW")

@@ -141,6 +141,21 @@
 | `SDT`(sdt_genus_matrix.py 内调 mafft) | 属级序列一致性矩阵 | sdt_genus_matrix.py |
 | `Rscript` | 运行 R 脚本 | ViPhyKit 等 |
 
+**2026-10-13 补录** —— ⑤ 管线实际调用但原表遗漏的 6 类外部工具 (均为可选: 缺失时对应
+stage 优雅跳过或交叉验证静默降级, 不阻断主线):
+
+| 工具 | 用途 | 出现脚本 | 缺失时的行为 |
+|---|---|---|---|
+| `trimal` | 序列修剪 (比对清洗) | phylo_pipeline.py | 修剪步骤跳过 |
+| `raxml-ng` | ML 树交叉验证 | utils/phylo_cross.py | 交叉验证该分支静默跳过 |
+| `lsd2` | 最小二乘定年 (交叉验证) | utils/phylo_cross.py, phylo_pipeline.py OPTIONAL 清单 | 同上 |
+| `mrbayes`/`mb` | 贝叶斯树交叉验证 | utils/phylo_cross.py | 同上 |
+| `phylobayes`/`pb_mpi` | 贝叶斯位点替代交叉验证 | utils/phylo_cross.py | 同上 |
+| `splitstree6-tools` + `Xvfb` | SplitsTree 分裂网络 (正式 stage `splitstree`) | utils/splitstree_bridge.py, utils/splitstree_native_viz.py | stage 记 skip(na), 主线继续 |
+
+> 另: `VCF2Dis` / `VCF2PCACluster` 只在 `pixi.toml` 手动安装区出现, 依赖文档此前零引用 ——
+> 如需用 ⑤ 群体结构分支请一并安装。
+
 > ✅ **pypopart 已固定到修复版 `4562cba`（2026-09-14，含 indel 修复）** —— 本地副本 `biosoft/pypopart/`
 > （含 `PROVENANCE.md`），服务器运行环境 `~/MMPV-RNA/biosoft/pypopart`（git 仓库，2026-09-22 从
 > `97d76b1` 升级至 `4562cba`）。
@@ -195,6 +210,7 @@
 | `numpy` / `scipy` | 数值/统计 | 大量（phylo, analysis, 绘图） |
 | `matplotlib` / `seaborn` | 绘图 | 大量 |
 | `plotly` + `kaleido` | 交互图/导出 | report_pipeline, taxonomic_sankey |
+| `jinja2` | 报告层 HTML 模板引擎 (mmpv_common/report_template.py + templates/*.html.j2; 过程面板/主报告/⑦ 提交报告; conda-forge, pixi 声明) | process_report, report_html |
 | `pysam` | BAM 处理 | batch_virus_depth*, batch_virus_variants |
 | `scikit-learn` | PCA/KMeans | virus_variants_analyzer, snpgenie_master |
 | `tqdm` / `psutil` | 进度/资源 | 大量 |
@@ -206,9 +222,9 @@
 | `networkx` / `pypopart` | 图/单倍型网络 | phylo/utils/build_haplo_outputs.py |
 | `openai` | AI 报告 | pixi 声明 |
 | `requests` / `urllib3` / `xmltodict` | HTTP/XML | pixi 声明 |
-| `pyside6` | 桌面 GUI (metadata_gui / submission_gui / virome_submission_pipeline) | GUI 全部入口 |
+| `pyside6` | 桌面 GUI (virome_submission_pipeline/submission_gui.py; 顶层桌面 GUI 已移交外部平台) | 管线内 GUI |
 | `scikit-learn` | PCA/KMeans | virus_variants_analyzer, snpgenie_master, virus_vcf_pipeline |
-| `openpyxl` | 读 xlsx (元数据/VMR 表) | gsa_sra.search/info, data_store, submission_gui |
+| `openpyxl` | 读 xlsx (元数据/VMR 表) | gsa_sra.search/info, data_store |
 | `treetime` | RTT 定年门禁 (Python 包, bioconda) | phylo_pipeline.py |
 | `cartopy` + `geopy` | 地理坐标/地图可视化 | phylo utils/sample_plot.py, virphy_bridge.py |
 | `marsilea` | 复合图 | phylo utils/pub_plots.py |

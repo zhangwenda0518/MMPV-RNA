@@ -81,15 +81,17 @@ makeblastdb -in viroids.fasta -dbtype nucl -out viroids.blast
 # 从 NCBI virus 下载完整植物病毒基因组
 # 路径: ~/database/virus-db/ncbi-virus_ref/
 
-# EVE Stage1 正向发现库 (同目录下蛋白版, endogenous_virus_pipeline)
+# EVE Stage1 正向发现库 (同目录下蛋白版)
+# 【⑥ endogenous_virus_pipeline 已归档 2026-10-11 → archive/20261011_endogenous_virus_pipeline;
+#   本节与 1.8 拆分库为该模块专用, 暂可跳过; 恢复模块时再建】
 wget https://ftp.ncbi.nlm.nih.gov/refseq/release/viral/viral.1.protein.faa.gz
 diamond makedb --in viral.1.protein.faa -d ~/database/virus-db/ncbi-virus_ref/ncbi-virus_ref.pep.dmnd --threads 60
 ```
 
-### 1.8 植物/病毒拆分库 (hybrid) + id2div — EVE 双侧判定专用
+### 1.8 植物/病毒拆分库 (hybrid) + id2div — EVE 双侧判定专用（⑥ 已归档 2026-10-11，暂可跳过）
 
 ```bash
-# 用途: endogenous_virus_pipeline Stage2 双侧判定
+# 用途: ⑥ Stage2 双侧判定 (模块已归档, 见 archive/20261011_endogenous_virus_pipeline/)
 #   把 SwissProt 拆成 viral + plant 两个子集合进同一个 diamond 库,
 #   id2div_final.tsv 记录每条 sseqid 归属 (viral|plant),
 #   判定逻辑: viral 侧 bitscore ≥50 且 ≥ plant 侧 → viral_supported
@@ -391,12 +393,12 @@ wget -c https://genome-idx.s3.amazonaws.com/kraken/k2_pluspfp_20260226.tar.gz \
 | NCBI nr | latest | ~250GB | Diamond BLASTX 去假阳性 |
 | RVDB | v31 | ~5GB | 病毒参考序列 |
 | geNomad DB | v1.7 | ~14GB | 病毒鉴定 |
-| CheckV DB | v1.7 | ~3GB | 完整性评估 |
+| CheckV DB | v1.7 | ~6.5GB (genome_db+hmm_db) | 完整性评估 |
 | VirSorter2 DB | latest | ~2GB | 病毒分类 |
 | ViraLM model | DNABERT-2 | ~1.5GB | DL 病毒鉴定 |
 | VirHunter weights | generalistic | ~6MB | DL 病毒鉴定 |
 | NCBI taxonomy | latest | ~200MB | 分类信息 |
-| MEGAN map | Feb2022 | ~20GB | 分类注释 |
+| MEGAN map | Feb2022 | ~20GB | 分类注释（⚠ 全仓管线代码 0 引用, 2026-10-13 核实; 仅留档, 不装不影响任何阶段） |
 | Kraken2 host | custom | ~50GB | 宿主去除 |
 | Bowtie2/HISAT2 host | custom | ~3GB | 宿主比对 |
 | PhaBOX2 | v2.2 | ~2GB | 宿主预测 |

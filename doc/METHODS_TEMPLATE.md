@@ -2,9 +2,9 @@
 
 > **用途**：本文档汇总 MMPV-RNA 各管道的论文级方法段，供使用 MMPV-RNA 的研究者在投稿时直接取用。按论文实际使用的管道组合挑选对应小节粘贴进 Methods，将文末占位符替换为自身数据即可。
 >
-> **如何使用**：按研究设计组合选取小节——①仅做病毒发现 → 管道一＋管道二（如需提交序列再加管道五）；②已知病毒定量/变异/群体遗传 → 管道三；③系统发育/定年/重组 → 管道四；④序列提交 → 管道五。管道一（公共数据获取与宿主库构建）为公共前置，仅在使用了公共数据或需声明宿主去除策略时写入。粘贴后统一替换文末"占位符清单"中的条目。
+> **如何使用**：按研究设计组合选取小节——①仅做病毒发现 → 管道一＋管道二（如需提交序列再加管道五）；②已知病毒定量/变异/群体遗传 → 管道三；③系统发育/定年/重组 → 管道四；④序列提交 → 管道五；⑤内源性病毒元件（EVE）筛查 → 管道六（**已归档 2026-10-11，方法不成熟，暂勿用于投稿**）；⑥宿主表达响应分析 → 管道七（**已归档 2026-10-11，方法不成熟，暂勿用于投稿**）。管道一（公共数据获取与宿主库构建）为公共前置，仅在使用了公共数据或需声明宿主去除策略时写入。粘贴后统一替换文末"占位符清单"中的条目。
 >
-> **来源文件**：本模板为各管道独立方法章的合并精简版，逐管道源文件见 `virome_discovery_pipeline/METHODS_Virome_Discovery.md`（管道一/二）、`virome_analysis_pipeline/METHODS.md`（管道三）、`virome_phylo_pipeline/METHODS.md`（管道四）、`virome_submission_pipeline/METHODS.md`（管道五）。
+> **来源文件**：本模板为各管道独立方法章的合并精简版，逐管道源文件见 `virome_discovery_pipeline/METHODS_Virome_Discovery.md`（管道一/二）、`virome_analysis_pipeline/METHODS.md`（管道三）、`virome_phylo_pipeline/METHODS.md`（管道四）、`virome_submission_pipeline/METHODS.md`（管道五）、`archive/20261011_endogenous_virus_pipeline/doc.md`（管道六，已归档）、`archive/20261011_host_expression_pipeline/README.md`（管道七，已归档）。
 >
 > **数据口径**：所有工具名、参数、阈值均取自各管道脚本的实际调用（argparse 默认值 / 代码逻辑）及各管道独立方法章，非编造。软件版本号标 ⊙ 者待从服务器运行环境确认（本机 `SOFTWARE_VERSIONS.txt` 及管道独立方法章中已核实的直接写明）。文末参考文献按字母排序，覆盖全部管道引用的软件。
 
@@ -16,7 +16,7 @@
 
 > Viral genomes were identified, assembled, and analyzed using MMPV-RNA (v2.3) [GitHub/DOI 待填], a modular metatranscriptomic virome analysis platform.
 
-（GitHub 地址与 DOI 按实际发布信息填写；v2.3 与代码内版本一致——`virome_pipeline.py`、`pixi.toml` 均为 v2.3。注意仓库 README 曾以 "MMPV v3.0" 作为平台展示名，投稿引用版本号以实际发布信息为准。）
+（GitHub 地址与 DOI 按实际发布信息填写；v2.3 与代码内版本一致——`virome_pipeline.py`、`pixi.toml` 均为 v2.3。注意仓库 README 现以 "MMPV v3.1" 作为平台展示名（v3.1 指统一 I/O 布局版本，与代码内 2.3.0 为两套独立口径），投稿引用版本号以实际发布信息为准。）
 
 ---
 
@@ -24,7 +24,7 @@
 
 ### 公共测序数据获取
 
-公共宏转录组数据集经五阶段元数据管道（`public_data_pipeline.py`，v3.1）获取，以宿主物种拉丁名与 NCBI TaxID 为输入。检索阶段并行检索 NCBI SRA（E-utilities esearch/efetch）与 CNCB GSA（网页爬虫），限定转录组文库（"biomol rna"），合并去重为统一登录号表；详细模式解析每个 Run 的 SRA XML 与 GSA Excel 记录，提取组织、发育阶段与地点等深层特征，并用大语言模型（DeepSeek）辅助清洗自由文本字段。元数据统一阶段将每个 Run 归一到核心表（Run、发布日期、采集日期、地点、来源、组织、发育阶段、物种学名、TaxID、文库类型、测序中心、BioProject、PMID），规则提取与大语言模型推理（DeepSeek/Kimi）仲裁互补，BioProject 追溯至 PubMed 文献。下载阶段经 NGDC（CRR 登录号，aria2c，FTP/HTTP 回退）与 NCBI（SRR/ERR/DRR 登录号，SRA Toolkit prefetch）双通道下载，均支持断点续传。转换阶段用 fasterq-dump 将 SRA 档案转为 FASTQ。可视化阶段生成 3×2 面板出版图，汇总样本队列的时间、数据库、机构、组织、地理与发育阶段分布。
+公共宏转录组数据集经九阶段元数据管道（`public_data_pipeline.py`，v3.2）获取，以宿主物种拉丁名与 NCBI TaxID 为输入。search（检索）阶段并行检索 NCBI SRA（E-utilities esearch/efetch）与 CNCB GSA（网页爬虫），限定转录组文库（"biomol rna"），合并去重为统一登录号表。info（元数据深度解析）阶段解析每个 Run 的 SRA XML 与 GSA Excel 记录，提取组织、发育阶段与地点等深层特征，用大语言模型（DeepSeek）辅助清洗自由文本字段，并将每个 Run 归一到核心表（Run、发布日期、采集日期、地点、来源、组织、发育阶段、物种学名、TaxID、文库类型、测序中心、BioProject、PMID），规则提取与大语言模型推理（DeepSeek/Kimi）仲裁互补，BioProject 追溯至 PubMed 文献。prescreen（病毒预筛，v3.2 新增）阶段基于 SRA/GSA 预计算分类结果对候选 Run 做病毒预筛与物种对拍（不下载任何测序数据），产出逐 Run 下载决策表（sample_decision.tsv；down 阶段按 safe/strict 两种模式消费其过滤清单——过滤失败时回退完整列表，绝不漏样）与病毒层面画像（virus_profile：病毒名录、丰度与跨样本检出率）。down（下载）阶段经 NGDC（CRR 登录号，aria2c，FTP/HTTP 回退）与 NCBI（SRR/ERR/DRR 登录号，SRA Toolkit prefetch）双通道下载，均支持断点续传。convert（转换）阶段用 fasterq-dump 将 SRA 档案转为 FASTQ。plot（可视化）阶段生成 3×2 面板出版图，汇总样本队列的时间、数据库、机构、组织、地理与发育阶段分布。hostref 与 hostdb 两阶段负责宿主参考基因组多通道下载与四索引构建（见下节），report 阶段汇总 HTML 报告与样本交接清单（sample_handoff.csv）。
 
 ### 宿主参考库构建
 
@@ -142,7 +142,23 @@ MAFFT 7.525、IQ-TREE 3.1.2、BEAST 1.10.4、BEAGLE ⊙、TreeTime ⊙、TempEst
 
 ## 管道五：GenBank 序列提交
 
-对 MMPV-RNA 鉴定的新病毒与已知病毒序列，用 suvtk v0.1.1（GitHub: LanderDC/suvtk，无正式发表文献）工具链准备 GenBank 提交文件（.sqn），由 `virome_submission.py` 编排并支持断点续传。新病毒序列来自发现管道 rescue 阶段的输出（final_centroids.fasta），已知病毒序列来自分析管道的全长组装阶段。流程分五步：(i) suvtk taxonomy 以 MMseqs2 LCA 分配 ICTV 分类学并预测基因组类型（`-s 0.7`）；(ii) suvtk features 做序列方向校正、pyrodigal-gv（Larralde, 2022）ORF 预测（coding-complete，CDS > 50% 基因组）、BFVD（Kim et al., 2025）蛋白功能注释，输出五列特征表 .tbl，无命中 ORF 标注 hypothetical protein 并可经 BLASTP 补充注释；(iii) 序列 ID 统一加 `lcl|` 前缀规范化；(iv) 按 GenBank 与 MIUVIG 标准准备 source.src、miuvig.tsv、assembly.tsv 与 template.sbt；(v) suvtk comments 整合结构化注释，suvtk table2asn 生成 Sequin 提交文件 submission.sqn 与验证报告 submission.val。提交前核对 taxonomy 无非 NA、CDS 无内部终止密码子、占位符已替换、分段病毒 isolate 一致、metagenomic 均为 TRUE、验证报告无 ERROR。
+对 MMPV-RNA 鉴定的新病毒与已知病毒序列准备 GenBank 提交文件（.sqn），由 `virome_submission.py`（suvtk 链，断点续传）与 `submission_pipeline.py`（统一入口：默认接收发现管道 analysis_verify 阶段的 class_KEEP.fasta，未运行该阶段时回退 08_Rescue 高置信全集，自动检测已有产物按需补跑）编排。新病毒序列来自发现管道 rescue 阶段的输出（final_centroids.fasta），已知病毒序列来自分析管道的全长组装阶段。提交前先经 `viral_topology.py` 判断基因组拓扑（环形/线性；suvtk taxonomy 分类规则结合序列末端重复检测），并用 `unified_metadata.py`（借鉴 SeqSender 的一表双报设计）从约 25 个核心字段一次性同时生成 GenBank source 修饰符与 BioSample 字段，样本字段可自 Core14 元数据表自动填充。
+
+### suvtk 模式（模式 A）
+
+用 suvtk v0.1.1（GitHub: LanderDC/suvtk，无正式发表文献）工具链，流程分五步：(i) suvtk taxonomy 以 MMseqs2 LCA 分配 ICTV 分类学并预测基因组类型（`-s 0.7`）；(ii) suvtk features 做序列方向校正、pyrodigal-gv（Larralde, 2022）ORF 预测（coding-complete，CDS > 50% 基因组）、BFVD（Kim et al., 2025）蛋白功能注释，输出五列特征表 .tbl，无命中 ORF 标注 hypothetical protein 并可经 BLASTP 补充注释；(iii) 序列 ID 统一加 `lcl|` 前缀规范化；(iv) 按 GenBank 与 MIUVIG 标准准备 source.src、miuvig.tsv、assembly.tsv 与 template.sbt；(v) suvtk comments 整合结构化注释，suvtk table2asn 生成 Sequin 提交文件 submission.sqn 与验证报告 submission.val。
+
+### Sequin 独立文件模式（模式 B）
+
+借鉴 Cenote-Taker3 的每病毒独立文件与 FASTA 头部嵌入元数据模式（`sequin_builder.py`）：为每个病毒生成 .fsa + .tbl + .cmt 独立文件包，经 NCBI tbl2asn 生成 .sqn。两种模式可任选或经 `--mode both` 同时产出。
+
+### 已知病毒参考引导提交
+
+已知病毒全长序列经 `known_virus_submit.py` 做 codon-aware 参考引导提交：cawlign 将组装比对至参考并转为 refmap 格式（查询插入相对参考被移除），参考 CDS 坐标直接映射到对齐列后提取组装 CDS，生成 .tbl 与 .gb——零假 ORF、零 BLASTP，curator 注释直接继承。
+
+### 提交后修订回路
+
+提交包经人工/GUI 核对编辑后，`sync_sqn_from_csv.py` 将编辑后 CSV 的非占位字段一键回写 source_filled.src 与 source_norm.src 并重建 submission.sqn（回写前校验 CSV 与 source 保留集完全一致，不一致即退出）。提交前核对 taxonomy 无非 NA、CDS 无内部终止密码子、占位符已替换、分段病毒 isolate 一致、metagenomic 均为 TRUE、验证报告无 ERROR。
 
 ### 软件与版本
 
@@ -156,6 +172,26 @@ MAFFT 7.525、IQ-TREE 3.1.2、BEAST 1.10.4、BEAGLE ⊙、TreeTime ⊙、TempEst
 | MEGAHIT | 1.2.9 | Li et al., 2015 |
 
 分析在 Linux 计算服务器（246）执行，Python 3.10；suvtk 数据库（约 5 GB）经 `suvtk download-database` 部署于 `~/database/virus-db/suvtk_db/`。
+
+---
+
+## 管道六：内源性病毒元件（EVE）筛查（已归档 2026-10-11，方法不成熟——模块移至 `archive/20261011_endogenous_virus_pipeline/`，方法段保留供恢复后取用，投稿暂勿引用）
+
+对**宿主参考基因组**（而非测序 reads）做内源性病毒元件正向筛查（`archive/20261011_endogenous_virus_pipeline/eve_screen.py`；模块已归档），回答"宿主基因组里哪里有病毒插入、是什么"；输入为公共数据管道 hostref 阶段产出的宿主基因组（all.genome.uniq.fasta）或自备 FASTA，故与 reads 管线相互独立。三阶段流程：discover（seqkit 50 kb 滑窗切块，DIAMOND BLASTX 对病毒参考蛋白库检索，块内坐标还原后按 300 nt 间隔合并为 EVE 位点并抽 locus 序列）；verdict（locus 对植物/病毒拆分库检索，两侧 bitscore 比较判定 viral_supported / host_like / undetermined）；annotate（viral_supported 与 undetermined 位点对 RVDB 做深度科/属归属）；可选类病毒层（locus 对类病毒库 BLASTN）；merge 跨基因组汇总（kingdom_summary、kingdom_loci_all、family_by_genome）。支持批量基因组并行与断点续跑，产物落 standard 布局 ⑥ 输出根 `06_EVE/`。元件级后处理层（`eve_element_db.py`，产物落 `05_Elements/`）将 viral_supported 位点跨基因组聚类为元件区并构建 consensus 文库，可选拷贝数定量（rm，需 RepeatMasker）、结构域注释（cdd，需 MMseqs2 profile 库）与系统发育输入（phylo）。
+
+### EVE 与真病毒的判别（`eve_distinguish/`，独立后运行脚本；随模块归档）
+
+对病毒组 de novo 组装得到的候选 contig，经"结构退化 × 单位点基因座架构"双通道判别其是真 DNA 病毒还是退化 EVE，输出 contig 级 verdict 与 `dna_vs_eve_filter.tsv`（action 列供发现管道证据链消费）。standard 布局下产物归口 `<项目>/06_EVE/eve_distinguish`（legacy 布局维持发现输出根下 `08b_EVE_Distinguish`）。跑完发现管道后单独调用，不是发现管道的 stage。
+
+---
+
+## 管道七：宿主表达响应分析（已归档 2026-10-11，方法不成熟——模块移至 `archive/20261011_host_expression_pipeline/`，方法段保留供恢复后取用，投稿暂勿引用）
+
+以"宿主如何响应病毒感染"为问题，对病毒阳性/阴性分组做差异表达与差异共表达分析（`archive/20261011_host_expression_pipeline/host_expression.py`，输出根 `08_HostExpression/`，两布局同名；模块已归档，不运行则主链完全不受影响）。输入四条，经 `--project-root` 自动定位：② clean reads（未去宿主）、① 宿主基因组 + GFF3、① Core14 元数据（Tissue 列）、④ 病毒检出表。
+
+流程：宿主 CDS 提取（genome+GFF3 → gffread -x）→ Salmon 定量（TPM/NumReads/FPKM/EffectiveLength 四矩阵）→ 定量 QC（比对率/reads 双阈值剔除）→ 病毒标签推导（④ 检出表 → 阳性/阴性二分 + 连续载量，可切单病毒口径）。**主分析**为 TEA-GCN 差异共表达（05_Coexp）：阳/阴双网络（PCC/SCC/bicor → RAvg → 秩变换 MR zScore）→ 每组网络 z 分布 QC 闸门（Δz 前强制体检，样本量不足会整体压低 z 分布）→ ΔzScore 显著对与 hub 聚合（0.5%/99.5% 分位阈值）→ DEG 限定 Louvain 模块（z ≥ 1.7 且两端均为 DEG 的边，resolution 1.0）→ 模块表达谱 × 病毒载量 Spearman 关联；内置样本量/失衡闸门（每组 ≥ 30、两组比 ≤ 3×，不过闸则跳过并建议降级路线）。**交叉参考**为 DESeq2 差异表达（06_DE，pydeseq2，可选 `--de-strata` 组织分层）；**剂量验证**为病毒载量 × 全基因组 Spearman 扫描（08_LoadScan，BH-FDR，Tissue 存在时自动加做组织内扫描）；可选功能富集 ORA（07_Enrich，超几何 + BH，注释需用户预先准备）。单页 HTML 汇总报告（09_Report）。
+
+方法学声明（如实写入局限）：Δz 的分位阈值是排序/截断装置而非校准的检验，显著对数量不宜作生物学计数，结论基于 hub 排序与下游模块/富集；Louvain 模块为单分辨率（res 1.0, seed 42）未做 bootstrap；DE 用原始计数模型而载量扫描用 TPM（秩相关下等价），两类检验不混用计数模型；公共队列建议组织分层与剂量响应交叉验证（防组织构成混杂）。
 
 ---
 
@@ -255,3 +291,13 @@ MAFFT 7.525、IQ-TREE 3.1.2、BEAST 1.10.4、BEAGLE ⊙、TreeTime ⊙、TempEst
 **管道五**
 - [ ] BioProject / BioSample / SRA 登录号
 - [ ] GenBank 登录号区间（或 "will be deposited"）
+- [ ] 实际采用的提交模式（suvtk 模式 A / Sequin 模式 B / both）
+
+**管道六**（已归档 2026-10-11，方法不成熟；占位符保留供恢复后取用）
+- [ ] 筛查基因组数（批量 TSV 行数）与各判定（viral_supported / host_like / undetermined）位点数
+- [ ] 是否启用 --fast / --overlap / 类病毒层（影响位点数口径，需与运行日志一致）
+
+**管道七**（已归档 2026-10-11，方法不成熟；占位符保留供恢复后取用）
+- [ ] 分组口径（Virus_any 或单病毒）与各组样本量、闸门结果
+- [ ] 显著 Δz 对数、hub 基因数、模块数与模块×载量关联数
+- [ ] 是否启用 --de-strata 组织分层与富集注释来源

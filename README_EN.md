@@ -29,10 +29,11 @@ public_metadata_pipeline/     → Data acquisition (SRA/GSA search & download & 
        ├── Sequencing data: SRA/GSA search → metadata cleaning → bulk download → visualization → SRA→FASTQ.GZ
        └── Host reference: multi-channel download or user FASTA → Kraken2/Bowtie2/HISAT2/Minimap2 four-index build
               │
-              ├──▶ endogenous_virus_pipeline/ → Endogenous viral element (EVE) forward screening
+              ├──▶ endogenous_virus_pipeline/ → Endogenous viral element (EVE) forward screening [ARCHIVED 2026-10-11, immature methodology]
               │      sliding-window blastx vs viral reference proteins → locus merging →
               │      plant/viral dual-side bitscore verdict → RVDB deep assignment
-              │      (input is host genome FASTA; independent from the reads pipeline)
+              │      (input is host genome FASTA; independent from the reads pipeline;
+              │       moved to archive/20261011_endogenous_virus_pipeline/)
               │
               ▼
 data_preprocessing_pipeline/  → Data cleaning (QC Fastp→Seqkit→Clumpify → host depletion Kraken2→alignment→Ribodetector + optional BBNorm normalization)
@@ -42,7 +43,7 @@ virome_discovery_pipeline/    → Virus discovery (de novo)
        │
        ├── assembly → 10-tool parallel identification → layered filtering → COBRA extension
        ├── merged co-assembly → CD-HIT reference-guided clustering → vclust dereplication → 8-tool taxonomy → host prediction
-       └── CheckV assessment → four-branch cascaded rescue (A/B/C/D) → HQ vOTU catalog
+       └── CheckV assessment → two-branch cascaded rescue (A: direct pass → B: VSI extension; C/D archived) → HQ vOTU catalog
               │
               ▼
 virome_analysis_pipeline/     → In-depth analysis of known viruses
@@ -59,10 +60,11 @@ virome_submission_pipeline/   → Data submission
        └── suvtk tbl2asn / Sequin tbl2asn dual mode → .sqn submission file
 ```
 
-**Optional supplementary module (off the main chain; skipping it changes nothing):**
+**Optional supplementary module (ARCHIVED 2026-10-11 — immature methodology; moved to
+`archive/20261011_host_expression_pipeline/`; main chain and other pipelines unaffected):**
 
 ```
-host_expression_pipeline/     → ⑧ Host expression analysis (host side: virus-positive/negative grouping)
+host_expression_pipeline/     → ⑧ Host expression analysis (host side: virus-positive/negative grouping) [ARCHIVED]
        ├── host CDS extraction (genome+GFF3 → gffread) → Salmon quantification → quantification QC
        ├── virus label derivation (④ detection table → +/- status + continuous load; Core14 tissue merge)
        ├── TEA-GCN differential co-expression (main analysis: dual networks → ΔzScore → network z-QC gate → DEG-restricted Louvain modules; sample-size/imbalance gates)
@@ -70,9 +72,10 @@ host_expression_pipeline/     → ⑧ Host expression analysis (host side: virus
        └── HTML summary report    ← core chain extracted from the goji-virome differential-expression project
 ```
 
-> See `host_expression_pipeline/README.md`. All inputs come from existing main-chain
-> artifacts (② clean reads, ① host reference/Core14, ④ detection table); outputs land
-> in `08_HostExpression/`.
+> See `archive/20261011_host_expression_pipeline/README.md` and `ARCHIVED_20261011.md`
+> (archival reason and revival steps) in the same directory. All inputs come from existing
+> main-chain artifacts (② clean reads, ① host reference/Core14, ④ detection table); outputs
+> land in `08_HostExpression/`.
 
 ---
 
@@ -83,7 +86,7 @@ Existing projects (with checkpoints or running jobs) can fall back to the `legac
 
 ```
 <project>/ 01_PublicData/ 02_Preprocessing/ 03_Discovery/ 04_Analysis/ 05_Phylo/ 06_EVE/ 90_Handoff/
-           (08_HostExpression/ is the output root of the ⑧ host-expression optional module)
+           (06_EVE/ = ⑥ EVE, 08_HostExpression/ = ⑧ host-expression output roots; both ⑥⑧ archived 2026-10-11)
 ```
 
 Pipeline-boundary handoffs are auto-locatable (one command for the ③→④ bridge; ①→⑤ Core14 read natively):
@@ -166,17 +169,21 @@ pixi run discovery-downstream \
     -t 120 -j 20
 ```
 
-### 3. Endogenous virus (EVE) screening
+### 3. Endogenous virus (EVE) screening [ARCHIVED 2026-10-11, immature methodology]
+
+> ⑥ moved to `archive/20261011_endogenous_virus_pipeline/` (reason and revival steps in
+> its `ARCHIVED_20261011.md`). Commands below are the pre-archive usage record; not
+> runnable until the module is revived.
 
 ```bash
 # Single genome: host reference genome → EVE loci (database paths read from pipeline_config.yaml)
-python endogenous_virus_pipeline/eve_screen.py \
+python archive/20261011_endogenous_virus_pipeline/eve_screen.py \
     -g host_reference/genome/all.genome.uniq.fasta \
     -n Solanum_lycopersicum -o out/eve/ -t 40
 
 # Batch: batch.tsv, one NAME<TAB>genome-path per line (.tar.gz bundles accepted, auto-unpacked in Stage 1;
 #       NAME must be unique — duplicates abort before start, they would share 01_Loci/<NAME>/ products)
-python endogenous_virus_pipeline/eve_screen.py \
+python archive/20261011_endogenous_virus_pipeline/eve_screen.py \
     -B batch.tsv -o out/eve/ -t 40 -J 5 --fast
 # -J parallel genomes, -t threads per genome; total cores = J x t (256 cores: -J5 -t40)
 
@@ -192,8 +199,8 @@ true DNA viruses vs degraded EVEs, two modules work together: `eve_screen.py` pe
 host-genome side, and `eve_distinguish/` performs candidate-side discrimination (run after the discovery pipeline):
 
 ```bash
-# DNA-virus candidate vs EVE discrimination (see endogenous_virus_pipeline/eve_distinguish/README.md)
-bash endogenous_virus_pipeline/eve_distinguish/run_all.sh \
+# DNA-virus candidate vs EVE discrimination (see archive/20261011_endogenous_virus_pipeline/eve_distinguish/README.md)
+bash archive/20261011_endogenous_virus_pipeline/eve_distinguish/run_all.sh \
     -D /path/to/discovery_out -A /path/to/1kp/assemblies -t 32
 #   output: dna_vs_eve_filter.tsv (one action per candidate; downstream filters by column)
 ```
@@ -239,8 +246,8 @@ python virome_submission_pipeline/submission_pipeline.py \
     --suvtk-db ~/database/virus-db/suvtk_db/ \
     -t 40
 
-# Launch the submission GUI desktop app
-python submission_gui/submission_gui.py
+# Desktop GUIs moved to the external local platform; a standalone GUI remains inside the pipeline:
+# python virome_submission_pipeline/submission_gui.py
 ```
 
 ---
@@ -297,7 +304,7 @@ Entry: `python public_metadata_pipeline/preprocess_unified.py --sra-dir ... --ou
 | 9 | `taxonomy` | virus_classifier.py + R | 8-tool taxonomy (Genomad + Metabuli + CAT + Diamond LCA + VITAP + MMseqs2 + ACVirus + vConTACT3) weighted voting → 8-rank taxonomy |
 | 10 | `host` | run_host_prediction.py | Three-tier host prediction (ICTV > RNAVirHost > PhaBOX2) + plant-specific post-filter |
 | 11 | `checkv` | (built-in) | CheckV completeness assessment |
-| 12 | `rescue` | rescue_pipeline.py | Four-branch cascaded rescue (CheckV → Virseqimprover → BLASTN/PlantVirusDB reference rebuild → genus-length fallback) |
+| 12 | `rescue` | rescue_pipeline.py | Two-branch cascaded rescue (CheckV ≥90% direct pass → Virseqimprover read extension); former branches C/D archived (archive/20261011_rescue_branch_cd/) |
 | 13 | `analysis` | (built-in) | Rescue-evidence integration + virome downstream analysis |
 | 14 | `analysis_verify` | (built-in) | 09b analysis re-verification (HMM/CT3 evidence scan) |
 | 15 | `report` | report_pipeline.py | TSV summary + Sankey diagram + interactive HTML report |
@@ -343,7 +350,7 @@ Entry: `python public_metadata_pipeline/preprocess_unified.py --sra-dir ... --ou
 | 3 | `hypothetical` | analyze_hypothetical.py | Hypothetical protein annotation (5 tools: HHsuite/Diamond/DeepLoc/PSORTb/TMHMM) |
 | 4 | `sequin` | sequin_builder.py | Sequin .tbl construction (Cenote-Taker3 style) |
 | 5 | `submit` | submission_pipeline.py | End-to-end orchestration: suvtk tbl2asn / Sequin tbl2asn dual mode → .sqn |
-| 6 | `gui` | submission_gui/submission_gui.py | PySide6 desktop GUI: interactive editing/validation/export |
+| 6 | `gui` | submission_gui.py (in-pipeline) | PySide6 desktop GUI: interactive editing/validation/export |
 | 6 | `report` | report_html.py | Interactive HTML full-table editing report |
 
 ---
@@ -370,7 +377,6 @@ MMPV-RNA/
 │   ├── doc.md                      # Full pipeline documentation
 │   └── utils/                      # Shared tool modules
 │
-├── metadata_gui/                   # Metadata management desktop app (PySide6)
 │   ├── main.py                     # GUI entry
 │   ├── controllers/                # Search bridge / AI completion / metadata control
 │   ├── models/                     # Data-store models
@@ -385,7 +391,7 @@ MMPV-RNA/
 │   ├── sequin_builder.py           # Sequin builder
 │   └── ...                         # metadata/report/topology analysis
 │
-├── endogenous_virus_pipeline/      # Endogenous viruses (EVE): host-genome screening + candidate discrimination
+├── archive/20261011_endogenous_virus_pipeline/  # [ARCHIVED 2026-10-11] Endogenous viruses (EVE): host-genome screening + candidate discrimination (was endogenous_virus_pipeline/, immature methodology)
 │   ├── eve_screen.py               # Screening orchestrator (three stages: discover→verdict→annotate→merge)
 │   ├── eve_genome_scan.py          # Per-genome worker (stage-product checkpointing)
 │   ├── eve_scan_core.py            # Pure-logic core (coordinate restore/locus merge/verdict/summary)
@@ -401,10 +407,7 @@ MMPV-RNA/
 │       ├── build_panel.py          # Reference panel build (ships panel.fasta/baits.fa)
 │       └── README.md               # Methods & pitfalls (with measured numbers)
 │
-├── submission_gui/                 # Submission desktop GUI
-│   └── submission_gui.py           # PySide6 interactive edit/validate/export
 │
-├── metadata_gui/                   # Metadata management GUI
 │
 ├── biosoft/                        # Third-party tools (scripts/JARs, no compilation)
 │   ├── VirBot/VirBot.py
@@ -439,7 +442,7 @@ MMPV-RNA/
 
 - **10-tool parallel virus identification**: Genomad + Diamond BLASTX + VirSorter2 + ViralVerify + VirHunter + Metabuli + RdrpCatch + ViraLM + VirBot + viroid BLASTN
 - **CD-HIT reference-guided pre-clustering**: integrates complete ICTV/NCBI genomes as references, attaching fragment contigs to known species
-- **Four-branch cascaded rescue**: A: CheckV≥90% direct pass → B: Virseqimprover read extension → C: BLASTN reference-guided rebuild → D: genus-length fallback — steadily improving HQ vOTU yield
+- **Two-branch cascaded rescue**: A: CheckV≥90% direct pass → B: Virseqimprover read extension — only evidence-backed products are kept (former C pass-through filter / D zero-yield archived: archive/20261011_rescue_branch_cd/)
 - **Host filtering**: pre-filters by host category before rescue, saving 70%+ compute
 - **pixi one-command deployment**: 100 conda packages with exact versions via `pixi install`
 - **Checkpoint/resume**: every script supports `--resume/--force` for safe interruption and recovery at scale
@@ -447,6 +450,7 @@ MMPV-RNA/
 - **Complete closed loop**: from public data mining to submission-ready figures, all in one platform
 - **Metadata GUI**: PySide6 desktop app for SRA/GSA metadata search, filtering, table browsing and charting
 - **Submission pipeline**: GenBank/CNCB submission automation with Sequin building and hypothetical-protein analysis
+- **Report template layer (2026-10)**: report HTML rendered through Jinja2 (`mmpv_common/report_template.py` + `templates/`: base skeleton + component macros); process panel / project master report / submission report migrated — auto-escaping for metadata values, fail-loud strict templates, fully offline with zero external assets
 
 ---
 
@@ -464,7 +468,7 @@ MMPV-RNA/
 | ViraLM DB | DNABERT-2 identification | Google Drive (gdown) |
 | Kraken2 + align DB | Host depletion | Built by this platform (build_host_pipeline.py) |
 | PhaBOX2 DB | Host prediction | PhaBOX2 |
-| Plant/viral split DB (hybrid) | EVE dual-side verdict | SwissProt split + id2div mapping (endogenous_virus_pipeline) |
+| Plant/viral split DB (hybrid) | EVE dual-side verdict | SwissProt split + id2div mapping (⑥ archived 2026-10-11) |
 
 **Full list & deployment**: all pipelines depend on 50 databases (25 required / 25 optional, ~710 GB total).
 Per-database download/indexing commands are in `DATABASE_SETUP.md`; the **reproducible centralized deployment**

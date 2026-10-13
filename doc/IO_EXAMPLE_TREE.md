@@ -8,6 +8,11 @@
 > 占位符：`{sample}` = 样本名；`{NAME}` = ⑥ 的基因组名；`{virus}` / `{vkey}` = 病毒名；
 > `{S}` = ③ 的 contig 前缀样本名；`{acc}` = SRA/GSA accession。
 > 目录键由 `mmpv_common/io_layout.py` 注册表解析；legacy 旧名对照见设计文档 §4。
+>
+> **【2026-10-11 归档说明】** ⑥ `endogenous_virus_pipeline`（EVE）与 ⑧ `host_expression_pipeline`（宿主表达）
+> 已因"方法不成熟"归档至 `archive/20261011_endogenous_virus_pipeline/` 与
+> `archive/20261011_host_expression_pipeline/`。下文 **§8（`06_EVE/`）与 §10（`08_HostExpression/`）
+> 的目录树为归档前的产物形态存档，命令不可再运行**；历史项目已有的对应输出仍可解读，恢复方法见各归档目录内说明。
 
 ---
 
@@ -20,9 +25,9 @@
 ├── 03_Discovery/             ← ③ 病毒发现（virome_pipeline.py --output_dir；⑦ 默认 --work-dir 也指这里）
 ├── 04_Analysis/              ← ④ 已知病毒分析（auto_known_virus.py --output_dir）
 ├── 05_Phylo/                 ← ⑤ 系统发育（phylo_pipeline.py --output_dir）
-├── 06_EVE/                   ← ⑥ 内源病毒（eve_screen.py -o）
+├── 06_EVE/                   ← ⑥ 内源病毒（eve_screen.py -o）【⑥ 已归档 2026-10-11，不可运行】
 ├── 07_*                      ← （空缺）⑦ 提交管线无独立输出根，产物落 <项目>/submission_<run_title>/
-├── 08_HostExpression/        ← ⑧ 宿主表达可选模块（host_expression.py -o/--project-root）
+├── 08_HostExpression/        ← ⑧ 宿主表达可选模块（host_expression.py -o/--project-root）【⑧ 已归档 2026-10-11，不可运行】
 ├── 90_Handoff/               ← 跨管线交接层（③→④ 桥 + 边界台账）
 └── submission_<run_title>/   ← ⑦ 提交产物（work_dir 的父目录下）
 ```
@@ -102,7 +107,7 @@
 │   └── from_info/Combined_Landscape_Full.pdf + .png
 ├── 05_HostRef/
 │   ├── genome/
-│   │   ├── all.genome.uniq.fasta           # ★宿主基因组去重合并（⑥/⑧ 的输入）
+│   │   ├── all.genome.uniq.fasta           # ★宿主基因组去重合并（⑥/⑧ 的输入；⑥⑧ 均已归档 2026-10-11）
 │   │   ├── all.genome.uniq.fasta.meta.txt  genome_report.txt
 │   │   ├── extracted/  genome_down.zip  gget_ref.json    # 各下载通道中间物
 │   │   └── {chloroplast,mitochondrion}/*.fasta           # 仅 --include-organelles
@@ -294,7 +299,7 @@
 │   ├── {safe_host}/completeness.tsv        # checkv 原始输出
 │   └── checkv_pass_ids.txt                 # ≥90% completeness 的 contig ID
 │
-├── 10_Rescue/                              # run_rescue + rescue_pipeline.py（四分支拯救）
+├── 10_Rescue/                              # run_rescue + rescue_pipeline.py（两分支拯救）
 │   ├── rescue.log
 │   ├── HQ_plant_viruses.fasta              # ★★★HQ 病毒集（免拯救 known + 各宿主 rescue 拼接）
 │   ├── known/centroids/final_centroids.fasta   # CD-HIT known + CheckV≥90% 直通
@@ -302,11 +307,9 @@
 │       ├── branch_a/{branchA_{pass,fail}.fasta, branch_a_prepass.txt, checkv_out/completeness.tsv}
 │       ├── branch_b/{branchB_{pass,fail}.fasta, logs/, scaffolds/, merged_reads/,
 │       │            {scaffold.fasta, pilon_out.fasta, run.ok, .vsi_failed, .vsi_error}}
-│       ├── branch_c/{branchC_{pass,fail,input}.fasta, branchC_genus_map.tsv,
-│       │            auto_blast_db/, blast_results/, <group>/{ragtag_out/ragtag.scaffold.fasta,
-│       │            cv/completeness.tsv, rga/}}
-│       ├── branch_d/branchD_pass.fasta
-│       ├── merged/all_HQ.fasta             # A+B+C+D pass 拼接
+│       │            # (2026-10-11) branch_c/branch_d 已归档 (archive/20261011_rescue_branch_cd/),
+│       │            #  历史输出目录中的 branch_c/ branch_d/ 仍可存在于旧运行里
+│       ├── merged/all_HQ.fasta             # A+B pass 拼接
 │       ├── centroids/final_centroids.fasta # ★HQ vOTU（最终 vclust 去重）
 │       ├── rescue_report.tsv               # contig_id,input_len,final_len,branch,method,genus,
 │       │                                   #   genus_avg_len,pct_of_genus,checkv,note
@@ -359,7 +362,8 @@
 │              taxonomy,host,checkv,rescue,analysis,analysis_verify,report}.log
 │
 └── （eve_distinguish 判别产物 2026-10-07 起归口 06_EVE/eve_distinguish/，见 §8 与 §13-D3；
-     存量运行与 -D 指向非 03_Discovery 目录名时仍落 <DISCOVERY>/08b_EVE_Distinguish/）
+     存量运行与 -D 指向非 03_Discovery 目录名时仍落 <DISCOVERY>/08b_EVE_Distinguish/；
+     ⑥ 已归档 2026-10-11，此判别不再新跑）
 ```
 
 **③→④ 桥**（运行 `discovery2analysis.py --from-discovery 03_Discovery --output_prefix 90_Handoff/analysis`）：
@@ -611,7 +615,7 @@
 
 ---
 
-## 8. ⑥ 内源性病毒 — `06_EVE/`
+## 8. ⑥ 内源性病毒 — `06_EVE/`【已归档 2026-10-11，命令不可运行；下为归档前产物形态】
 
 **编排**：`eve_screen.py -g <宿主基因组>.fasta -n <NAME> -o <项目>/06_EVE -t 40`（批量 `-B batch.tsv`，TSV 两列 `NAME<TAB>路径`）
 **stage 顺序**：`discover(1) → verdict(2) → annotate(3) → [viroid 可选] → merge(4)`；断点=按产物存在性判定（空文件=已完成零结果）
@@ -697,7 +701,7 @@
 
 ---
 
-## 10. ⑧ 宿主表达（可选模块）— `08_HostExpression/`
+## 10. ⑧ 宿主表达（可选模块）— `08_HostExpression/`【已归档 2026-10-11，命令不可运行；下为归档前产物形态】
 
 **编排**：`host_expression.py --project-root <项目根>`（四条输入自动定位，standard 优先 legacy 兜底）
 **执行序**：`hostref → quant → qc → labels → coexp → de → enrich → loadscan → report`
@@ -758,9 +762,9 @@
 | B3 | ③→④ | `03_Discovery/06_CLUSTER/4_centroids/final_centroids.fasta` + `07_Taxonomy/{Votus}.integrated/final_integrated_classification.tsv` → 桥 → `90_Handoff/analysis.reference.{fasta,tsv}` | `auto_known_virus.py --reference --ref_info --reads_dir <②>/02_HostDepleted` |
 | B4 | ④→⑤ | `04_Analysis/06_Extraction/{病毒目录}/{样本}.{acc}.full.fasta` | `phylo_pipeline.py --extract_dir` |
 | B5 | ①→⑤ | `01_PublicData/02_Unified/Global_Unified_Metadata_Core14.csv` | `phylo_pipeline.py --metadata`（data_collector 原生直读） |
-| B6 | ①→⑥ | `01_PublicData/05_HostRef/genome/all.genome.uniq.fasta` | `eve_screen.py -g`（或 `-B batch.tsv`） |
-| B7 | ③↔⑥ | ⑥ 判别器吃 ③ 的 `evescan_query.fasta`/`rescue_evidence_scored.tsv`，产出 `dna_vs_eve_filter.tsv` 归口 `06_EVE/eve_distinguish/`（-D 目录名非 `03_Discovery` 时旧默认 `<③根>/08b_EVE_Distinguish/`） | `eve_distinguish/run_all.sh -D <③根> -A <1kp 组装根>` |
-| B8 | ②①④→⑧ | ①`05_HostRef/genome`(+GFF3)、①`02_Unified/Core14`、②`01_CleanData/{3.clumpify,2.fasta}`、④`01_Detection/summary/all_viruses.best.summary.tsv` | `host_expression.py --project-root`（四条自动定位） |
+| B6 | ①→⑥ | `01_PublicData/05_HostRef/genome/all.genome.uniq.fasta` | `eve_screen.py -g`（或 `-B batch.tsv`）（**⑥ 已归档 2026-10-11，边界停用**） |
+| B7 | ③↔⑥ | ⑥ 判别器吃 ③ 的 `evescan_query.fasta`/`rescue_evidence_scored.tsv`，产出 `dna_vs_eve_filter.tsv` 归口 `06_EVE/eve_distinguish/`（-D 目录名非 `03_Discovery` 时旧默认 `<③根>/08b_EVE_Distinguish/`） | `eve_distinguish/run_all.sh -D <③根> -A <1kp 组装根>`（**⑥ 已归档 2026-10-11，边界停用；历史产物仍可被 `triage --preset eve_distinguish` 消费**） |
+| B8 | ②①④→⑧ | ①`05_HostRef/genome`(+GFF3)、①`02_Unified/Core14`、②`01_CleanData/{3.clumpify,2.fasta}`、④`01_Detection/summary/all_viruses.best.summary.tsv` | `host_expression.py --project-root`（四条自动定位）（**⑧ 已归档 2026-10-11，边界停用**） |
 | B9 | ③→⑦ | `12_AnalysisVerify/class_KEEP.fasta`（主）→ `10_Rescue/HQ_plant_viruses.fasta`（回退）+ `11_ViromeAnalysis/ref_info.tsv` | `submission_pipeline.py --work-dir <③根>` |
 | B10 | ③④→panvirome | `{base}/prevalence_{sp}_{tag}/`（④ 根）+ `{base}/{prefix}_{sp}_out/`（③ 根） | `panvirome_prevalence.py --base` |
 
@@ -774,9 +778,9 @@
 |---|---|---|---|
 | D1 | `virome_discovery_pipeline/cluster_pipeline.py:617` | cluster 实写 `06_CLUSTER/4_centroids/`，而 io_layout standard 契约名是 `06_CLUSTER/centroids/` | 编排器靠 `_locate_centroids_dir()` 重绑 + `locate_centroids()` 的 `*/*` 限深兜底命中，主链不断；但按契约路径直接取文件会 miss |
 | D2 | `virome_analysis_pipeline/auto_known_virus.py:735,750` vs `generate_pipeline_report.py:837,2142` | post 阶段把 metadata_association 写到 `04_PostAnalysis/metadata_association`，报告读 `02_Filtering/metadata_association` | 报告端取不到 metadata 汇总表（静默跳过章节），属真实路径错配 |
-| D3 | ~~`eve_distinguish/run_all.sh:165`~~ **已解决（2026-10-07）** | 原：判别产物落 `03_Discovery/08b_EVE_Distinguish/`，与文档 B7 的 `14_EVE_Distinguish/` 互不相认。现已按用户裁定归口 **`06_EVE/eve_distinguish/`**（`-D` 目录名为 `03_Discovery` 即 standard 布局时生效；其余目录名与存量运行维持旧默认 08b，`-o` 始终可显式覆盖）。测试：eve_distinguish 21/21 | 判别产物归 ⑥ 名下，不再混入 ③ 的编号体系 |
+| D3 | ~~`eve_distinguish/run_all.sh:165`~~ **已解决（2026-10-07）** | 原：判别产物落 `03_Discovery/08b_EVE_Distinguish/`，与文档 B7 的 `14_EVE_Distinguish/` 互不相认。现已按用户裁定归口 **`06_EVE/eve_distinguish/`**（`-D` 目录名为 `03_Discovery` 即 standard 布局时生效；其余目录名与存量运行维持旧默认 08b，`-o` 始终可显式覆盖）。测试：eve_distinguish 21/21（⑥ 已归档 2026-10-11） | 判别产物归 ⑥ 名下，不再混入 ③ 的编号体系 |
 | D4 | `virome_pipeline.py`（`TAX_GATE_REQUIRED="6.2"`）vs `virus_classifier_analysis.R` | 编排器强制校验 `taxonomy_gate_stamp.tsv`/`taxonomy_gate_check.tsv`，但当前树内的 R 共识脚本不写这两个文件（写闸门戳的版本在 `archive/20261007_audit_cleanup/snapshot/live_virus_classifier_analysis.R`，原 scripts/audit/snapshot 已归档） | taxonomy 阶段闸门恒判 FAIL → 每次重跑 R 共识并记 error 日志（不会静默放行） |
-| D5 | `host_expression.py:69` | ⑧ 执行序为 …coexp→de→**enrich→loadscan**…，目录号 07/08 与执行序相反 | 仅需知晓，非缺陷 |
+| D5 | `host_expression.py:69`（⑧ 已归档 2026-10-11） | ⑧ 执行序为 …coexp→de→**enrich→loadscan**…，目录号 07/08 与执行序相反 | 仅需知晓，非缺陷 |
 | D6 | ② `data_preprocessing.py` `cleanup_00a_after_deplete()` | `--stage all` 跑完后 `01_CleanData/{1.fastp_tmp,2.fasta,3.clumpify}` 的样本数据文件被清理（留 logs/JSON） | ②→⑧ 的 `3.clumpify` 取 clean reads 仅在**只跑 clean 未跑 deplete 清理**时成立；跑完全链后 ⑧ 需从 `02_HostDepleted` 取（或保留 ② 单独跑 clean 的副本） |
 | D7 | `scripts/audit/check_io_handoffs.py` SCOPES | 审计范围缺 `virome_submission_pipeline/`（它 import 了 layout_dirs） | ⑦ 的 legacy 字面量不在审计覆盖内 |
 

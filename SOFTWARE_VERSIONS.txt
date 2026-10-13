@@ -1,6 +1,9 @@
 # ==============================================================================
 # MMPV-RNA Third-Party Software Versions
 # ==============================================================================
+# Updated: 2026-10-13 (追记: 本文件 2026-08-26 后未全量维护 —— 期间新增的
+#   checkv/metabuli/treetime/jinja2/pydeseq2 等以 pixi.toml 为准; "pixi global
+#   install" 段仅为当时快照, 完整依赖清单见 pixi.toml [dependencies])
 # Updated: 2026-08-26
 #
 # Sources:

@@ -29,10 +29,11 @@ public_metadata_pipeline/     → 数据获取 (测序数据检索/下载/转换
        ├── 测序数据: SRA/GSA 搜索 → 元数据清洗 → 批量下载 → 可视化 → SRA→FASTQ.GZ
        └── 宿主参考: 多通道下载·或用户 FASTA → Kraken2/Bowtie2/HISAT2/Minimap2 四索引
               │
-              ├──▶ endogenous_virus_pipeline/ → 内源性病毒（EVE）正向筛查
+              ├──▶ endogenous_virus_pipeline/ → 内源性病毒（EVE）正向筛查【已归档 2026-10-11, 方法不成熟】
               │      滑窗 blastx vs 病毒参考蛋白 → 位点合并 →
               │      植物/病毒双侧 bitscore 判定 → RVDB 深度归属
-              │      (输入是宿主基因组 FASTA, 与 reads 管线相互独立)
+              │      (输入是宿主基因组 FASTA, 与 reads 管线相互独立;
+              │       目录移至 archive/20261011_endogenous_virus_pipeline/)
               │
               ▼
 data_preprocessing_pipeline/  → 数据清洗 (质控 Fastp→Seqkit→Clumpify → 去宿主 Kraken2→比对→Ribodetector ＋可选 BBNorm 归一化)
@@ -42,7 +43,7 @@ virome_discovery_pipeline/    → 病毒发现（de novo）
        │
        ├── 组装 → 10工具并行鉴定 → 分层过滤 → COBRA延伸
        ├── 合并共组装 → CD-HIT参考聚类 → vclust去冗余 → 8工具分类 → 宿主预测
-       └── CheckV评估 → 四支路级联拯救 (A/B/C/D) → HQ vOTU catalog
+       └── CheckV评估 → 两支路级联拯救 (A: 直通 → B: VSI延伸; C/D 已归档) → HQ vOTU catalog
               │
               ▼
 virome_analysis_pipeline/     → 已知病毒深度分析
@@ -59,10 +60,11 @@ virome_submission_pipeline/   → 数据提交
        └── suvtk tbl2asn / Sequin tbl2asn 双模式 → .sqn 提交文件
 ```
 
-**可选补充模块（不在主链，不跑无影响）**：
+**可选补充模块（已归档，2026-10-11，方法不成熟——目录移至
+`archive/20261011_host_expression_pipeline/`，主链与各管线不受影响）**：
 
 ```
-host_expression_pipeline/     → ⑧ 宿主表达分析（宿主侧：病毒阳性/阴性分组）
+host_expression_pipeline/     → ⑧ 宿主表达分析（宿主侧：病毒阳性/阴性分组）【已归档】
        ├── 宿主 CDS 提取 (genome+GFF3 → gffread) → Salmon 定量 → 定量 QC
        ├── 病毒标签推导 (④ 检出表 → 阳性/阴性 + 连续载量; 合并 Core14 组织)
        ├── TEA-GCN 差异共表达 (主分析: 阳/阴双网络 → ΔzScore → 网络 z-QC 闸门 → DEG 限定 Louvain 模块; 内置样本量/失衡闸门)
@@ -70,7 +72,8 @@ host_expression_pipeline/     → ⑧ 宿主表达分析（宿主侧：病毒阳
        └── HTML 汇总报告     ← 抽取自 goji-virome 差异表达分析核心链路
 ```
 
-> 详见 `host_expression_pipeline/README.md`。输入全部取自主链现有产物
+> 详见 `archive/20261011_host_expression_pipeline/README.md` 与同目录
+> `ARCHIVED_20261011.md`（归档原因与恢复方法）。输入全部取自主链现有产物
 > （② clean reads、① 宿主参考/Core14、④ 检出表），输出落 `08_HostExpression/`。
 
 ---
@@ -82,7 +85,7 @@ host_expression_pipeline/     → ⑧ 宿主表达分析（宿主侧：病毒阳
 
 ```
 <项目>/ 01_PublicData/ 02_Preprocessing/ 03_Discovery/ 04_Analysis/ 05_Phylo/ 06_EVE/ 90_Handoff/
-        (08_HostExpression/ 为 ⑧ 宿主表达可选模块的输出根)
+        (06_EVE/ 为 ⑥ EVE、08_HostExpression/ 为 ⑧ 宿主表达的输出根; ⑥⑧ 均已归档 2026-10-11)
 ```
 
 管线边界交接可自动定位（③→④ 桥一条命令；①→⑤ Core14 原生直读）：
@@ -163,17 +166,20 @@ pixi run discovery-downstream \
     -t 120 -j 20
 ```
 
-### 3. 内源性病毒（EVE）筛查
+### 3. 内源性病毒（EVE）筛查【已归档 2026-10-11，方法不成熟】
+
+> ⑥ 模块已归档至 `archive/20261011_endogenous_virus_pipeline/`（原因与恢复方法见
+> 其 `ARCHIVED_20261011.md`）。以下命令为归档前用法存档，恢复前不可运行。
 
 ```bash
 # 单基因组: 宿主参考基因组 → EVE 位点 (数据库路径从 pipeline_config.yaml 读)
-python endogenous_virus_pipeline/eve_screen.py \
+python archive/20261011_endogenous_virus_pipeline/eve_screen.py \
     -g host_reference/genome/all.genome.uniq.fasta \
     -n Solanum_lycopersicum -o out/eve/ -t 40
 
 # 批量: batch.tsv 每行 NAME<TAB>基因组路径 (.tar.gz 包也可直接填, Stage1 自动解包;
 #       NAME 必须唯一, 重名开跑前报错 — 重名会共用 01_Loci/<NAME>/ 产物)
-python endogenous_virus_pipeline/eve_screen.py \
+python archive/20261011_endogenous_virus_pipeline/eve_screen.py \
     -B batch.tsv -o out/eve/ -t 40 -J 5 --fast
 # -J 并行基因组数, -t 每基因组线程数, 总核数 = J x t (256 核推荐 -J5 -t40)
 
@@ -189,8 +195,8 @@ python endogenous_virus_pipeline/eve_screen.py \
 `eve_distinguish/` 做候选侧的判别（跑完发现管道后单独调用）：
 
 ```bash
-# DNA 病毒候选 vs EVE 判别 (详见 endogenous_virus_pipeline/eve_distinguish/README.md)
-bash endogenous_virus_pipeline/eve_distinguish/run_all.sh \
+# DNA 病毒候选 vs EVE 判别 (详见 archive/20261011_endogenous_virus_pipeline/eve_distinguish/README.md)
+bash archive/20261011_endogenous_virus_pipeline/eve_distinguish/run_all.sh \
     -D /path/to/discovery_out -A /path/to/1kp/assemblies -t 32
 #   产物: dna_vs_eve_filter.tsv (每条候选一个 action, 下游按列过滤即可)
 ```
@@ -236,8 +242,8 @@ python virome_submission_pipeline/submission_pipeline.py \
     --suvtk-db ~/database/virus-db/suvtk_db/ \
     -t 40
 
-# 启动提交 GUI 桌面应用
-python submission_gui/submission_gui.py
+# 提交 GUI 已移交外部本地平台 (D:/桌面/植物病毒分析平台); 管线内仍有独立 GUI:
+# python virome_submission_pipeline/submission_gui.py
 ```
 
 ---
@@ -294,7 +300,7 @@ python submission_gui/submission_gui.py
 | 9 | `taxonomy` | virus_classifier.py + R | 8工具分类 (Genomad+Metabuli+CAT+Diamond LCA+VITAP+MMseqs2+ACVirus+vConTACT3) 加权投票 → 8级 taxonomy |
 | 10 | `host` | run_host_prediction.py | ICTV > RNAVirHost > PhaBOX2 三级宿主预测 + 植物专属后过滤 |
 | 11 | `checkv` | (内置) | CheckV 完整性评估 |
-| 12 | `rescue` | rescue_pipeline.py | 四支路级联拯救 (CheckV → Virseqimprover → BLASTN/PlantVirusDB 参考重建 → genus-length 兜底) |
+| 12 | `rescue` | rescue_pipeline.py | 两支路级联拯救 (CheckV ≥90% 直通 → Virseqimprover reads 延伸); 原分支 C/D 已归档 (archive/20261011_rescue_branch_cd/) |
 | 13 | `analysis` | (内置) | 整合拯救证据 + 病毒组下游分析 |
 | 14 | `analysis_verify` | (内置) | 09b 分析复核 (HMM/CT3 证据扫描) |
 | 15 | `report` | report_pipeline.py | TSV汇总 + Sankey图 + 交互式HTML报告 |
@@ -340,7 +346,7 @@ python submission_gui/submission_gui.py
 | 3 | `hypothetical` | analyze_hypothetical.py | 假定蛋白功能注释 (HHsuite/Diamond/DeepLoc/PSORTb/TMHMM 5工具) |
 | 4 | `sequin` | sequin_builder.py | Sequin .tbl 格式构建 (Cenote-Taker3 风格) |
 | 5 | `submit` | submission_pipeline.py | 端到端编排: suvtk tbl2asn / Sequin tbl2asn 双模式 → .sqn |
-| 6 | `gui` | submission_gui/submission_gui.py | PySide6 桌面 GUI: 交互式编辑/验证/导出提交文件 |
+| 6 | `gui` | submission_gui.py (管线内) | PySide6 桌面 GUI: 交互式编辑/验证/导出提交文件 (外部平台承接桌面交互) |
 | 6 | `report` | report_html.py | 交互式HTML全表编辑报告 |
 
 ---
@@ -367,13 +373,6 @@ MMPV-RNA/
 │   ├── doc.md                      # 完整流程文档
 │   └── utils/                      # 共享工具模块
 │
-├── metadata_gui/                   # 元数据管理桌面应用 (PySide6)
-│   ├── main.py                     # GUI 主入口
-│   ├── controllers/                # 搜索桥接 / AI补全 / 元数据控制
-│   ├── models/                     # 数据存储模型
-│   ├── views/                      # 主窗口 / 搜索视图 / 表格 / 可视化 / 详情面板
-│   └── utils/                      # 辅助工具
-│
 ├── virome_phylo_pipeline/          # 系统发育/进化/群体遗传 (18 stage, 8 大模块)
 │   ├── phylo_pipeline.py           # 总管线 (BEAST 定年 + pypopart + 正选择)
 │   └── doc/ 权威体系 (RUN_GUIDE/STAGE_REFERENCE/METHODS)
@@ -382,7 +381,7 @@ MMPV-RNA/
 │   ├── sequin_builder.py           # Sequin 构建器
 │   └── ...                         # 元数据/报告/拓扑分析
 │
-├── endogenous_virus_pipeline/      # 内源性病毒 (EVE): 宿主基因组筛查 + 候选判别
+├── archive/20261011_endogenous_virus_pipeline/  # 【已归档 2026-10-11】内源性病毒 (EVE): 宿主基因组筛查 + 候选判别 (原 endogenous_virus_pipeline/, 方法不成熟)
 │   ├── eve_screen.py               # 筛查主编排器 (三阶段: discover→verdict→annotate→merge)
 │   ├── eve_genome_scan.py          # 单基因组 worker (按阶段产物断点续传)
 │   ├── eve_scan_core.py            # 纯逻辑核心 (坐标还原/位点合并/判定/汇总)
@@ -397,11 +396,6 @@ MMPV-RNA/
 │       ├── s4_filter.py            # verdict → action (REMOVE/MOVE_EVE/KEEP_virus/REVIEW)
 │       ├── build_panel.py          # 参考面板构建 (随模块提交 panel.fasta/baits.fa)
 │       └── README.md               # 方法与踩坑记录 (含逐条实测数字)
-│
-├── submission_gui/                 # 提交桌面 GUI
-│   └── submission_gui.py           # PySide6 交互式编辑/验证/导出
-│
-├── metadata_gui/                   # 元数据管理 GUI
 │
 ├── biosoft/                        # 第三方工具 (脚本/JAR, 无需编译)
 │   ├── VirBot/VirBot.py
@@ -436,14 +430,15 @@ MMPV-RNA/
 
 - **10工具并行病毒鉴定**: Genomad + Diamond BLASTX + VirSorter2 + ViralVerify + VirHunter + Metabuli + RdrpCatch + ViraLM + VirBot + Viroid BLASTN
 - **CD-HIT参考引导预聚类**: 整合ICTV/NCBI完整基因组为参考，关联碎片contig到已知物种
-- **四支路级联拯救**: A: CheckV≥90% 直通 → B: Virseqimprover reads 延伸 → C: BLASTN 参考引导重建 → D: genus-length 兜底，逐步提升 HQ vOTU 产出
+- **两支路级联拯救**: A: CheckV≥90% 直通 → B: Virseqimprover reads 延伸，只保留有质量证据的产出 (原 C 直通筛选/D 零产出已归档: archive/20261011_rescue_branch_cd/)
 - **宿主过滤**: 拯救前按宿主类别预过滤，节省70%+计算量
 - **pixi一键部署**: 100个conda包精确版本管理，`pixi install`即可
 - **断点续传**: 全部脚本支持 `--resume/--force`，大规模运行安全中止和恢复
 - **基于分类层级的新颖性判断**: 无需BLASTN依赖，直接从taxonomy completeness判断新病毒
 - **完整闭环**: 从公共数据挖掘到投稿图表，一站式完成
-- **元数据 GUI**: PySide6 桌面应用, 支持 SRA/GSA 元数据可视化搜索、过滤、表格浏览和图表分析
 - **提交管线**: GenBank/CNCB 序列提交自动化, 支持 Sequin 构建和假设蛋白分析
+- **AI 驱动层 (2026-10)**: 四层递进架构 — run digest 状态数字化 → AI 解读 (五报告统一接线 + **过程面板: 报告不止读数据, 兼载全过程与 AI 参与轨迹**) → 建议/候选 triage 实战标注 (`--preset ident` 鉴定证据矩阵, 只写 ai_* 列) → 自然语言副驾驶 + MCP server + 受控 agent 全链路编排 (`mmpv_ai.py agent`) + 项目级主报告 (`mmpv_ai.py report`, 含报告互链/digest 演化图/token 用量) + 溯源导出 (`mmpv_ai.py provenance` → 中英文方法学段落) + 事后补 AI (`mmpv_ai.py enrich`: 无 key 先跑, 配 key 后一键补解读, 幂等)。AI 只建议不执行, 离线完整可用; 入口 `python mmpv_ai.py --help`, 论证见 `doc/AI_DRIVEN_DESIGN.md`
+- **报告模板层 (2026-10)**: 报告 HTML 由 Jinja2 统一渲染 (`mmpv_common/report_template.py` + `templates/`: base 骨架 + 组件宏), 过程面板/项目主报告/⑦ 提交报告已迁移; autoescape 修复元数据特殊字符破坏标记, StrictUndefined 缺变量 fail-loud, 离线零外部资源
 
 ---
 
@@ -461,9 +456,9 @@ MMPV-RNA/
 | ViraLM DB | DNABERT-2鉴定 | Google Drive (gdown) |
 | Kraken2 + align DB | 宿主去除 | 本管线构建 (build_host_pipeline.py) |
 | PhaBOX2 DB | 宿主预测 | PhaBOX2 |
-| 植物/病毒拆分库 (hybrid) | EVE 双侧判定 | SwissProt 拆分 + id2div 映射 (endogenous_virus_pipeline) |
+| 植物/病毒拆分库 (hybrid) | EVE 双侧判定 | SwissProt 拆分 + id2div 映射 (⑥ 已归档 2026-10-11) |
 
-**完整清单与部署方案**：全管线共依赖 50 项数据库（必需 25 / 可选 25，全量约 710GB）。
+**完整清单与部署方案**：全管线共依赖 50 项数据库（必需 24 / 可选 26，全量约 710GB）。
 逐库的下载与建索引命令见 `DATABASE_SETUP.md`；**可复现的集中部署方案**（共享库根 + 软链接
 兼容层 + 环境变量 + 校验）见 `doc/DB_DEPLOYMENT.md`，配套工具：
 
@@ -491,6 +486,7 @@ python scripts/db_setup/mmpv_db.py link --apply                          # 建�
 | `public_metadata_pipeline/doc.md` | 公共数据管线 + 宿主参考构建（含四通道下载） |
 | `virome_submission_pipeline/` | 提交管线脚本头部均有详细 docstring |
 | `doc/14-pipeline-diagrams.md` | Mermaid流程图/架构图 |
+| `doc/AI_DRIVEN_DESIGN.md` | AI 驱动四层架构: 设计论证 / 红线 / 上手指南 |
 | `doc/DB_DEPLOYMENT.md` | 数据库部署方案（共享库根/软链接/环境变量/校验，可复现） |
 | `SOFTWARE_VERSIONS.txt` | 全部第三方软件版本记录 |
 | `pixi.toml` | 依赖配置 (可直接查看) |

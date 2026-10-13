@@ -1,5 +1,10 @@
 # MMPV 逻辑框架与核心完整性说明
 
+> 【历史文档 · 编号已过时】(2026-10-13 标注) 本文的管线编号是旧体系 (③=discovery、
+> ④=analysis、⑥=submission、⑦=GUI), 与现行 v3.1 编号 (①公共数据 ②清洗 ③发现
+> ④分析 ⑤进化 ⑥EVE(已归档) ⑦提交) 不一致; 文中审计数字 (270 处引用) 亦为当时
+> 快照 (2026-10-13 实测 213 处)。框架结论仍然有效, 阅读时请按现行编号换算。
+
 > 2026-09-05 整理。回应两个问题：① MMPV 的模块逻辑框架；② 昨日合并/清理后核心内容是否受损。
 > 结论先行：**核心目录零文件缺失（git index 与磁盘逐一比对通过）；管线间 270 处脚本引用全部核查，真实断裂仅 3 处，且均为本会话之前已知的迁移残留，不影响任何活跃调用链。**
 
@@ -24,7 +29,7 @@ MMPV (Massive Meta-mining of Plant Viruses)：从**公共测序档案**（NCBI S
           ┌─────────────────────┼────────────────┼──────────────────────┐
           ▼                     ▼                │                      │
 ┌──────────────────────┐  ┌──────────────────────────────────────────┐   │
-│ ③ metadata_gui/      │  │  ② virome_discovery_pipeline/  病毒发现 │   │
+│ (GUI 已移交外部平台)  │  │  ② virome_discovery_pipeline/  病毒发现 │   │
 │  (PySide6 桌面)      │  │  virome_pipeline.py  15 阶段编排:         │   │
 │  search_bridge 动态  │  │   clean→deplete→assembly→          │   │
 │  加载 gsa_sra.*.py   │  │   identification(10工具)→filter(UniRef90+ │   │
@@ -60,7 +65,7 @@ MMPV (Massive Meta-mining of Plant Viruses)：从**公共测序档案**（NCBI S
               └──────────────────────────────────────────────────┘         │
                                                                            │
               ┌──────────────────────────────────────────────────┐         │
-              │  ⑦ submission_gui/  (PySide6)                    │◄────────┘
+              │  ⑦ virome_submission_pipeline/ (GUI 已移交外部平台) │◄────────┘
               │  unified_metadata.csv 多标签编辑/占位符高亮/      │
               │  template.sbt 生成/验证报告 → 与⑥经 sync 闭环     │
               └──────────────────────────────────────────────────┘
@@ -87,7 +92,7 @@ MMPV (Massive Meta-mining of Plant Viruses)：从**公共测序档案**（NCBI S
 
 ## 4. 跨模块桥接（代码级）
 
-- `metadata_gui/controllers/search_bridge.py`：importlib 动态加载 ① 的 `gsa_sra.search.py`（同进程 QThread）；`deep_extract` 走 subprocess 调 `gsa_sra.info.py`；`viz_panel` 动态加载 `gsa_sra.plot.py`
+- ~~`metadata_gui/`~~（2026-10 移交外部本地平台「植物病毒分析平台」；其 search_bridge 曾动态加载 ① 的 gsa_sra.*.py，检索能力仍由 CLI 全量提供）
 - ② `virome_pipeline.py` 的 analysis 阶段直接 subprocess 调 ④ 的 `batch_virus_depth.py`；analysis_verify 调 `~/bin/acvirus_tree_pro.py`（回退）与 ④ 的 `sdt_genus_matrix.py`
 - ⑥ `submission_pipeline.py` 步骤 2.6 调 ① 的 `gsa_sra.info.py -m local` 回填元数据；`tbl2gb` 借用 ④/utils/tbl2gb.py
 - ⑥⑦ 经 `sync_client.py`（SSH）+ 服务器端 `sync_sqn_from_csv.py` 闭环
@@ -107,9 +112,9 @@ MMPV (Massive Meta-mining of Plant Viruses)：从**公共测序档案**（NCBI S
 
 **真实引用断裂仅 3 处，均为本会话之前已存在**（git 记录佐证）：
 1. `utils/auto_known_virus.py`（旧版 10-stage 编排器，无任何调用方）引用的 `utils/gbk_extractor.py`、`utils/visual_codon_miner.py` —— 这两文件在**更早的 capheine 迁移**中移至 `virome_phylo_pipeline/`（服务器端 R100 记录一致）。旧版编排器已于 2026-09-28 归档至 archive/auto_known_virus.orphan_utils_20260915.py。
-2. `submission_gui/sync_client.py` 引用 `sync_sqn_from_csv.py` —— 该文件仅存在于服务器端（本来就要在服务器跑）。
+2. ~~`submission_gui/sync_client.py`~~（目录已移交外部平台）；管线内 `sync_sqn_from_csv.py` 仍在 ⑦。
 3. `build_virus_db.py` 的 3 个辅助脚本（SearchAccessionIdToTaxId.py 等）—— 仅在服务器，该工具为独立建库工具，不在主编排链。
 
 **检查器报告的其余 ~95 处"断裂"经逐一核实均为误报**：跨管线动态定位（SCRIPT_DIR/'utils'/'x.py' 拼写）、运行时自生成脚本（gene_partition_dating.py 生成 parse_gene_beast.py）、外部命令（rnaviralspades/ragtag）、报告 HTML 的文字提及（capheine）、PyInstaller dist 产物等。
 
-**核心目录现状**：`doc database metadata_gui public_metadata_pipeline submission_gui virome_analysis_pipeline virome_discovery_pipeline virome_phylo_pipeline virome_submission_pipeline + pixi.toml pipeline_config.yaml DATABASE_SETUP.md SOFTWARE_VERSIONS.txt README.md` —— git index 内每一个文件磁盘都在，无一缺失。
+**核心目录现状**：`doc database public_metadata_pipeline virome_analysis_pipeline virome_discovery_pipeline virome_phylo_pipeline virome_submission_pipeline mmpv_common + pixi.toml pipeline_config.yaml DATABASE_SETUP.md SOFTWARE_VERSIONS.txt README.md`（metadata_gui / submission_gui 已于 2026-10 移交外部平台，git 历史可查） —— git index 内每一个文件磁盘都在，无一缺失。

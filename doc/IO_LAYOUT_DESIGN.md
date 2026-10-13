@@ -39,6 +39,8 @@
 > 的输出根：不在 ①→⑤ 主链上、不跑无影响；根内独立编号 01→07，与 ⑥ EVE
 > 同属"独立分析"型支线。**根号 = 管线号**（01→06 ↔ ①→⑥）；07 号空缺 ——
 > ⑦ 提交管线消费 ④ 产物、无独立输出根；⑧ 为本模块，编号顺延至 08。
+> **【⑧ 已归档 2026-10-11 → `archive/20261011_host_expression_pipeline/`
+> （方法不成熟）；根名与 `he_*` 键保留，历史输出定位不受影响。】**
 
 ```
 <project_root>/
@@ -96,7 +98,9 @@
 │     └── .checkpoints/              断点标记 (不编号)
 │
 ├── 06_EVE/                        ← ⑥ 内源性病毒管线的输出根 (eve_screen -o 指向这里;
-│   │                                内部编号两布局一致, 本就符合编号惯例)
+│   │                                内部编号两布局一致, 本就符合编号惯例;
+│   │                                ⑥ 已归档 2026-10-11 → archive/20261011_endogenous_virus_pipeline,
+│   │                                根名与 e_* 键保留, 历史输出定位不受影响)
 │   ├── 01_Loci/<NAME>/              Stage1 滑窗 blastx 发现 (fna/chunks/s1_hits/loci.bed/loci.fa)
 │   ├── 02_Verdict/<NAME>/           Stage2 植物/病毒双侧 bitscore 判定 (s2_verdict)
 │   ├── 03_RVDB/<NAME>/              Stage3 RVDB 深度归属 (cand3.bed/s3_rvdb)
@@ -135,8 +139,8 @@
 | B3 | ③→④ | `03_Discovery/06_CLUSTER/centroids/final_centroids.fasta` + `07_Taxonomy/integrated/final_integrated_classification.tsv` → 桥 → `90_Handoff/analysis.reference.{fasta,tsv}` | `auto_known_virus.py --reference --ref_info --reads_dir <②的02_HostDepleted>` |
 | B4 | ④→⑤ | `04_Analysis/06_Extraction/` | `phylo_pipeline.py --extract_dir` |
 | B5 | ①→⑤ | `01_PublicData/02_Unified/Global_Unified_Metadata_Core14.tsv` | `phylo_pipeline.py --metadata`（`data_collector.load_sample_metadata` 原生直读，无需转换器） |
-| B6 | ①→⑥ | `01_PublicData/05_HostRef/genome/all.genome.uniq.fasta` | `eve_screen.py -g <genome.fa>` 或批量 `-B batch.tsv`（EVE 与 reads 主链相互独立） |
-| B7 | ③↔⑥ | ⑥ 的判别器吃 ③ 的发现输出，产出 `dna_vs_eve_filter.tsv` 归口 `06_EVE/eve_distinguish/`（2026-10-07 起；`-D` 目录名非 `03_Discovery` 时维持旧默认 `<DISCOVERY>/08b_EVE_Distinguish/`） | `eve_distinguish/run_all.sh -D <项目>/03_Discovery -A <1kp_assemblies>` |
+| B6 | ①→⑥ | `01_PublicData/05_HostRef/genome/all.genome.uniq.fasta` | `eve_screen.py -g <genome.fa>` 或批量 `-B batch.tsv`（EVE 与 reads 主链相互独立；**⑥ 已归档 2026-10-11，边界停用**） |
+| B7 | ③↔⑥ | ⑥ 的判别器吃 ③ 的发现输出，产出 `dna_vs_eve_filter.tsv` 归口 `06_EVE/eve_distinguish/`（2026-10-07 起；`-D` 目录名非 `03_Discovery` 时维持旧默认 `<DISCOVERY>/08b_EVE_Distinguish/`） | `eve_distinguish/run_all.sh -D <项目>/03_Discovery -A <1kp_assemblies>`（**⑥ 已归档 2026-10-11，边界停用；历史产物仍可被 `triage --preset eve_distinguish` 消费**） |
 | B8 | ②①④→⑧ | ⑧ 宿主表达（可选）四条输入：`02_Preprocessing/01_CleanData/{3.clumpify,2.fasta}`、`01_PublicData/05_HostRef/genome/`（含 GFF3）、`01_PublicData/02_Unified/Global_Unified_Metadata_Core14.{csv,tsv}`、`04_Analysis/01_Detection/summary/all_viruses.best.summary.tsv` | `host_expression.py --project-root <项目根>`（四条自动定位，standard 优先 legacy 兜底；亦可逐个 `--reads_dir/--genome/--gff/--metadata/--detect` 显式给） |
 
 ③→④ 桥（两布局通吃，无需开关）：
@@ -209,9 +213,10 @@ standard 相对路径均相对**本管线自己的根**。
 | he_report | `07_Report/`（同） | `07_Report/`（同） | 08_HostExpression |
 | x_handoff | `90_Handoff/` | `90_Handoff/`（同） | 项目根 |
 
-> ♪ ⑧ 宿主表达为**可选补充模块**（2026-10-02 并入，见
-> `host_expression_pipeline/README.md`）：新模块无 legacy 历史名，两布局同名、
-> 根内独立编号；键集与 ⑥ 一样受 `mmpv_common/tests/test_io_layout.py` 冻结。
+> ♪ ⑧ 宿主表达为**可选补充模块**（2026-10-02 并入；**2026-10-11 已归档**，见
+> `archive/20261011_host_expression_pipeline/README.md`）：新模块无 legacy 历史名，
+> 两布局同名、根内独立编号；键集与 ⑥ 一样受 `mmpv_common/tests/test_io_layout.py`
+> 冻结（归档未删键，冻结依然成立）。
 >
 > ♢ d_graph 为 ③ graph 阶段新增键（2026-10-02）：无 legacy 历史名，两布局同名
 > filter 目录之下（standard `03_Filter/graph/`，legacy `02b_Filter/graph/`）；
@@ -262,15 +267,16 @@ python virome_phylo_pipeline/phylo_pipeline.py \
     --output_dir <项目>/05_Phylo --stage all
 
 # ⑥ EVE (与 reads 主链相互独立, 输入=① 的宿主参考基因组)
-python endogenous_virus_pipeline/eve_screen.py \
+# 【⑥ 已归档 2026-10-11 → archive/20261011_endogenous_virus_pipeline; 命令存档, 恢复前不可运行】
+python archive/20261011_endogenous_virus_pipeline/eve_screen.py \
     -g <项目>/01_PublicData/05_HostRef/genome/all.genome.uniq.fasta \
     -n <物种名> -o <项目>/06_EVE -t 40
 
 # ⑥ 的 HTML 报告 (在 --merge 之后; 补齐与 ①-⑤ 一致的末阶段 HTML 闭环)
-python endogenous_virus_pipeline/eve_report.py -o <项目>/06_EVE
+python archive/20261011_endogenous_virus_pipeline/eve_report.py -o <项目>/06_EVE
 
 # ⑥ 的后运行判别 (吃 ③ 发现输出; -D 指向 03_Discovery 时产物归口 <项目>/06_EVE/eve_distinguish/)
-bash endogenous_virus_pipeline/eve_distinguish/run_all.sh \
+bash archive/20261011_endogenous_virus_pipeline/eve_distinguish/run_all.sh \
     -D <项目>/03_Discovery -A <1kp_assemblies> -t 32
 ```
 
@@ -301,8 +307,8 @@ bash endogenous_virus_pipeline/eve_distinguish/run_all.sh \
 | `public_metadata_pipeline/public_data_pipeline.py` | dirs/宿主参考路径 → 布局；`--io-layout` |
 | `public_metadata_pipeline/preprocess_unified.py` | 00a/00b/00c → `layout_dir_name()`；`--io-layout` |
 | `virome_phylo_pipeline/phylo_pipeline.py` | 69 处 `os.path.join(out_dir,"模块",…)` → `ph_dir()`（布局感知模块名）；`--io-layout`；`STAGE_MODULE_DIR`/`STAGE_GROUPS` 保留逻辑名不动 |
-| `endogenous_virus_pipeline/eve_scan_core.py` | `STAGE_DIRS` → `io_layout` e_* 键（带脱离仓库兜底回退）；standard 输出根约定 06_EVE |
-| `endogenous_virus_pipeline/eve_report.py` | **新增**：⑥ 的 HTML 报告生成器（merge 产物 → 自包含 HTML），补齐六管线"末阶段出 HTML"闭环 |
+| `endogenous_virus_pipeline/eve_scan_core.py` | `STAGE_DIRS` → `io_layout` e_* 键（带脱离仓库兜底回退）；standard 输出根约定 06_EVE（**脚本已随 ⑥ 归档 2026-10-11**） |
+| `endogenous_virus_pipeline/eve_report.py` | **新增**：⑥ 的 HTML 报告生成器（merge 产物 → 自包含 HTML），补齐六管线"末阶段出 HTML"闭环（**脚本已随 ⑥ 归档 2026-10-11**） |
 | 衔接审计（2026-09-27 第二轮） | **13 个 worker 脚本补接线**：③ report_pipeline/build_ref_info/filter_virus/rescue_pipeline/virome_analysis/virome_pipeline(cobra 回退+日志目录)、④ generate_pipeline_report(含 33 处相对子路径+陈旧 09_dvg 修复)/generate_pipeline_report_full（已于 2026-10-03 删除）/panvirome_×2/virus_detection_summary、② preprocess_report、① generate_report/preprocess_unified(hostref 根)、⑤ phylo(--output_dir 默认)。审计器：`scripts/audit/check_io_handoffs.py`（0 fail / 23 warn，warn 均为帮助文本措辞） |
 | 衔接审计（2026-09-28 第三轮，含 report/HTML 链路实测） | **⑦ 提交管线纳入审计范围并接线**：submission_pipeline(suvtk 输出探测/KEEP FASTA 探测/ref_info 定位)、fix_sqn(08_Rescue×3)。**⑤ utils 接线**：clock_analysis(6 处 time/phylogeny 路径)、data_collector(prep 的 data 目录)、report_builder(MODULES 注册表 7 个 dir 字段 + 注册表重排为编号序)、beast1_bridge(IQ-TREE 报告探测)。**实测**：③ report_pipeline 空 standard 树实跑产出 `13_Report/pipeline_report.html`（目录引用全为 standard 名）；④ generate_pipeline_report 合成 summary 实跑，standard 路径读取入 HTML；② preprocess_report 合成 fastp/seqkit 数据实跑出 HTML。审计器 SCOPES 补 ⑦ |
 

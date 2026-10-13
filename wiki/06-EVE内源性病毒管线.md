@@ -1,5 +1,10 @@
 # 06 · ⑥ EVE 内源性病毒管线 (endogenous_virus_pipeline)
 
+> **⚠️ 已归档（2026-10-11，方法不成熟）**：模块已整体移至
+> `archive/20261011_endogenous_virus_pipeline/`，归档原因与恢复方法见其
+> `ARCHIVED_20261011.md`。本页内容为归档前的方法记录，保留供恢复后取用；
+> 恢复前 ⑥ 不可运行，B6/B7 边界停用。
+
 **定位**: 宿主基因组侧的内源性病毒元件 (Endogenous Viral Elements) 筛查 — **与 reads 主链相互独立** (输入是宿主参考基因组 FASTA)。移植自 hi-fever eve_kingdom.py, 246 服务器千种植物实测。
 **主编排器**: `eve_screen.py` → 单基因组 worker `eve_genome_scan.py` → 纯逻辑核心 `eve_scan_core.py` (坐标还原/位点合并/判定/汇总, 142 个单测)
 
