@@ -1,0 +1,24 @@
+{#- base.html.j2 — 整页骨架: head/共享CSS/页脚/时间戳。报告页 extends 本模板。
+    可用块: title / css_extra / body_attrs / header / content / footer / scripts。
+    侧边栏导航 (nav 块) 待大报告 (analysis/public/discovery) 迁移时再引入。-#}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>{% block title %}MMPV Report{% endblock %}</title>
+<style>
+{{ base_css }}
+{% block css_extra %}{% endblock %}
+</style>
+</head>
+<body{% block body_attrs %}{% endblock %}>
+{% block header %}{% endblock %}
+{% block content %}{% endblock %}
+{% block footer %}
+<div style="color:var(--ink-secondary);font-size:11px;margin-top:26px">
+Generated {{ generated_at }} · MMPV-RNA</div>
+{% endblock %}
+{% block scripts %}{% endblock %}
+</body>
+</html>

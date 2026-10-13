@@ -1,0 +1,54 @@
+{#- macros.html.j2 — 规范组件宏 (类契约与 report_style.BASE_CSS 严格一致)。
+    使用: {% import "macros.html.j2" as m %} → {{ m.kpi_card('检测数', 47) }}
+    单元格/标签值经 autoescape 转义; extra_html/kpi_grid 的入参是可信预构建标记。-#}
+
+{% macro kpi_card(label, value, accent='', extra_html='') -%}
+<div class="kpi-card {{ accent }}">
+  <div class="kpi-value">{{ value }}</div>
+  <div class="kpi-label">{{ label }}</div>
+  {% if extra_html %}{{ extra_html|safe }}{% endif %}
+</div>
+{%- endmacro %}
+
+{% macro kpi_grid(cards_html) -%}
+<div class="kpi-grid">
+{{ cards_html|safe }}
+</div>
+{%- endmacro %}
+
+{% macro section_header(title, icon='') -%}
+<div class="section-header">
+  <span class="icon">{{ icon }}</span>
+  <h2>{{ title }}</h2>
+</div>
+{%- endmacro %}
+
+{% macro data_table(headers, rows, caption='', table_id='', required_cols=[], full_rows=None) -%}
+{#- required_cols: 必填列名集合 → th/td 加 required-col (完整度统计口径);
+    full_rows: 与 rows 平行的未截断原值 (存在且与显示值不同时写 data-full,
+    JS 导出优先读 data-full, 显示仍为 rows 的截断文本)。-#}
+<div class="table-wrap">
+<table class="data-table"{% if table_id %} id="{{ table_id }}"{% endif %}>
+{% if caption %}<caption style="caption-side:bottom;font-size:12px;color:var(--ink-secondary);padding:8px 0;">{{ caption }}</caption>{% endif %}
+<thead><tr>{% for h in headers %}<th{% if h in required_cols %} class="required-col"{% endif %}>{{ h }}</th>{% endfor %}</tr></thead>
+<tbody>
+{% for row in rows %}{% set ri = loop.index0 %}<tr>{% for v in row %}<td{% if headers[loop.index0] in required_cols %} class="required-col"{% endif %}{% if full_rows and ri < full_rows|length and loop.index0 < full_rows[ri]|length and full_rows[ri][loop.index0] != v %} data-full="{{ full_rows[ri][loop.index0] }}"{% endif %}>{{ v }}</td>{% endfor %}</tr>
+{% endfor %}
+</tbody>
+</table></div>
+{%- endmacro %}
+
+{% macro badge(text, kind='primary') -%}
+<span class="badge badge-{{ kind }}">{{ text }}</span>
+{%- endmacro %}
+
+{#- 过程时间线行 (process_panel tail=6 / master_report tail=12 共用)。
+    snaps 由 Python 预处理: [{ts, n, on}] (on = 在线管线名逗号串) -#}
+{% macro process_timeline_rows(snaps) -%}
+{%- if snaps %}
+{% for s in snaps %}<tr><td style="padding:3px 10px;white-space:nowrap">{{ s.ts }}</td><td style="padding:3px 10px">{{ s.n }} pipeline(s) online</td><td style="padding:3px 10px;color:{{ palette.ink_secondary }};font-size:11px">{{ s.on or '—' }}</td></tr>
+{% endfor %}
+{%- else %}
+<tr><td colspan="3" style="padding:3px 10px;color:{{ palette.ink_secondary }}">No timeline yet (started by mmpv_ai.py digest --write)</td></tr>
+{%- endif %}
+{%- endmacro %}

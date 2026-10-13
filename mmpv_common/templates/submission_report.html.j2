@@ -1,0 +1,184 @@
+{#- submission_report.html.j2 — ⑦ GenBank 提交交互报告 (全表双击编辑/批量填充/导出)。
+    上下文: run_title / timestamp / pipeline / n_seqs / n_viruses / suvtk_parts /
+            src_{headers,rows} / cmt_{headers,rows} / bs_{headers,rows} /
+            miuvig_rows / asm_rows / topo_rows[{contig,taxonomy,rule_topology,
+            final_topology,cls,seq_length,dtr,evidence}] / topo_summary / checklist /
+            js -#}
+{% extends "base.html.j2" %}
+{% import "macros.html.j2" as m %}
+{% block title %}{{ run_title }} — GenBank Submission Report{% endblock %}
+
+{% block css_extra %}
+/* ── submission-only overlay (fixes historically undefined classes: toolbar / stat cards / sections / editable cells / toast) ── */
+.header { background: linear-gradient(135deg, #1a2332, #2563eb); color: #fff; padding: 24px 32px; }
+.header h1 { color: #fff; font-size: 22px; }
+.header .meta { font-size: 12px; opacity: .85; margin-top: 4px; }
+.header .stats { display: flex; gap: 12px; margin-top: 14px; flex-wrap: wrap; }
+.header .stat { background: rgba(255,255,255,.12); border-radius: 8px; padding: 10px 18px; text-align: center; min-width: 90px; }
+.header .stat .num { font-size: 24px; font-weight: 700; }
+.header .stat.ok .num { color: #6ee7b7; }
+.header .stat.warn .num { color: #fcd34d; }
+.header .stat .label { font-size: 11px; opacity: .8; text-transform: uppercase; letter-spacing: .5px; }
+.header .progress { height: 8px; background: rgba(255,255,255,.25); border-radius: 4px; overflow: hidden; margin-top: 12px; }
+.header .progress .progress-bar { height: 100%; width: 0; background: #6ee7b7; border-radius: 4px; transition: width .3s; }
+.header .suvtk-summary { background: rgba(255,255,255,.10); padding: 10px 16px; border-radius: 6px; font-size: 13px; color: rgba(255,255,255,.92); margin-top: 10px; }
+
+.toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; margin-bottom: 12px; }
+.btn { border: none; border-radius: 6px; padding: 7px 12px; font-size: 12px; font-weight: 600; cursor: pointer; }
+.btn.primary { background: var(--primary); color: #fff; }
+.btn.success { background: var(--success); color: #fff; }
+.btn.warn { background: var(--warning); color: #fff; }
+.btn:hover { filter: brightness(1.08); }
+.filter input { border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; font-size: 12px; width: 220px; }
+
+.legend { display: flex; gap: 14px; align-items: center; font-size: 12px; color: var(--ink-secondary); margin-bottom: 14px; }
+.legend .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 4px; vertical-align: middle; }
+.dot.missing-dot { background: var(--danger); }
+.dot.filled-dot { background: var(--success); }
+
+.section { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 14px; overflow: hidden; }
+.section-title { padding: 12px 16px; font-weight: 600; font-size: 14px; cursor: pointer; background: var(--surface-alt); border-bottom: 1px solid var(--border-light); user-select: none; }
+.section-title:hover { background: var(--primary-light); }
+.section-body { padding: 12px 16px; }
+.section.collapsed .section-body { display: none; }
+
+.checklist { list-style: none; }
+.checklist li { padding: 6px 0; font-size: 13px; }
+.checklist li.done { color: var(--success); }
+.checklist li.todo { color: var(--ink-secondary); }
+
+/* editable cells: show span by default, input only while .editing (previously both were always shown) */
+td .cell-content { display: inline; }
+td input { display: none; }
+td.editing .cell-content { display: none; }
+td.editing input { display: inline-block; width: 90%; border: 1px solid var(--primary); border-radius: 4px; padding: 2px 6px; font-size: 12px; font: inherit; }
+td.missing { background: var(--danger-light); }
+td.filled { background: var(--success-light); }
+
+.toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(20px); background: var(--ink); color: #fff; padding: 10px 18px; border-radius: 6px; font-size: 13px; opacity: 0; transition: all .3s; z-index: 999; }
+.toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+.toast.error { background: var(--danger); }
+{% endblock %}
+
+{% block header %}
+<div class="header">
+<h1>GenBank Submission Report — {{ run_title }}</h1>
+<div class="meta">Generated: {{ timestamp }} | Pipeline: {{ pipeline }}</div>
+<div class="stats">
+<div class="stat"><div class="num">{{ n_seqs }}</div><div class="label">Seq</div></div>
+<div class="stat"><div class="num">{{ n_viruses }}</div><div class="label">Virus</div></div>
+<div class="stat ok"><div class="num" id="completeness">-</div><div class="label">Complete</div></div>
+<div class="stat warn"><div class="num" id="missingCount">-</div><div class="label">Missing</div></div>
+</div>
+<div class="progress"><div class="progress-bar" id="completeBar"></div></div>
+<div class="suvtk-summary">{% if suvtk_parts %}{{ suvtk_parts|join(' | ') }}{% else %}<span style="color:#bbb">suvtk not run (optional)</span>{% endif %}</div>
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="container">
+<div class="toolbar">
+<button class="btn primary" onclick="downloadTSV('srcTable','source.src')">⬇ source.src</button>
+<button class="btn success" onclick="downloadTSV('bsTable','biosample_template.tsv')">⬇ BioSample</button>
+<button class="btn success" onclick="downloadCSV('srcTable','unified_metadata_edited.csv')">💾 Save CSV</button>
+<button class="btn warn" onclick="batchFill('srcTable','Collection_date')">Fill Date</button>
+<button class="btn warn" onclick="batchFill('srcTable','geo_loc_name')">Fill Location</button>
+<button class="btn warn" onclick="batchFill('srcTable','Lat_Lon')">Fill LatLon</button>
+<button class="btn warn" onclick="batchFill('srcTable','Bioproject')">Fill BioProject</button>
+<div style="flex:1"></div>
+<div class="filter"><input type="text" placeholder="Filter sequences..." oninput="filterTable(this.value)"></div>
+</div>
+
+<div class="legend">
+<span><div class="dot missing-dot"></div> Missing</span>
+<span><div class="dot filled-dot"></div> Filled</span>
+<span style="color:#888">| Double-click to edit | Enter = confirm | Tab = next</span>
+</div>
+
+<div class="section" id="srcSection">
+<div class="section-title" onclick="toggleSection('srcSection')">
+source.src / Unified Metadata ({{ n_seqs }} seqs)
+<span style="font-size:10px;color:#999">Double-click any cell to edit</span>
+</div>
+<div class="section-body">
+{{ m.data_table(src_headers, src_rows, table_id='srcTable', required_cols=required_cols|default([], true), full_rows=src_full|default(None, true)) }}
+</div></div>
+
+<div class="section" id="cmtSection">
+<div class="section-title" onclick="toggleSection('cmtSection')">
+Structured Comment (.cmt) / structured comment parameters
+<span style="font-size:10px;color:#999">Assembly, Coverage, Annotation</span>
+</div>
+<div class="section-body">
+{{ m.data_table(cmt_headers, cmt_rows, table_id='cmtTable', full_rows=cmt_full|default(None, true)) }}
+</div></div>
+
+<div class="section" id="bsSection">
+<div class="section-title" onclick="toggleSection('bsSection')">
+BioSample Template ({{ n_seqs }} samples)
+<span style="font-size:10px;color:#999">Pathogen.cl.1.0 format for NCBI registration</span>
+</div>
+<div class="section-body">
+{{ m.data_table(bs_headers, bs_rows, table_id='bsTable', full_rows=bs_full|default(None, true)) }}
+</div></div>
+
+<div class="section collapsed" id="miuvigSection">
+<div class="section-title" onclick="toggleSection('miuvigSection')">
+MIUVIG Parameters (miuvig.tsv) — Advanced
+<span style="font-size:10px;color:#999">25+ required fields, usually auto-generated</span>
+</div>
+<div class="section-body">
+{{ m.data_table(['Parameter', 'Value'], miuvig_rows, table_id='miuvigTable') }}
+</div></div>
+
+<div class="section" id="topoSection">
+<div class="section-title" onclick="toggleSection('topoSection')">
+Viral Topology (topology.tsv) — {{ topo_summary }}
+<span style="font-size:10px;color:#999">Linear/Circular genome determination</span>
+</div>
+<div class="section-body">
+<div class="table-wrap">
+<table class="data-table" id="topoTable">
+<thead><tr><th>Contig</th><th>Taxonomy</th><th>Rule</th><th>Final</th><th>Length</th><th>DTR</th><th>Evidence</th></tr></thead>
+<tbody>
+{% if topo_rows %}
+{% for r in topo_rows %}<tr>
+<td>{{ r.contig }}</td>
+<td>{{ r.taxonomy }}</td>
+<td>{{ r.rule_topology }}</td>
+<td class="{{ r.cls }}">{{ r.final_topology }}</td>
+<td style="text-align:right">{{ r.seq_length }}</td>
+<td style="text-align:center">{{ r.dtr }}</td>
+<td style="font-size:10px;color:#888">{{ r.evidence }}</td>
+</tr>
+{% endfor %}
+{% else %}
+<tr><td colspan="7" style="color:#999;text-align:center">No topology data</td></tr>
+{% endif %}
+</tbody>
+</table></div>
+</div></div>
+
+<div class="section collapsed" id="asmSection">
+<div class="section-title" onclick="toggleSection('asmSection')">
+Assembly Parameters (assembly.tsv)
+<span style="font-size:10px;color:#999">Assembly method, sequencing tech</span>
+</div>
+<div class="section-body">
+{{ m.data_table(['Parameter', 'Value'], asm_rows, table_id='asmTable') }}
+</div></div>
+
+<div class="section">
+<div class="section-title">Submission Checklist</div>
+<div class="section-body">
+<ul class="checklist">{% for c in checklist %}<li class="{{ c[0] }}">{% if c[0] == 'done' %}✓{% else %}☐{% endif %} {{ c[1] }}</li>{% endfor %}</ul>
+<div style="margin-top:10px;font-size:11px;color:#888">
+<b>Workflow:</b> Edit above → Download source.src → suvtk comments → suvtk table2asn → email gb-sub@ncbi.nlm.nih.gov
+</div></div></div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>{{ js|safe }}</script>
+{% endblock %}

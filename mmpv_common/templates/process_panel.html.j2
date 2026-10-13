@@ -1,0 +1,29 @@
+{#- process_panel.html.j2 — 确定性过程面板片段 (无 AI、无网络、幂等标记 panel_id)。
+    作为片段嵌入: 主报告 {% include %} 或 append_process_panel_to_html() 的 </body> 前注入。
+    上下文: panel_id / chips[{num,name,on}] / timeline_tail / ai{...} / agents[...] /
+            triage_n / triage_keep / triage_review / links[{href,label}] -#}
+{% import "macros.html.j2" as m %}
+<section id="{{ panel_id }}" style="margin:22px 0;padding:14px 18px;background:{{ palette.surface }};border:1px solid {{ palette.border }};border-radius:8px">
+<h2 style="font-size:15px;color:{{ palette.primary }};margin-bottom:8px">Project Process Overview · AI Involvement Trace</h2>
+<div style="margin:6px 0">
+{%- if chips %}
+{% for c in chips %}<span style="background:{{ palette.success_light if c.on else palette.surface_alt }};color:{{ palette.success if c.on else palette.ink_secondary }};border:1px solid {{ palette.border }};border-radius:12px;padding:2px 10px;font-size:11px;white-space:nowrap">{{ c.num }} {{ c.name }} {{ '✓' if c.on else '·' }}</span> {% endfor %}
+{%- else %}
+<span style="color:{{ palette.ink_secondary }}">(no pipeline outputs)</span>
+{%- endif %}
+</div>
+<table style="border-collapse:collapse;width:100%;font-size:12px;margin:8px 0">
+<thead><tr style="background:{{ palette.surface_alt }};color:{{ palette.ink_secondary }}">
+<th style="text-align:left;padding:3px 10px">Timeline</th>
+<th style="text-align:left;padding:3px 10px">Progress</th>
+<th style="text-align:left;padding:3px 10px">Pipelines Online</th></tr></thead>
+<tbody>{{ m.process_timeline_rows(timeline_tail) }}</tbody></table>
+<div style="font-size:12px;line-height:1.8">
+<div>{% if ai.n_calls %}AI calls: <b>{{ ai.n_calls }}</b> ({{ ai_ops_str or '—' }}) · models {{ ', '.join(ai.models) or '—' }} · tokens ~{{ ai.total_tokens|fmt_int }}{% if ai.n_cached %} · cache hits {{ ai.n_cached }}{% endif %}{% if ai.prompt_versions %}<br>Prompt versions: {{ ', '.join(ai.prompt_versions) }} (full provenance in 90_Handoff/state/ai_log.jsonl){% endif %}{% else %}No AI calls recorded (rule-based run){% endif %}</div>
+<div>{% if agents %}Controlled agent runs: <b>{{ agents|length }}</b> — {% for a in agents[-3:] %}{{ a.summary }}{% if not loop.last %}; {% endif %}{% endfor %}{% else %}No agent runs recorded{% endif %}</div>
+<div>{% if triage_n %}Triage annotations: <b>{{ triage_n }}</b> file(s) (KEEP {{ triage_keep }} / REVIEW {{ triage_review }}) — REVIEW items await manual adjudication{% else %}Triage annotations: none yet (start with mmpv_ai.py triage --preset ident){% endif %}</div>
+<div style="color:{{ palette.ink_secondary }};font-size:11px;margin-top:4px">
+Governance statement: AI only interprets, advises, annotates and validates commands; it never
+runs pipelines or overrides any statistical conclusion (taxonomy = tool voting, completeness =
+CheckV, differential expression = DESeq2/TEA-GCN); all AI decisions are traceable.</div>
+</div>{% if links %}<div style="margin-top:6px">Related reports: {% for l in links %}<a href="{{ l.href }}">{{ l.label }}</a>{% if not loop.last %} · {% endif %}{% endfor %}</div>{% endif %}</section>

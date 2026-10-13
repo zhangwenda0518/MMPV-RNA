@@ -1,0 +1,90 @@
+{#- master_report.html.j2 — 项目级主报告 (90_Handoff/MMPV_master_report.html)。
+    上下文: project_dir / layout / generated_at / nav_reps[{rel,title}] /
+            kpi_pipelines / kpi_ai_calls / kpi_tokens / kpi_agent_runs / kpi_triage_review /
+            pipeline_details[{num,name,n_done,n_stages,extra}] / svg /
+            timeline_rows (tail=12) / ai{...} / triage[...] / recs[{level,level_upper,
+            title,detail,command,color}] / narrative_status / narrative_text /
+            narrative_reason / panel_html -#}
+{% extends "base.html.j2" %}
+{% import "macros.html.j2" as m %}
+{% block title %}MMPV Master Report{% endblock %}
+{% block body_attrs %} style="padding:32px 40px"{% endblock %}
+
+{% block header %}
+<h1 style="font-size:22px">MMPV Master Report — Results × Process × AI Involvement</h1>
+<div style="color:{{ palette.ink_secondary }};font-size:12px;margin-bottom:16px">
+Project: {{ project_dir }} · Layout: {{ layout }} · Generated: {{ generated_at }}
+· Regenerate: <code>python mmpv_ai.py report &lt;PROJECT_ROOT&gt;</code></div>
+{% if nav_reps %}<div style="margin:8px 0">{% for r in nav_reps %}<a href="{{ r.rel }}" style="font-size:13px">{{ r.title }}</a>{% if not loop.last %} · {% endif %}{% endfor %}</div>{% endif %}
+{% endblock %}
+
+{% block content %}
+{{ m.kpi_grid(
+     m.kpi_card('Pipelines Online', kpi_pipelines)
+     ~ m.kpi_card('AI Calls', kpi_ai_calls)
+     ~ m.kpi_card('tokens ~', kpi_tokens)
+     ~ m.kpi_card('Agent Runs', kpi_agent_runs)
+     ~ m.kpi_card('triage REVIEW', kpi_triage_review)) }}
+
+<h2 style="font-size:17px;margin:26px 0 8px">Pipeline Overview</h2>
+{% if pipeline_details %}
+{% for p in pipeline_details %}<div style="margin:10px 0;padding:10px 14px;border:1px solid {{ palette.border }};border-radius:8px;background:{{ palette.surface }}">
+<b style="color:{{ palette.primary }}">{{ p.num }} {{ p.name }}</b><span style="color:{{ palette.ink_secondary }};font-size:12px"> — {{ p.n_done }}/{{ p.n_stages }} stage dirs with outputs</span>{% if p.extra %}<div style="font-size:12px;margin-top:4px">{{ p.extra }}</div>{% endif %}
+</div>
+{% endfor %}
+{% else %}<p style="color:{{ palette.ink_secondary }}">No pipeline outputs.</p>{% endif %}
+
+<h2 style="font-size:17px;margin:26px 0 8px">Process Timeline</h2>
+<div style="background:{{ palette.surface }};border:1px solid {{ palette.border }};border-radius:8px;padding:10px 14px;margin:8px 0">{{ svg|safe }}{% if svg %}<div style="color:{{ palette.ink_secondary }};font-size:11px">Y axis = pipelines online, X axis = digest snapshot series (started by mmpv_ai.py digest --write)</div>{% endif %}</div>
+<table style="border-collapse:collapse;width:100%;font-size:12px;background:{{ palette.surface }}">
+<thead><tr style="background:{{ palette.surface_alt }};color:{{ palette.ink_secondary }}">
+<th style="text-align:left;padding:4px 10px">Time</th><th style="text-align:left;padding:4px 10px">Progress</th>
+<th style="text-align:left;padding:4px 10px">Pipelines Online</th></tr></thead>
+<tbody>{{ m.process_timeline_rows(timeline_rows) }}</tbody></table>
+
+{{ panel_html|safe }}
+
+{% set ths = ('style="background:' ~ palette.surface_alt ~ ';color:' ~ palette.ink_secondary
+              ~ ';text-align:left;padding:4px 10px"')|safe %}
+<h2 style="font-size:17px;margin:26px 0 8px">AI Usage</h2>
+{% if ai.n_calls %}
+<table style="border-collapse:collapse;font-size:12px;background:{{ palette.surface }};margin-right:24px;display:inline-table;vertical-align:top">
+<tr><th {{ ths }}>Operation (by op)</th><th {{ ths }}>Calls</th><th {{ ths }}>tokens</th></tr>
+{% for op, n in ai.by_op.items() %}<tr><td style="padding:3px 10px">{{ op }}</td><td style="padding:3px 10px;text-align:right">{{ n }}</td><td style="padding:3px 10px;text-align:right">{{ ai.by_op_tokens.get(op, 0)|fmt_int }}</td></tr>
+{% endfor %}</table>
+<table style="border-collapse:collapse;font-size:12px;background:{{ palette.surface }};display:inline-table;vertical-align:top">
+<tr><th {{ ths }}>Month</th><th {{ ths }}>Calls</th><th {{ ths }}>tokens</th></tr>
+{% for ym, s in ai.by_month.items() %}<tr><td style="padding:3px 10px">{{ ym }}</td><td style="padding:3px 10px;text-align:right">{{ s.calls }}</td><td style="padding:3px 10px;text-align:right">{{ s.tokens|fmt_int }}</td></tr>
+{% endfor %}</table>
+{% else %}<p style="color:{{ palette.ink_secondary }};font-size:12px">No AI call records.</p>{% endif %}
+
+<h2 style="font-size:17px;margin:26px 0 8px">Triage Candidate Annotation Summary</h2>
+{% if triage %}
+<table style="border-collapse:collapse;width:100%;font-size:12px;background:{{ palette.surface }}">
+<tr><th {{ ths }}>Annotation File</th><th {{ ths }}>Rows</th><th {{ ths }}>KEEP</th><th {{ ths }}>REVIEW</th></tr>
+{% for t in triage %}<tr><td style="padding:3px 10px"><code>{{ t.file }}</code></td><td style="padding:3px 10px;text-align:right">{{ t.rows }}</td><td style="padding:3px 10px;text-align:right;color:{{ palette.success }}">{{ t.keep }}</td><td style="padding:3px 10px;text-align:right;color:{{ palette.warning }}">{{ t.review }}</td></tr>
+{% endfor %}</table><div style="color:{{ palette.ink_secondary }};font-size:11px;margin-top:4px">REVIEW rows carry the evidence reasons given by AI/rules, for manual adjudication; data columns were not modified.</div>
+{% else %}<p style="color:{{ palette.ink_secondary }};font-size:12px">No annotation files yet.</p>{% endif %}
+
+<h2 style="font-size:17px;margin:26px 0 8px">Current Recommendations (rule-based advisor; AI does not decide)</h2>
+{% if recs %}
+{% for r in recs %}<div style="margin:8px 0;padding:8px 12px;border-left:3px solid {{ r.color }};background:{{ palette.surface }}"><b style="color:{{ r.color }}">[{{ r.level_upper }}]</b> {{ r.title }}<div style="font-size:12px;color:{{ palette.ink_secondary }};margin-top:2px">{{ r.detail }}</div>{% if r.command %}<div style="font-family:monospace;font-size:11px;background:{{ palette.surface_alt }};padding:6px 10px;border-radius:4px;margin-top:4px">{{ r.command }}</div>{% endif %}</div>
+{% endfor %}
+{% else %}<p style="color:{{ palette.ink_secondary }}">No recommendations at present (the project may be fully advanced).</p>{% endif %}
+
+<section style="margin:18px 0;padding:14px 18px;background:{{ palette.primary_light }};border:1px solid {{ palette.border }};border-radius:8px">
+<h2 style="color:{{ palette.primary }};font-size:16px;margin-bottom:8px">AI Process Narrative</h2>
+{% if narrative_status == 'ok' %}
+<div style="font-size:13px;line-height:1.7;white-space:pre-wrap">{{ narrative_text }}</div>
+{% else %}
+<div style="font-size:12px;color:{{ palette.ink_secondary }}">Not generated ({{ narrative_status }}: {{ narrative_reason }}) — set MMPV_AI_API_KEY and rerun this command to fill it in; the process panel and recommendations are deterministic and unaffected.</div>
+{% endif %}
+</section>
+{% endblock %}
+
+{% block footer %}
+<div style="color:{{ palette.ink_secondary }};font-size:11px;margin-top:26px">
+MMPV AI layer · Process data: 90_Handoff/state/ (run_digest.json / digest_history.jsonl /
+ai_log.jsonl / agent_runs/) · The same process panel is embedded in each pipeline HTML report ·
+Methods citation: <code>python mmpv_ai.py provenance &lt;PROJECT_ROOT&gt;</code> → 90_Handoff/AI_PROVENANCE.md</div>
+{% endblock %}
