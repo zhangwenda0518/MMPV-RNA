@@ -29,20 +29,21 @@ convert → clean → [hostref] → deplete → [bbnorm]
 
 ## 1. public_data_pipeline.py — 公共数据主编排器
 
-**用途:** 八阶段公共数据获取调度器 (`search → info → down → convert → plot → hostref → hostdb → report`)。按物种拉丁名和 NCBI TaxID，搜索 NCBI SRA + CNCB GSA 数据库，清洗元数据，下载原始测序数据，转换 FASTQ，生成出版级可视化，下载宿主参考基因组并构建四索引，收尾产出 HTML 报告与下游交接清单。检查点机制避免重复执行。各 stage 直接调用工作脚本，不嵌套子管道。
+**用途:** 十阶段公共数据获取调度器 (`search → info → prescreen → down → convert → plot → hostref → hostdb → eve → report`)。按物种拉丁名和 NCBI TaxID，搜索 NCBI SRA + CNCB GSA 数据库，清洗元数据，下载原始测序数据，转换 FASTQ，生成出版级可视化，下载宿主参考基因组并构建四索引，收尾产出 HTML 报告与下游交接清单。检查点机制避免重复执行。各 stage 直接调用工作脚本，不嵌套子管道。
 
-### 8 阶段说明
+### 10 阶段说明
 
 | 阶段 | 脚本 | 输入 | 输出 |
 |------|------|------|------|
 | search | gsa_sra.search.py | — | `search/SRA_GSA_Merged_Final.csv` |
-| info | gsa_sra.info.py | `sra.list` | `info/Global_Unified_Metadata_Core14.csv` |
+| info | gsa_sra.info.py | `sra.list` (+ `search/SRA_GSA_Merged_Final.csv` 供 `--search-backfill`) | `info/Global_Unified_Metadata_Core14.csv` |
 | down | gsa_sra.down.py | `sra.list` | `down/{sample}/*.sra` |
 | convert | sra2fastx.py | `down/*.sra` | `down/{sample}/*.fastq.gz` |
 | plot | gsa_sra.plot.py | 上述 CSV | `plot/Combined_Landscape_Full.pdf` |
 | hostref | download_host_genome.py | --host-species/--host-taxid (默认复用 --species/--taxid)；`--host-fasta` 跳过下载 | `host_reference/genome/all.genome.uniq.fasta` |
 | hostdb | build_hostbase.py | 上一步基因组 FASTA | `host_reference/hostdb/{kraken2,bowtie2,hisat2,minimap2}/` |
-| report | generate_report.py | 上述全部产物 | `Pipeline_Summary_Report.html` + `sample_handoff.csv` |
+| eve | eve_genome/eve_screen.py (+) | hostdb 后的基因组；`--eve-scan` 开启 | `host_reference/eve/`（HTML + 可选元件库/蛋白库） |
+| report | generate_report.py | 上述全部产物 | `Pipeline_Summary_Report.html`（含 S7 EVE）+ `sample_handoff.csv` |
 
 ### 参数
 
@@ -50,8 +51,10 @@ convert → clean → [hostref] → deplete → [bbnorm]
 |------|--------|------|
 | `--species` | 必需 | 物种拉丁学名 |
 | `--taxid` | 必需 | NCBI Taxonomy ID |
-| `--stage` | 必需 | search / info / down / convert / plot / all |
+| `--stage` | 必需 | search/info/prescreen/down/convert/plot/hostref/hostdb/eve/report/all |
 | `--deepseek-api` | 环境变量 | DeepSeek API Key (AI 元数据清洗) |
+| `--deepseek-search` | False | search 阶段启用 DeepSeek 网页检索补全缺失 metadata (采样时间/采样地/组织/生长年限) |
+| `--deepseek-fetch` | False | 检索证据不足 (rerank<1.5) 时追加 Fetch 抓取网页正文 |
 | `--ncbi-api` | 环境变量 | NCBI API Key |
 | `--work-dir` | `./public_data_pipeline_output` | 输出根目录 |
 | `--source-type` | `TRANSCRIPTOMIC` | 测序类型过滤 |
@@ -72,6 +75,10 @@ convert → clean → [hostref] → deplete → [bbnorm]
   down/{sample_name}/{accession}.fastq.gz      ← 转换后的测序数据 (convert 阶段)
   plot/from_search/Combined_Landscape_Full.*   ← 搜索数据可视化
   plot/from_info/Combined_Landscape_Full.*     ← 元数据可视化
+  host_reference/genome/all.genome.uniq.fasta  ← 宿主基因组
+  host_reference/hostdb/{kraken2,bowtie2,hisat2,minimap2}/  ← 四索引
+  host_reference/eve/                          ← EVE 分析 (--eve-scan): 04_Summary/eve_report.html 等
+  Pipeline_Summary_Report.html                 ← 含 S7 EVE 章节
 ```
 
 ### 上下游衔接
@@ -82,7 +89,7 @@ convert → clean → [hostref] → deplete → [bbnorm]
 
 ## 2. gsa_sra.search.py — 双引擎物种检索
 
-**用途:** 同时搜索 NCBI SRA (E-utilities) 和 CNCB GSA (网页爬虫)，合并去重输出统一 CSV。detailed 模式下解析 XML/Excel 提取 Tissue, Age, Location 等深层特征，可选 DeepSeek AI 清洗。
+**用途:** 同时搜索 NCBI SRA (E-utilities) 和 CNCB GSA (网页爬虫)，合并去重输出统一 CSV。detailed 模式下解析 XML/Excel 提取 Tissue, Age, Location, CollectionDate 等深层特征，可选 DeepSeek AI 清洗；官方字段仍缺失时可用 DeepSeek 网页搜索 API ([Search/Fetch](https://api-docs.deepseek.com/zh-cn/guides/search/)) 检索证据回填。
 
 ### 参数
 
@@ -93,7 +100,9 @@ convert → clean → [hostref] → deplete → [bbnorm]
 | `-o` / `--outdir` | `./Global_Species_Results` | 输出目录 |
 | `--detailed` | False | 详细模式 |
 | `--ncbi-api` | — | NCBI API Key |
-| `--deepseek-api` | — | DeepSeek API Key |
+| `--deepseek-api` | 环境变量 `DEEPSEEK_API_KEY`/`MMPV_AI_API_KEY` | DeepSeek API Key |
+| `--deepseek-search` | False | 启用 DeepSeek 网页检索补全缺失 metadata (官方限速 QPS=5, 计费 ¥5/千次检索) |
+| `--deepseek-fetch` | False | 检索证据不足 (rerank<1.5) 时追加 Fetch 抓取最优网页正文 |
 
 ### 输入
 无 (在线 API 调用)
@@ -101,7 +110,11 @@ convert → clean → [hostref] → deplete → [bbnorm]
 ### 输出
 ```
 {outdir}/
-  SRA_GSA_Merged_Final.csv          ← 合并结果 (Database, Run, BioProject, BioSample, Tissue, Age, Location, ...)
+  SRA_GSA_Merged_Final.csv          ← 合并结果 (Database, Run, BioProject, BioSample, Tissue, Age, Location, CollectionDate, AI_Backfill, AI_Conflict, ...)
+  metadata_backfill_log.json        ← 检索补全留档 (查询词/证据 URL/抽取结果, --deepseek-search 时)
+  ai_conflicts.jsonl                ← AI 与真值冲突留档 (每行一个冲突: run/field/old/new/action)
+  ai_conflicts.csv                  ← 同上, CSV 汇总便于表格查看
+  ai_log.jsonl                      ← AI 调用日志 (找不到项目 90_Handoff 时的回退位置)
   GSA_Results/0_web_cache/          ← GSA 网页缓存
   GSA_Results/1_xls_cache/          ← GSA Excel 缓存 (detailed 模式)
 ```
@@ -110,7 +123,10 @@ convert → clean → [hostref] → deplete → [bbnorm]
 - `Database` 列: `SRA` (NCBI) 或 `GSA` (CNCB)
 - `Run` 列: SRR/ERR/DRR/CRR accession
 - `ReleaseDate` 列: 数据发布日期
-- `Tissue`, `Age_GrowthStage`, `Location` 列: detailed 模式下提取的深层特征
+- `Tissue`, `Age_GrowthStage`, `Location`, `CollectionDate` 列: detailed 模式下提取的深层特征; 采样时间优先取官方属性 (SRA XML `collection_date` / GSA Excel `collection date`)
+- `AI_Backfill` 列: 检索补全溯源 — 记录该行哪些字段来自 DeepSeek 网页检索回填 (如 `CollectionDate|Location`)，证据原文见 `metadata_backfill_log.json`
+- `AI_Conflict` 列: AI 结论与已有真值不一致时**不覆盖**，把双方写进该列 (`字段: 原文 ⇒ AI`)，原文保留，留档于 `ai_conflicts.jsonl`
+- `Location` 列: 经 AI 规范化/补全的写法统一以 `_AI` 结尾 (如 `China, Ningxia, Yinchuan_AI`)，便于下游识别来源并剥离
 
 ---
 
@@ -130,6 +146,7 @@ convert → clean → [hostref] → deplete → [bbnorm]
 | `--ncbi-api` | — | NCBI API Key |
 | `--use-scholar` | False | 允许 Google Scholar |
 | `--fill-date` | False | 时间兜底填充 |
+| `--search-backfill` | — | search 阶段产出的 `SRA_GSA_Merged_Final.csv`；把其中 `AI_Backfill` 标记的检索结论合并进 Core14 (只填空，来源记入 `AI_Backfill_Search`) |
 
 ### 输入
 文本文件，每行一个 SRA/GSA accession
@@ -152,10 +169,31 @@ convert → clean → [hostref] → deplete → [bbnorm]
   BioProject_Results/                   ← 文献追溯
     BioProject_Trace_Details.csv
   Report_Global_Unified_Metadata_Full/  ← datavzrd 交互报告
+  search_backfill_merge.json            ← 检索结论并入 Core14 的对账 (--search-backfill 时)
+  ai_conflicts.csv / ai_conflicts.jsonl ← AI 与真值冲突留档
 ```
 
 ### 核心 14 列
 `Run`, `ReleaseDate`, `CollectionDate`, `Location`, `Source`, `Tissue`, `Age_GrowthStage`, `ScientificName`, `TaxID`, `LibrarySource`, `CenterName`, `BioProject`, `BioSample`, `PMID`
+
+### AI 调用规范与溯源
+
+元数据管线有三类 AI 调用，全部走同一条"非破坏 + 可溯源"约定 (`ai_value_policy.py` / `ai_trace.py`)：
+
+| 调用 | 触发 | 作用 | 冲突处理 |
+|------|------|------|----------|
+| `search_sanitizer` | search `--deepseek-api` (detailed) | 每行规范化 Location/Tissue/Age_GrowthStage | 原文与 AI 不一致 → 保留原文，记 `AI_Conflict` |
+| `search_backfill` | search `--deepseek-search` | DeepSeek Search/Fetch 检索证据补缺 | 只填空白格，来源记 `AI_Backfill` |
+| `orthogonalize` / `info_api_infer` / `gsa_enhance` / `location_normalize` | info `--mode api|both` | 18 维推断、AI↔规则仲裁、GSA 深度推断、Location 批量规范化 | 同样非破坏，冲突进 `AI_Conflict` |
+
+裁决规则 (字段级，`resolve_value`)：空白 → 填；AI 给出占位词 (`not provided` 等) → 不动；同一信息的更完整写法 (如 `China, Yinchuan` → `China, Ningxia, Yinchuan`、`2021` → `2021-05-03`) → 采纳为规范化；**二者都有值且互不包含 → 保留原文，记录冲突**。`AI_Conflict` 只在冲突时出现，不参与 Core14 表结构。
+
+`Location` 的 AI 来源统一用 `_AI` 后缀 (三处写入路径都经 `format_location`)，下游 `metadata_governance.py` / `gsa_sra.plot.py` 会自动剥离，因此不会污染统计与系统发育输入。
+
+每次调用写一条审计记录到 `ai_log.jsonl` (`kind/op/model/ok/latency_ms/usage.total_tokens/prompt{name,version}/rows` 等)：
+- 优先写 `<项目>/90_Handoff/state/ai_log.jsonl` (与平台 AI 驱动层同一账本，`mmpv_ai.py provenance <项目>` 可汇总)；
+- 找不到 `90_Handoff` 时回退写产物目录，保证离线可查；
+- 可用环境变量 `MMPV_AI_STATE_DIR` 显式指定；主编排器会自动探测并注入。
 
 **工具依赖:** esearch, efetch (NCBI E-utilities CLI), datavzrd
 
@@ -224,7 +262,7 @@ accession 列表文件 (每行一个 Run ID)
 
 ## 6. build_host_pipeline.py — 宿主参考编排器
 
-**用途:** 两阶段编排: `genome-down` (多通道下载参考基因组: datasets → ngd → FTP → gget 自动回退；或 `--genome-fasta` 直接用自有 FASTA) → `hostdb` (build_hostbase.py 构建 Kraken2/Bowtie2/HISAT2/Minimap2 四索引)。全检查点化。
+**用途:** 三阶段编排: `genome-down` (多通道下载参考基因组: datasets → ngd → FTP → gget 自动回退；或 `--genome-fasta` 直接用自有 FASTA) → `[eve-mask]` (可选、**默认关闭**：按 EVE 判定表/BED 把宿主基因组里的内源病毒样区域掩成 N，见 `doc/16-host-eve-masking.md` §6) → `hostdb` (build_hostbase.py 构建 Kraken2/Bowtie2/HISAT2/Minimap2 四索引)。全检查点化。
 
 ### 参数
 
@@ -232,7 +270,7 @@ accession 列表文件 (每行一个 Run ID)
 |------|--------|------|
 | `--species` | 必需 | 物种拉丁学名 |
 | `--taxid` | 必需 | NCBI Taxonomy ID |
-| `--stage` | 必需 | genome-down / hostdb / all |
+| `--stage` | 必需 | genome-down / eve-mask / hostdb / all（eve-mask 未启用时 `all` 自动跳过它）|
 | `--work-dir` | `./build_host_pipeline_output` | 输出目录 |
 | `--genome-fasta` | — | 已有基因组 FASTA (跳过下载) |
 | `--download-source` | `auto` | 下载通道: auto / datasets / ngd / ftp / gget |
@@ -244,6 +282,20 @@ accession 列表文件 (每行一个 Run ID)
 | `--threads` | 30 | 线程数 |
 | `--force` / `--dry-run` | False | 强制重跑 / 仅预览 |
 
+**EVE/EPRV 掩码（可选组，给任一掩码源即启用）:**
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `--eve-mask` | False | 显式开关（配合 `--eve-bed`/`--eve-verdict`）|
+| `--eve-bed FILE...` | — | BED（0 基半开）|
+| `--eve-verdict FILE...` | — | EVE 判定表（`*.s2_verdict.tsv` / `kingdom_loci_all.tsv.gz`）|
+| `--eve-verdict-values` | `viral_supported` | 哪些 verdict 视为「该掩」|
+| `--eve-scan` | False | 现场调归档 `eve_screen.py`（stage 1,2,3 `--fast` + `--merge`）生成掩码源，落 `{work}/eve/` |
+| `--eve-pad` / `--eve-merge-gap` | 0 / 0 | 区间外扩 / 相邻区间合并距离 |
+| `--eve-mask-mode` | `N` | `N` 硬掩码或 `lower` 软掩码 |
+| `--masked-genome FILE` | — | 直接用已掩码 FASTA（只登记 + 写 meta）|
+| `--masked-hostdb-dir` | `{work}/hostdb_evemask` | 掩码库输出目录（与原始 `hostdb/` 并存）|
+
 ### 输入
 无 (或 `--genome-fasta` 跳过下载)
 
@@ -251,16 +303,22 @@ accession 列表文件 (每行一个 Run ID)
 ```
 {work_dir}/
   genome/all.genome.uniq.fasta       ← 合并去重基因组
-  hostdb/
+  genome/all.genome.masked.fasta     ← 仅 eve-mask 启用时 (长度不变，EVE 区掩成 N)
+  genome/all.genome.masked.fasta.report.tsv   ← 逐 contig 掩码量
+  genome/all.genome.masked.fasta.meta.json    ← 掩码源/pad/mergap/totals/掩码率建议
+  hostdb/                            ← 未掩码库 (默认路径，行为不变)
     kraken2/                         ← Kraken2 数据库 (含 taxonomy + standard libraries)
     bowtie2/host.*.bt2               ← Bowtie2 索引
     hisat2/host.*.ht2                ← HISAT2 索引
     minimap2/host_{type}.mmi         ← Minimap2 索引
+    db_provenance.json               ← 建库溯源 (用哪个 FASTA、md5、是否掩码)
+  hostdb_evemask/                    ← 仅 eve-mask 启用时，布局同上
 ```
 
 ### 上下游衔接
 **→ data_preprocessing_pipeline:** `hostdb/` 直接作为 `host_depletion.py -k/-x` 输入与发现管线 `--host_db`；
 **→ preprocess_unified.py:** 其 hostref 阶段自动调用本脚本。
+⚠ EVE 掩码库在同一 work_dir 下是 `hostdb_evemask/`，`data_preprocessing.py` 的 `find_host_db()` 只自动找 `hostdb/`，**必须显式 `--host_db <work>/hostdb_evemask`**，否则会静默用到未掩码库；`preprocess_unified.py` 不经过本编排器，要用掩码库需显式 `--kraken2-db <work>/hostdb_evemask/kraken2 --step2-index <work>/hostdb_evemask/bowtie2/host`。
 
 **工具依赖:** datasets (NCBI CLI), ncbi-genome-download (pip), gget (pip), requests, unzip, build_hostbase.py
 

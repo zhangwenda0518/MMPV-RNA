@@ -49,6 +49,8 @@ import os
 import sys
 import time
 import csv
+import json
+import re
 import argparse
 import shlex
 from typing import Dict, List, Optional, Tuple
@@ -72,7 +74,7 @@ if sys.platform == 'win32':
 # ==========================================
 class PublicDataPipeline:
     STAGES = ['search', 'info', 'prescreen', 'down', 'convert',
-              'plot', 'hostref', 'hostdb', 'report']
+              'plot', 'hostref', 'hostdb', 'eve', 'report']
 
     STAGE_DESC = {
         'search':    'GSA + SRA 双引擎物种检索',
@@ -83,6 +85,7 @@ class PublicDataPipeline:
         'plot':      'SCI 级六图可视化',
         'hostref':   '宿主基因组下载 (datasets/ngd/FTP/gget 四通道; --host-fasta 可跳过)',
         'hostdb':    '宿主索引构建 (Kraken2/Bowtie2/HISAT2/Minimap2)',
+        'eve':       '基因组 EVE 分析 (宿主库构建后; 默认关, --eve-scan 开启)',
         'report':    'HTML 报告 + sample_handoff.csv 交接清单',
     }
 
@@ -107,6 +110,18 @@ class PublicDataPipeline:
         self.dirs = build_meta_dirs(Path(self.work_dir), self.layout)
         for _name, _path in self.dirs.items():
             os.makedirs(_path, exist_ok=True)
+        # AI 溯源: 若 work_dir 之上能找到项目 90_Handoff, 让 search/info 子进程把
+        # AI 调用记进 <项目>/90_Handoff/state/ai_log.jsonl (与平台 AI 层同账本)
+        self.ai_state_dir = self._find_ai_state_dir()
+        if self.ai_state_dir:
+            os.environ["MMPV_AI_STATE_DIR"] = self.ai_state_dir
+
+    def _find_ai_state_dir(self) -> Optional[str]:
+        p = Path(self.work_dir)
+        for cand in (p, *list(p.parents)[:4]):
+            if (cand / "90_Handoff").is_dir():
+                return str(cand / "90_Handoff" / "state")
+        return None
 
     def _bin(self, script: str) -> str:
         p = os.path.join(self.bin_dir, script)
@@ -156,11 +171,14 @@ class PublicDataPipeline:
         UI.stage(self.STAGE_DESC[s], 'start')
         self.ckpt.mark_start(s)
         detailed = '--detailed' if self.args.detailed else ''
+        search_ai = ''
+        if self.args.deepseek_search:
+            search_ai = '--deepseek-search' + (' --deepseek-fetch' if self.args.deepseek_fetch else '')
         cmd = (
             f'{self._py()} {shlex.quote(self._bin("gsa_sra.search.py"))} '
             f'--query {shlex.quote(self.args.species)} '
             f'--source {shlex.quote(self.args.source_type)} '
-            f'{detailed} {self._api_cli()} '
+            f'{detailed} {self._api_cli()} {search_ai} '
             f'--outdir {shlex.quote(self.dirs["search"])}'
         )
         rc = run_cmd(cmd, s, self.log_dir, secrets=self._secrets())
@@ -185,10 +203,17 @@ class PublicDataPipeline:
         mode = 'both' if self.args.deepseek_api else 'local'
         if mode == 'local':
             UI.warn("未提供 --deepseek-api, 将跳过 AI 深度清洗 (mode=local)")
+        # search 阶段的 --deepseek-search 检索回填只落在 Merged CSV, info 重抓元数据,
+        # 不显式贯通就会丢掉 —— 这里把表交给 info (仅补空值, 已有值不动)
+        merged = os.path.join(self.dirs['search'], 'SRA_GSA_Merged_Final.csv')
+        backfill_cli = ''
+        if os.path.isfile(merged):
+            backfill_cli = f'--search-backfill {shlex.quote(merged)}'
+            UI.ok("检索回填表并入 Core14 (--search-backfill; 仅补空值)")
         cmd = (
             f'{self._py()} {shlex.quote(self._bin("gsa_sra.info.py"))} '
             f'--input {shlex.quote(sra_list)} --mode {shlex.quote(mode)} --fill-date '
-            f'{self._api_cli()} --threads {self.args.threads} '
+            f'{self._api_cli()} {backfill_cli} --threads {self.args.threads} '
             f'--outdir {shlex.quote(self.dirs["info"])}'
         )
         rc = run_cmd(cmd, s, self.log_dir, secrets=self._secrets())
@@ -521,6 +546,96 @@ class PublicDataPipeline:
         self.ckpt.mark_fail(s, f"exit={rc}")
         return False
 
+    def run_eve(self) -> bool:
+        """[eve] 基因组 EVE 分析 (接在 hostdb 之后).
+
+        掩码仍在 eve-mask 之外单独控制: 这里只做"发现 + 汇总", 不改已建好的宿主库。
+        产物落 <host_reference>/eve/ (04_Summary/eve_report.html + 可选元件库/蛋白库),
+        report 阶段会自动把它并进 Pipeline_Summary_Report.html。
+        """
+        s = 'eve'
+        UI.stage(self.STAGE_DESC[s], 'start')
+        self.ckpt.mark_start(s)
+        if not getattr(self.args, 'eve_scan', False):
+            UI.warn("EVE 分析未启用 (--eve-scan): 跳过")
+            self.ckpt.mark_done(s)
+            return True
+
+        genome_dir = os.path.join(self.work_dir,
+                                  layout_dir_name('h_genome', self.layout))
+        fasta = os.path.join(genome_dir, 'all.genome.uniq.fasta')
+        if not os.path.isfile(fasta):
+            UI.err(f"missing genome fasta: {fasta} (先跑 hostref, 或 --host-fasta)")
+            self.ckpt.mark_fail(s, 'missing genome FASTA')
+            return False
+        eve_dir = os.path.join(genome_dir, 'eve')
+        os.makedirs(eve_dir, exist_ok=True)
+        species = (getattr(self.args, 'host_species', None) or self.args.species)
+        name = re.sub(r'[^0-9A-Za-z_.-]+', '_', species).strip('_') or 'host'
+        threads = str(getattr(self.args, 'threads', 30))
+
+        screen = self._bin_multi('eve_genome', 'eve_screen.py')
+        if not os.path.isfile(screen):
+            UI.err(f"eve_screen.py 不存在: {screen}")
+            self.ckpt.mark_fail(s, 'missing eve_screen.py')
+            return False
+        cmd = (f'{self._py()} {shlex.quote(screen)} -g {shlex.quote(fasta)} '
+               f'-n {shlex.quote(name)} --outdir {shlex.quote(eve_dir)} '
+               f'--stage 1,2,3 --fast -t {threads}')
+        UI.warn("EVE 扫描耗时较长 (滑窗 blastx); 结果仅作分析/参考库")
+        if run_cmd(cmd, s, self.log_dir, secrets=self._secrets(),
+                   timeout=86400 * 2) != 0:
+            self.ckpt.mark_fail(s, 'eve_screen failed')
+            return False
+        run_cmd(f'{self._py()} {shlex.quote(screen)} --merge -o {shlex.quote(eve_dir)}',
+                s, self.log_dir, secrets=self._secrets(), timeout=86400)
+
+        manifest = {'eve_root': eve_dir, 'scan_html': None,
+                    'consensus_library': None, 'protein_library': None}
+        if getattr(self.args, 'eve_elements', False):
+            elem = self._bin_multi('eve_genome', 'eve_element_db.py')
+            if os.path.isfile(elem):
+                ecmd = (f'{self._py()} {shlex.quote(elem)} -o {shlex.quote(eve_dir)} '
+                        f'--stages {shlex.quote(self.args.eve_element_stages)} '
+                        f'-t {threads}')
+                if getattr(self.args, 'eve_diamond', ''):
+                    ecmd += f' --diamond {shlex.quote(self.args.eve_diamond)}'
+                if getattr(self.args, 'eve_ictv_prot', ''):
+                    ecmd += f' --ictv-prot {shlex.quote(self.args.eve_ictv_prot)}'
+                run_cmd(ecmd, s, self.log_dir, secrets=self._secrets(),
+                        timeout=86400 * 3)
+                lib = os.path.join(eve_dir, '05_Elements',
+                                   'eve_consensus_library.fa')
+                if os.path.isfile(lib):
+                    manifest['consensus_library'] = lib
+                    prot = self._bin_multi('eve_genome', 'eve_prot_lib.py')
+                    faa = lib.replace('.fa', '.sixframe.faa')
+                    if os.path.isfile(prot) and run_cmd(
+                            f'{self._py()} {shlex.quote(prot)} --in {shlex.quote(lib)} '
+                            f'--out {shlex.quote(faa)}', s, self.log_dir,
+                            secrets=self._secrets(), timeout=86400) == 0:
+                        manifest['protein_library'] = faa
+
+        rep = self._bin_multi('eve_genome', 'eve_scan_report.py')
+        if os.path.isfile(rep):
+            html = os.path.join(eve_dir, '04_Summary', 'eve_report.html')
+            run_cmd(f'{self._py()} {shlex.quote(rep)} -o {shlex.quote(eve_dir)} '
+                    f'--out {shlex.quote(html)}', s, self.log_dir,
+                    secrets=self._secrets(), timeout=3600)
+            if os.path.isfile(html):
+                manifest['scan_html'] = html
+        with open(os.path.join(eve_dir, 'eve_manifest.json'), 'w',
+                  encoding='utf-8') as fh:
+            json.dump(manifest, fh, ensure_ascii=False, indent=2)
+        UI.ok(f"EVE 报告: {manifest['scan_html'] or eve_dir}")
+        if manifest['protein_library']:
+            UI.ok(f"EVE 蛋白库 (供发现管线 --eve-faa): {manifest['protein_library']}")
+        self.ckpt.mark_done(s)
+        return True
+
+    def _bin_multi(self, subdir: str, script: str) -> str:
+        return os.path.join(self.bin_dir, subdir, script)
+
     def run_report(self) -> bool:
         s = 'report'
         UI.stage(self.STAGE_DESC[s], 'start')
@@ -573,6 +688,11 @@ examples:
                         help=f'执行阶段. 可选: {PublicDataPipeline.STAGES}')
     parser.add_argument('--deepseek-api', help='DeepSeek API Key')
     parser.add_argument('--deepseek-model', default='deepseek-v4-flash', help='DeepSeek 模型')
+    parser.add_argument('--deepseek-search', action='store_true',
+                        help='search 阶段启用 DeepSeek 网页检索补全缺失 metadata '
+                             '(采样时间/采样地/组织/生长年限; ¥5/千次检索)')
+    parser.add_argument('--deepseek-fetch', action='store_true',
+                        help='检索证据不足 (rerank<1.5) 时追加 Fetch 抓取网页正文')
     parser.add_argument('--ncbi-api', help='NCBI API Key')
     parser.add_argument('--work-dir', default='./public_data_pipeline_output', help='输出根目录')
     parser.add_argument('--io-layout', choices=['legacy', 'standard'], default=None,
@@ -630,6 +750,14 @@ examples:
     parser.add_argument('--host-download-source', default='auto',
                         choices=['auto', 'datasets', 'ngd', 'ftp', 'gget'],
                         help='宿主基因组下载通道 (默认: auto 自动回退; gget 走 Ensembl)')
+    parser.add_argument('--eve-scan', action='store_true',
+                        help='hostdb 后做基因组 EVE 分析 (默认关; 产物并入 HTML 报告)')
+    parser.add_argument('--eve-elements', action='store_true',
+                        help='EVE 扫描后继续跑元件层 (聚类/consensus/CDD) 并产蛋白库')
+    parser.add_argument('--eve-element-stages', default='collect,cluster,consensus,cdd',
+                        help='EVE 元件层阶段 (default: collect,cluster,consensus,cdd)')
+    parser.add_argument('--eve-diamond', default='', help='EVE 元件层 DIAMOND 可执行文件')
+    parser.add_argument('--eve-ictv-prot', default='', help='ICTV 六框蛋白库 (EVE 定科用)')
     parser.add_argument('--hostdb-tools', default='kraken2,bowtie2,hisat2,minimap2',
                         help='hostref 建库工具 (默认: kraken2,bowtie2,hisat2,minimap2)')
     parser.add_argument('--force', action='store_true', help='强制重新执行 (忽略已完成状态)')
@@ -637,7 +765,7 @@ examples:
 
     args = parser.parse_args()
     if not args.deepseek_api:
-        args.deepseek_api = os.environ.get('DEEPSEEK_API_KEY', '')
+        args.deepseek_api = os.environ.get('DEEPSEEK_API_KEY') or os.environ.get('MMPV_AI_API_KEY', '')
     if not args.ncbi_api:
         args.ncbi_api = os.environ.get('NCBI_API_KEY', '')
     if not args.bin_dir:
@@ -673,7 +801,8 @@ examples:
     p = PublicDataPipeline(args)
     funcs = {'search': p.run_search, 'info': p.run_info, 'prescreen': p.run_prescreen,
              'down': p.run_down, 'convert': p.run_convert, 'plot': p.run_plot,
-             'hostref': p.run_hostref, 'hostdb': p.run_hostdb, 'report': p.run_report}
+             'hostref': p.run_hostref, 'hostdb': p.run_hostdb,
+             'eve': p.run_eve, 'report': p.run_report}
     failed = []
     t0 = time.time()
     for s in stages_to_run:

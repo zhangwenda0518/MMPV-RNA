@@ -97,6 +97,10 @@ UNIFIED_COLUMNS = OrderedDict([
 
 REQUIRED_COLS = [k for k, v in UNIFIED_COLUMNS.items() if v["required"]]
 
+# 元数据管线给 AI 结论打的来源标记 (`China:Jiangsu_AI`)。提交用的 geo_loc_name
+# 必须剥掉 —— 2026-10-26 下游核实发现这里直接透传, 会在 GenBank 表单里露出来。
+_AI_SRC_RE = re.compile(r"[_\-]AI$", re.IGNORECASE)
+
 
 # ══════════════════════════════════════════════════════════════
 
@@ -183,6 +187,10 @@ def load_metadata(meta_file, log=None):
         loc = str(row.get('Location', '')) if pd.notna(row.get('Location')) else ''
         if loc.lower() in ('nan', 'not_provided'):
             loc = ''
+        # 2026-10-26: 元数据管线给 AI 结论加 `_AI` 来源标记, GenBank 的
+        # geo_loc_name 只认 `Country:Region`, 不能带后缀 (fix_sqn.py 早已单独剥过,
+        # 这里在源头统一剥, 免得每条下游各修一遍)。
+        loc = _AI_SRC_RE.sub('', loc).strip()
 
         lookup[run] = {
             'collection_date': str(row.get('CollectionDate', '')) if pd.notna(row.get('CollectionDate')) else '',

@@ -8,6 +8,9 @@
 2. 重写了 AI 提示词，强制剔除 Tissue 中的环境/状态修饰语 (如 under stress, young)。
 3. 强化了 Location 的三级自动推理补全 (如 China:Yinchuan -> China, Ningxia, Yinchuan_AI)。
 4. 清洗了各种形式的 missing/not collected 等无效信息。
+5. 官方渠道优先提取 CollectionDate (SRA XML collection_date / GSA Excel collection date)，
+   缺失部分用 DeepSeek 网页搜索 API (/v1/tools/search) 检索证据回填
+   采样时间/采样地/组织部位/生长年限，溯源列 AI_Backfill + 证据日志。
 """
 
 import sys
@@ -34,6 +37,14 @@ from openai import OpenAI
 import warnings
 
 warnings.filterwarnings("ignore")
+
+# 同目录共享模块 (AI 值裁决 / 溯源日志); 直跑与 import 两种方式都可用
+_PKG_DIR = os.path.dirname(os.path.abspath(__file__))
+if _PKG_DIR not in sys.path:
+    sys.path.insert(0, _PKG_DIR)
+import ai_trace  # noqa: E402
+import ai_value_policy  # noqa: E402
+from ai_value_policy import apply_updates, format_location, is_blank  # noqa: E402
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
@@ -119,19 +130,21 @@ class SRAEngine:
                     
                     tissue = attr_dict.get('tissue', attr_dict.get('cell type', attr_dict.get('tissue type', pd.NA)))
                     loc = attr_dict.get('geo_loc_name', attr_dict.get('country', attr_dict.get('geographic location', pd.NA)))
-                    
+                    coll = attr_dict.get('collection date', attr_dict.get('collection_date', attr_dict.get('sampling date', pd.NA)))
+
                     age_parts = []
                     for k in ['age', 'dev_stage', 'development stage', 'growth stage']:
                         if k in attr_dict and attr_dict[k]:
                             age_parts.append(attr_dict[k])
                     stage = " | ".join(age_parts) if age_parts else pd.NA
-                    
+
                     for r in runs:
-                        meta_dict[r] = {'Tissue': tissue, 'Age_GrowthStage': stage, 'Location': loc}
-                
+                        meta_dict[r] = {'Tissue': tissue, 'Age_GrowthStage': stage, 'Location': loc, 'CollectionDate': coll}
+
                 df_sra['Tissue'] = df_sra['Run'].map(lambda x: meta_dict.get(x, {}).get('Tissue', pd.NA))
                 df_sra['Age_GrowthStage'] = df_sra['Run'].map(lambda x: meta_dict.get(x, {}).get('Age_GrowthStage', pd.NA))
                 df_sra['Location'] = df_sra['Run'].map(lambda x: meta_dict.get(x, {}).get('Location', pd.NA))
+                df_sra['CollectionDate'] = df_sra['Run'].map(lambda x: meta_dict.get(x, {}).get('CollectionDate', pd.NA))
 
             return df_sra
             
@@ -262,10 +275,30 @@ class GSAEngine:
                             if age_str: stage_parts.append(age_str)
                             if pd.notna(stage_val): stage_parts.append(str(stage_val).strip())
                             
+                            # 位置字段回退链（2026-10-14 对 10 个 CRA 实测）：GSA 标准
+                            # 模板没有 SRA 惯例的 'geographic location' 列，坐标列为
+                            # 'latitude longitude'——原键名恒落空是 GSA Location 全空
+                            # 的根因（E 面板占位）。按实际列名依次回退。
+                            loc_val = pd.NA
+                            for loc_key in ('geographic location', 'geo_loc_name',
+                                            'latitude longitude'):
+                                v = row.get(loc_key, pd.NA)
+                                if pd.notna(v) and str(v).strip():
+                                    loc_val = v
+                                    break
+
+                            # 采样时间同 SRA 口径: 官方列优先 (collection date 系列键名)
+                            coll_val = pd.NA
+                            for dkey in ('collection date', 'collection_date', 'sampling date'):
+                                v = row.get(dkey, pd.NA)
+                                if pd.notna(v) and str(v).strip():
+                                    coll_val = v
+                                    break
                             meta_dict[sam] = {
                                 'Tissue': row.get(tissue_col, pd.NA),
                                 'Age_GrowthStage': " | ".join(stage_parts) if stage_parts else pd.NA,
-                                'Location': row.get('geographic location', pd.NA)
+                                'Location': loc_val,
+                                'CollectionDate': coll_val
                             }
                 except: pass
         return meta_dict
@@ -389,49 +422,331 @@ class GSAEngine:
             df_gsa['Tissue'] = df_gsa['BioSample'].map(lambda x: excel_meta.get(x, {}).get('Tissue', pd.NA))
             df_gsa['Age_GrowthStage'] = df_gsa['BioSample'].map(lambda x: excel_meta.get(x, {}).get('Age_GrowthStage', pd.NA))
             df_gsa['Location'] = df_gsa['BioSample'].map(lambda x: excel_meta.get(x, {}).get('Location', pd.NA))
+            df_gsa['CollectionDate'] = df_gsa['BioSample'].map(lambda x: excel_meta.get(x, {}).get('CollectionDate', pd.NA))
 
         return df_gsa
 
 # ==========================================
 # 🤖 AI 智能清洗与规范化引擎 (全新提纯规则)
 # ==========================================
-def run_ai_sanitizer(df, api_key, api_base, model):
-    if df.empty or not api_key: return df
-    print("\n🤖 启动 AI 洗髓引擎 (深度规范 Tissue, Age_GrowthStage, Location)...")
-    
-    client = OpenAI(api_key=api_key, base_url=api_base)
-    cols = ['Location', 'Tissue', 'Age_GrowthStage']
-    for c in cols: 
-        if c not in df.columns: df[c] = pd.NA
-
-    prompt = """你是一个极其严苛的生命科学数据清理程序。请严格按以下规则处理输入的JSON，返回清洗后的JSON：
+_SANITIZE_PROMPT = """你是一个极其严苛的生命科学数据清理程序。请严格按以下规则处理输入的JSON，返回清洗后的JSON：
 1. **全局去杂**：遇到 'not applicable', 'not collected', 'missing', 'N/A', 'nan', 或只包含无意义编号(如 'tissue9')，一律清空替换为 'Not_Provided'。
 2. **Tissue (核心剥离)**：强制剔除所有的状态、环境、时间、物种等修饰语（例如：将 "flower under drought stress in the stage 2", "leaf of Wolfberry", "young leaves" 统统剥离）。你【只能】输出最纯粹的单数英文核心组织词，例如：leaf, root, stem, flower, fruit, seed, anther, stamen, pistil, whole plant 等。绝对不要保留多余信息！
 3. **Age_GrowthStage (凝练)**：剥离多余符号和无效重复，合并年龄和时期信息。例如将 "3 | Young Fruit" 规范为 "3 years, young fruit stage"；将 "not applicable | missing" 清除为 "Not_Provided"。
 4. **Location (三级正交化)**：必须凭借你的地理知识，强制补全为【国家, 省/州, 市/县_AI】的标准格式（如 "China:Yinchuan" 或 "China:yinchuan" 必须补全为 "China, Ningxia, Yinchuan_AI"；"China:Qaidam Basin" 补全为 "China, Qinghai, Qaidam Basin_AI"）。实在缺失的层级用 Unknown 补全。
 仅返回合法 JSON，勿带 ```json 标记。绝对禁止凭空捏造数据！"""
 
+
+def run_ai_sanitizer(df, api_key, api_base, model, out_dir=None, client=None):
+    """AI 洗髓: 规范 Tissue / Age_GrowthStage / Location。
+
+    采纳规则走 ai_value_policy 非破坏性裁决:
+      * 空值 -> 填; 语义等价 -> 只规范写法; 补全信息 -> 采用;
+      * 与既有真值相斥 -> **保留旧值**, 冲突记入 AI_Conflict 列 + ai_conflicts.jsonl。
+    AI 返回的占位词一律视为「无建议」, 绝不删除已有数据。
+    """
+    if df.empty or not api_key: return df
+    print("\n🤖 启动 AI 洗髓引擎 (深度规范 Tissue, Age_GrowthStage, Location)...")
+
+    if client is None:
+        # 超时 + 有限重试: 单行失败不应拖垮整体, 也不无限挂起
+        client = OpenAI(api_key=api_key, base_url=api_base, timeout=60, max_retries=2)
+    cols = ['Location', 'Tissue', 'Age_GrowthStage']
+    for c in cols:
+        if c not in df.columns: df[c] = pd.NA
+
+    prompt = _SANITIZE_PROMPT
+    changed = 0
+    conflicts = []
+    errors = 0
+    usage_total = 0
+    t_all = time.time()
+
     for idx, row in tqdm(df.iterrows(), total=len(df), desc="AI Sanitization"):
-        if pd.isna(row.get('Location')) and pd.isna(row.get('Tissue')) and pd.isna(row.get('Age_GrowthStage')): continue
-        target = {k: str(row.get(k, "Not_Provided")) for k in cols}
-        
+        if is_blank(row.get('Location')) and is_blank(row.get('Tissue')) and is_blank(row.get('Age_GrowthStage')):
+            continue
+        target = {k: (str(row.get(k)) if not is_blank(row.get(k)) else "Not_Provided") for k in cols}
+
         try:
             res = client.chat.completions.create(
                 model=model,
                 messages=[{"role": "system", "content": prompt}, {"role": "user", "content": json.dumps(target, ensure_ascii=False)}],
-                temperature=0.1
+                temperature=0.1,
             )
+            usage_total += int((getattr(getattr(res, "usage", None), "total_tokens", 0) or 0))
             clean_str = re.sub(r"^```(?:json)?\s*|\s*```$", "", res.choices[0].message.content.strip(), flags=re.IGNORECASE)
             clean_data = json.loads(clean_str)
-            
-            for k in cols:
-                if k in clean_data:
-                    val = str(clean_data[k]).strip()
-                    if val.lower() in ["", "none", "nan", "not_provided", "unknown"]:
-                        df.at[idx, k] = pd.NA
-                    else:
-                        df.at[idx, k] = val
-        except: pass
+            if not isinstance(clean_data, dict):
+                continue
+            updates = {k: clean_data[k] for k in cols if k in clean_data}
+            adopted, row_conflicts = apply_updates(df, idx, updates, fields=cols,
+                                                   stage="search_sanitizer")
+            if adopted:
+                changed += 1
+            conflicts.extend(row_conflicts)
+        except Exception:
+            errors += 1  # 单行失败继续; trace 里体现失败行数
+    if conflicts:
+        ai_value_policy.write_conflicts(out_dir, conflicts)
+    ai_trace.trace("metadata_sanitizer", model=model, ok=(errors == 0),
+                   latency_ms=int((time.time() - t_all) * 1000),
+                   usage={"total_tokens": usage_total}, prompt_text=prompt,
+                   rows=int(len(df)), changed_rows=changed,
+                   conflict_count=len(conflicts), errors=errors)
+    return df
+
+# ==========================================
+# 🔎 DeepSeek 网页检索补全引擎 (Search API)
+# 文档: https://api-docs.deepseek.com/zh-cn/guides/search/
+# Search: POST {base}/v1/tools/search — query≤128 字符, count≤50, QPS=5, ¥5/千次成功请求
+# Fetch:  POST {base}/v1/tools/fetch  — url≤8192, 返回 Markdown 正文
+# 补全顺序: 官方字段 (XML/Excel) 已在上方提取, 本引擎只负责仍缺失的回填
+# ==========================================
+
+SEARCH_BACKFILL_FIELDS = ['CollectionDate', 'Location', 'Tissue', 'Age_GrowthStage']
+_FIELD_PROMPT_KEY = {'CollectionDate': 'collection_date', 'Location': 'location',
+                     'Tissue': 'tissue', 'Age_GrowthStage': 'growth_stage'}
+_FIELD_QUERY_KW = {'CollectionDate': 'collection date', 'Location': 'sampling location',
+                   'Tissue': 'tissue', 'Age_GrowthStage': 'age growth stage'}
+_SEARCH_MIN_INTERVAL = 0.25   # 官方限速 QPS=5, 按 4 QPS 保守节流
+_SEARCH_SESSION = None
+_LAST_API_TS = 0.0
+
+
+def _pace():
+    """Search/Fetch 接口节流: 两次调用间隔不低于 _SEARCH_MIN_INTERVAL。"""
+    global _LAST_API_TS
+    wait = _SEARCH_MIN_INTERVAL - (time.time() - _LAST_API_TS)
+    if wait > 0:
+        time.sleep(wait)
+    _LAST_API_TS = time.time()
+
+
+def _search_session():
+    global _SEARCH_SESSION
+    if _SEARCH_SESSION is None:
+        _SEARCH_SESSION = get_retry_session()
+    return _SEARCH_SESSION
+
+
+def _acc_or_empty(v):
+    try:
+        if pd.isna(v):
+            return ""
+    except (TypeError, ValueError):
+        pass
+    return str(v).strip()
+
+
+def _is_missing_meta(v):
+    """缺失判定 (与 info 阶段 / AI 值裁决共用同一份占位词表, 避免两套口径)。"""
+    return is_blank(v)
+
+
+_JUNK_ANSWERS = ("", "nan", "none", "null", "na", "n/a", "unknown", "unknow",
+                 "not provided", "not_provided", "not collected", "missing",
+                 "not available", "no evidence", "未知", "未提供", "未采集")
+
+
+def _valid_backfill_value(field, value):
+    """校验 AI 从检索证据抽取的值; 无效返回 None (禁止占位词/无年份日期混入)。"""
+    if value is None:
+        return None
+    s = str(value).strip().strip("\"'")
+    if len(s) < 2 or len(s) > 120:
+        return None
+    if s.lower() in _JUNK_ANSWERS:
+        return None
+    if field == 'CollectionDate' and not re.search(r'\d{4}', s):
+        return None
+    return s
+
+
+def build_search_query(species, sample_acc, project_acc, missing_fields):
+    """组装 DeepSeek Search 查询词 (官方上限 128 字符, 超出截断)。"""
+    parts = [a for a in (sample_acc, project_acc, species) if a]
+    kws = [_FIELD_QUERY_KW[f] for f in SEARCH_BACKFILL_FIELDS if f in missing_fields]
+    parts.append(" ".join(kws) if kws else "sample metadata")
+    return " ".join(parts)[:128].strip()
+
+
+def _ds_search(query, api_key, api_base, count=8, ori_question=None, need_content=False):
+    """调用 DeepSeek 网页搜索 API, 返回按 rerank_score 降序的 results 列表。
+    429/5xx 由 session 级 Retry 兜底; 402 (欠费) 给出明确提示。"""
+    _pace()
+    url = api_base.rstrip("/") + "/v1/tools/search"
+    payload = {"query": query[:128], "count": max(1, min(int(count), 50)),
+               "need_content": bool(need_content)}
+    if ori_question:
+        payload["ori_question"] = ori_question[:128]
+    r = _search_session().post(url, json=payload, timeout=45,
+                               headers={"Authorization": f"Bearer {api_key}",
+                                        "Content-Type": "application/json"})
+    if r.status_code == 402:
+        raise RuntimeError("DeepSeek Search HTTP 402: 账户余额不足 (¥5/千次检索), 请充值后重试")
+    if r.status_code != 200:
+        raise RuntimeError(f"DeepSeek Search HTTP {r.status_code}: {r.text[:200]}")
+    results = (r.json() or {}).get("results") or []
+    return sorted(results, key=lambda x: x.get("rerank_score") or 0, reverse=True)
+
+
+def _ds_fetch(url, api_key, api_base):
+    """调用 DeepSeek Fetch API 抓取网页 Markdown 正文 (截断 6000 字符防 token 爆炸)。"""
+    _pace()
+    r = _search_session().post(api_base.rstrip("/") + "/v1/tools/fetch",
+                               json={"url": str(url)[:8192]}, timeout=60,
+                               headers={"Authorization": f"Bearer {api_key}",
+                                        "Content-Type": "application/json"})
+    if r.status_code != 200:
+        return ""
+    return (r.json() or {}).get("content") or ""
+
+
+_BACKFILL_PROMPT = """你是生物样本元数据抽取器。只依据提供的检索证据回答，禁止编造、禁止猜测。
+规则：
+1. 证据中没有明确出现的字段一律输出 null。
+2. collection_date：样本的采样/收集日期，规范化为 YYYY 或 YYYY-MM 或 YYYY-MM-DD（如 "collected in May 2021" → "2021-05"）。注意：数据库的 Submitted/Release/发表年份不是采样日期，除非证据明确说明两者等同。
+3. location：采样地点，规范化为 "国家, 省/州, 市/地点"（如 "China, Qinghai, Qaidam Basin"）；只有国家级信息也照实输出。
+4. tissue：组织部位，输出单数英文核心组织词（leaf/root/stem/flower/fruit/seed/whole plant 等），剥离干旱胁迫、发育期等状态修饰语。
+5. growth_stage：生长年限/发育时期（如 "5-year-old plant"、"fruit ripening stage"、"seedling"）。
+6. evidence_url：你实际采信的那条证据的 url；没有则 null。
+仅返回一个合法 JSON（键：collection_date, location, tissue, growth_stage, evidence_url），不要 ```json 标记。"""
+
+_BACKFILL_PROMPT_FOR_TRACE = _BACKFILL_PROMPT  # 溯源哈希用
+
+
+def _extract_fields_via_chat(client, model, payload):
+    res = client.chat.completions.create(
+        model=model,
+        messages=[{"role": "system", "content": _BACKFILL_PROMPT},
+                  {"role": "user", "content": json.dumps(payload, ensure_ascii=False)}],
+        temperature=0.0,
+    )
+    txt = re.sub(r"^```(?:json)?\s*|\s*```$", "",
+                 (res.choices[0].message.content or "").strip(), flags=re.IGNORECASE)
+    return json.loads(txt)
+
+
+def run_ai_metadata_backfill(df, api_key, api_base, model, out_dir, use_fetch=False, client=None):
+    """对仍缺失的采样时间/采样地/组织部位/生长年限，用 DeepSeek 网页检索证据回填。
+
+    检索单元为 (Database, BioProject, BioSample, ScientificName)：同一样本的多个
+    Run 共享一次检索结论以省 API 费；官方 QPS=5 由 _pace() 节流；回填值在
+    AI_Backfill 列记录补了哪些字段，检索查询/证据 URL/抽取结果留档
+    {out_dir}/metadata_backfill_log.json 供论文溯源。
+    """
+    if df.empty or not api_key:
+        return df
+    for c in SEARCH_BACKFILL_FIELDS + ['AI_Backfill']:
+        if c not in df.columns:
+            df[c] = pd.NA
+    if client is None:
+        client = OpenAI(api_key=api_key, base_url=api_base)
+
+    units = {}
+    for idx, row in df.iterrows():
+        miss = [f for f in SEARCH_BACKFILL_FIELDS if _is_missing_meta(row.get(f))]
+        if not miss:
+            continue
+        key = (str(row.get('Database', '')), _acc_or_empty(row.get('BioProject')),
+               _acc_or_empty(row.get('BioSample')), _acc_or_empty(row.get('ScientificName')))
+        u = units.setdefault(key, {"rows": [], "missing": set()})
+        u["rows"].append(idx)
+        u["missing"].update(miss)
+
+    if not units:
+        print("✅ 无缺失 metadata，跳过检索补全。")
+        return df
+
+    print(f"\n🔎 DeepSeek 检索补全: {len(units)} 个检索单元 "
+          f"(计费约 ¥{len(units)*0.005:.2f}/轮检索, 官方价 ¥5/千次)...")
+    log_records = []
+    n_search = 0
+    filled_cells = 0
+    t_all = time.time()
+    for (db, project, sample, species), u in tqdm(units.items(), total=len(units),
+                                                  desc="Metadata Backfill"):
+        rec = {"database": db, "bioproject": project, "biosample": sample,
+               "species": species, "query": None, "n_results": 0, "used_fetch": False,
+               "urls": [], "extracted": {}, "filled": []}
+        try:
+            query = build_search_query(species, sample, project, u["missing"])
+            rec["query"] = query
+            ori_q = f"collection date, sampling location, tissue, plant age of {species or 'sample'} {sample or project}".strip()
+            results = _ds_search(query, api_key, api_base, count=8, ori_question=ori_q)
+            n_search += 1
+            rec["n_results"] = len(results)
+            rec["urls"] = [r.get("url", "") for r in results[:8]]
+            if not results:
+                log_records.append(rec)
+                continue
+
+            evidence = []
+            for i, r in enumerate(results[:8]):
+                text = (r.get("summary") or r.get("snippet") or "")[:500]
+                evidence.append(f"[{i}] {r.get('title', '')} | {r.get('url', '')} | "
+                                f"date={r.get('date')} | {text}")
+
+            # 官方口径: rerank_score ≥1.5 为优质结果; 不足且开启 Fetch 时抓取最优网页正文
+            top_score = max((r.get("rerank_score") or 0) for r in results)
+            fetch_text = ""
+            if use_fetch and top_score < 1.5:
+                fetch_text = _ds_fetch(results[0].get("url", ""), api_key, api_base)[:6000]
+                rec["used_fetch"] = bool(fetch_text)
+
+            payload = {
+                "target_fields": sorted(u["missing"]),
+                "species": species or None,
+                "accessions": [a for a in (sample, project) if a],
+                "evidence": evidence,
+                "fetched_page_content": fetch_text or None,
+            }
+            extracted = _extract_fields_via_chat(client, model, payload)
+            if not isinstance(extracted, dict):
+                extracted = {}
+            rec["extracted"] = {k: extracted.get(k) for k in
+                                ("collection_date", "location", "tissue", "growth_stage",
+                                 "evidence_url")}
+
+            for field, jkey in _FIELD_PROMPT_KEY.items():
+                if field not in u["missing"]:
+                    continue
+                val = _valid_backfill_value(field, rec["extracted"].get(jkey))
+                if val is None:
+                    continue
+                for idx in u["rows"]:
+                    if not _is_missing_meta(df.at[idx, field]):
+                        continue
+                    # Location 与洗髓/建库统一成 `国家, 省/州, 市/县_AI` 一种写法
+                    df.at[idx, field] = format_location(val) if field == "Location" else val
+                    prev = df.at[idx, 'AI_Backfill']
+                    tags = {t for t in str(prev).split("|") if t} if pd.notna(prev) else set()
+                    tags.add(field)
+                    df.at[idx, 'AI_Backfill'] = "|".join(sorted(tags))
+                    filled_cells += 1
+                rec["filled"].append(field)
+        except Exception as e:
+            rec["error"] = str(e)[:300]
+        log_records.append(rec)
+
+    log_file = os.path.join(out_dir, "metadata_backfill_log.json")
+    with open(log_file, "w", encoding="utf-8") as f:
+        json.dump(log_records, f, ensure_ascii=False, indent=2, default=str)
+
+    counts = {f: sum(1 for rec in log_records if f in rec["filled"])
+              for f in SEARCH_BACKFILL_FIELDS}
+    failed_units = sum(1 for r in log_records if r.get("error"))
+    ai_trace.trace("metadata_search_backfill", model=model, ok=(failed_units == 0),
+                   latency_ms=int((time.time() - t_all) * 1000),
+                   prompt_text=_BACKFILL_PROMPT_FOR_TRACE,
+                   units=len(units), searches=n_search,
+                   filled_cells=filled_cells, sheet_fields=counts,
+                   used_fetch=bool(use_fetch),
+                   failed_units=failed_units,
+                   log_file=log_file)
+    print(f"  🔎 检索 {n_search} 次 (计费约 ¥{n_search*0.005:.2f}); "
+          f"单元级补全: " + ", ".join(f"{f}={counts[f]}" for f in SEARCH_BACKFILL_FIELDS))
+    print(f"  📁 检索证据日志: {log_file}")
     return df
 
 # ==========================================
@@ -551,13 +866,16 @@ Years: {', '.join(sorted(years)) if years else 'N/A'}"""
 Requirements: formal scientific English, past tense. Include total runs, database split, data volume, species, tissues, locations, time span, key institutions, sequencing type.
 Output ONLY the paragraph, no markdown."""
 
+    t0 = time.time()
     try:
-        client = OpenAI(api_key=api_key, base_url="https://api.deepseek.com")
+        client = OpenAI(api_key=api_key, base_url="https://api.deepseek.com", timeout=120)
         kwargs = {"model": model, "messages": [
             {"role": "system", "content": "You are a scientific writer. Output only the paragraph."},
             {"role": "user", "content": prompt}
         ]}
         kwargs["temperature"] = 0.3
+        if model.startswith("deepseek-v4"):
+            kwargs["stream"] = False
         response = client.chat.completions.create(**kwargs)
         summary = response.choices[0].message.content or ""
         print(f"\n{'='*60}")
@@ -569,14 +887,23 @@ Output ONLY the paragraph, no markdown."""
         with open(summary_file, "w", encoding="utf-8") as f:
             f.write(summary)
         print(f"\n📁 Summary saved: {summary_file}")
+        ai_trace.trace("metadata_summary", model=model,
+                       latency_ms=int((time.time() - t0) * 1000),
+                       usage=ai_trace.usage_tokens(response),
+                       prompt_text=prompt, output=summary_file,
+                       words=len(summary.split()))
     except Exception as e:
+        ai_trace.trace("metadata_summary", model=model, ok=False,
+                       latency_ms=int((time.time() - t0) * 1000),
+                       prompt_text=prompt, error=str(e)[:200])
         print(f"\n⚠️ AI Summary failed: {e}")
 
 
 # ==========================================
 # 🌍 数据大一统合并
 # ==========================================
-def merge_results(df_sra, df_gsa, out_dir, detailed, api_key, api_base, model, do_summary=False):
+def merge_results(df_sra, df_gsa, out_dir, detailed, api_key, api_base, model, do_summary=False,
+                  backfill=False, use_fetch=False):
     if not df_sra.empty:
         df_sra['Database'] = 'SRA'
         _add_filesize_sra(df_sra)
@@ -591,11 +918,15 @@ def merge_results(df_sra, df_gsa, out_dir, detailed, api_key, api_base, model, d
     if df_merged.empty: return
 
     if detailed and api_key:
-        df_merged = run_ai_sanitizer(df_merged, api_key, api_base, model)
+        df_merged = run_ai_sanitizer(df_merged, api_key, api_base, model, out_dir)
+        if backfill:
+            df_merged = run_ai_metadata_backfill(df_merged, api_key, api_base, model, out_dir,
+                                                 use_fetch=use_fetch)
 
     target_cols = ['Database', 'Run', 'BioProject', 'BioSample', 'ScientificName']
     if detailed:
-        target_cols.extend(['Tissue', 'Age_GrowthStage', 'Location'])
+        target_cols.extend(['Tissue', 'Age_GrowthStage', 'Location', 'CollectionDate',
+                            'AI_Backfill', 'AI_Conflict'])
     target_cols.extend(['LibraryStrategy', 'LibrarySource', 'Platform', 'CenterName', 'ReleaseDate', 'FileSize_GB'])
 
     final_cols = [c for c in target_cols if c in df_merged.columns]
@@ -619,17 +950,26 @@ if __name__ == "__main__":
     parser.add_argument("--no-detailed", action="store_true", help="关闭详细模式 (默认开启)")
     parser.add_argument("--summary", action="store_true", help="搜索完成后生成 AI 统计段落 (需 --deepseek-api)")
     parser.add_argument("--ncbi-api", help="NCBI E-utilities API Key (提升速率)")
-    parser.add_argument("--deepseek-api", help="DeepSeek API Key (AI 智能清洗及AI统计)")
+    parser.add_argument("--deepseek-api", help="DeepSeek API Key (AI 智能清洗及AI统计; 缺省回退 DEEPSEEK_API_KEY/MMPV_AI_API_KEY 环境变量)")
     parser.add_argument("--deepseek-model", default="deepseek-v4-flash",
                         choices=["deepseek-chat", "deepseek-reasoner", "deepseek-v4-flash", "deepseek-v4-pro"],
                         help="DeepSeek 模型")
+    parser.add_argument("--deepseek-search", action="store_true",
+                        help="启用 DeepSeek 网页检索补全缺失 metadata (采样时间/采样地/组织/生长年限); 官方限速 QPS=5, 计费 ¥5/千次检索")
+    parser.add_argument("--deepseek-fetch", action="store_true",
+                        help="检索证据不足 (rerank<1.5) 时追加 Fetch 抓取最优网页正文 (同 API 计费)")
 
     args = parser.parse_args()
     args.detailed = not args.no_detailed  # default True, --no-detailed to disable
+    # API Key 环境变量回退 (与 gsa_sra.info.py / mmpv_common 同口径)
+    args.deepseek_api = args.deepseek_api or os.environ.get("DEEPSEEK_API_KEY") or os.environ.get("MMPV_AI_API_KEY")
     # Normalize "All" / "" source to None (no filter)
     if args.source and args.source.strip().lower() in ("all", ""):
         args.source = None
     os.makedirs(args.outdir, exist_ok=True)
+    state_dir = ai_trace.auto_state(args.outdir)  # AI 溯源: 反推项目 90_Handoff/state
+    if state_dir is not None:
+        print(f"🧾 AI 溯源日志: {os.path.join(str(state_dir), 'ai_log.jsonl')}")
 
     df_sra = pd.DataFrame()
     df_gsa = pd.DataFrame()
@@ -642,7 +982,8 @@ if __name__ == "__main__":
         gsa_engine = GSAEngine(args.query, args.source, args.outdir, detailed=args.detailed)
         df_gsa = gsa_engine.fetch_gsa()
 
-    merge_results(df_sra, df_gsa, args.outdir, args.detailed, args.deepseek_api, "https://api.deepseek.com", args.deepseek_model)
+    merge_results(df_sra, df_gsa, args.outdir, args.detailed, args.deepseek_api, "https://api.deepseek.com",
+                  args.deepseek_model, backfill=args.deepseek_search, use_fetch=args.deepseek_fetch)
 
     # AI Summary
     if args.summary and args.deepseek_api:

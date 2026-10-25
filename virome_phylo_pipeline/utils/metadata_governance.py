@@ -438,12 +438,29 @@ class GeoInfo:
         }
 
 
+# 地名里要剔除的噪声后缀（数据里常见 `_AI` 之类的来源标记）。
+#
+# ⚠ 必须要求**分隔符存在**（`_AI` / `-AI` / `.AI`）或整体就是个噪声标记，
+#   绝不能只按「结尾是 ai」判断 —— 否则会误伤以 ai 结尾的真实地名：
+#   `Shanghai`→`Shangh`、`Qinghai`→`Qingh`、`Chennai`→`Chenn`、`Zhanjiang` 等。
+#   这是 2026-09-16 第二轮实测发现并修掉的 bug。
+_LOC_NOISE_RE = re.compile(
+    r"[_\-](?:ai|v[1-9]|new|final|rev\d*|copy)$", re.IGNORECASE
+)
+
+
 def split_location(raw) -> List[str]:
     """拆地理层级。**冒号与逗号都拆** (修 geo_resolver._norm 只拆 [,;] 的缺口):
         'China:Ningxia'            → ['China', 'Ningxia']
-        'China, Ningxia, Yinchuan_AI' → ['China', 'Ningxia', 'Yinchuan_AI']
+        'China, Ningxia, Yinchuan_AI' → ['China', 'Ningxia', 'Yinchuan']
+
+    层级内的来源标记 (`_AI` 等) 统一在此剥离 —— 2026-10-26: 元数据管线的 AI
+    结论都会带 `_AI` 后缀, 若不清洗会原样进标准化表/地图标签; 原始写法仍保留在
+    `GeoInfo.raw` / 体检报告的 `geo_raw` 列, 审计不受影响。
     """
-    return [p.strip() for p in re.split(r"[,;:：]", str(raw or "")) if p.strip()]
+    parts = [p.strip() for p in re.split(r"[,;:：]", str(raw or "")) if p.strip()]
+    parts = [_LOC_NOISE_RE.sub("", p).strip() for p in parts]
+    return [p for p in parts if p]
 
 
 def parse_location(raw, *, drop_unknown: bool = True) -> GeoInfo:
@@ -771,9 +788,7 @@ def _lookup_gazetteer(term: str, prefer_iso2: str = ""):
 #   绝不能只按「结尾是 ai」判断 —— 否则会误伤以 ai 结尾的真实地名：
 #   `Shanghai`→`Shangh`、`Qinghai`→`Qingh`、`Chennai`→`Chenn`、`Zhanjiang` 等。
 #   这是 2026-09-16 第二轮实测发现并修掉的 bug。
-_LOC_NOISE_RE = re.compile(
-    r"[_\-](?:ai|v[1-9]|new|final|rev\d*|copy)$", re.IGNORECASE
-)
+#   (_LOC_NOISE_RE 已上移到 split_location 之前定义, 此处复用, 不重复定义)
 
 
 def _split_loc(loc: str):

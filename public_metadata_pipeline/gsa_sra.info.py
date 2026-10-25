@@ -32,6 +32,16 @@ from tqdm import tqdm
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
+# 同目录共享模块 (AI 值裁决 / 溯源日志); 直跑与 import 两种方式都可用
+_PKG_DIR = os.path.dirname(os.path.abspath(__file__))
+if _PKG_DIR not in sys.path:
+    sys.path.insert(0, _PKG_DIR)
+import ai_trace  # noqa: E402
+import ai_value_policy  # noqa: E402
+from ai_value_policy import (  # noqa: E402
+    apply_updates, format_location, format_tissue, is_blank as _policy_is_blank,
+)
+
 # 屏蔽警告
 warnings.filterwarnings("ignore", category=UserWarning, module="scipy")
 warnings.filterwarnings("ignore", category=FutureWarning, module="seaborn")
@@ -64,6 +74,13 @@ GSA_AI_10 = ['Run', 'CollectionDate', 'Location', 'Source', 'Tissue', 'Age_Growt
 
 # 大一统输出 14 列
 FINAL_14 = ['Run', 'ReleaseDate', 'CollectionDate', 'Location', 'Source', 'Tissue', 'Age_GrowthStage', 'ScientificName', 'TaxID', 'LibrarySource', 'CenterName', 'BioProject', 'BioSample', 'PMID']
+
+# search 阶段 (--deepseek-search) 网页检索补全的字段; 与 gsa_sra.search.SEARCH_BACKFILL_FIELDS 对齐
+SEARCH_BACKFILL_FIELDS = ['CollectionDate', 'Location', 'Tissue', 'Age_GrowthStage']
+_SEARCH_BACKFILL_TISSUE_SINGULAR = {
+    'leaves': 'leaf', 'fruits': 'fruit', 'roots': 'root', 'stems': 'stem',
+    'flowers': 'flower', 'seeds': 'seed', 'myceliums': 'mycelium',
+}
 
 # ----------------- 【SRA 专用推断提示词（全域信息综合推断版）】 -----------------
 PROMPT_SRA_INFER = """你是一个专业的生物信息学数据分析专家。我将提供一段来自NCBI SRA数据库的元数据记录（植物测序实验）。
@@ -195,22 +212,14 @@ def get_retry_session(retries=5, backoff_factor=2.0):
     session.mount("http://", adapter)
     return session
 
-# 缺失/占位符的统一口径 (空值判定与 AI 回填共用; 空格/下划线两种写法都要认)
-_PLACEHOLDER_VALS = ['nan', 'none', 'null', 'not_provided', 'not provided',
-                     'missing', 'unknown', 'n/a', 'not collected',
-                     'not_collected', 'not applicable', 'not_applicable',
-                     '', '<na>']
+# 缺失/占位符口径已收敛到 ai_value_policy.is_blank (见上方 is_blank 转发)
 
 def is_blank(val):
-    """值为空 / 无效占位符时返回 True (pd.NA/NaN/None、空串、常见占位词)。"""
-    if val is None or val is pd.NA:
-        return True
-    try:
-        if pd.isna(val):
-            return True
-    except (TypeError, ValueError):
-        pass
-    return str(val).strip().lower() in _PLACEHOLDER_VALS
+    """值为空 / 无效占位符时返回 True (pd.NA/NaN/None、空串、常见占位词)。
+
+    口径实现在 ai_value_policy (与 search 阶段、AI 值裁决共用一份), 这里只做转发。
+    """
+    return _policy_is_blank(val)
 
 def fill_ai_blanks(final_df, idx, ai_res, cols):
     """把 AI 推断值**只回填到空白单元格** (已有真值一律保留), 返回回填的列名.
@@ -218,18 +227,20 @@ def fill_ai_blanks(final_df, idx, ai_res, cols):
     审核: 旧版逐列无条件 `final_df.at[idx, col] = val`, AI 的语义推断会盖掉
     GSA 表格里的真值 —— 与仲裁提示词"数据 A 已有明确值必须 100% 信任"矛盾。
     """
-    filled = []
+    updates = {}
     for col in cols:
-        val = ai_res.get(col)
-        if not (pd.notna(val) and str(val).strip().lower()
-                not in ["not_provided", "unknown", "none", "nan", ""]):
+        val = ai_res.get(col) if isinstance(ai_res, dict) else None
+        if val is None or is_blank(val):
             continue
+        updates[col] = format_location(val) if col == "Location" else val
+    if not updates:
+        return []
+    for col in updates:
         if col not in final_df.columns:
             final_df[col] = pd.NA
-        if is_blank(final_df.at[idx, col]):
-            final_df.at[idx, col] = val
-            filled.append(col)
-    return filled
+    adopted, _ = apply_updates(final_df, idx, updates, fields=list(updates),
+                               conflict_col=None, stage="info_fill_blanks")
+    return adopted
 
 def apply_fill_date(df, fill_date=False, is_gsa=False):
     """CollectionDate 兜底填充。
@@ -590,28 +601,54 @@ class SRAPipeline:
 
     def api_infer(self, srr, xml):
         jp = os.path.join(self.d_api, f"{srr}_api.json")
-        if os.path.exists(jp): return json.load(open(jp, 'r', encoding='utf-8')), "[✓API缓存]"
+        if os.path.exists(jp):
+            ai_trace.trace("metadata_sra_infer", model=self.ai_model, cached=True,
+                           prompt_text=PROMPT_SRA_INFER, run=srr)
+            return json.load(open(jp, 'r', encoding='utf-8')), "[✓API缓存]"
+        t0 = time.time()
         try:
             kwargs = build_api_kwargs(self.ai_model, PROMPT_SRA_INFER, f"【XML 全文】:\n{xml[:20000]}")
             res = self.api_client.chat.completions.create(**kwargs)
             rd = json.loads(clean_ai_json(res.choices[0].message.content))
             rd['query_id'] = srr
             with open(jp, 'w', encoding='utf-8') as f: json.dump(rd, f, indent=4, ensure_ascii=False)
+            ai_trace.trace("metadata_sra_infer", model=self.ai_model,
+                           latency_ms=int((time.time() - t0) * 1000),
+                           usage=ai_trace.usage_tokens(res),
+                           prompt_text=PROMPT_SRA_INFER, run=srr)
             return rd, "[✓API推断]"
-        except: return {"query_id": srr}, "[❌API推断失败]"
+        except Exception as e:
+            ai_trace.trace("metadata_sra_infer", model=self.ai_model, ok=False,
+                           latency_ms=int((time.time() - t0) * 1000),
+                           prompt_text=PROMPT_SRA_INFER, run=srr,
+                           error=str(e).replace('\n', ' ')[:200])
+            return {"query_id": srr}, "[❌API推断失败]"
 
     def api_arbitrate(self, srr, ld, ad):
         jp = os.path.join(self.d_arb, f"{srr}_arb.json")
-        if os.path.exists(jp): return json.load(open(jp, 'r', encoding='utf-8')), "[✓Arb缓存]"
+        if os.path.exists(jp):
+            ai_trace.trace("metadata_sra_arbitrate", model=self.ai_model, cached=True,
+                           prompt_text=PROMPT_SRA_ARBITRATE, run=srr)
+            return json.load(open(jp, 'r', encoding='utf-8')), "[✓Arb缓存]"
         sl = {k:v for k,v in ld[0].items() if "url" not in k and "md5" not in k and "size" not in k and "abstract" not in k and "title" not in k}
+        t0 = time.time()
         try:
             kwargs = build_api_kwargs(self.ai_model, PROMPT_SRA_ARBITRATE, f"【数据A】:\n{json.dumps(sl)}\n\n【数据B】:\n{json.dumps(ad)}")
             res = self.api_client.chat.completions.create(**kwargs)
             fd = json.loads(clean_ai_json(res.choices[0].message.content))
             fd['query_id'] = srr
             with open(jp, 'w', encoding='utf-8') as f: json.dump(fd, f, indent=4, ensure_ascii=False)
+            ai_trace.trace("metadata_sra_arbitrate", model=self.ai_model,
+                           latency_ms=int((time.time() - t0) * 1000),
+                           usage=ai_trace.usage_tokens(res),
+                           prompt_text=PROMPT_SRA_ARBITRATE, run=srr)
             return fd, "[✓Arb仲裁]"
-        except: return ad, "[❌Arb仲裁失败]"
+        except Exception as e:
+            ai_trace.trace("metadata_sra_arbitrate", model=self.ai_model, ok=False,
+                           latency_ms=int((time.time() - t0) * 1000),
+                           prompt_text=PROMPT_SRA_ARBITRATE, run=srr,
+                           error=str(e).replace('\n', ' ')[:200])
+            return ad, "[❌Arb仲裁失败]"
 
     def process_all(self, sra_list, threads):
         all_local, all_arb = [], []
@@ -960,6 +997,9 @@ class GSAPipeline:
                             try:
                                 with open(api_json_f, 'r', encoding='utf-8') as f: ai_res = json.load(f)
                                 logs.append("[✓API缓存]")
+                                ai_trace.trace("metadata_gsa_enhance", model=self.ai_model,
+                                               cached=True, prompt_text=PROMPT_GSA_ENHANCE,
+                                               run=str(q_id))
                                 if pd.notna(org) and ai_res.get('Location') and "Unknown" not in ai_res['Location']:
                                     self.org_loc_cache[org] = ai_res['Location']
                             except: pass
@@ -973,6 +1013,7 @@ class GSAPipeline:
 
                             safe_context = self.sanitize_for_json(raw_context)
 
+                            t0 = time.time()
                             try:
                                 kwargs = build_api_kwargs(self.ai_model, PROMPT_GSA_ENHANCE, json.dumps(safe_context, ensure_ascii=False))
                                 res = self.api_client.chat.completions.create(**kwargs)
@@ -984,9 +1025,17 @@ class GSAPipeline:
                                 with open(api_json_f, 'w', encoding='utf-8') as f:
                                     json.dump(self.sanitize_for_json(ai_res), f, indent=4, ensure_ascii=False)
                                 logs.append("[✓API推断]")
+                                ai_trace.trace("metadata_gsa_enhance", model=self.ai_model,
+                                               latency_ms=int((time.time() - t0) * 1000),
+                                               usage=ai_trace.usage_tokens(res),
+                                               prompt_text=PROMPT_GSA_ENHANCE, run=str(q_id))
                             except Exception as e:
                                 error_msg = str(e).replace('\n', ' ')
                                 logs.append(f"[⚠️API报错:{type(e).__name__} | {error_msg[:50]}]")
+                                ai_trace.trace("metadata_gsa_enhance", model=self.ai_model, ok=False,
+                                               latency_ms=int((time.time() - t0) * 1000),
+                                               prompt_text=PROMPT_GSA_ENHANCE, run=str(q_id),
+                                               error=error_msg[:200])
                                 ai_res = {}
 
                         if pd.notna(org) and org in self.org_loc_cache:
@@ -1118,42 +1167,218 @@ views:
 def standardize_metadata_df(df, api_client, ai_model):
     if df is None: return pd.DataFrame()
     if df.empty: return df
-    
+
     df = df.copy()
-    null_words = {'not collected', 'missing', 'none', 'unknown', 'na', 'n/a', 'not applicable', 'not provided', '-', 'null', ''}
+    # 占位词/空值口径与 AI 值裁决、search 阶段完全同一份 (is_blank)
     for col in df.columns:
         if df[col].dtype == object:
-            df[col] = df[col].apply(lambda x: pd.NA if str(x).strip().lower().replace('_', ' ') in null_words else x)
-    
+            df[col] = df[col].apply(lambda x: pd.NA if is_blank(x) else x)
+
     if 'Tissue' in df.columns:
-        df['Tissue'] = df['Tissue'].apply(lambda x: str(x).strip().lower() if pd.notna(x) else x)
-        mapping = {'leaves': 'leaf', 'fruits': 'fruit', 'roots': 'root', 'stems': 'stem', 'flowers': 'flower', 'seeds': 'seed', 'myceliums': 'mycelium'}
-        df['Tissue'] = df['Tissue'].replace(mapping)
-        
+        df['Tissue'] = df['Tissue'].apply(lambda x: format_tissue(x) if pd.notna(x) else x)
+
     if 'Location' in df.columns and api_client:
         unique_locs = df['Location'].dropna().unique().tolist()
-        to_fix = [loc for loc in unique_locs if str(loc).strip().lower().replace('_', ' ') not in null_words]
-        
+        to_fix = [loc for loc in unique_locs if not is_blank(loc)]
+
         if to_fix:
             mapped_locs = {}
+            prompt_loc = """你是一个专业的地理位置数据清洗引擎。请将以下地点统一定制化为【国家, 省/州, 市/县】格式。
+1. 若只有国家和城市，凭常识补全省份（如 "China:Yinchuan" -> "China, Ningxia, Yinchuan"）。
+2. 若缺失城市，用 Unknown 代替。
+3. 必须使用逗号加空格分隔层级（来源标记 _AI 由程序统一追加，不要自己写）。
+只返回 JSON 字典：{"原值": "新值"}"""
+            t_all = time.time()
+            usage_total = 0
             for i in range(0, len(to_fix), 50):
                 batch = to_fix[i:i+50]
-                prompt_loc = """你是一个专业的地理位置数据清洗引擎。请将以下地点统一定制化为【国家, 省/州, 市/县_AI】格式。
-1. 若只有国家和城市，凭常识补全省份（如 "China:Yinchuan_AI" -> "China, Ningxia, Yinchuan_AI"）。
-2. 若缺失城市，用 Unknown 代替。
-3. 必须使用逗号加空格分隔层级，且结尾必须带 "_AI"。
-只返回 JSON 字典：{"原值": "新值"}"""
                 try:
                     kwargs = build_api_kwargs(ai_model, prompt_loc, json.dumps(batch, ensure_ascii=False))
                     res = api_client.chat.completions.create(**kwargs)
+                    usage_total += int((getattr(getattr(res, "usage", None), "total_tokens", 0) or 0))
                     batch_res = json.loads(clean_ai_json(res.choices[0].message.content))
-                    mapped_locs.update(batch_res)
-                except: pass
+                    if isinstance(batch_res, dict):
+                        for k, v in batch_res.items():
+                            if v and not is_blank(v):
+                                mapped_locs[k] = format_location(v)  # 统一 `国家, 省, 市_AI` 一种写法
+                except Exception:
+                    continue
             if mapped_locs:
                 df['Location'] = df['Location'].map(mapped_locs).fillna(df['Location'])
+            ai_trace.trace("metadata_location_normalize", model=ai_model,
+                           latency_ms=int((time.time() - t_all) * 1000),
+                           usage={"total_tokens": usage_total},
+                           prompt_text=prompt_loc,
+                           batches=max(1, (len(to_fix) + 49) // 50),
+                           locations=len(mapped_locs))
     return df
 
-def merge_global_results(df_sra, df_gsa, out_dir, fill_date, mode, api_client, ai_model, ncbi_api, use_scholar):
+def _clean_search_backfill_value(field, val):
+    """校验 search 阶段检索回填值; 不合格返回 None (宁可留空也不写脏值)。"""
+    if val is None:
+        return None
+    s = str(val).strip().strip('"').strip("'").strip()
+    if not s or is_blank(s):
+        return None
+    if field == 'CollectionDate':
+        # 下游要拿它做时间轴/进化速率, 至少得含 4 位年份
+        return s if re.search(r'(?:19|20)\d{2}', s) else None
+    if field == 'Tissue':
+        low = s.lower().strip('. ')
+        return _SEARCH_BACKFILL_TISSUE_SINGULAR.get(low, low)
+    if field == 'Location':
+        s = re.sub(r'\s*[,:;，：；]\s*', ', ', s)
+        if ',' not in s and len(s) < 2:
+            return None
+        return format_location(s)  # 统一 `国家, 省/州, 市/县_AI` (幂等, 不会双后缀)
+    return s
+
+
+# AI 九列正交化自检的范围 (专治 GSA 的长文本小作文和物种名混入杂质)
+FIREWALL_FIELDS = ['CollectionDate', 'Location', 'Source', 'Tissue', 'Age_GrowthStage',
+                   'ScientificName', 'LibrarySource', 'CenterName', 'BioProject']
+
+
+def orthogonalize_ai_columns(df, api_client, ai_model, out_dir=None):
+    """AI 九列正交化: 逐行让 AI 凝练长文本/清杂, 采纳走 ai_value_policy 裁决。
+
+    与旧实现的区别: 不再无条件覆盖 —— AI 与既有真值语义相斥时保留旧值,
+    冲突写入 ``AI_Conflict`` 并列进 ``ai_conflicts.csv|jsonl``, 供人工复核。
+    返回 stats dict (rows/changed_rows/conflict_count/errors/usage_total)。
+    """
+    stats = {"rows": int(len(df)), "changed_rows": 0, "conflict_count": 0,
+             "errors": 0, "usage_total": 0}
+    cols_to_check = [c for c in FIREWALL_FIELDS if c in df.columns]
+    if df.empty or not cols_to_check:
+        return stats
+
+    conflict_records = []
+    t_all = time.time()
+    for idx, row in tqdm(df.iterrows(), total=len(df), desc="Data Sanitization"):
+        target_dict = {k: (str(row.get(k)) if not is_blank(row.get(k)) else "Not_Provided")
+                       for k in cols_to_check}
+        try:
+            kwargs = build_api_kwargs(ai_model, PROMPT_DATA_SANITIZER, json.dumps(target_dict, ensure_ascii=False))
+            res = api_client.chat.completions.create(**kwargs)
+            stats["usage_total"] += int((getattr(getattr(res, "usage", None), "total_tokens", 0) or 0))
+            clean_data = json.loads(clean_ai_json(res.choices[0].message.content))
+            if not isinstance(clean_data, dict):
+                continue
+            updates = {k: clean_data[k] for k in cols_to_check if k in clean_data}
+            adopted, cf = apply_updates(df, idx, updates,
+                                        fields=list(updates), stage="info_firewall")
+            if adopted:
+                stats["changed_rows"] += 1
+            stats["conflict_count"] += len(cf)
+            for c in cf:
+                c["run"] = str(row.get("Run") or row.get("Run_Accession") or "")
+                conflict_records.append(c)
+        except Exception:
+            stats["errors"] += 1
+
+    if conflict_records:
+        ai_value_policy.write_conflicts(out_dir, conflict_records)
+        print(f"   ⚖️ 正交化发现 {stats['conflict_count']} 处 AI/原值冲突: 已保留原值并记入 AI_Conflict 列 "
+              f"(明细见 ai_conflicts.csv / ai_conflicts.jsonl)")
+    ai_trace.trace("metadata_orthogonalize", model=ai_model, ok=(stats["errors"] == 0),
+                   latency_ms=int((time.time() - t_all) * 1000),
+                   usage={"total_tokens": stats["usage_total"]},
+                   prompt_text=PROMPT_DATA_SANITIZER,
+                   rows=stats["rows"], changed_rows=stats["changed_rows"],
+                   conflict_count=stats["conflict_count"], errors=stats["errors"])
+    return stats
+
+
+def merge_search_backfill(df, backfill_csv, out_dir=None):
+    """把 search 阶段 (--deepseek-search) 的网页检索回填值贯通进最终元数据.
+
+    背景: 检索补全发生在 search 阶段, 结果只落在 SRA_GSA_Merged_Final.csv;
+    info 阶段是重新从 XML/GSA 抓取的, 若不做这一步, 补全的采样时间/地点/组织/
+    生长年限就永远到不了 Global_Unified_Metadata_Core14 (全平台唯一权威表)。
+
+    规则:
+      * 只采纳 AI_Backfill 列声明过的字段 (有证据回流的值), 不猜;
+      * 只填空值, 已有真值一律保留;
+      * 来源记入 AI_Backfill_Search (只出现在 _Full 溯源表), 便于审计;
+      * CollectionDate 必须含 4 位年份, 否则丢弃。
+    """
+    stats = {"filled_runs": 0, "filled_cells": 0}
+    if df is None or df.empty or not backfill_csv or not os.path.isfile(backfill_csv):
+        return df, stats
+    try:
+        sb = pd.read_csv(backfill_csv, encoding='utf-8-sig', dtype=str)
+    except Exception as e:
+        print(f"⚠️  读取检索回填表失败, 跳过贯通: {e}")
+        return df, stats
+    if (sb.empty or 'Run' not in sb.columns
+            or 'AI_Backfill' not in sb.columns):
+        return df, stats
+
+    value_map = {}
+    for _, r in sb.iterrows():
+        run = str(r.get('Run') if r.get('Run') is not None else '').strip().upper()
+        if not run or run in ('NAN', '<NA>', 'NONE'):
+            continue
+        tags = {t.strip() for t in str(r.get('AI_Backfill') or '').split('|') if t.strip()}
+        rec = {}
+        for f in SEARCH_BACKFILL_FIELDS:
+            if f in tags and f in sb.columns:
+                v = _clean_search_backfill_value(f, r.get(f))
+                if v:
+                    rec[f] = v
+        if rec:
+            value_map.setdefault(run, {}).update(rec)
+    if not value_map or 'Run' not in df.columns:
+        return df, stats
+
+    df = df.copy()
+    for f in SEARCH_BACKFILL_FIELDS:
+        if f in df.columns:
+            df[f] = df[f].astype(object)
+    if 'AI_Backfill_Search' not in df.columns:
+        df['AI_Backfill_Search'] = pd.NA
+
+    for idx in df.index:
+        run = str(df.at[idx, 'Run']).strip().upper()
+        rec = value_map.get(run)
+        if not rec:
+            continue
+        added = []
+        for f, v in rec.items():
+            if f not in df.columns:
+                df[f] = pd.NA
+            if is_blank(df.at[idx, f]):
+                df.at[idx, f] = v
+                added.append(f)
+        if added:
+            stats["filled_runs"] += 1
+            stats["filled_cells"] += len(added)
+            prev = df.at[idx, 'AI_Backfill_Search']
+            tags = {t for t in str(prev).split('|') if t} if pd.notna(prev) else set()
+            tags.update(added)
+            df.at[idx, 'AI_Backfill_Search'] = '|'.join(sorted(tags))
+
+    if stats["filled_runs"]:
+        print(f"🔗 检索回填贯通: {stats['filled_runs']} 条记录 / "
+              f"{stats['filled_cells']} 个字段 (仅填空值; 来源见 AI_Backfill_Search)")
+    else:
+        print("🔗 检索回填贯通: 无可用补充 (目标列无空值或回填值不合规)")
+    if out_dir:
+        try:
+            os.makedirs(out_dir, exist_ok=True)
+            with open(os.path.join(out_dir, 'search_backfill_merge.json'),
+                      'w', encoding='utf-8') as f:
+                json.dump({"source": os.path.abspath(backfill_csv),
+                           "filled_runs": stats["filled_runs"],
+                           "filled_cells": stats["filled_cells"],
+                           "fields": SEARCH_BACKFILL_FIELDS},
+                          f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
+    return df, stats
+
+
+def merge_global_results(df_sra, df_gsa, out_dir, fill_date, mode, api_client, ai_model, ncbi_api, use_scholar, search_backfill=None):
     if df_sra is None: df_sra = pd.DataFrame()
     if df_gsa is None: df_gsa = pd.DataFrame()
 
@@ -1174,25 +1399,18 @@ def merge_global_results(df_sra, df_gsa, out_dir, fill_date, mode, api_client, a
     if df_global.empty: return
 
     # 🚀 AI 9列正交化自检防火墙 (专治 GSA 的长文本小作文和物种名混入杂质)
+    #    采纳规则走 ai_value_policy: AI 与既有真值相斥时保留旧值并记 AI_Conflict,
+    #    不再被 AI 的"改写版"静默覆盖 (CollectionDate 尤其多, 时间轴靠它)。
     if api_client:
         print("🤖 正在启动 AI 9列正交化自检防火墙 (隔离语义污染并浓缩长文本)...")
-        cols_to_check = ['CollectionDate', 'Location', 'Source', 'Tissue', 'Age_GrowthStage', 'ScientificName', 'LibrarySource', 'CenterName', 'BioProject']
-        
-        for idx, row in tqdm(df_global.iterrows(), total=len(df_global), desc="Data Sanitization"):
-            target_dict = {k: row.get(k, "Not_Provided") for k in cols_to_check if k in df_global.columns}
-            try:
-                kwargs = build_api_kwargs(ai_model, PROMPT_DATA_SANITIZER, json.dumps(target_dict, ensure_ascii=False))
-                res = api_client.chat.completions.create(**kwargs)
-                clean_data = json.loads(clean_ai_json(res.choices[0].message.content))
-                
-                # 找到 merge_global_results 函数中的 AI 正交化回填部分，替换为：
-                for k in cols_to_check:
-                    if k in clean_data and k in df_global.columns:
-                        val = str(clean_data[k]).strip()
-                        # 【核心修复】：忽略大小写，防止 AI 输出小写的 not_provided 覆盖掉已填补的时间
-                        if val.lower() not in ["", "none", "nan", "not_provided"]:
-                            df_global.at[idx, k] = val
-            except: pass
+        orthogonalize_ai_columns(df_global, api_client, ai_model, out_dir)
+
+    # 🔗 search 阶段 (--deepseek-search) 网页检索回填值贯通: 只填空值, 不碰已有真值
+    if search_backfill:
+        df_global, _bf_stats = merge_search_backfill(df_global, search_backfill, out_dir)
+        if _bf_stats.get('filled_runs'):
+            print(f"   ↳ 已把 {_bf_stats['filled_runs']} 条记录的检索回填值并入 Core14")
+
     # 【修复】：强制将 TaxID 转为字符串并去除 .0 后缀
     if 'TaxID' in df_global.columns:
         df_global['TaxID'] = df_global['TaxID'].astype(str).str.replace(r'\.0$', '', regex=True).replace(['nan', '<NA>', 'None', ''], pd.NA)
@@ -1272,14 +1490,6 @@ def merge_global_results(df_sra, df_gsa, out_dir, fill_date, mode, api_client, a
     full_f = save_dual_format(df_global, os.path.join(out_dir, "Global_Unified_Metadata_Full"))
     generate_global_datavzrd(full_f, out_dir)
     
-    # === 找到 merge_global_results 函数的末尾，确保调用方式如下 ===
-    # 保存 Core14 (由于我们加入了新字段，列名需对齐实际情况，这里使用你最终确定的列)
-    core_cols = [c for c in['Run', 'ReleaseDate', 'CollectionDate', 'Location', 'Source', 'Tissue', 'Age_GrowthStage', 'ScientificName', 'TaxID', 'LibrarySource', 'CenterName', 'BioProject', 'BioSample', 'PMID'] if c in df_global.columns]
-    df_core = df_global[core_cols].copy().replace(["Not_Provided", "not_provided", "None", ""], pd.NA)
-    # 强制同时保存 CSV 和 TSV，并返回 CSV 路径
-    core_f = save_dual_format(df_core, os.path.join(out_dir, "Global_Unified_Metadata_Core14"))
-    full_f = save_dual_format(df_global, os.path.join(out_dir, "Global_Unified_Metadata_Full"))
-
     print(f"🎉 完美收工！数据已纯净化。")
     print(f"👉 【全维溯源表】: Global_Unified_Metadata_Full.csv")
     print(f"👉 【核心标准表】: Global_Unified_Metadata_Core14.tsv")
@@ -1296,6 +1506,8 @@ def main():
     parser.add_argument("--ncbi-api", help="NCBI API Key")
     parser.add_argument("--use-scholar", action="store_true", help="允许调用 Google Scholar")
     parser.add_argument("--fill-date", action="store_true", help="时间兜底")
+    parser.add_argument("--search-backfill", dest="search_backfill", default=None,
+                        help="search 阶段产出的 SRA_GSA_Merged_Final.csv; 把 --deepseek-search 的检索回填值贯通进 Core14 (只填空值)")
     args = parser.parse_args()
 
     if args.ncbi_api: os.environ["NCBI_API_KEY"] = args.ncbi_api
@@ -1307,15 +1519,21 @@ def main():
         os.environ["NCBI_API_KEY"] = args.ncbi_api
     client, model = None, None
     if args.mode in ['api', 'both']:
+        # 超时 + 有限重试: 单个 run 卡住不应让整批挂死
         if args.kimi_api:
-            client, model = OpenAI(api_key=args.kimi_api, base_url="https://api.moonshot.cn/v1"), "moonshot-v1-32k"
+            client, model = OpenAI(api_key=args.kimi_api, base_url="https://api.moonshot.cn/v1",
+                                   timeout=180, max_retries=2), "moonshot-v1-32k"
             print("🤖 挂载引擎: Kimi")
         elif args.deepseek_api:
-            client, model = OpenAI(api_key=args.deepseek_api, base_url="https://api.deepseek.com"), args.deepseek_model
+            client, model = OpenAI(api_key=args.deepseek_api, base_url="https://api.deepseek.com",
+                                   timeout=120, max_retries=2), args.deepseek_model
             print(f"🤖 挂载引擎: DeepSeek ({model})")
         else: parser.error("API模式需提供 Key (--deepseek-api 或 export DEEPSEEK_API_KEY)")
 
     os.makedirs(args.outdir, exist_ok=True)
+    state_dir = ai_trace.auto_state(args.outdir)  # AI 溯源: 反推项目 90_Handoff/state
+    if state_dir is not None:
+        print(f"🧾 AI 溯源日志: {os.path.join(str(state_dir), 'ai_log.jsonl')}")
     input_data = [line.strip() for line in open(args.input, 'r')] if os.path.isfile(args.input) else [args.input]
     input_list = list(dict.fromkeys([x for x in input_data if x]))
     sra_list, gsa_list, _ = get_lists_by_regex(input_list)
@@ -1324,7 +1542,8 @@ def main():
     df_sra, df_gsa = pd.DataFrame(), pd.DataFrame()
     if sra_list: df_sra = SRAPipeline(args.mode, client, model, args.outdir, args.fill_date).process_all(sra_list, args.threads)
     if gsa_list: df_gsa = GSAPipeline(args.mode, client, model, args.outdir, args.fill_date).process_all(gsa_list)
-    merge_global_results(df_sra, df_gsa, args.outdir, args.fill_date, args.mode, client, model, args.ncbi_api, args.use_scholar)
+    merge_global_results(df_sra, df_gsa, args.outdir, args.fill_date, args.mode, client, model, args.ncbi_api, args.use_scholar,
+                         search_backfill=args.search_backfill)
 
 if __name__ == "__main__":
     main()

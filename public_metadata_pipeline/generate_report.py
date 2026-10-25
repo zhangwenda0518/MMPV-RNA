@@ -24,6 +24,11 @@ _D = _layout_dirs(os.environ.get("MMPV_IO_LAYOUT"))
 _HOSTREF_ROOT = str(Path(_D['h_genome']).parent)   # legacy=host_reference / standard=05_HostRef
 
 try:
+    from mmpv_common.table_widgets import TW_BLOCK as _TW
+except Exception:
+    _TW = ""   # 共享表格控件不可达时静默降级为原生表格
+
+try:
     import pandas as pd
     HAS_PANDAS = True
 except ImportError:
@@ -72,6 +77,15 @@ def img_to_base64(path, max_kb=2000):
 def _esc(s):
     return str(s).replace("&","&amp;").replace("<","&lt;").replace(">","&gt;").replace('"',"&quot;")
 
+# 元数据管线给 AI 结论打的来源标记 (`China, Qinghai, X_AI`)。它是**管线内部**的
+# 溯源约定, 不该流进交给下载/提交阶段的 handoff —— 2026-10-26 下游核实发现
+# write_handoff_manifest 直接透传, 已在此剥离。Core14 主表仍保留标记。
+_AI_SRC_RE = re.compile(r"[_\-]AI$", re.IGNORECASE)
+
+def _strip_ai(v):
+    """去掉 Location 等字段末尾的 `_AI` 来源标记 (handoff/展示用)。"""
+    return _AI_SRC_RE.sub("", str(v or "")).strip()
+
 def _fmt_pct(v, nd=1):
     """把百分数格式化成给人看的样子 —— 避免表格里出现 4.6e-05 这种科学计数法。
 
@@ -88,6 +102,38 @@ def _fmt_pct(v, nd=1):
     if abs(x) < 1:
         return f"{x:.4f}".rstrip("0").rstrip(".")
     return f"{x:.{nd}f}"
+
+def file_link(path, out_root):
+    """产物路径 → 可点击链接: 报告根内输出 <a href="相对路径">文件名</a>, 否则原样返回转义文本.
+
+    href 用相对报告输出根的路径 (Windows 反斜杠统一为正斜杠), 整目录拷走后链接仍有效;
+    根外的绝对路径不做链接 (浏览器打不开), 退回纯文本与改造前一致。
+    """
+    s = str(path or "")
+    if not s:
+        return ""
+    root = Path(out_root).resolve()
+    p = Path(s)
+    # 采集层可能存相对 out 的路径 (search/info/prescreen), 也可能存相对 CWD 的路径 (hostref/handoff)
+    for cand in ([p] if p.is_absolute() else [root / p, p]):
+        try:
+            rc = cand.resolve()
+        except OSError:
+            continue
+        if not rc.exists():
+            continue
+        try:
+            rel = rc.relative_to(root)
+        except ValueError:
+            continue
+        href = str(rel).replace("\\", "/")
+        return f'<a href="{_esc(href)}">{_esc(rc.name)}</a>'
+    return _esc(s)
+
+def _fig_title(name):
+    """图文件名 → 人类可读标题: 去掉 01_ 这类序号前缀, 下划线转空格."""
+    t = re.sub(r"^\d+[_\-\s]+", "", Path(name).stem).replace("_", " ").strip()
+    return t or Path(name).stem
 
 # ═══════════════════════════════════════════
 # Data Collection
@@ -169,10 +215,15 @@ def collect_plot_images(out_dir):
     return images
 
 def collect_download_summary(out_dir):
-    """download_report_*.csv 状态统计 + failed_sra_*.txt 行数 + down/ 目录文件盘点."""
+    """download_report_*.csv 状态统计 + failed_sra_*.txt 行数 + down/ 目录文件盘点.
+
+    额外带上两份清单相对 out 的路径, 供报告里做可点击链接 (报告只展示不解析)。
+    """
     out = Path(out_dir)
     status, methods, n_rows = {}, {}, 0
+    report_files = []
     for p in out.rglob("download_report_*.csv"):
+        report_files.append(p)
         try:
             with open(p, encoding="utf-8-sig") as f:
                 for r in csv.DictReader(f):
@@ -190,12 +241,14 @@ def collect_download_summary(out_dir):
         except Exception:
             n = 0
         failed += n
-        failed_files.append(p.name)
+        failed_files.append(p)
     fq = [f for f in out.rglob("*.fastq.gz") if f.is_file()]
     fq_gb = sum(f.stat().st_size for f in fq) / 1024 ** 3
     sra_left = sum(1 for f in out.rglob("*.sra") if f.is_file())
     return {"rows": n_rows, "status": status, "methods": methods, "failed": failed,
-            "failed_files": failed_files[:5], "fastq_count": len(fq),
+            "failed_files": [str(p.relative_to(out)) for p in failed_files[:5]],
+            "report_files": [str(p.relative_to(out)) for p in report_files[:5]],
+            "fastq_count": len(fq),
             "fastq_gb": fq_gb, "sra_left": sra_left}
 
 RUN_PATTERNS = [
@@ -258,7 +311,7 @@ def write_handoff_manifest(out_dir):
             def _s(p):
                 return str(p.resolve()) if p is not None else ""
             w.writerow([acc, layout, _s(r1), _s(r2), _s(se), f"{size:.1f}",
-                        m.get("ScientificName", ""), m.get("Tissue", ""), m.get("Location", ""),
+                        m.get("ScientificName", ""), m.get("Tissue", ""), _strip_ai(m.get("Location", "")),
                         m.get("BioProject", ""), "ready" if ready else "missing"])
     return {"path": str(handoff), "runs": len(accs), "ready": n_ready,
             "missing": len(accs) - n_ready}
@@ -286,7 +339,7 @@ def collect_hostref_summary(out_dir):
     hostdb = hr / "hostdb" if (hr / "hostdb").is_dir() else hr
 
     def _has(*pats):
-        return any(hostdb.rglob(p) for p in pats)
+        return any(next(hostdb.rglob(p), None) is not None for p in pats)
 
     idx = {
         "Kraken2": _has("*.k2d"),
@@ -297,6 +350,43 @@ def collect_hostref_summary(out_dir):
     return {"root": str(hr), "genome": str(genome) if genome else None,
             "genome_mb": round(genome.stat().st_size / 1024 ** 2, 1) if genome else None,
             "indexes": idx, "built": sum(idx.values())}
+
+def collect_eve_summary(out_dir):
+    """收集基因组 EVE 阶段产物 (eve-report): 扫描 HTML + kingdom_summary + 元件库."""
+    out = Path(out_dir)
+    html = next(iter(out.rglob("eve_report.html")), None)
+    summ = next(iter(out.rglob("kingdom_summary.tsv")), None)
+    if not html and not summ:
+        return None
+    d = {"root": None, "html": str(html) if html else None,
+         "genomes": 0, "viral_supported": 0, "host_like": 0, "undetermined": 0,
+         "elements": None, "protein_library": None}
+    if html:
+        d["root"] = str(html.parent.parent)
+    if summ:
+        try:
+            with open(summ, encoding="utf-8", errors="replace") as fh:
+                for r in csv.DictReader(fh, delimiter="	"):
+                    d["genomes"] += 1
+                    for k in ("viral_supported", "host_like", "undetermined"):
+                        try:
+                            d[k] += int(float(r.get(k, 0) or 0))
+                        except ValueError:
+                            pass
+        except OSError:
+            pass
+    et = next(iter(out.rglob("element_table.tsv")), None)
+    if et:
+        try:
+            d["elements"] = max(sum(1 for _ in open(et, encoding="utf-8",
+                                                    errors="replace")) - 1, 0)
+        except OSError:
+            pass
+    faa = next(iter(out.rglob("eve_consensus_library.sixframe.faa")), None)
+    if faa:
+        d["protein_library"] = str(faa)
+    return d
+
 
 def collect_prescreen_summary(out_dir, top_n=15):
     """读取预筛产物 (sample_decision.tsv + prescreen_meta.json) 汇总成报告用数据。
@@ -409,10 +499,8 @@ def _collect_virus_profile(prescreen_dir, out, top_n=15):
     ranked = sorted(prow, key=lambda r: -_f(r.get(ncol)))
     shown = [r for r in ranked if _f(r.get(ncol)) >= min_n][:top_n]
 
+    # figures/ 下全部 png 都收: 文件名自带 01_.. 序号, sorted 后即预期展示顺序
     figs = sorted((vdir / "figures").glob("*.png")) if (vdir / "figures").is_dir() else []
-    # 优先展示：检出率条形图 → 组合图
-    pick = ([f for f in figs if "prevalence_bar" in f.name]
-            + [f for f in figs if "Combined" in f.name])
 
     try:
         rel = str(vdir.relative_to(out))
@@ -432,7 +520,7 @@ def _collect_virus_profile(prescreen_dir, out, top_n=15):
             "rank": r.get("rank", ""), "n": r.get(ncol, ""), "pct": r.get(pcol, ""),
             "mean_pct": r.get("mean_pct", ""), "share": r.get("hits_share_pct", ""),
         } for r in shown],
-        "figures": [str(f) for f in pick],
+        "figures": [str(f) for f in figs],
     }
 
 # ═══════════════════════════════════════════
@@ -516,10 +604,12 @@ State only facts supported by the data. English. Academic prose. Do not fabricat
 # ═══════════════════════════════════════════
 
 def generate_html(out_dir, search_data, info_data, plot_images, ai_html="", out_html=None,
-                  download_data=None, handoff_data=None, hostref_data=None, prescreen_data=None):
+                  download_data=None, handoff_data=None, hostref_data=None,
+                  prescreen_data=None, eve_data=None):
     out = Path(out_dir); now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     s = search_data or {}; i = info_data or {}; d = download_data or {}
     h = handoff_data or {}; hr = hostref_data or {}; ps = prescreen_data or {}
+    ev = eve_data or {}
 
     # Build stage data JSON for browser AI
     sd = {
@@ -548,6 +638,12 @@ def generate_html(out_dir, search_data, info_data, plot_images, ai_html="", out_
         "s4_plot": {"note": "6-panel SCI landscape figure: temporal trends, database composition, top organizations, tissues, locations, growth stages"},
         "s5_hostref": {"genome": hr.get("genome"), "genome_mb": hr.get("genome_mb"),
                        "indexes": hr.get("indexes", {}), "built": hr.get("built", "?")},
+        "s7_eve": {"genomes": ev.get("genomes","?"),
+                   "viral_supported": ev.get("viral_supported","?"),
+                   "host_like": ev.get("host_like","?"),
+                   "undetermined": ev.get("undetermined","?"),
+                   "elements": ev.get("elements","?"),
+                   "html": ev.get("html","")},
         "s6_handoff": {"runs": h.get("runs","?"), "ready": h.get("ready","?"),
                        "missing": h.get("missing","?"), "manifest": h.get("path","sample_handoff.csv")},
     }
@@ -559,12 +655,14 @@ def generate_html(out_dir, search_data, info_data, plot_images, ai_html="", out_
     nav_items = '<li class="nav-item"><a href="#overview" class="nav-link active">Overview</a></li>'
     nav_items += '<li class="nav-header">Pipeline Stages</li>'
     nav_items += '<div class="nav-sub">'
-    for sid, label in [("stage-search","S1: Search"),("stage-info","S2: Info"),("stage-prescreen","S3: Prescreen"),("stage-down","S4: Download"),("stage-plot","S5: Plot"),("stage-hostref","S6: HostRef"),("stage-handoff","S7: Handoff")]:
+    for sid, label in [("stage-search","S1: Search"),("stage-info","S2: Info"),("stage-prescreen","S3: Prescreen"),("stage-down","S4: Download &amp; Convert"),("stage-plot","S5: Plot"),("stage-hostref","S6: HostRef &amp; HostDB"),("stage-eve","S7: EVE (genome)"),("stage-handoff","S8: Handoff")]:
         nav_items += f'<li class="nav-item"><a href="#{sid}" class="nav-link stage-toggle" style="font-size:12px;padding-left:24px;font-weight:600">{label}</a></li>'
     nav_items += '</div>'
-    nav_items += '<li class="nav-header">Report</li><div class="nav-sub">'
-    nav_items += '<li class="nav-item"><a href="#ai-summary-area" class="nav-link" style="font-size:12px;padding-left:24px">AI Summary</a></li>'
-    nav_items += '</div>'
+    if ai_html:
+        # AI Summary 的 section 只在有摘要时生成 —— 导航项与目标共存亡, 不留悬空锚点
+        nav_items += '<li class="nav-header">Report</li><div class="nav-sub">'
+        nav_items += '<li class="nav-item"><a href="#ai-summary-area" class="nav-link" style="font-size:12px;padding-left:24px">AI Summary</a></li>'
+        nav_items += '</div>'
 
     # ── Global Overview ──
     overview = f'''<section id="overview"><h2>Public Metadata Pipeline Report</h2>
@@ -584,7 +682,7 @@ def generate_html(out_dir, search_data, info_data, plot_images, ai_html="", out_
         s1 += f'<div class="card-row"><div class="card"><div class="value">{s.get("total","?")}</div><div class="label">Merged Records</div></div>'
         s1 += f'<div class="card"><div class="value">{s.get("sra","?")}</div><div class="label">SRA</div></div>'
         s1 += f'<div class="card"><div class="value">{s.get("gsa","?")}</div><div class="label">GSA</div></div></div>'
-        s1 += f'<p style="font-size:12px;color:var(--ink-secondary)">Source: {_esc(s.get("path","?"))}</p>'
+        s1 += f'<p style="font-size:12px;color:var(--ink-secondary)">Source: {file_link(s.get("path","?"), out)}</p>'
     else:
         s1 += '<p style="color:var(--ink-secondary)">Search output not found. Run Stage 1 (search) first.</p>'
     s1 += '</section>'
@@ -612,7 +710,7 @@ def generate_html(out_dir, search_data, info_data, plot_images, ai_html="", out_
             for val, cnt in items[:10]:
                 s2 += f'<tr><td>{_esc(val[:50])}</td><td>{cnt}</td></tr>'
             s2 += '</tbody></table></div></details>'
-        s2 += f'<p style="font-size:12px;color:var(--ink-secondary);margin-top:4px">Source: {_esc(i.get("path","?"))}</p>'
+        s2 += f'<p style="font-size:12px;color:var(--ink-secondary);margin-top:4px">Source: {file_link(i.get("path","?"), out)}</p>'
     else:
         s2 += '<p style="color:var(--ink-secondary)">Info output not found. Run Stage 2 (info) first.</p>'
     s2 += '</section>'
@@ -730,15 +828,15 @@ def generate_html(out_dir, search_data, info_data, plot_images, ai_html="", out_
                          f'<div class="label">{_esc(c)}</div></div>')
             s_ps += '</div>'
 
-            for fp in (vp.get("figures") or [])[:2]:
+            for fp in (vp.get("figures") or []):
                 b64 = img_to_base64(fp, 6000)
+                nm = _fig_title(Path(fp).name)
                 if b64:
-                    nm = Path(fp).name
                     s_ps += (f'<div class="chart-card"><div class="chart-title">{_esc(nm)}</div>'
                              f'<img src="data:image/png;base64,{b64}" loading="lazy" alt="{_esc(nm)}"></div>')
                 elif Path(fp).is_file():
                     mb = Path(fp).stat().st_size / 1024 ** 2
-                    s_ps += (f'<div class="chart-card"><div class="chart-title">{_esc(Path(fp).name)}</div>'
+                    s_ps += (f'<div class="chart-card"><div class="chart-title">{_esc(nm)}</div>'
                              f'<p style="padding:12px;color:#d97706;font-size:13px">⚠ Image too large ({mb:.1f} MB) — not embedded, open the file directly: <code>{_esc(fp)}</code></p></div>')
 
             s_ps += ('<details style="margin-top:8px" open><summary style="font-weight:600;'
@@ -767,7 +865,7 @@ def generate_html(out_dir, search_data, info_data, plot_images, ai_html="", out_
     s_ps += '</section>'
 
     # ── Stage 4: Download ──
-    s3 = f'''<section id="stage-down"><h2>S4: Download <button onclick="runStageAI('s3_down')" class="ai-stage-btn">AI</button></h2>
+    s3 = f'''<section id="stage-down"><h2>S4: Download &amp; Convert <button onclick="runStageAI('s3_down')" class="ai-stage-btn">AI</button></h2>
     <p style="color:var(--ink-secondary);font-size:13px">Smart SRA downloader: dual-protocol (aria2c NGDC + prefetch NCBI), progress tracking, failed retry list.</p>'''
     if d.get("rows") or d.get("fastq_count"):
         chips = "".join(f'<div class="card"><div class="value">{v}</div><div class="label">Status: {_esc(k)}</div></div>'
@@ -781,13 +879,17 @@ def generate_html(out_dir, search_data, info_data, plot_images, ai_html="", out_
         s3 += '</div>'
         if d.get("methods"):
             s3 += f'<p style="font-size:12px;color:var(--ink-secondary)">Methods: {_esc(", ".join(f"{k}×{v}" for k, v in sorted(d["methods"].items())))}</p>'
+        if d.get("report_files"):
+            s3 += ('<p style="font-size:12px;color:var(--ink-secondary)">Reports: '
+                   + ", ".join(file_link(p, out) for p in d["report_files"]) + '</p>')
         if d.get("failed_files"):
-            s3 += f'<p style="font-size:12px;color:var(--ink-secondary)">Retry lists: {_esc(", ".join(d["failed_files"]))}</p>'
+            s3 += ('<p style="font-size:12px;color:var(--ink-secondary)">Retry lists: '
+                   + ", ".join(file_link(p, out) for p in d["failed_files"]) + '</p>')
     else:
         s3 += '<p style="color:var(--ink-secondary)">Download report not found. Run Stage 4 (down) first.</p>'
     s3 += '</section>'
 
-    # ── Stage 4: Plot ──
+    # ── Stage 5: Plot ──
     s4 = f'''<section id="stage-plot"><h2>S5: Plot <button onclick="runStageAI('s4_plot')" class="ai-stage-btn">AI</button></h2>
     <p style="color:var(--ink-secondary);font-size:13px">SCI-grade 6-panel landscape figure: (A) Temporal Distribution, (B) Database Proportion, (C) Top Organizations, (D) Top Tissues, (E) Top Locations, (F) Top Growth Stages.</p>'''
     if plot_images.get("landscape") or plot_images.get("landscape_pdf"):
@@ -812,8 +914,8 @@ def generate_html(out_dir, search_data, info_data, plot_images, ai_html="", out_
         s4 += '<p style="color:var(--ink-secondary)">Plot not found. Run Stage 5 (plot) to generate the 6-panel figure.</p>'
     s4 += '</section>'
 
-    # ── Stage 5: HostRef ──
-    s_hr = f'''<section id="stage-hostref"><h2>S6: HostRef — Host Reference Genome</h2>
+    # ── Stage 6: HostRef ──
+    s_hr = f'''<section id="stage-hostref"><h2>S6: HostRef &amp; HostDB — Host Reference Genome</h2>
     <p style="color:var(--ink-secondary);font-size:13px">Host genome acquisition (datasets / ncbi-genome-download / FTP / gget, or user FASTA)
     and Kraken2 / Bowtie2 / HISAT2 / Minimap2 index building — consumed by the host-depletion stage downstream.</p>'''
     if hr:
@@ -828,20 +930,42 @@ def generate_html(out_dir, search_data, info_data, plot_images, ai_html="", out_
             mark = "✓" if ok else "✗"
             s_hr += f'<div class="card"><div class="value" style="font-size:14px;color:{color}">{mark}</div><div class="label">{_esc(name)}</div></div>'
         s_hr += '</div>'
-        s_hr += f'<p style="font-size:12px;color:var(--ink-secondary)">Root: <code>{_esc(hr.get("root",""))}</code></p>'
+        s_hr += f'<p style="font-size:12px;color:var(--ink-secondary)">Root: <code>{file_link(hr.get("root",""), out)}</code></p>'
     else:
         s_hr += '<p style="color:var(--ink-secondary)">Host reference not found under <code>host_reference/</code>. Run hostref + hostdb stages first, or pass --host-fasta.</p>'
     s_hr += '</section>'
 
-    # ── Stage 6: Handoff ──
-    s5 = f'''<section id="stage-handoff"><h2>S7: Handoff Manifest</h2>
+    # ── Stage 7: EVE (genome) ──
+    s_ev = f'''<section id="stage-eve"><h2>S7: EVE — Genome-side Endogenous Viral Elements</h2>
+    <p style="color:var(--ink-secondary);font-size:13px">EVE discovery on the host reference genome
+    (sliding-window blastx → dual-side verdict → RVDB assignment). The optional masking step runs
+    <b>before</b> HostDB so the host indexes exclude EVE regions; this section reports the analysis.</p>'''
+    if ev:
+        s_ev += f'<div class="card-row"><div class="card"><div class="value">{ev.get("genomes","?")}</div><div class="label">Genomes Scanned</div></div>'
+        s_ev += f'<div class="card"><div class="value" style="color:#16a34a">{ev.get("viral_supported","?")}</div><div class="label">Viral-supported (EVE)</div></div>'
+        s_ev += f'<div class="card"><div class="value" style="color:#d97706">{ev.get("undetermined","?")}</div><div class="label">Undetermined</div></div>'
+        s_ev += f'<div class="card"><div class="value" style="color:#6b7280">{ev.get("host_like","?")}</div><div class="label">Host-like</div></div>'
+        if ev.get("elements") is not None:
+            s_ev += f'<div class="card"><div class="value">{ev.get("elements")}</div><div class="label">EVE Elements</div></div>'
+        s_ev += '</div>'
+        if ev.get("html"):
+            s_ev += f'<p style="font-size:12px">EVE report: <code>{file_link(ev["html"], out)}</code></p>'
+        if ev.get("protein_library"):
+            s_ev += f'<p style="font-size:12px">EVE protein library (Δbit-score input): <code>{file_link(ev["protein_library"], out)}</code></p>'
+        s_ev += f'<p style="font-size:12px;color:var(--ink-secondary)">Root: <code>{file_link(ev.get("root",""), out)}</code></p>'
+    else:
+        s_ev += '<p style="color:var(--ink-secondary)">EVE analysis not found. Enable <code>--eve-scan</code> (and optionally <code>--eve-elements</code>) to generate it.</p>'
+    s_ev += '</section>'
+
+    # ── Stage 8: Handoff ──
+    s5 = f'''<section id="stage-handoff"><h2>S8: Handoff Manifest</h2>
     <p style="color:var(--ink-secondary);font-size:13px">Downstream handoff manifest: Run → FASTQ absolute paths + Core14 metadata.
     Consumed by <code>data_preprocessing_pipeline/clean-data.py --input</code> as the file-level sample list.</p>'''
     if h:
         s5 += f'<div class="card-row"><div class="card"><div class="value">{h.get("runs","?")}</div><div class="label">Runs Total</div></div>'
         s5 += f'<div class="card"><div class="value" style="color:#16a34a">{h.get("ready","?")}</div><div class="label">Ready (files found)</div></div>'
         s5 += f'<div class="card"><div class="value" style="color:#d97706">{h.get("missing","?")}</div><div class="label">Missing (metadata only)</div></div></div>'
-        s5 += f'<p style="font-size:12px;color:var(--ink-secondary)">Manifest: <code>{_esc(h.get("path","sample_handoff.csv"))}</code> — columns: Run / Layout / R1_Path / R2_Path / SE_Path / Size_MB / ScientificName / Tissue / Location / BioProject / Status</p>'
+        s5 += f'<p style="font-size:12px;color:var(--ink-secondary)">Manifest: <code>{file_link(h.get("path","sample_handoff.csv"), out)}</code> — columns: Run / Layout / R1_Path / R2_Path / SE_Path / Size_MB / ScientificName / Tissue / Location / BioProject / Status</p>'
     else:
         s5 += '<p style="color:var(--ink-secondary)">Handoff manifest not generated (no down/ files and no Core14 metadata found).</p>'
     s5 += '</section>'
@@ -850,6 +974,7 @@ def generate_html(out_dir, search_data, info_data, plot_images, ai_html="", out_
     ai_area = f'<section id="ai-summary-area">{ai_html}</section>' if ai_html else ''
 
     html = f'''<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<!-- impeccable-disable numbered-section-markers,em-dash-overuse: stage IDs are pipeline identifiers; CJK scientific copy -->
 <title>Public Metadata Pipeline Report</title>
 <style>
 :root {{
@@ -869,7 +994,7 @@ body {{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-se
 .nav-header {{cursor:pointer;user-select:none;display:flex;justify-content:space-between;align-items:center;padding:8px 20px 4px;font-size:12px;color:var(--ink-secondary);font-weight:600;border-top:1px solid var(--border);margin-top:4px}}
 .nav-header::after {{content:'\\25B2';font-size:8px;transition:transform 0.15s}}
 .nav-header.collapsed::after {{transform:rotate(180deg)}}
-.nav-sub {{overflow:hidden;max-height:2000px;transition:max-height 0.25s ease}}
+.nav-sub {{overflow:hidden;max-height:2000px}}
 .nav-sub.collapsed {{max-height:0}}
 .main {{margin-left:248px;padding:32px 40px;flex:1;max-width:1440px}}
 h1 {{color:var(--ink);font-size:26px;font-weight:700;margin-bottom:4px;padding-bottom:10px;border-bottom:2px solid var(--border)}}
@@ -922,7 +1047,7 @@ summary {{cursor:pointer;font-weight:600;color:var(--accent);padding:4px 0;font-
 .chat-input-row{{display:flex;gap:6px;padding:8px 10px;border-top:1px solid var(--border-light)}}
 .chat-input-row input{{flex:1;padding:6px 8px;border:1px solid var(--border);border-radius:4px;font-size:12px}}
 .chat-send-btn{{padding:6px 12px;background:var(--accent);color:#fff;border:none;border-radius:4px;font-size:12px;cursor:pointer}}
-@media (max-width:800px){{.sidebar{{display:none}}.main{{margin-left:0;padding:20px 16px}}}}
+/* 侧栏常驻：不再随宽度隐藏（2026-10-17 用户裁定） */
 @media print{{.sidebar{{display:none}}#ai-btn,#chat-btn,#ai-panel,#chat-panel{{display:none}}.main{{margin-left:0}}}}
 @media (prefers-reduced-motion:reduce){{*,*::after{{transition-duration:0s!important;animation-duration:0s!important}}}}
 </style>
@@ -957,7 +1082,7 @@ summary {{cursor:pointer;font-weight:600;color:var(--accent);padding:4px 0;font-
 <nav class="sidebar"><h3>Metadata Pipeline</h3><ul>{nav_items}</ul></nav>
 <main class="main">
   {overview}
-  {s1}{s2}{s_ps}{s3}{s4}{s_hr}{s5}
+  {s1}{s2}{s_ps}{s3}{s4}{s_hr}{s_ev}{s5}
   {ai_area}
   <div class="footer">Public Metadata Pipeline — {now}</div>
 </main>
@@ -970,6 +1095,26 @@ summary {{cursor:pointer;font-weight:600;color:var(--accent);padding:4px 0;font-
       while(s&&s.classList.contains('nav-sub')){{s.classList.toggle('collapsed');s=s.nextElementSibling;}}
     }});
   }});
+  // scroll-spy: 视口内的当前 section 高亮对应 nav-link, 其余移除 (零外部依赖)
+  var spyLinks=document.querySelectorAll('.nav-link');
+  var spyIds=[];
+  spyLinks.forEach(function(a){{var h=a.getAttribute('href')||'';if(h.charAt(0)==='#')spyIds.push(h.slice(1));}});
+  function spyUpdate(){{
+    var cur='';
+    var doc=document.documentElement;
+    var atBottom=window.innerHeight+window.scrollY>=doc.scrollHeight-2;
+    if(atBottom&&spyIds.length){{cur=spyIds[spyIds.length-1];}} // 触底时末节(如 AI Summary)可能已滚出检测线, 直接取最后一项
+    else{{
+      for(var i=0;i<spyIds.length;i++){{
+        var sec=document.getElementById(spyIds[i]);
+        if(sec&&sec.getBoundingClientRect().top<=120)cur=spyIds[i];
+      }}
+    }}
+    spyLinks.forEach(function(a){{a.classList.toggle('active',a.getAttribute('href')==='#'+cur);}});
+  }}
+  window.addEventListener('scroll',spyUpdate,{{passive:true}});
+  window.addEventListener('resize',spyUpdate);
+  spyUpdate();
   document.querySelectorAll('.chart-gallery').forEach(function(g){{
     var n=g.querySelectorAll('.chart-card').length;var c=n<=1?1:n===2?2:n===3?3:4;
     g.style.gridTemplateColumns='repeat('+c+', 1fr)';
@@ -1030,7 +1175,7 @@ function sendChat(){{
   }}).then(r=>r.json()).then(d=>{{thinking.textContent=d.choices[0].message.content.trim();msgs.scrollTop=msgs.scrollHeight;}}).catch(e=>{{thinking.textContent='Error: '+e;}});
 }}
 </script>
-</body></html>'''
+{_TW}</body></html>'''
 
     if out_html:
         with open(out_html, "w", encoding="utf-8") as f:
@@ -1096,6 +1241,14 @@ def main():
     else:
         print("  Not found (run hostref stage first)")
 
+    print("Collecting EVE summary...")
+    eve_data = collect_eve_summary(args.dir)
+    if eve_data:
+        print(f"  EVE: {eve_data['genomes']} genomes, "
+              f"{eve_data['viral_supported']} viral-supported loci-sum")
+    else:
+        print("  Not found (run --eve-scan / eve-report stage first)")
+
     print("Collecting pre-screen summary...")
     prescreen_data = collect_prescreen_summary(args.dir)
     if prescreen_data:
@@ -1113,7 +1266,8 @@ def main():
     out_html = Path(args.output) if args.output else out / "Pipeline_Summary_Report.html"
     print("Generating HTML report...")
     generate_html(args.dir, search_data, info_data, plot_images, ai_html, out_html,
-                  download_data, handoff_data, hostref_data, prescreen_data)
+                  download_data, handoff_data, hostref_data, prescreen_data,
+                  eve_data=eve_data)
     print(f"  Report: {out_html} ({out_html.stat().st_size / 1024:.0f} KB)")
 
 if __name__ == "__main__":
