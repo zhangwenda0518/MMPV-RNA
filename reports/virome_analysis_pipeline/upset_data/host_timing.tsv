@@ -1,0 +1,5 @@
+tool	wall_sec	steps
+RNAVirHost	353	RNAVirHost Classify Order 139s + RNAVirHost Predict 214s｜RVH_result/
+PhaBOX2 (Cherry)	322	PhaBOX2 CHERRY Host Prediction 322s｜phabox2_output/
+ICTV (C9 lookup)	2	ICTV Taxonomy Lookup (C9) 2s｜C9_ICTV_result/
+Rule (class fallback)	NA	in-process, no separate wall time
