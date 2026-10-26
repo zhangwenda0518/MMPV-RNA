@@ -2,6 +2,24 @@
 
 > preprocess.py, viroid_circular_detect.py — independent helpers for data preprocessing and viroid detection.
 
+## 图件四格式导出 — `mmpv_common/figure_export.py` / `.R`
+
+所有出图脚本默认同时产出 **SVG + PNG(300 dpi) + PDF + PNG(1200 dpi)**，
+高清副本落在同目录 `_hires_1200dpi/` 下。既有 `fig.savefig()` / `ggsave()` 写法
+无需改动（脚本头已注入引导块），新代码用 `export_figure()` / `save_figure()`。
+
+完整口径、环境变量与未纳入范围见 **[FIGURE_EXPORT.md](FIGURE_EXPORT.md)**。
+
+```bash
+# 关闭自动补齐（只写脚本原本要的那一种格式）
+MMPV_FIG_EXPORT=0 python <script>.py
+
+# 只产出 PNG + PDF
+MMPV_FIG_FORMATS=png,pdf python <script>.py
+```
+
+---
+
 ## preprocess.py — 预处理独立入口 / Combined Preprocessing
 
 ```bash

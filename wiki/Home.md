@@ -2,8 +2,8 @@
 
 > 大规模宏植物病毒挖掘与分析平台 v3.1。从公共测序档案 (NCBI SRA / CNCB GSA) 出发,
 > 经 **病毒发现 → 已知病毒深度分析 → 系统发育/进化 → GenBank 提交** 的完整闭环,
-> 外加 **EVE 内源性病毒筛查** 与 **宿主表达分析** 两条独立支线
-> (**均已归档 2026-10-11, 方法不成熟 → `archive/20261011_*`**)。
+> EVE 内源病毒已拆成两段并入 ① 与 ③（不再是独立管线）。宿主表达分析支线已归档
+> (2026-10-11, 方法不成熟 → `archive/20261011_host_expression_pipeline/`)。
 > Python 编排 + bioconda 工具 + 少量 R,
 > 全部阶段带 checkpoint 与断点续跑。
 
@@ -17,7 +17,7 @@
 | [[03-病毒发现管线]] | ③ virome_discovery_pipeline — 15 阶段 de novo 发现 (核心) |
 | [[04-已知病毒分析管线]] | ④ virome_analysis_pipeline — 定量/变异/全长组装/相似性/DVG (9 阶段) |
 | [[05-系统发育进化管线]] | ⑤ virome_phylo_pipeline — 18 stage / 8 大模块 (BEAST+pypopart) |
-| [[06-EVE内源性病毒管线]] | ⑥ endogenous_virus_pipeline — 三阶段筛查 + 判别 (独立支线; **已归档 2026-10-11**) |
+| [[06-EVE内源性病毒管线]] | EVE 集成模块 — ① `eve_genome/` (宿主库前后) + ③ `eve_discriminate/` (KEEP 前判别)，结果进各自管线 HTML |
 | [[07-数据提交管线]] | ⑦ virome_submission_pipeline — taxonomy→.sqn (GenBank/CNCB) |
 | [[08-脚本参数参考]] | 198 个核心脚本的 `--help` 自动提取库 (按管线分组) |
 | [[09-质量审查与审计]] | 审计器/单测/引用完整性检查/验收记录 |
@@ -28,7 +28,7 @@
 ```bash
 git clone https://github.com/zhangwenda0518/MMPV-RNA.git && cd MMPV-RNA
 pixi install                      # 100 个 conda 包 (手动工具见 doc/MMPV_dependencies.md)
-python scripts/db_setup/mmpv_db.py check   # 数据库体检 (50 项, 必需 24 / 可选 26)
+python database/setup/mmpv_db.py check   # 数据库体检 (50 项, 必需 24 / 可选 26)
 python public_metadata_pipeline/public_data_pipeline.py --species "Lycium barbarum" \
     --taxid 112863 --stage all    # 检索→下载→转换→宿主建库→报告
 python data_preprocessing_pipeline/data_preprocessing.py --stage all \
@@ -39,9 +39,9 @@ python virome_discovery_pipeline/virome_pipeline.py --stage all \
 
 ## 平台事实卡 (以代码为准)
 
-- **管线**: 7 条 (①–⑧可选) + mmpv_common AI 驱动层; 桌面 GUI 已移交外部平台 (2026-10)
+- **管线**: 6 条 (①、②、③、④、⑤、⑦) + mmpv_common AI 驱动层; EVE 为 ①③ 内模块, ⑧ 宿主表达已归档; 桌面 GUI 已移交外部平台 (2026-10)
 - **脚本规模**: 467 个活动 Python 脚本; 其中 198 个核心脚本收录于 [[08-脚本参数参考]]
-- **阶段**: ③ 15 阶段 / ④ 9 阶段 / ⑤ 20 stage (treetime/phymapr 2026-10-12 新增) / ① 8 阶段 / ⑥ 3+判别 (已归档) / ⑦ 7 项
+- **阶段**: ③ 15 阶段 (含 09b EVE 判别) / ④ 9 阶段 / ⑤ 20 stage / ① 9 阶段 (含 eve) / ⑦ 7 项
 - **断点续传**: 全部编排器 `--resume/--force`; `.ok` 标记 + 产物核验双条件
-- **布局**: `standard` (管线独立根 01_PublicData…06_EVE, **默认**) / `legacy` (v3.0 目录名, 存量项目用 `MMPV_IO_LAYOUT=legacy` 切回)
+- **布局**: `standard` (管线独立根 01_PublicData…05_Phylo; EVE 产物在 host_reference/eve 与 09b/eve, **默认**) / `legacy` (v3.0 目录名, 存量项目用 `MMPV_IO_LAYOUT=legacy` 切回)
 - **回滚锚点**: 任何编排器均可 `--stage <子集>` 重跑, 不动上游

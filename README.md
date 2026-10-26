@@ -21,7 +21,7 @@
 
 ---
 
-## 七大管线 / Seven Pipelines
+## 六大管线 / Six Pipelines
 
 ```
 public_metadata_pipeline/     → 数据获取 (测序数据检索/下载/转换 ＋ 宿主参考基因组获取/建库)
@@ -29,11 +29,9 @@ public_metadata_pipeline/     → 数据获取 (测序数据检索/下载/转换
        ├── 测序数据: SRA/GSA 搜索 → 元数据清洗 → 批量下载 → 可视化 → SRA→FASTQ.GZ
        └── 宿主参考: 多通道下载·或用户 FASTA → Kraken2/Bowtie2/HISAT2/Minimap2 四索引
               │
-              ├──▶ endogenous_virus_pipeline/ → 内源性病毒（EVE）正向筛查【已归档 2026-10-11, 方法不成熟】
-              │      滑窗 blastx vs 病毒参考蛋白 → 位点合并 →
-              │      植物/病毒双侧 bitscore 判定 → RVDB 深度归属
-              │      (输入是宿主基因组 FASTA, 与 reads 管线相互独立;
-              │       目录移至 archive/20261011_endogenous_virus_pipeline/)
+              ├──▶ public_metadata_pipeline/eve_genome/ → 基因组 EVE 分析
+              │      hostdb 前: 可选 EVE 掩码 (-–eve-mask)
+              │      hostdb 后: 扫描 → 双侧判定 → RVDB → 元件库 → HTML (eve 阶段)
               │
               ▼
 data_preprocessing_pipeline/  → 数据清洗 (质控 Fastp→Seqkit→Clumpify → 去宿主 Kraken2→比对→Ribodetector ＋可选 BBNorm 归一化)
@@ -43,7 +41,9 @@ virome_discovery_pipeline/    → 病毒发现（de novo）
        │
        ├── 组装 → 10工具并行鉴定 → 分层过滤 → COBRA延伸
        ├── 合并共组装 → CD-HIT参考聚类 → vclust去冗余 → 8工具分类 → 宿主预测
-       └── CheckV评估 → 两支路级联拯救 (A: 直通 → B: VSI延伸; C/D 已归档) → HQ vOTU catalog
+       ├── CheckV评估 → 两支路级联拯救 (A: 直通 → B: VSI延伸; C/D 已归档) → HQ vOTU catalog
+       └── 09b KEEP 前: 候选+科标签 → eve_discriminate (16科 ML + 可选 Δbit)
+                        EVE_like → KEEP 降 REVIEW
               │
               ▼
 virome_analysis_pipeline/     → 已知病毒深度分析
@@ -84,8 +84,9 @@ host_expression_pipeline/     → ⑧ 宿主表达分析（宿主侧：病毒阳
 存量项目（已有 checkpoint / 正在跑的任务）显式切回 `legacy` 布局（v3.0 目录名）：
 
 ```
-<项目>/ 01_PublicData/ 02_Preprocessing/ 03_Discovery/ 04_Analysis/ 05_Phylo/ 06_EVE/ 90_Handoff/
-        (06_EVE/ 为 ⑥ EVE、08_HostExpression/ 为 ⑧ 宿主表达的输出根; ⑥⑧ 均已归档 2026-10-11)
+<项目>/ 01_PublicData/ 02_Preprocessing/ 03_Discovery/ 04_Analysis/ 05_Phylo/ 90_Handoff/
+        (EVE 产物: ① <host_reference>/eve/ · ③ <发现根>/09b_Analysis_Verify/virus_validation/eve/;
+         旧 06_EVE/ 与 08_HostExpression/ 已随对应模块归档 2026-10-11)
 ```
 
 管线边界交接可自动定位（③→④ 桥一条命令；①→⑤ Core14 原生直读）：
@@ -166,40 +167,55 @@ pixi run discovery-downstream \
     -t 120 -j 20
 ```
 
-### 3. 内源性病毒（EVE）筛查【已归档 2026-10-11，方法不成熟】
+### 3. 内源病毒（EVE）分析（并入 ① 与 ③，不单独成管线）
 
-> ⑥ 模块已归档至 `archive/20261011_endogenous_virus_pipeline/`（原因与恢复方法见
-> 其 `ARCHIVED_20261011.md`）。以下命令为归档前用法存档，恢复前不可运行。
+EVE 拆成两段，分别挂在宿主库构建和病毒发现的 DNA 候选分析上；结果为各自管线的 HTML 增加章节。
 
-```bash
-# 单基因组: 宿主参考基因组 → EVE 位点 (数据库路径从 pipeline_config.yaml 读)
-python archive/20261011_endogenous_virus_pipeline/eve_screen.py \
-    -g host_reference/genome/all.genome.uniq.fasta \
-    -n Solanum_lycopersicum -o out/eve/ -t 40
+**① 基因组侧** — `public_metadata_pipeline/eve_genome/`
 
-# 批量: batch.tsv 每行 NAME<TAB>基因组路径 (.tar.gz 包也可直接填, Stage1 自动解包;
-#       NAME 必须唯一, 重名开跑前报错 — 重名会共用 01_Loci/<NAME>/ 产物)
-python archive/20261011_endogenous_virus_pipeline/eve_screen.py \
-    -B batch.tsv -o out/eve/ -t 40 -J 5 --fast
-# -J 并行基因组数, -t 每基因组线程数, 总核数 = J x t (256 核推荐 -J5 -t40)
-
-# 断点续传: 按请求的阶段判定 (阶段产物齐全才算完成), 重发同命令即可续跑
-# 汇总: kingdom_summary.tsv / family_by_genome.tsv (--merge 单独重跑汇总)
-# 抽序列: samtools faidx (需 samtools >= 1.11, 版本不够开跑前体检即报错)
-#          索引写到输出目录, 不依赖参考基因组目录可写
-# 防挂死: --cmd-timeout 7200 (单条外部命令超时秒数, 0=不限)
-```
-
-判明"是宿主基因还是内源病毒化石"，以及判别病毒组组装出的候选 contig 是真 DNA 病毒
-还是退化 EVE，另有两个模块：`eve_screen.py` 做宿主基因组侧的位点发现，
-`eve_distinguish/` 做候选侧的判别（跑完发现管道后单独调用）：
+| 环节 | 位置 | 说明 |
+|---|---|---|
+| 掩码 | `hostdb` **之前**（`--eve-mask`） | 先把 EVE 区间屏蔽，宿主索引里就不含 EVE 序列 |
+| 分析汇总 | `hostdb` **之后**（`eve` 阶段，`--eve-scan`） | 扫描 → 双侧判定 → RVDB；可选元件库/consensus + 六框蛋白库 |
+| 产物 | `<host_reference>/eve/` | `04_Summary/eve_report.html`、`05_Elements/eve_consensus_library.fa`、`.sixframe.faa` |
+| 报告 | `Pipeline_Summary_Report.html` | 新增 **S7: EVE (genome)** 章节（基因组数/内源/未定/寄主样/元件数 + 链接） |
 
 ```bash
-# DNA 病毒候选 vs EVE 判别 (详见 archive/20261011_endogenous_virus_pipeline/eve_distinguish/README.md)
-bash archive/20261011_endogenous_virus_pipeline/eve_distinguish/run_all.sh \
-    -D /path/to/discovery_out -A /path/to/1kp/assemblies -t 32
-#   产物: dna_vs_eve_filter.tsv (每条候选一个 action, 下游按列过滤即可)
+# 九阶段公共数据管线：hostref → hostdb → eve → report
+python public_metadata_pipeline/public_data_pipeline.py --species <拉丁名> --taxid <ID> \
+    --stage hostref,hostdb,eve,report --eve-scan --eve-elements \
+    --work-dir <项目>/01_PublicData
+
+# 或独立的宿主构建管线
+python public_metadata_pipeline/build_host_pipeline.py --species <拉丁名> --taxid <ID> \
+    --stage all --eve-scan --eve-elements --work-dir out/host
 ```
+
+**③ 转录组侧** — `virome_discovery_pipeline/eve_discriminate/`
+
+| 环节 | 位置 | 说明 |
+|---|---|---|
+| 判别 | `analysis_verify`（09b）内，CDD 验证之后、五层证据整合**之前** | 候选 fasta + taxonomy 科标签 → 16 科 ML（默认开） |
+| 否决 | `integrate_rescue_evidence.py --eve-calls` | `EVE_like` 且 verdict=KEEP → 降为 REVIEW（只降不删） |
+| 可选第二路 | `--eve-faa` + `--eve-exo-dmnd` | Δbit-score 双库竞争；EVE 库可直接用 ① 产出的 `.sixframe.faa` |
+| 产物 | `09b_Analysis_Verify/virus_validation/eve/` | `eve_calls.tsv`、`eve_report.html` |
+| 报告 | `10_Reports/pipeline_report.html` | 09b 卡片新增 **EVE discrimination (before KEEP)** 区块（模型数/EVE_like/否决数 + 链接） |
+
+```bash
+python virome_discovery_pipeline/virome_pipeline.py --stage analysis_verify \
+    --output_dir <发现项目根> \
+    --eve-faa <host_reference>/eve/05_Elements/eve_consensus_library.sixframe.faa \
+    --eve-exo-dmnd <ICTV 蛋白库>.dmnd        # 可选：启用 Δbit-score
+```
+
+**为什么在 KEEP 前而不是后**：KEEP 由 `integrate_rescue_evidence.py` 判定，`class_KEEP.fasta`
+直接从它抽取。放在 KEEP 之后只能给已进目录的 EVE 贴标签；放在之前，EVE 证据才能参与裁决
+（`EVE_like` → REVIEW）。只降不删，保留人工复核空间。
+
+**模型/数据**：16 科模型与阈值在 `database/eve_ml/`；训练脚本在 `database/eve_ml/build/`。
+
+> 旧 EVE 模块（`endogenous_virus_pipeline/` + `eve_distinguish/`）已于 2026-10-11
+> 归档至 `archive/20261011_endogenous_virus_pipeline/`，保留用于历史结果复现。
 
 ### 4. 分析管线
 
@@ -357,7 +373,8 @@ python virome_submission_pipeline/submission_pipeline.py \
 MMPV-RNA/
 ├── data_preprocessing_pipeline/    # 数据清洗 (质控 clean-data.py → 去宿主 host_depletion.py; 含一条龙入口)
 ├── virome_discovery_pipeline/      # 病毒发现 (de novo, 15 阶段)
-│   ├── virome_pipeline.py          # 主编排器
+│   ├── virome_pipeline.py          # 主编排器 (09b KEEP 前接 EVE 判别)
+│   ├── eve_discriminate/           # EVE 判别模块: no_ref_genome/ (ML/Δbit/无监督) + with_ref_genome/ (整合证据) + 报告
 │   ├── doc.md                      # 完整流程文档
 │   └── utils/                      # 辅助工具 (组装/鉴定/COBRA统计, Sankey)
 │
@@ -366,9 +383,10 @@ MMPV-RNA/
 │   ├── doc.md                      # 完整流程文档
 │   └── utils/                      # 辅助工具
 │
-├── public_metadata_pipeline/       # 公共数据获取 (8 阶段)
-│   ├── public_data_pipeline.py     # 公共数据编排器 (检索/元数据/下载/可视化)
-│   ├── build_host_pipeline.py      # 宿主参考编排 (多通道下载/用户FASTA → 四索引)
+├── public_metadata_pipeline/       # 公共数据获取 (9 阶段)
+│   ├── public_data_pipeline.py     # 公共数据编排器 (检索/元数据/下载/可视化 + hostdb/eve)
+│   ├── build_host_pipeline.py      # 宿主参考编排 (多通道下载/用户FASTA → 四索引 → EVE 报告)
+│   ├── eve_genome/                 # 基因组 EVE: eve_screen/element_db/report + 六框蛋白库
 │   ├── preprocess_unified.py       # 全链路预处理入口 (convert→clean→hostref→deplete→[bbnorm])
 │   ├── doc.md                      # 完整流程文档
 │   └── utils/                      # 共享工具模块
@@ -381,7 +399,9 @@ MMPV-RNA/
 │   ├── sequin_builder.py           # Sequin 构建器
 │   └── ...                         # 元数据/报告/拓扑分析
 │
-├── archive/20261011_endogenous_virus_pipeline/  # 【已归档 2026-10-11】内源性病毒 (EVE): 宿主基因组筛查 + 候选判别 (原 endogenous_virus_pipeline/, 方法不成熟)
+├── database/eve_ml/                # EVE ML 资产: 16 科模型 + index.json + FEATURE_SPEC + build/ 构建脚本
+│
+├── archive/20261011_endogenous_virus_pipeline/  # 【已归档 2026-10-11】旧 EVE 模块 (被 ①③ 内的 EVE 模块取代, 保留历史复现)
 │   ├── eve_screen.py               # 筛查主编排器 (三阶段: discover→verdict→annotate→merge)
 │   ├── eve_genome_scan.py          # 单基因组 worker (按阶段产物断点续传)
 │   ├── eve_scan_core.py            # 纯逻辑核心 (坐标还原/位点合并/判定/汇总)
@@ -406,16 +426,10 @@ MMPV-RNA/
 ├── doc/                            # 文档 (17篇 + 方法章总模板 + 依赖清单)
 │   ├── METHODS_TEMPLATE.md         # 五大管道论文级方法章合并版 (SCI投稿直接取用)
 │   └── MMPV_dependencies.md        # 外部依赖清单 (工具/数据库/路径)
-├── scripts/                        # 开发期一次性脚本归档 (非核心管线, 见 scripts/README.md)
-│   ├── blacklist/                  # 宿主黑名单构建/同步/验证 (bl_layer1~4)
-│   ├── db_query/                   # 结果库临时查询 (q_*)
-│   ├── patch/                      # 已合入管线的一次性补丁留档
-│   ├── audit/                      # 结果审计/交叉核对
-│   ├── pilot_rvdb/                 # RVDB 试点分析
-│   ├── mapper_bench/               # 比对器基准测试
-│   ├── utils/                      # md2docx / 服务器端启动器
+├── scripts/                        # 脚本引用检查 (一次性脚本已归档到 archive/20261025_cleanup/scripts_oneoff/)
+│   ├── README.md
 │   └── check_script_refs.py        # 管线脚本引用完整性检查
-├── paper/                          # SCI 论文稿 (英文全流程初稿)
+├── MMPV-RNA-paper/                 # SCI 论文稿与引用库 (citations/ + figures/)
 ├── reports/                        # 生成的 HTML 报告输出 (gitignored)
 ├── envs/viralm.yaml                # ViraLM 独立conda环境
 ├── pixi.toml                       # 一键部署 (conda 可装依赖; 手动工具见文件尾注释)
@@ -456,19 +470,19 @@ MMPV-RNA/
 | ViraLM DB | DNABERT-2鉴定 | Google Drive (gdown) |
 | Kraken2 + align DB | 宿主去除 | 本管线构建 (build_host_pipeline.py) |
 | PhaBOX2 DB | 宿主预测 | PhaBOX2 |
-| 植物/病毒拆分库 (hybrid) | EVE 双侧判定 | SwissProt 拆分 + id2div 映射 (⑥ 已归档 2026-10-11) |
+| 植物/病毒拆分库 (hybrid) | `eve_genome` 双侧判定 | SwissProt 拆分 + id2div 映射 (`database/setup/mmpv_db_manifest.tsv`) |
 
 **完整清单与部署方案**：全管线共依赖 50 项数据库（必需 24 / 可选 26，全量约 710GB）。
 逐库的下载与建索引命令见 `DATABASE_SETUP.md`；**可复现的集中部署方案**（共享库根 + 软链接
 兼容层 + 环境变量 + 校验）见 `doc/DB_DEPLOYMENT.md`，配套工具：
 
 ```bash
-python scripts/db_setup/mmpv_db.py list                                 # 打印 50 项依赖清单
-python scripts/db_setup/mmpv_db.py check                                # 部署前体检
-python scripts/db_setup/mmpv_db.py verify                               # 校验现有库是否齐全
-python scripts/db_setup/mmpv_db.py down --apply                          # 下载/构建可自动获取的库
-python scripts/db_setup/mmpv_db.py adopt --db-from ~/database --apply   # 迁移到共享库根
-python scripts/db_setup/mmpv_db.py link --apply                          # 建旧路径兼容软链接
+python database/setup/mmpv_db.py list                                 # 打印 50 项依赖清单
+python database/setup/mmpv_db.py check                                # 部署前体检
+python database/setup/mmpv_db.py verify                               # 校验现有库是否齐全
+python database/setup/mmpv_db.py down --apply                          # 下载/构建可自动获取的库
+python database/setup/mmpv_db.py adopt --db-from ~/database --apply   # 迁移到共享库根
+python database/setup/mmpv_db.py link --apply                          # 建旧路径兼容软链接
 ```
 
 换服务器时用 `down` 拉取；其中 RVDB 派生的一整套库（diamond / mmseqs / metabuli / CAT）

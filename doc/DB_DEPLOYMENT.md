@@ -4,7 +4,7 @@
 > (2) 旧路径 `~/database`、`~/plant_virus_db` 通过软链接继续可用——核心代码里那些
 > 硬编码路径**一行不用改**。
 >
-> 配套工具：`scripts/db_setup/mmpv_db.py`（部署/迁移/下载/校验）
+> 配套工具：`database/setup/mmpv_db.py`（部署/迁移/下载/校验）
 > + `mmpv_db_manifest.tsv`（50 项依赖清单）+ `mmpv_db_fetch.tsv`（25 项获取配方）。
 > 每库的下载与建索引原文命令见 `DATABASE_SETUP.md` §1–§6。
 > 本文与 `doc/MMPV_dependencies.md` 的 **D 节（数据库/参考文件）** 和 **「路径配置」节** 配套：
@@ -34,7 +34,7 @@
 其中 **25 项有自动化获取配方**（`down` 能直接下），24 项需共享池或人工，1 项随 git 自带；分类见 §3.5。
 
 ```bash
-python scripts/db_setup/mmpv_db.py list    # 按类别打印 50 项
+python database/setup/mmpv_db.py list    # 按类别打印 50 项
 ```
 
 | 类别 | 数量 | 含义 | 复现方式 |
@@ -134,19 +134,19 @@ RVDB_v31.fasta.gz（上游基底，条目 src_rvdb31）
 ```bash
 cd ~/MMPV-RNA
 
-python scripts/db_setup/mmpv_db.py --share /data/mmpv check                 # ① 体检
-python scripts/db_setup/mmpv_db.py --share /data/mmpv layout --apply        # ② 建骨架
+python database/setup/mmpv_db.py --share /data/mmpv check                 # ① 体检
+python database/setup/mmpv_db.py --share /data/mmpv layout --apply        # ② 建骨架
 
-python scripts/db_setup/mmpv_db.py --share /data/mmpv adopt \               # ③ 演练后加 --apply
+python database/setup/mmpv_db.py --share /data/mmpv adopt \               # ③ 演练后加 --apply
     --db-from ~/database --plant-from ~/plant_virus_db
-python scripts/db_setup/mmpv_db.py --share /data/mmpv adopt \
+python database/setup/mmpv_db.py --share /data/mmpv adopt \
     --db-from ~/database --plant-from ~/plant_virus_db --apply
 
-python scripts/db_setup/mmpv_db.py --share /data/mmpv link --apply          # ④ 旧路径软链接
-python scripts/db_setup/mmpv_db.py --share /data/mmpv publish --apply       # ⑤ 仓库小文件入池
-python scripts/db_setup/mmpv_db.py --share /data/mmpv env --write /data/mmpv/mmpv-db.env
+python database/setup/mmpv_db.py --share /data/mmpv link --apply          # ④ 旧路径软链接
+python database/setup/mmpv_db.py --share /data/mmpv publish --apply       # ⑤ 仓库小文件入池
+python database/setup/mmpv_db.py --share /data/mmpv env --write /data/mmpv/mmpv-db.env
 echo 'source /data/mmpv/mmpv-db.env' >> ~/.bashrc
-python scripts/db_setup/mmpv_db.py --share /data/mmpv verify                # ⑥ 校验
+python database/setup/mmpv_db.py --share /data/mmpv verify                # ⑥ 校验
 ```
 
 `adopt` 行为要点：同文件系统用 `mv`（秒级），跨文件系统自动切 `rsync -a`（可续传）；
@@ -156,10 +156,10 @@ python scripts/db_setup/mmpv_db.py --share /data/mmpv verify                # �
 ### 3.4 路线 B：全新机器下载
 
 ```bash
-python scripts/db_setup/mmpv_db.py --share /data/mmpv layout --apply
-python scripts/db_setup/mmpv_db.py --share /data/mmpv down                # 演练：看会下哪些
-python scripts/db_setup/mmpv_db.py --share /data/mmpv down --apply        # 实际下载/构建
-python scripts/db_setup/mmpv_db.py --share /data/mmpv verify              # 看还缺什么
+python database/setup/mmpv_db.py --share /data/mmpv layout --apply
+python database/setup/mmpv_db.py --share /data/mmpv down                # 演练：看会下哪些
+python database/setup/mmpv_db.py --share /data/mmpv down --apply        # 实际下载/构建
+python database/setup/mmpv_db.py --share /data/mmpv verify              # 看还缺什么
 ```
 
 `down` 的特点：
@@ -197,10 +197,10 @@ python scripts/db_setup/mmpv_db.py --share /data/mmpv verify              # 看�
 ### 3.6 路线 C：挂共享池
 
 ```bash
-python scripts/db_setup/mmpv_db.py --share /mnt/mmpv-share link --apply    # 建 ~/database 软链接
-python scripts/db_setup/mmpv_db.py --share /mnt/mmpv-share env --write ~/mmpv-db.env
+python database/setup/mmpv_db.py --share /mnt/mmpv-share link --apply    # 建 ~/database 软链接
+python database/setup/mmpv_db.py --share /mnt/mmpv-share env --write ~/mmpv-db.env
 source ~/mmpv-db.env
-python scripts/db_setup/mmpv_db.py --share /mnt/mmpv-share verify
+python database/setup/mmpv_db.py --share /mnt/mmpv-share verify
 ```
 
 只读挂载也没问题：`link` 建的是**指向**挂载点的链接，不写挂载点本身。
@@ -271,11 +271,11 @@ Windows 上 PATH 里的 `bash.exe` 可能只是 WSL 安装提示桩）。
 ## 6. 校验与排障
 
 ```bash
-python scripts/db_setup/mmpv_db.py verify                         # 逐项表格，缺必需项退出码 1
-python scripts/db_setup/mmpv_db.py verify --only cdd_db kraken2_pluspfp
-python scripts/db_setup/mmpv_db.py which virus_db_genomad         # 单查
-python scripts/db_setup/mmpv_db.py fetch virus_db_rvdb31_diamond  # 看某个库的配方
-python scripts/db_setup/mmpv_db.py check                          # 含旧路径软链接健康度
+python database/setup/mmpv_db.py verify                         # 逐项表格，缺必需项退出码 1
+python database/setup/mmpv_db.py verify --only cdd_db kraken2_pluspfp
+python database/setup/mmpv_db.py which virus_db_genomad         # 单查
+python database/setup/mmpv_db.py fetch virus_db_rvdb31_diamond  # 看某个库的配方
+python database/setup/mmpv_db.py check                          # 含旧路径软链接健康度
 ```
 
 `verify` 的状态值不只有「缺失」，区分这几种——**迁移后最常出的就是断链**：
@@ -316,18 +316,18 @@ export MMPV_DATA_SHARE=/data/mmpv
 git clone <repo> ~/MMPV-RNA && cd ~/MMPV-RNA
 
 # ── 2. 环境变量
-python scripts/db_setup/mmpv_db.py --share $MMPV_DATA_SHARE env --write ~/mmpv-db.env
+python database/setup/mmpv_db.py --share $MMPV_DATA_SHARE env --write ~/mmpv-db.env
 source ~/mmpv-db.env && echo 'source ~/mmpv-db.env' >> ~/.bashrc
 
 # ── 3. 旧路径软链接（核心代码的硬编码路径靠这个活）
-python scripts/db_setup/mmpv_db.py --share $MMPV_DATA_SHARE link --apply
+python database/setup/mmpv_db.py --share $MMPV_DATA_SHARE link --apply
 
 # ── 4. 补齐本机缺的库（能自动下的一批）
-python scripts/db_setup/mmpv_db.py --share $MMPV_DATA_SHARE down
-python scripts/db_setup/mmpv_db.py --share $MMPV_DATA_SHARE down --apply
+python database/setup/mmpv_db.py --share $MMPV_DATA_SHARE down
+python database/setup/mmpv_db.py --share $MMPV_DATA_SHARE down --apply
 
 # ── 5. 校验；剩余缺项按 §3.5 从共享池补
-python scripts/db_setup/mmpv_db.py --share $MMPV_DATA_SHARE verify
+python database/setup/mmpv_db.py --share $MMPV_DATA_SHARE verify
 
 # ── 6. 工具环境（与数据库无关，独立一步）
 pixi install          # 或按 DATABASE_SETUP.md §8 逐个 pixi global install
@@ -338,7 +338,7 @@ pixi install          # 或按 DATABASE_SETUP.md §8 逐个 pixi global install
 ## 8. 维护约定与已知陷阱
 
 **改版本时三处要同步**，否则会漂移：
-1. `scripts/db_setup/mmpv_db_manifest.tsv` 的 `path`/`probe`
+1. `database/setup/mmpv_db_manifest.tsv` 的 `path`/`probe`
 2. `pipeline_config.yaml` 的对应键
 3. 本文 §2 的目录树、§1 的类别表
 

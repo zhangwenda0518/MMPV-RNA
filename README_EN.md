@@ -21,7 +21,7 @@
 
 ---
 
-## Seven Pipelines
+## Six Pipelines
 
 ```
 public_metadata_pipeline/     → Data acquisition (SRA/GSA search & download & conversion + host reference genome acquisition/indexing)
@@ -29,11 +29,9 @@ public_metadata_pipeline/     → Data acquisition (SRA/GSA search & download & 
        ├── Sequencing data: SRA/GSA search → metadata cleaning → bulk download → visualization → SRA→FASTQ.GZ
        └── Host reference: multi-channel download or user FASTA → Kraken2/Bowtie2/HISAT2/Minimap2 four-index build
               │
-              ├──▶ endogenous_virus_pipeline/ → Endogenous viral element (EVE) forward screening [ARCHIVED 2026-10-11, immature methodology]
-              │      sliding-window blastx vs viral reference proteins → locus merging →
-              │      plant/viral dual-side bitscore verdict → RVDB deep assignment
-              │      (input is host genome FASTA; independent from the reads pipeline;
-              │       moved to archive/20261011_endogenous_virus_pipeline/)
+              ├──▶ public_metadata_pipeline/eve_genome/ → genome-side EVE analysis
+              │      before hostdb: optional EVE masking (--eve-mask)
+              │      after hostdb:  scan → dual-side verdict → RVDB → element library → HTML ('eve' stage)
               │
               ▼
 data_preprocessing_pipeline/  → Data cleaning (QC Fastp→Seqkit→Clumpify → host depletion Kraken2→alignment→Ribodetector + optional BBNorm normalization)
@@ -43,7 +41,9 @@ virome_discovery_pipeline/    → Virus discovery (de novo)
        │
        ├── assembly → 10-tool parallel identification → layered filtering → COBRA extension
        ├── merged co-assembly → CD-HIT reference-guided clustering → vclust dereplication → 8-tool taxonomy → host prediction
-       └── CheckV assessment → two-branch cascaded rescue (A: direct pass → B: VSI extension; C/D archived) → HQ vOTU catalog
+       ├── CheckV assessment → two-branch cascaded rescue (A: direct pass → B: VSI extension; C/D archived) → HQ vOTU catalog
+       └── 09b before KEEP: candidates + family labels → eve_discriminate
+                        (16-family ML + optional Δbit); EVE_like → KEEP downgraded to REVIEW
               │
               ▼
 virome_analysis_pipeline/     → In-depth analysis of known viruses
@@ -85,8 +85,9 @@ The five pipelines now use the `standard` layout by default — **one independen
 Existing projects (with checkpoints or running jobs) can fall back to the `legacy` layout (v3.0 directory names):
 
 ```
-<project>/ 01_PublicData/ 02_Preprocessing/ 03_Discovery/ 04_Analysis/ 05_Phylo/ 06_EVE/ 90_Handoff/
-           (06_EVE/ = ⑥ EVE, 08_HostExpression/ = ⑧ host-expression output roots; both ⑥⑧ archived 2026-10-11)
+<project>/ 01_PublicData/ 02_Preprocessing/ 03_Discovery/ 04_Analysis/ 05_Phylo/ 90_Handoff/
+           (EVE outputs: ① <host_reference>/eve/ · ③ <discovery-root>/09b_Analysis_Verify/virus_validation/eve/;
+            legacy 06_EVE/ and 08_HostExpression/ were archived with their modules on 2026-10-11)
 ```
 
 Pipeline-boundary handoffs are auto-locatable (one command for the ③→④ bridge; ①→⑤ Core14 read natively):
@@ -169,41 +170,59 @@ pixi run discovery-downstream \
     -t 120 -j 20
 ```
 
-### 3. Endogenous virus (EVE) screening [ARCHIVED 2026-10-11, immature methodology]
+### 3. Endogenous viral elements (EVE) — integrated into pipelines ① and ③
 
-> ⑥ moved to `archive/20261011_endogenous_virus_pipeline/` (reason and revival steps in
-> its `ARCHIVED_20261011.md`). Commands below are the pre-archive usage record; not
-> runnable until the module is revived.
+EVE is no longer a standalone pipeline. It is split into two modules attached to the host-reference
+pipeline and the DNA-candidate analysis of the discovery pipeline, and each pipeline's HTML report
+gets its own section.
 
-```bash
-# Single genome: host reference genome → EVE loci (database paths read from pipeline_config.yaml)
-python archive/20261011_endogenous_virus_pipeline/eve_screen.py \
-    -g host_reference/genome/all.genome.uniq.fasta \
-    -n Solanum_lycopersicum -o out/eve/ -t 40
+**① Genome side** — `public_metadata_pipeline/eve_genome/`
 
-# Batch: batch.tsv, one NAME<TAB>genome-path per line (.tar.gz bundles accepted, auto-unpacked in Stage 1;
-#       NAME must be unique — duplicates abort before start, they would share 01_Loci/<NAME>/ products)
-python archive/20261011_endogenous_virus_pipeline/eve_screen.py \
-    -B batch.tsv -o out/eve/ -t 40 -J 5 --fast
-# -J parallel genomes, -t threads per genome; total cores = J x t (256 cores: -J5 -t40)
-
-# Resume: stage products must be complete to count as done; re-issue the same command to resume
-# Summary: kingdom_summary.tsv / family_by_genome.tsv (--merge to re-run the summary alone)
-# Sequence extraction: samtools faidx (requires samtools >= 1.11; pre-flight check fails early otherwise)
-#          index written to the output dir; the reference-genome dir does not need to be writable
-# Anti-hang: --cmd-timeout 7200 (per-command timeout in seconds, 0 = unlimited)
-```
-
-To tell "host gene vs endogenous viral fossil", and to classify candidate contigs from virome assembly as
-true DNA viruses vs degraded EVEs, two modules work together: `eve_screen.py` performs locus discovery on the
-host-genome side, and `eve_distinguish/` performs candidate-side discrimination (run after the discovery pipeline):
+| Step | Position | What it does |
+|---|---|---|
+| Masking | **before** `hostdb` (`--eve-mask`) | Mask EVE intervals so the host indexes exclude EVE sequence |
+| Analysis | **after** `hostdb` (`eve` stage, `--eve-scan`) | scan → dual-side verdict → RVDB; optional element library/consensus + six-frame protein library |
+| Outputs | `<host_reference>/eve/` | `04_Summary/eve_report.html`, `05_Elements/eve_consensus_library.fa`, `.sixframe.faa` |
+| Report | `Pipeline_Summary_Report.html` | new **S7: EVE (genome)** section (genomes / endogenous / undetermined / host-like / elements + links) |
 
 ```bash
-# DNA-virus candidate vs EVE discrimination (see archive/20261011_endogenous_virus_pipeline/eve_distinguish/README.md)
-bash archive/20261011_endogenous_virus_pipeline/eve_distinguish/run_all.sh \
-    -D /path/to/discovery_out -A /path/to/1kp/assemblies -t 32
-#   output: dna_vs_eve_filter.tsv (one action per candidate; downstream filters by column)
+# nine-stage public-data pipeline: hostref → hostdb → eve → report
+python public_metadata_pipeline/public_data_pipeline.py --species <name> --taxid <ID> \
+    --stage hostref,hostdb,eve,report --eve-scan --eve-elements \
+    --work-dir <project>/01_PublicData
+
+# or the standalone host builder
+python public_metadata_pipeline/build_host_pipeline.py --species <name> --taxid <ID> \
+    --stage all --eve-scan --eve-elements --work-dir out/host
 ```
+
+**③ Transcriptome side** — `virome_discovery_pipeline/eve_discriminate/`
+
+| Step | Position | What it does |
+|---|---|---|
+| Discrimination | inside `analysis_verify` (09b), after CDD validation and **before** evidence integration | candidate fasta + taxonomy family labels → 16-family ML (on by default) |
+| Veto | `integrate_rescue_evidence.py --eve-calls` | `EVE_like` with verdict=KEEP → REVIEW (downgrade only, never delete) |
+| Optional 2nd channel | `--eve-faa` + `--eve-exo-dmnd` | Δbit-score competition; the EVE library can be the `.sixframe.faa` from ① |
+| Outputs | `09b_Analysis_Verify/virus_validation/eve/` | `eve_calls.tsv`, `eve_report.html` |
+| Report | `10_Reports/pipeline_report.html` | 09b card gains an **EVE discrimination (before KEEP)** block (scored / EVE_like / vetoed + link) |
+
+```bash
+python virome_discovery_pipeline/virome_pipeline.py --stage analysis_verify \
+    --output_dir <discovery-root> \
+    --eve-faa <host_reference>/eve/05_Elements/eve_consensus_library.sixframe.faa \
+    --eve-exo-dmnd <ICTV-protein>.dmnd        # optional: enable Δbit-score
+```
+
+**Why before KEEP, not after**: KEEP is decided by `integrate_rescue_evidence.py`, and
+`class_KEEP.fasta` is extracted directly from its verdict. Running EVE after KEEP can only annotate
+EVE already in the catalog; running before lets the evidence participate in the decision
+(`EVE_like` → REVIEW). Downgrade only, so human review still has the final say.
+
+**Models/data**: 16-family models and thresholds live in `database/eve_ml/`; training scripts in
+`database/eve_ml/build/`.
+
+> The old EVE modules (`endogenous_virus_pipeline/` + `eve_distinguish/`) were archived on
+> 2026-10-11 to `archive/20261011_endogenous_virus_pipeline/` for historical reproducibility.
 
 ### 4. Analysis pipeline
 
@@ -361,7 +380,8 @@ Entry: `python public_metadata_pipeline/preprocess_unified.py --sra-dir ... --ou
 MMPV-RNA/
 ├── data_preprocessing_pipeline/    # Data cleaning (QC clean-data.py → host depletion host_depletion.py; one-shot entry)
 ├── virome_discovery_pipeline/      # Virus discovery (de novo, 15 stages)
-│   ├── virome_pipeline.py          # Main orchestrator
+│   ├── virome_pipeline.py          # Main orchestrator (EVE discrimination before KEEP in 09b)
+│   ├── eve_discriminate/           # EVE discrimination: no_ref_genome/ (ML/Δbit/unsupervised) + with_ref_genome/ + reports
 │   ├── doc.md                      # Full pipeline documentation
 │   └── utils/                      # Helpers (assembly/identification/COBRA stats, Sankey)
 │
@@ -370,9 +390,10 @@ MMPV-RNA/
 │   ├── doc.md                      # Full pipeline documentation
 │   └── utils/                      # Helpers
 │
-├── public_metadata_pipeline/       # Public data acquisition (8 stages)
+├── public_metadata_pipeline/       # Public data acquisition (9 stages)
 │   ├── public_data_pipeline.py     # Orchestrator (search/metadata/download/visualization)
 │   ├── build_host_pipeline.py      # Host reference orchestration (multi-channel download/user FASTA → four indices)
+│   ├── eve_genome/                 # Genome-side EVE: eve_screen/element_db/report + six-frame protein library
 │   ├── preprocess_unified.py       # Full-chain preprocessing entry (convert→clean→hostref→deplete→[bbnorm])
 │   ├── doc.md                      # Full pipeline documentation
 │   └── utils/                      # Shared tool modules
@@ -391,7 +412,9 @@ MMPV-RNA/
 │   ├── sequin_builder.py           # Sequin builder
 │   └── ...                         # metadata/report/topology analysis
 │
-├── archive/20261011_endogenous_virus_pipeline/  # [ARCHIVED 2026-10-11] Endogenous viruses (EVE): host-genome screening + candidate discrimination (was endogenous_virus_pipeline/, immature methodology)
+├── database/eve_ml/                # EVE ML assets: 16-family models + index.json + FEATURE_SPEC + build/ scripts
+│
+├── archive/20261011_endogenous_virus_pipeline/  # [ARCHIVED 2026-10-11] old EVE module (superseded by the EVE modules in ①/③)
 │   ├── eve_screen.py               # Screening orchestrator (three stages: discover→verdict→annotate→merge)
 │   ├── eve_genome_scan.py          # Per-genome worker (stage-product checkpointing)
 │   ├── eve_scan_core.py            # Pure-logic core (coordinate restore/locus merge/verdict/summary)
@@ -418,16 +441,10 @@ MMPV-RNA/
 ├── doc/                            # Documentation (17 docs + methods template + dependency list)
 │   ├── METHODS_TEMPLATE.md         # Combined paper-grade Methods for all pipelines (ready for SCI submission)
 │   └── MMPV_dependencies.md        # External dependency list (tools/databases/paths)
-├── scripts/                        # Dev-time one-off script archive (non-core; see scripts/README.md)
-│   ├── blacklist/                  # Host blacklist build/sync/validation (bl_layer1~4)
-│   ├── db_query/                   # Result-db ad-hoc queries (q_*)
-│   ├── patch/                      # One-off patches already merged into pipelines
-│   ├── audit/                      # Result audits/cross-checks
-│   ├── pilot_rvdb/                 # RVDB pilot analyses
-│   ├── mapper_bench/               # Aligner benchmarks
-│   ├── utils/                      # md2docx / server-side launchers
+├── scripts/                        # script-reference checker (one-offs archived to archive/20261025_cleanup/scripts_oneoff/)
+│   ├── README.md
 │   └── check_script_refs.py        # Pipeline script reference integrity check
-├── paper/                          # SCI manuscript (English full-workflow draft)
+├── MMPV-RNA-paper/                 # SCI manuscript + citations/ + figures/
 ├── reports/                        # Generated HTML reports (gitignored)
 ├── envs/viralm.yaml                # Standalone ViraLM conda environment
 ├── pixi.toml                       # One-command deployment (conda-installable deps; manual tools in tail comments)
@@ -468,19 +485,19 @@ MMPV-RNA/
 | ViraLM DB | DNABERT-2 identification | Google Drive (gdown) |
 | Kraken2 + align DB | Host depletion | Built by this platform (build_host_pipeline.py) |
 | PhaBOX2 DB | Host prediction | PhaBOX2 |
-| Plant/viral split DB (hybrid) | EVE dual-side verdict | SwissProt split + id2div mapping (⑥ archived 2026-10-11) |
+| Plant/viral split DB (hybrid) | `eve_genome` dual-side verdict | SwissProt split + id2div mapping (`database/setup/mmpv_db_manifest.tsv`) |
 
 **Full list & deployment**: all pipelines depend on 50 databases (25 required / 25 optional, ~710 GB total).
 Per-database download/indexing commands are in `DATABASE_SETUP.md`; the **reproducible centralized deployment**
 (shared DB root + symlink compatibility layer + environment variables + verification) is in `doc/DB_DEPLOYMENT.md`, with the companion tool:
 
 ```bash
-python scripts/db_setup/mmpv_db.py list                                 # print the 50-item dependency list
-python scripts/db_setup/mmpv_db.py check                                # pre-deployment check
-python scripts/db_setup/mmpv_db.py verify                               # verify existing databases
-python scripts/db_setup/mmpv_db.py down --apply                          # download/build auto-fetchable databases
-python scripts/db_setup/mmpv_db.py adopt --db-from ~/database --apply   # migrate to the shared DB root
-python scripts/db_setup/mmpv_db.py link --apply                          # create legacy-path symlinks
+python database/setup/mmpv_db.py list                                 # print the 50-item dependency list
+python database/setup/mmpv_db.py check                                # pre-deployment check
+python database/setup/mmpv_db.py verify                               # verify existing databases
+python database/setup/mmpv_db.py down --apply                          # download/build auto-fetchable databases
+python database/setup/mmpv_db.py adopt --db-from ~/database --apply   # migrate to the shared DB root
+python database/setup/mmpv_db.py link --apply                          # create legacy-path symlinks
 ```
 
 Use `down` when moving servers; the RVDB-derived suite (diamond / mmseqs / metabuli / CAT) is built on-site

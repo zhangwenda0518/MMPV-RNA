@@ -777,7 +777,7 @@
 | # | 位置 | 偏差 | 影响 |
 |---|---|---|---|
 | D1 | `virome_discovery_pipeline/cluster_pipeline.py:617` | cluster 实写 `06_CLUSTER/4_centroids/`，而 io_layout standard 契约名是 `06_CLUSTER/centroids/` | 编排器靠 `_locate_centroids_dir()` 重绑 + `locate_centroids()` 的 `*/*` 限深兜底命中，主链不断；但按契约路径直接取文件会 miss |
-| D2 | `virome_analysis_pipeline/auto_known_virus.py:735,750` vs `generate_pipeline_report.py:837,2142` | post 阶段把 metadata_association 写到 `04_PostAnalysis/metadata_association`，报告读 `02_Filtering/metadata_association` | 报告端取不到 metadata 汇总表（静默跳过章节），属真实路径错配 |
+| D2 | ~~`auto_known_virus.py:735,750` vs `generate_pipeline_report.py:837,2142`~~ **已解决（2026-10 核实）** | 原：post 阶段把 metadata_association 写到 `04_PostAnalysis/metadata_association`，报告只读 `02_Filtering/metadata_association`。现状：报告三处触点均已改为「`04_PostAnalysis/metadata_association` 优先、`02_Filtering` 兜底回退」（`generate_pipeline_report.py:937-942` Overview 指标、`:976-982` S2 阶段文件、`:2306-2310` 拷贝归档），错配消除 | 报告可正常取到 metadata 汇总表；本条仅存档 |
 | D3 | ~~`eve_distinguish/run_all.sh:165`~~ **已解决（2026-10-07）** | 原：判别产物落 `03_Discovery/08b_EVE_Distinguish/`，与文档 B7 的 `14_EVE_Distinguish/` 互不相认。现已按用户裁定归口 **`06_EVE/eve_distinguish/`**（`-D` 目录名为 `03_Discovery` 即 standard 布局时生效；其余目录名与存量运行维持旧默认 08b，`-o` 始终可显式覆盖）。测试：eve_distinguish 21/21（⑥ 已归档 2026-10-11） | 判别产物归 ⑥ 名下，不再混入 ③ 的编号体系 |
 | D4 | `virome_pipeline.py`（`TAX_GATE_REQUIRED="6.2"`）vs `virus_classifier_analysis.R` | 编排器强制校验 `taxonomy_gate_stamp.tsv`/`taxonomy_gate_check.tsv`，但当前树内的 R 共识脚本不写这两个文件（写闸门戳的版本在 `archive/20261007_audit_cleanup/snapshot/live_virus_classifier_analysis.R`，原 scripts/audit/snapshot 已归档） | taxonomy 阶段闸门恒判 FAIL → 每次重跑 R 共识并记 error 日志（不会静默放行） |
 | D5 | `host_expression.py:69`（⑧ 已归档 2026-10-11） | ⑧ 执行序为 …coexp→de→**enrich→loadscan**…，目录号 07/08 与执行序相反 | 仅需知晓，非缺陷 |
