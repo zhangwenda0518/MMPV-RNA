@@ -77,13 +77,19 @@ def main():
 
     # 去宿主
     g = p.add_argument_group("去宿主 (host_depletion.py)")
-    g.add_argument("--host_db", help="宿主库目录 (hostdb/ 或 host_reference 根, 自动查找 kraken2/ 与比对索引)")
-    g.add_argument("--kraken2_db", help="Kraken2 宿主库 (与 --host_align_db 二选一)")
+    g.add_argument("--host_db", help="宿主库目录 (hostdb/ 或 host_reference 根, 自动查找 kraken2/kunpeng/ 与比对索引)")
+    g.add_argument("--kraken2_db", help="宿主分类库 (Kraken2 或 Kun-peng 分片库; 与 --host_align_db 二选一)")
     g.add_argument("--host_align_db", help="宿主比对索引 (与 --kraken2_db 二选一)")
     g.add_argument("--tool", default="bowtie2", choices=["bowtie2", "hisat2", "minimap2"], help="比对工具")
+    g.add_argument("--classifier", default="kraken2", choices=["kraken2", "kunpeng"],
+                   help="初筛分类器 (默认: kraken2; kunpeng 需 kun_peng, 自动 hashshard 转换)")
+    g.add_argument("--kunpeng-bin", default=os.environ.get("MMPV_KUNPENG_BIN", "kun_peng"),
+                   help="Kun-peng 可执行文件 (默认 $MMPV_KUNPENG_BIN 或 PATH)")
+    g.add_argument("--kunpeng-hash-capacity", default="1G", help="Kun-peng hashshard 容量 (默认: 1G)")
+    g.add_argument("--min-hit-groups", type=int, default=2, help="Kun-peng 最小 hit group 数 (默认: 2)")
     g.add_argument("--seq-type", default="rna-short", choices=["dna-short", "rna-short", "nanopore", "pacbio"])
     g.add_argument("--rrna", action="store_true", help="开启 Ribodetector 去 rRNA")
-    g.add_argument("--confidence", type=float, default=0.4, help="Kraken2 置信度阈值")
+    g.add_argument("--confidence", type=float, default=0.4, help="分类置信度阈值")
     g.add_argument("--steps", default="kraken2,align,rrna", help="去宿主步骤")
 
     # 跳过
@@ -152,10 +158,16 @@ def main():
             if (hdb / "hostdb").is_dir():
                 hdb = hdb / "hostdb"
             if not args.kraken2_db:
-                for sub in ("kraken2", "kraken2_db", "kraken"):
-                    if (hdb / sub).is_dir():
-                        args.kraken2_db = str(hdb / sub)
-                        break
+                if (hdb / "hash.k2d").is_file() or (hdb / "hash_config.k2d").is_file():
+                    args.kraken2_db = str(hdb)
+                else:
+                    subs = ("kunpeng", "kraken2", "kraken2_db", "kraken") \
+                        if args.classifier == "kunpeng" \
+                        else ("kraken2", "kraken2_db", "kraken", "kunpeng")
+                    for sub in subs:
+                        if (hdb / sub).is_dir():
+                            args.kraken2_db = str(hdb / sub)
+                            break
             if not args.host_align_db:
                 al = hdb / args.tool
                 for prefix in ("host", "index", "genome"):
@@ -173,6 +185,10 @@ def main():
         parts = [
             f"python {script_dir / 'host_depletion.py'}",
             f"--tool {args.tool}",
+            f"--classifier {args.classifier}",
+            f'--kunpeng-bin "{args.kunpeng_bin}"',
+            f"--kunpeng-hash-capacity {args.kunpeng_hash_capacity}",
+            f"--min-hit-groups {args.min_hit_groups}",
             f"--seq-type {args.seq_type}",
             f"--kraken2_index {args.kraken2_db}",
             f"--step2_index {args.host_align_db}",

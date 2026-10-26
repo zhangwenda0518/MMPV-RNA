@@ -77,18 +77,22 @@ profiles:
 
     deplete: &deplete_default
       # 已接线 (2026-10-26): virome_pipeline.py 的 _load_config() 把本段映射到
-      #   --kraken2_db / --keep_taxids / --kraken2_confidence / --vmtouch。
+      #   --kraken2_db / --classifier / --keep_taxids / --kraken2_confidence / --vmtouch。
       #   优先级: CLI 显式参数 > 本段 > argparse 默认值。
-      #   下列值与 argparse 默认完全一致 (10239 / false / 0.2), 故默认行为不变;
+      #   下列值与 argparse 默认完全一致 (kraken2 / 10239 / false / 0.2), 故默认行为不变;
       #   换环境/换库改这里即可, 不必每次敲 CLI。
       # 空 = 不覆盖: 默认流程用 host_db 下自建宿主库
-      #   (host_db 内 kraken2/kraken2_db/kraken 子目录自动探测)。
-      #   仅当缺 kraken2 库会报致命错误、或要整体换库时才填具体路径, 例:
+      #   (host_db 内 kraken2/kunpeng/kraken2_db/kraken 子目录自动探测)。
+      #   仅当缺分类库会报致命错误、或要整体换库时才填具体路径, 例:
       #   ${MMPV_KRAKEN2_DB:-/home/zhangwenda/database/kraken2/k2_pluspfp_20260226}
       kraken2_db:   ${MMPV_KRAKEN2_DB:-}
-      keep_taxids:  10239    # 从 Kraken2 classified 池中救回病毒 reads (整数自动转 '10239'); 设空字符串关闭
-      vmtouch:      false    # 将 Kraken2 数据库锁定到 page cache 加速 I/O
-      confidence:   0.2      # Kraken2 分类置信度阈值 (默认: 0.2)
+      classifier:   kraken2  # kraken2 / kunpeng; kunpeng 需 kun_peng 可执行文件, 首次会自动 hashshard 库
+      # kunpeng_bin: kun_peng                 # 或绝对路径 / 由 MMPV_KUNPENG_BIN 指定
+      # kunpeng_hash_capacity: 1G             # hashshard 分片容量 (1G ≈ 4GiB/片)
+      # min_hit_groups: 2                     # Kun-peng 最小 hit group 数
+      keep_taxids:  10239    # 从分类 classified 池中救回病毒 reads (整数自动转 '10239'); 设空字符串关闭
+      vmtouch:      false    # 将分类库锁定到 page cache 加速 I/O
+      confidence:   0.2      # 分类置信度阈值 (默认: 0.2)
       # 以下键同样已接线, 默认不写 (= 沿用 argparse 默认), 需要时取消注释:
       # keep_rrna:        false   # 保留 rRNA reads (跳过 ribodetector)
       # rrna_chunk_size:  256

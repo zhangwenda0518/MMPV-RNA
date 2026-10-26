@@ -89,6 +89,7 @@ class CommandSpec:
 _PREP_FLAGS = ("--input_reads", "--output_dir", "-o", "--io-layout", "--host_db", "--kraken2_db",
                "--host_align_db", "--host_fasta", "--host_species", "--host_taxid",
                "--aligner", "--seq_type", "--rrna", "--rrna_tool", "--silva_index",
+               "--classifier", "--kunpeng_bin", "--kunpeng_hash_capacity", "--min_hit_groups",
                "--kraken2_confidence", "--skip_clumpify", "--dedup", "--clumpify_memory",
                "--no_compress", "--threads", "-t", "--jobs", "-j", "--force",
                "--keep_rrna", "--tmp_dir", "--warn_retained")
@@ -115,6 +116,8 @@ _DISC_RUN_FLAGS = ("--skip_clean", "--skip_depletion", "--skip_clumpify", "--dry
                    "--no_compress", "--clean_debug", "--deplete_tmp", "--kraken2_confidence",
                    "--keep_rrna", "--keep_taxids", "--vmtouch", "--rrna_chunk_size",
                    "--rrna_report", "--deplete_steps", "--align_config", "--deplete_debug",
+                   "--classifier", "--kunpeng_bin", "--kunpeng_hash_capacity",
+                   "--min_hit_groups",
                    "--refinec_threads", "--refinec_frag_min_len", "--refinec_min_id",
                    "--refinec_min_cov", "--n-total-samples")
 # assembly / identification / cobra / cluster

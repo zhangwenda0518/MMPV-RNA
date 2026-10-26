@@ -600,7 +600,9 @@ def find_fastp_reports(clean_dir):
 
 
 def find_kraken2_reports(deplete_dir):
-    """host_depletion.py 的每样本 kraken2 报告: {logs}/kraken2_report/{sample}_kraken2_report.txt"""
+    """host_depletion.py 的每样本分类报告 (Kraken2/Kun-peng 共用同一路径):
+    {logs}/kraken2_report/{sample}_kraken2_report.txt
+    """
     if not deplete_dir:
         return []
     root = Path(deplete_dir)
@@ -784,7 +786,7 @@ def generate_html(rows, out_path, warn_retained, plot_paths=None,
         dep_stage_cls, dep_badge, dep_badge_txt = "stage-skip", "s-skip", "○ SKIP"
     dep_sb_cls = {"stage-pass": "sb-pass", "stage-fail": "sb-fail",
                   "stage-skip": "sb-skip"}[dep_stage_cls]
-    # kraken2 / 资源用量 → 00b stage-tables 内的 details (缺失则不渲染)
+    # 分类报告 (Kraken2 / Kun-peng) / 资源用量 → 00b stage-tables 内的 details (缺失则不渲染)
     dep_tables = ""
     k2_reports = find_kraken2_reports(deplete_dir)
     if k2_reports:
@@ -793,7 +795,7 @@ def generate_html(rows, out_path, warn_retained, plot_paths=None,
             f'<td><a href="{_esc_attr(_rel_href(base_dir, p))}">{_esc(p.name)}</a></td></tr>'
             for p in k2_reports)
         dep_tables += f'''<details class="stage-table-detail" open>
-<summary>{len(k2_reports)} per-sample Kraken2 reports <span style="color:var(--muted);font-size:11px">({len(k2_reports)} rows)</span></summary>
+<summary>{len(k2_reports)} per-sample classification reports <span style="color:var(--muted);font-size:11px">({len(k2_reports)} rows)</span></summary>
 <div style="overflow-x:auto;margin-top:6px">
 <table class="app-table" id="stagetbl_s00b_kraken2"><thead><tr><th>Sample</th><th>Report</th></tr></thead>
 <tbody>{k2_rows}</tbody></table>

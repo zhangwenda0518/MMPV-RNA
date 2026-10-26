@@ -140,6 +140,9 @@ python public_metadata_pipeline/build_host_pipeline.py --species "Solanum lycope
 # Host depletion + rRNA removal: Kraken2 → alignment → Ribodetector
 python data_preprocessing_pipeline/host_depletion.py -k kraken2_db/ -x bowtie2_idx/ -I out/00a_CleanData/ -O out/00b_HostDepletion/ --tool bowtie2 --seq-type rna-short --rrna -t 40 -j 10
 
+# Same flow with Kun-peng as the pre-filter (Kraken2 host DB is auto-converted via hashshard)
+# python data_preprocessing_pipeline/host_depletion.py --classifier kunpeng -k kraken2_db/ -x bowtie2_idx/ -I out/00a_CleanData/ -O out/00b_HostDepletion/ --tool bowtie2 --seq-type rna-short --rrna -t 40 -j 10
+
 # Report + handoff list: preprocessing_summary.tsv + assembly_ready.list + HTML
 # (one-shot --stage all = clean → deplete → report)
 python data_preprocessing_pipeline/data_preprocessing.py --stage report --output_dir out/
@@ -291,7 +294,7 @@ python virome_submission_pipeline/submission_pipeline.py \
 | # | Stage | Script | Function |
 |---|------|------|------|
 | 1 | `genome-down` | public_metadata_pipeline/download_host_genome.py | Multi-channel reference genome download (datasets/ngd/FTP/gget · or user --genome-fasta) + GFF3 + organelle genomes |
-| 2 | `hostdb` | public_metadata_pipeline/build_hostbase.py | Kraken2 + Bowtie2 + HISAT2 + Minimap2 four-index build |
+| 2 | `hostdb` | public_metadata_pipeline/build_hostbase.py | Kraken2/Bowtie2/HISAT2/Minimap2 four-index build (+ optional Kun-peng shards) |
 
 ### Unified preprocessing entry (one command from .sra to clean reads)
 
@@ -313,7 +316,7 @@ Entry: `python public_metadata_pipeline/preprocess_unified.py --sra-dir ... --ou
 | # | Stage | Script | Function |
 |---|------|------|------|
 | 1 | `clean` | data_preprocessing_pipeline/clean-data.py | Fastp QC + Seqkit FASTA conversion + Clumpify cluster-reorder (better compression) |
-| 2 | `deplete` | data_preprocessing_pipeline/host_depletion.py | Kraken2 → Bowtie2/HISAT2/Minimap2 → rRNA removal |
+| 2 | `deplete` | data_preprocessing_pipeline/host_depletion.py | Classifier (Kraken2/Kun-peng) → Bowtie2/HISAT2/Minimap2 → rRNA removal |
 | 3 | `assembly` | assembly_pipeline.py | MEGAHIT / rnaviralSPAdes / Penguin assembly |
 | 4 | `identification` | virus_identification.py | 10-tool parallel identification (Genomad + Diamond BLASTX + RdrpCatch + ViraLM + VirBot + VirSorter2 + ViralVerify + VirHunter + Metabuli + viroid BLASTN) |
 | 5 | `filter` | filter_virus.py + graph_propagation.py | UniProt-strict high-confidence filtering (CDD + UniProt two layers) + optional graph sub-step: second-opinion adjudication of no-evidence keepers (rescue/demote) → COBRA input; idea after GMW, 2026 (off by default, enable via graph.enabled) |

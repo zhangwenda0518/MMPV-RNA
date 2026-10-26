@@ -14,7 +14,7 @@ python virome_pipeline.py --stage <stage> [参数]
 
 ```
 --stage clean              清洗 (Fastp + Seqkit + Clumpify)
---stage deplete            去宿主 (Kraken2 + Bowtie2/HISAT2 + rRNA)
+--stage deplete            去宿主 (Kraken2/Kun-peng + Bowtie2/HISAT2 + rRNA)
 --stage assembly           三工具组装 (Penguin + SPAdes + MEGAHIT)
 --stage identification     六工具病毒鉴定
 --stage cobra              COBRA 批量延伸
@@ -38,7 +38,7 @@ python virome_pipeline.py --stage <stage> [参数]
 | `--skip_depletion` | — | 跳过去宿主 |
 | `--skip_clumpify` | — | 跳过 Clumpify |
 | `--force` | — | 强制重跑 |
-| `--kraken2_db` | — | Kraken2 宿主库 |
+| `--kraken2_db` | — | 宿主分类库 (Kraken2 或 Kun-peng 分片库) |
 | `--host_align_db` | — | 宿主比对索引 |
 | `--virus_db` | — | 病毒数据库根目录 |
 | `--checkv_db` | — | CheckV 数据库 |

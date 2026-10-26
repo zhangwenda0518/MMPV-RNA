@@ -635,7 +635,11 @@ class BuildHostPipeline:
             f'--seq-type {shlex.quote(self.args.seq_types)}',
             f'--k2-libs {shlex.quote(self.args.k2_libs)}',
             f'--taxid {self.args.taxid}',
+            f'--hash-capacity {shlex.quote(str(self.args.hash_capacity))}',
+            f'--kunpeng-bin {shlex.quote(str(self.args.kunpeng_bin))}',
         ]
+        if self.args.kunpeng_native:
+            cmd_parts.append('--kunpeng-native')
         if self.args.taxonomy_dir:
             if os.path.isfile(os.path.join(self.args.taxonomy_dir, 'names.dmp')):
                 cmd_parts.append(f'--taxonomy {shlex.quote(self.args.taxonomy_dir)}')
@@ -645,7 +649,7 @@ class BuildHostPipeline:
                 self.ckpt.mark_fail(s, "invalid taxonomy dir")
                 return False
 
-        UI.warn("Kraken2 build may take several hours")
+        UI.warn("Kraken2/Kun-peng build may take several hours")
         rc = run_cmd(' '.join(cmd_parts), s, self.log_dir, timeout=86400 * 3)
         if rc == 0:
             try:
@@ -697,9 +701,16 @@ examples:
     parser.add_argument('--download-source', default='auto',
                         choices=['auto', 'datasets', 'ngd', 'ftp'],
                         help='基因组下载通道: auto=datasets 失败自动回退 ncbi-genome-download / FTP 直连')
-    parser.add_argument('--taxonomy-dir', help='Kraken2 本地 Taxonomy 目录')
+    parser.add_argument('--taxonomy-dir', help='Kraken2/Kun-peng 本地 Taxonomy 目录')
     parser.add_argument('--hostdb-tools', default='kraken2,bowtie2,hisat2,minimap2',
-                        help='建库工具 (default: kraken2,bowtie2,hisat2,minimap2)')
+                        help='建库工具 (default: kraken2,bowtie2,hisat2,minimap2; '
+                             '加 kunpeng 时默认用 hashshard 把 kraken2 库原地转为双后端库)')
+    parser.add_argument('--kunpeng-bin', default=os.environ.get('MMPV_KUNPENG_BIN', 'kun_peng'),
+                        help='Kun-peng 可执行文件 (默认 $MMPV_KUNPENG_BIN 或 PATH)')
+    parser.add_argument('--hash-capacity', default='1G',
+                        help='Kun-peng hash 分片容量 (default: 1G ≈ 4GiB/片)')
+    parser.add_argument('--kunpeng-native', action='store_true',
+                        help='强制从 FASTA 原生构建独立 kunpeng/ 库 (默认: kraken2+kunpeng 时用 hashshard)')
     parser.add_argument('--seq-types', default='dna-short,rna-short,nanopore,pacbio',
                         help='Minimap2 序列类型 (default: dna-short,rna-short,nanopore,pacbio)')
     parser.add_argument('--k2-libs', default='archaea,bacteria,plasmid,fungi,protozoa,UniVec',

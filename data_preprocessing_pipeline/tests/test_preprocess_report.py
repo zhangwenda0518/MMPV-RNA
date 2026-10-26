@@ -365,7 +365,7 @@ def test_html_detail_links_fastp_kraken2_resource(tmp_path):
     html = out.read_text(encoding="utf-8")
     assert "Per-sample fastp QC reports (1)" in html
     assert "clean/logs/S1_fastp_report.html" in html
-    assert "1 per-sample Kraken2 reports" in html
+    assert "1 per-sample classification reports" in html
     assert "dep/logs/kraken2_report/S1_kraken2_report.txt" in html
     assert "Resource usage table:" in html
     assert "dep/logs/host_depletion_resource_usage.tsv" in html
@@ -374,4 +374,4 @@ def test_html_detail_links_fastp_kraken2_resource(tmp_path):
     pr.generate_html([_mk_row()], out2, 20.0)
     html2 = out2.read_text(encoding="utf-8")
     assert "Per-sample fastp QC reports" not in html2
-    assert "Kraken2 reports" not in html2 and "Resource usage table" not in html2
+    assert "classification reports" not in html2 and "Resource usage table" not in html2

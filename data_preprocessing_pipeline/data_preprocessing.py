@@ -53,21 +53,25 @@ def run_cmd(cmd, log, step):
         return False
 
 def find_host_db(args):
-    """从 --host_db 自动推导 kraken2 和比对索引路径.
+    """从 --host_db 自动推导分类库和比对索引路径.
 
     --host_db 可指向: hostdb/ 目录本身、host_reference 根 (自动下钻 hostdb/)、
-    或直接的 kraken2 库目录 (含 hash.k2d)。
+    或直接的分片/full 分类库目录 (Kraken2: hash.k2d; Kun-peng: hash_config.k2d)。
+    Kun-peng 原生库默认落在 hostdb/kunpeng/。
     """
     kraken2_db = args.kraken2_db
     host_align_db = args.host_align_db
     if args.host_db:
         hdb = Path(args.host_db)
-        if not kraken2_db and (hdb / 'hash.k2d').is_file():
+        if not kraken2_db and ((hdb / 'hash.k2d').is_file() or (hdb / 'hash_config.k2d').is_file()):
             kraken2_db = str(hdb)
         if (hdb / 'hostdb').is_dir():
             hdb = hdb / 'hostdb'
         if not kraken2_db:
-            for sub in ['kraken2', 'kraken2_db', 'kraken']:
+            subs = ['kunpeng', 'kraken2', 'kraken2_db', 'kraken'] \
+                if getattr(args, 'classifier', 'kraken2') == 'kunpeng' \
+                else ['kraken2', 'kraken2_db', 'kraken', 'kunpeng']
+            for sub in subs:
                 if (hdb / sub).is_dir(): kraken2_db = str(hdb / sub); break
         if not host_align_db:
             aligner = args.aligner
@@ -124,10 +128,15 @@ def ensure_hostdb(args, log):
         log.error("未找到宿主基因组 FASTA: %s", fasta)
         sys.exit(1)
 
-    log.info("[前置] 宿主索引构建 (build_hostbase.py: kraken2 + %s)", args.aligner)
+    tools = ['kraken2', args.aligner]
+    if args.classifier == 'kunpeng':
+        # kraken2 建好后由 hashshard 原地追加分片: 同一个 hostdb/kraken2
+        # 同时支持 Kraken2 与 Kun-peng, 不必再复制一份完整参考。
+        tools.append('kunpeng')
+    log.info("[前置] 宿主索引构建 (build_hostbase.py: %s)", ','.join(tools))
     parts = [
         f"python {bin_dir / 'build_hostbase.py'}",
-        f"--tool kraken2,{args.aligner}",
+        f"--tool {','.join(tools)}",
         f"--input {fasta}",
         f"--output {hostdb}",
         f"--threads {args.threads}",
@@ -136,6 +145,9 @@ def ensure_hostdb(args, log):
     ]
     if args.host_taxid:
         parts.append(f"--taxid {args.host_taxid}")
+    if args.classifier == 'kunpeng':
+        parts.append(f'--kunpeng-bin "{args.kunpeng_bin}"')
+        parts.append(f"--hash-capacity {args.kunpeng_hash_capacity}")
     if not run_cmd(' '.join(parts), log, "HostDB"):
         sys.exit(1)
     args.host_db = str(hostdb)
@@ -184,12 +196,16 @@ def run_deplete(args, log, reads_dir):
         log.error("致命: 需要 --host_align_db 或 --host_db"); sys.exit(1)
 
     log.info("=" * 50)
-    log.info("[2/2] 去宿主: Kraken2 → %s → rRNA", args.aligner)
+    log.info("[2/2] 去宿主: %s → %s → rRNA", args.classifier.upper(), args.aligner)
 
     deplete_script = SCRIPT_DIR / 'host_depletion.py'
     parts = [
         f"python {deplete_script}",
         f"--tool {args.aligner}",
+        f"--classifier {args.classifier}",
+        f'--kunpeng-bin "{args.kunpeng_bin}"',
+        f"--kunpeng-hash-capacity {args.kunpeng_hash_capacity}",
+        f"--min-hit-groups {args.min_hit_groups}",
         f"--seq-type {args.seq_type}",
         f"--kraken2_index {kraken2_db}",
         f"--step2_index {host_align_db}",
@@ -315,8 +331,8 @@ def main():
                         '亦可 MMPV_IO_LAYOUT 环境变量')
 
     g = p.add_argument_group('数据库 (去宿主)')
-    g.add_argument('--host_db', help='宿主数据库目录 (支持 hostdb/ 本身、host_reference 根、kraken2 库目录, 自动查找子索引)')
-    g.add_argument('--kraken2_db', help='Kraken2 宿主库 (与 --host_align_db 同用, 精确指定)')
+    g.add_argument('--host_db', help='宿主数据库目录 (支持 hostdb/ 本身、host_reference 根、kraken2/kunpeng 库目录, 自动查找子索引)')
+    g.add_argument('--kraken2_db', help='宿主分类库 (Kraken2 或 Kun-peng 分片库; 与 --host_align_db 同用, 精确指定)')
     g.add_argument('--host_align_db', help='宿主比对索引前缀 (bowtie2/minimap2)')
     g.add_argument('--host_fasta', help='宿主基因组 FASTA (无现成库时现场构建到 {output_dir}/宿主参考目录/)')
     g.add_argument('--host_species', help='宿主物种拉丁学名 (与 --host_taxid 同用, 现场构建)')
@@ -324,11 +340,17 @@ def main():
 
     g = p.add_argument_group('工具与算法')
     g.add_argument('--aligner', default='bowtie2', choices=['bowtie2','hisat2','minimap2'], help='比对工具 (默认: bowtie2)')
+    g.add_argument('--classifier', default='kraken2', choices=['kraken2','kunpeng'],
+                   help='初筛分类器 (默认: kraken2; kunpeng 需 kun_peng, 自动 hashshard 转换 Kraken2 库)')
+    g.add_argument('--kunpeng_bin', default=os.environ.get('MMPV_KUNPENG_BIN', 'kun_peng'),
+                   help='Kun-peng 可执行文件 (默认 $MMPV_KUNPENG_BIN 或 PATH)')
+    g.add_argument('--kunpeng_hash_capacity', default='1G', help='Kun-peng hashshard 容量 (默认: 1G)')
+    g.add_argument('--min_hit_groups', type=int, default=2, help='Kun-peng 最小 hit group 数 (默认: 2)')
     g.add_argument('--seq_type', default='rna-short', choices=['dna-short','rna-short','nanopore','pacbio'])
     g.add_argument('--rrna', action='store_true', help='开启 rRNA 剔除')
     g.add_argument('--rrna_tool', default='ribodetector', choices=['ribodetector','silva'], help='rRNA 工具')
     g.add_argument('--silva_index', help='SILVA Bowtie2 索引前缀 (--rrna_tool silva 时必需)')
-    g.add_argument('--kraken2_confidence', type=float, default=0.2, help='Kraken2 置信度阈值 (默认: 0.2)')
+    g.add_argument('--kraken2_confidence', type=float, default=0.2, help='分类置信度阈值 (默认: 0.2)')
 
     g = p.add_argument_group('清洗参数')
     g.add_argument('--skip_clumpify', action='store_true', help='跳过 Clumpify 聚类重排')

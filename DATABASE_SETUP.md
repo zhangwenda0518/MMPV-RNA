@@ -367,10 +367,30 @@ python public_metadata_pipeline/build_host_pipeline.py \
 产出:
 ```
 hostdb/
-├── kraken2/       # Kraken2 分类库
+├── kraken2/       # Kraken2 分类库 (加 --hostdb-tools ...,kunpeng 时同时含 Kun-peng 分片)
+├── kunpeng/       # 仅 --hostdb-tools 含 kunpeng 且 --kunpeng-native 时: 独立原生库
 ├── bowtie2/       # Bowtie2 比对索引
 ├── hisat2/        # HISAT2 比对索引
 └── minimap2/      # Minimap2 比对索引
+```
+
+**Kun-peng 后端**: `host_depletion.py --classifier kunpeng` 可直接复用上面的
+`hostdb/kraken2/`。首次运行会自动执行
+`kun_peng hashshard --db hostdb/kraken2 --hash-capacity 1G`,
+在原地追加 `hash_*.k2d` + `hash_config.k2d` (保留 `hash.k2d`), 之后该目录
+同时支持 Kraken2 与 Kun-peng。也可在 build_host_pipeline 阶段一次建好:
+
+```bash
+python public_metadata_pipeline/build_host_pipeline.py \
+    --species "<species_name>" --taxid <taxid> \
+    --hostdb-tools kraken2,kunpeng,bowtie2,hisat2,minimap2 \
+    --kunpeng-bin /opt/bin/kun_peng --hash-capacity 1G \
+    --stage all --threads 30
+
+# 只有 kunpeng + 已有 FASTA/Taxonomy 时, 可直接原生建库:
+python public_metadata_pipeline/build_hostbase.py \
+    --tool kunpeng,bowtie2 --input host.fa --output hostdb \
+    --taxonomy ~/database/taxonomy --taxid <taxid> --kunpeng-bin /opt/bin/kun_peng
 ```
 
 **[可选]** 标准 Kraken2 预建通用索引 (host_depletion.py 去宿主第一步, config 引用 `k2_pluspfp_20260226`)。默认流程是自建宿主库 (见 §6 开头的 build_host_pipeline.py, 有基因组数据即可建 kraken2/bowtie2/hisat2/minimap2 四索引); 无参考基因组或需通用去宿主时才用下面的大库:
@@ -400,6 +420,7 @@ wget -c https://genome-idx.s3.amazonaws.com/kraken/k2_pluspfp_20260226.tar.gz \
 | NCBI taxonomy | latest | ~200MB | 分类信息 |
 | MEGAN map | Feb2022 | ~20GB | 分类注释（⚠ 全仓管线代码 0 引用, 2026-10-13 核实; 仅留档, 不装不影响任何阶段） |
 | Kraken2 host | custom | ~50GB | 宿主去除 |
+| Kun-peng host | custom | 约等于 Kraken2 hash 分片总量 | 宿主去除 (可选后端; 与 Kraken2 共用参考库) |
 | Bowtie2/HISAT2 host | custom | ~3GB | 宿主比对 |
 | PhaBOX2 | v2.2 | ~2GB | 宿主预测 |
 
@@ -413,6 +434,10 @@ wget -c https://genome-idx.s3.amazonaws.com/kraken/k2_pluspfp_20260226.tar.gz \
 # A. 质控 / 去宿主
 pixi global install -c conda-forge -c bioconda fastp seqkit clumpify bbmap seqtk pigz
 pixi global install -c conda-forge -c bioconda kraken2 bowtie2 hisat2 minimap2 ribodetector
+# Kun-peng (可选初筛后端, --classifier kunpeng): 无 conda 包, 从 release 取 single binary
+#   https://github.com/eric9n/Kun-peng/releases → kun_peng 放入 PATH
+#   或 export MMPV_KUNPENG_BIN=/path/to/kun_peng
+#   源码构建: cargo build --release → target/release/kun_peng
 pixi global install -c conda-forge -c bioconda hocort hostil ribodetector fastp
 
 # B. 组装

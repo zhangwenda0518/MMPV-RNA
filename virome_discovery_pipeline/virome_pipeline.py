@@ -545,11 +545,19 @@ class ViromePipeline:
         host_align_db = self.args.host_align_db
         if self.args.host_db:
             hdb = Path(self.args.host_db)
+            if (hdb / 'hostdb').is_dir():
+                hdb = hdb / 'hostdb'
             if not kraken2_db:
-                for sub in ['kraken2', 'kraken2_db', 'kraken']:
-                    if (hdb / sub).is_dir():
-                        kraken2_db = str(hdb / sub)
-                        break
+                if (hdb / 'hash.k2d').is_file() or (hdb / 'hash_config.k2d').is_file():
+                    kraken2_db = str(hdb)
+                else:
+                    subs = ['kunpeng', 'kraken2', 'kraken2_db', 'kraken'] \
+                        if getattr(self.args, 'classifier', 'kraken2') == 'kunpeng' \
+                        else ['kraken2', 'kraken2_db', 'kraken', 'kunpeng']
+                    for sub in subs:
+                        if (hdb / sub).is_dir():
+                            kraken2_db = str(hdb / sub)
+                            break
             if not host_align_db:
                 aligner = self.args.aligner
                 for sub in [aligner, f'{aligner}_index', 'align']:
@@ -577,7 +585,7 @@ class ViromePipeline:
             sys.exit(1)
 
         self.log.info("=" * 50)
-        self.log.info("[0b] Kraken2 → Align → Ribodetector")
+        self.log.info("[0b] %s → Align → Ribodetector", self.args.classifier.upper())
 
         # host_depletion.py 完整参数:
         #   --tool, --seq-type, --kraken2_index, --step2_index,
@@ -588,6 +596,10 @@ class ViromePipeline:
         parts = [
             f"python {self.sc['deplete']}",
             f"--tool {self.args.aligner}",
+            f"--classifier {self.args.classifier}",
+            f'--kunpeng-bin "{self.args.kunpeng_bin}"',
+            f"--kunpeng-hash-capacity {self.args.kunpeng_hash_capacity}",
+            f"--min-hit-groups {self.args.min_hit_groups}",
             f"--seq-type {self.args.seq_type}",
             f"--kraken2_index {kraken2_db}",
         ]
@@ -3472,7 +3484,13 @@ def _build_parser(add_help=True):
 
     g = p.add_argument_group('Deplete 阶段 (host_depletion.py)')
     g.add_argument('--deplete_tmp', help='去宿主临时文件目录')
-    g.add_argument('--kraken2_confidence', type=float, default=0.2, help='Kraken2 分类置信度阈值 (默认: 0.2)')
+    g.add_argument('--classifier', default='kraken2', choices=['kraken2', 'kunpeng'],
+                   help='初筛分类器 (默认: kraken2; kunpeng 需 kun_peng, 自动 hashshard 转换 Kraken2 宿主库)')
+    g.add_argument('--kunpeng_bin', default=os.environ.get('MMPV_KUNPENG_BIN', 'kun_peng'),
+                   help='Kun-peng 可执行文件 (默认 $MMPV_KUNPENG_BIN 或 PATH)')
+    g.add_argument('--kunpeng_hash_capacity', default='1G', help='Kun-peng hashshard 容量 (默认: 1G)')
+    g.add_argument('--min_hit_groups', type=int, default=2, help='Kun-peng 最小 hit group 数 (默认: 2)')
+    g.add_argument('--kraken2_confidence', type=float, default=0.2, help='分类置信度阈值 (默认: 0.2)')
     g.add_argument('--keep_rrna', action='store_true', help='保留分离出的 rRNA 序列到 rrna/ 目录')
     g.add_argument('--keep_taxids', default='10239', help='Kraken2 保留的 taxID (逗号分隔), 默认 10239=Viruses, 设空字符串关闭')
     g.add_argument('--vmtouch', action='store_true', help='用 vmtouch 预热 Kraken2 数据库到 page cache (配合 --memory-mapping, 多样本并行时推荐)')
@@ -3775,6 +3793,9 @@ def _load_config(args):
         '--rrna_report': 'rrna_report', '--deplete_steps': 'deplete_steps',
         '--align_config': 'align_config', '--deplete_debug': 'deplete_debug',
         '--kraken2_db': 'kraken2_db',
+        '--classifier': 'classifier', '--kunpeng_bin': 'kunpeng_bin',
+        '--kunpeng_hash_capacity': 'kunpeng_hash_capacity',
+        '--min_hit_groups': 'min_hit_groups',
     }
     _cli_set = set()
     for i, a in enumerate(sys.argv):
@@ -3880,6 +3901,10 @@ def _load_config(args):
         'align_config':     ('align_config', str),
         'deplete_debug':    ('deplete_debug', _cfg_bool),
         'tmp':              ('deplete_tmp', str),
+        'classifier':       ('classifier', str),
+        'kunpeng_bin':      ('kunpeng_bin', str),
+        'kunpeng_hash_capacity': ('kunpeng_hash_capacity', str),
+        'min_hit_groups':   ('min_hit_groups', int),
     }
     for key, (attr, conv) in _deplete_map.items():
         if key not in dep_cfg or attr in _cli_set:   # CLI 显式给了 → 不覆盖

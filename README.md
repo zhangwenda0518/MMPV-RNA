@@ -137,6 +137,9 @@ python public_metadata_pipeline/build_host_pipeline.py --species "Solanum lycope
 # 去宿主 + 去rRNA: Kraken2 → 比对 → Ribodetector
 python data_preprocessing_pipeline/host_depletion.py     -k kraken2_db/ -x bowtie2_idx/ -I out/00a_CleanData/ -O out/00b_HostDepletion/     --tool bowtie2 --seq-type rna-short --rrna -t 40 -j 10
 
+# 同一流程换 Kun-peng 初筛 (自动把 Kraken2 宿主库 hashshard 成双后端库)
+# python data_preprocessing_pipeline/host_depletion.py --classifier kunpeng     -k kraken2_db/ -x bowtie2_idx/ -I out/00a_CleanData/ -O out/00b_HostDepletion/     --tool bowtie2 --seq-type rna-short --rrna -t 40 -j 10
+
 # 报告 + 交接清单: preprocessing_summary.tsv + assembly_ready.list + HTML
 # (一条龙 --stage all = clean → deplete → report 自动收尾)
 python data_preprocessing_pipeline/data_preprocessing.py --stage report --output_dir out/
@@ -276,7 +279,7 @@ python virome_submission_pipeline/submission_pipeline.py \
 | 4 | `convert` | sra2fastx.py | fasterq-dump 批量 SRA → FASTQ.GZ（失败回退 fastq-dump） |
 | 5 | `plot` | gsa_sra.plot.py | 时间/组织/地区/机构 SCI级6面板可视化 |
 | 6 | `hostref` | download_host_genome.py | 宿主基因组下载 (datasets/ngd/FTP/gget 四通道; `--host-fasta` 用户基因组跳过下载) → `host_reference/genome/` |
-| 6 | `hostdb` | build_hostbase.py | Kraken2/Bowtie2/HISAT2/Minimap2 四索引构建 → `host_reference/hostdb/`（默认复用 --species/--taxid） |
+| 6 | `hostdb` | build_hostbase.py | Kraken2/Bowtie2/HISAT2/Minimap2 四索引构建 → `host_reference/hostdb/`（`--tool kraken2,kunpeng` 可追加 Kun-peng 分片库；默认由 Kraken2 库 hashshard 原地转换） |
 | 7 | `report` | generate_report.py | 交互式 HTML 报告 + `sample_handoff.csv` 交接清单 (Run→FASTQ 路径+元数据, 交棒数据清洗管道) |
 
 ### 宿主参考数据库构建
@@ -284,7 +287,7 @@ python virome_submission_pipeline/submission_pipeline.py \
 | # | 阶段 | 脚本 | 功能 |
 |---|------|------|------|
 | 1 | `genome-down` | public_metadata_pipeline/download_host_genome.py | 多通道下载参考基因组 (datasets/ngd/FTP/gget · 或 --genome-fasta 用户提供) + GFF3 + 细胞器基因组 |
-| 2 | `hostdb` | public_metadata_pipeline/build_hostbase.py | Kraken2 + Bowtie2 + HISAT2 + Minimap2 四种索引构建 |
+| 2 | `hostdb` | public_metadata_pipeline/build_hostbase.py | Kraken2/Bowtie2/HISAT2/Minimap2 四种索引构建 (+ 可选 Kun-peng 分片) |
 
 ### 统一预处理入口 (从 .sra 一条命令到 clean reads)
 
@@ -293,7 +296,7 @@ python virome_submission_pipeline/submission_pipeline.py \
 | 1 | `convert` | sra2fastx.py | .sra → FASTQ.GZ（可选，已有 FASTQ 时 `--skip-convert`） |
 | 2 | `clean` | data_preprocessing_pipeline/clean-data.py | Fastp → Seqkit → Clumpify → `00a_CleanData/` |
 | 3 | `hostref` | download_host_genome.py + build_hostbase.py | 可选：宿主基因组四通道下载 + 四索引构建 |
-| 4 | `deplete` | data_preprocessing_pipeline/host_depletion.py | Kraken2 → 比对 → Ribodetector → `00b_HostDepletion/` |
+| 4 | `deplete` | data_preprocessing_pipeline/host_depletion.py | 分类 (Kraken2/Kun-peng) → 比对 → Ribodetector → `00b_HostDepletion/` |
 | 5 | `bbnorm` | data_preprocessing_pipeline/run_bbnorm.py | **可选**（`--bbnorm`，默认不跑）：覆盖度归一化 → `00c_BBnorm/` |
 
 入口脚本: `python public_metadata_pipeline/preprocess_unified.py --sra-dir ... --outdir ...`
@@ -306,7 +309,7 @@ python virome_submission_pipeline/submission_pipeline.py \
 | # | 阶段 | 脚本 | 功能 |
 |---|------|------|------|
 | 1 | `clean` | data_preprocessing_pipeline/clean-data.py | Fastp QC + Seqkit FASTA转换 + Clumpify 聚类重排（提升压缩率） |
-| 2 | `deplete` | data_preprocessing_pipeline/host_depletion.py | Kraken2 → Bowtie2/HISAT2/Minimap2 → rRNA去除 |
+| 2 | `deplete` | data_preprocessing_pipeline/host_depletion.py | 分类 (Kraken2/Kun-peng) → Bowtie2/HISAT2/Minimap2 → rRNA去除 |
 | 3 | `assembly` | assembly_pipeline.py | MEGAHIT / rnaviralSPAdes / Penguin 组装 |
 | 4 | `identification` | virus_identification.py | 10工具并行鉴定 (Genomad+Diamond BLASTX+RdrpCatch+ViraLM+VirBot+VirSorter2+ViralVerify+VirHunter+Metabuli+Viroid BLASTN) |
 | 5 | `filter` | filter_virus.py + graph_propagation.py | UniProt-strict 高置信过滤 (CDD+UniProt 两层) + 可选 graph 子步骤: 对无证据保留结果二次裁决 (rescue/demote) → COBRA 输入; 思想源自 GMW, 2026 (默认关闭, graph.enabled 开启) |

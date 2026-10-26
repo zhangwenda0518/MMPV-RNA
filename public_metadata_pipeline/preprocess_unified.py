@@ -45,6 +45,7 @@ convert → clean → [hostref] → deplete → [bbnorm]，
 
 import argparse
 import os
+import shlex
 import shutil
 import sys
 import subprocess
@@ -203,7 +204,8 @@ def stage_clean(fastq_dir, outdir, logger,
 
 def stage_hostref(logger, host_species, host_taxid, host_fasta,
                   host_work_dir, ncbi_api, tool, seq_type, threads,
-                  host_download_source="auto"):
+                  host_download_source="auto", classifier="kraken2",
+                  kunpeng_bin="kun_peng", hash_capacity="1G"):
     """宿主参考构建: 直接调 download_host_genome.py (四通道) + build_hostbase.py, 不嵌套子管道。
 
     返回 (kraken2_db, step2_index_prefix)；失败返回 None。
@@ -234,22 +236,34 @@ def stage_hostref(logger, host_species, host_taxid, host_fasta,
         logger.error("[hostref] 未找到宿主基因组 FASTA: %s", fasta)
         return None
 
-    # hostdb: Kraken2/Bowtie2/HISAT2/Minimap2 四索引
+    # hostdb: Kraken2/Bowtie2/HISAT2/Minimap2 四索引 (+ 可选 Kun-peng 分片)
+    tools = "kraken2,bowtie2,hisat2,minimap2"
+    if classifier == "kunpeng":
+        tools += ",kunpeng"       # build_hostbase 默认用 hashshard 原地转换
     cmd = (f"python {SCRIPT_DIR / 'build_hostbase.py'} "
-           f"--tool kraken2,bowtie2,hisat2,minimap2 "
+           f"--tool {tools} "
            f"--input {fasta} --output {hostdb} "
            f"--threads {threads} "
            f"--seq-type dna-short,rna-short,nanopore,pacbio "
            f"--k2-libs archaea,bacteria,plasmid,fungi,protozoa,UniVec "
-           f"--taxid {host_taxid}")
+           f"--taxid {host_taxid} "
+           f"--hash-capacity {hash_capacity} "
+           f"--kunpeng-bin {shlex.quote(str(kunpeng_bin))}")
     if not run_cmd(cmd, logger, "hostdb"):
         return None
     kraken2_db = hostdb / "kraken2"
     step2_index = hostdb / tool / "host"
-    if not (kraken2_db / "hash.k2d").is_file():
-        logger.error("[hostref] Kraken2 库缺失: %s", kraken2_db)
+    if classifier == "kunpeng":
+        ok_db = (kraken2_db / "hash_config.k2d").is_file()
+        missing = "Kun-peng 分片 (hash_config.k2d)"
+    else:
+        ok_db = (kraken2_db / "hash.k2d").is_file()
+        missing = "Kraken2 库 (hash.k2d)"
+    if not ok_db:
+        logger.error("[hostref] %s 缺失: %s", missing, kraken2_db)
         return None
-    logger.info("  宿主参考就绪: kraken2=%s, %s 索引前缀=%s", kraken2_db, tool, step2_index)
+    logger.info("  宿主参考就绪: %s=%s, %s 索引前缀=%s",
+                classifier, kraken2_db, tool, step2_index)
     return str(kraken2_db), str(step2_index)
 
 
@@ -257,7 +271,9 @@ def stage_deplete(fasta_dir, outdir, logger,
                   kraken2_db, step2_index,
                   tool="bowtie2", seq_type="rna-short",
                   threads=4, jobs=4, rrna=True,
-                  tmp=None):
+                  tmp=None, classifier="kraken2",
+                  kunpeng_bin="kun_peng", hash_capacity="1G",
+                  min_hit_groups=2):
     """FASTA → host-depleted + rRNA-removed reads"""
     logger.info("=== [deplete] 宿主剔除 + rRNA 去除 ===")
     cmd_parts = [
@@ -265,6 +281,10 @@ def stage_deplete(fasta_dir, outdir, logger,
         f"-I {fasta_dir}",
         f"-O {outdir}",
         f"--tool {tool}",
+        f"--classifier {classifier}",
+        f"--kunpeng-bin {shlex.quote(str(kunpeng_bin))}",
+        f"--kunpeng-hash-capacity {hash_capacity}",
+        f"--min-hit-groups {min_hit_groups}",
         f"--seq-type {seq_type}",
         f"-k {kraken2_db}",
         f"-x {step2_index}",
@@ -313,6 +333,12 @@ def main():
     g.add_argument("--skip-convert", action="store_true", help="跳过 SRA 转换")
     g.add_argument("--skip-clean", action="store_true", help="跳过清洗 (fastp+clumpify)")
     g.add_argument("--skip-deplete", action="store_true", help="跳过宿主剔除")
+    g.add_argument("--classifier", default="kraken2", choices=["kraken2", "kunpeng"],
+                   help="初筛分类器 (默认: kraken2; kunpeng 需 kun_peng, 自动 hashshard 转换)")
+    g.add_argument("--kunpeng-bin", default=os.environ.get("MMPV_KUNPENG_BIN", "kun_peng"),
+                   help="Kun-peng 可执行文件 (默认 $MMPV_KUNPENG_BIN 或 PATH)")
+    g.add_argument("--hash-capacity", default="1G", help="Kun-peng hashshard 容量 (默认: 1G)")
+    g.add_argument("--min-hit-groups", type=int, default=2, help="Kun-peng 最小 hit group 数 (默认: 2)")
     g.add_argument("--bbnorm", action="store_true",
                    help="可选: 去宿主后 BBNorm 覆盖度归一化 → 00c_BBnorm/ (默认不运行; "
                         "需 deplete 产物, 与 --skip-deplete 同用时要求 00b_HostDepletion/ 已存在)")
@@ -438,7 +464,10 @@ def main():
         built = stage_hostref(logger, args.host_species, args.host_taxid,
                               args.host_fasta, host_work, args.ncbi_api,
                               args.tool, args.seq_type, threads=args.threads,
-                              host_download_source=args.host_download_source)
+                              host_download_source=args.host_download_source,
+                              classifier=args.classifier,
+                              kunpeng_bin=args.kunpeng_bin,
+                              hash_capacity=args.hash_capacity)
         if built:
             args.kraken2_db, args.step2_index = built
         else:
@@ -466,7 +495,11 @@ def main():
                              threads=args.threads,
                              jobs=args.jobs,
                              rrna=True,
-                             tmp=args.tmp):
+                             tmp=args.tmp,
+                             classifier=args.classifier,
+                             kunpeng_bin=args.kunpeng_bin,
+                             hash_capacity=args.hash_capacity,
+                             min_hit_groups=args.min_hit_groups):
             failed.append("deplete")
     else:
         logger.info("[deplete] 跳过")
