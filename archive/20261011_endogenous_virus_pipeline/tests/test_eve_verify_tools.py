@@ -225,6 +225,8 @@ def credit_components_bruteforce(hsps, comp_aa_min=100):
 
     线上版用 `subtract_ivs` 做区间算术 + 求和; 这里把占用展开成位置集合再取差集。
     机制完全不同, 因而是一个真正的独立参照。
+    判定规则与线上版同步 (v7 P1-4): 组件数 = min(比对长度封顶, 空闲区间能放下的
+    完整蛋白位数) —— 闸门不再是 avail >= nt_min 的全有全无。
     """
     nt_min = comp_aa_min * 3
     credited, occupied, n_used = set(), set(), 0
@@ -232,7 +234,7 @@ def credit_components_bruteforce(hsps, comp_aa_min=100):
         avail = len(set(range(h["qs"], h["qe"] + 1)) - occupied)
         labels = [c for c in s2.CANON if c in h["comps"].split("+")]
         cap = max(1, h["aln"] // comp_aa_min)
-        got = labels[:cap] if avail >= nt_min else []
+        got = labels[:min(cap, avail // nt_min)]
         if got:
             n_used += 1
             credited.update(got)

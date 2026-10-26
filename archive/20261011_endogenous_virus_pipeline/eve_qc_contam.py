@@ -28,7 +28,6 @@ eve_qc_contam.py — 测序污染筛查（对一次已跑完的筛查结果事�
 import argparse
 import collections
 import json
-import os
 import sys
 from pathlib import Path
 

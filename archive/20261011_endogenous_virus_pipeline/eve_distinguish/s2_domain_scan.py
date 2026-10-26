@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""S2 功能通道 [判定逻辑最后变更: 模块 v6]: 基因座(locus)架构 + 前病毒规模判定.
+"""S2 功能通道 [判定逻辑最后变更: 模块 v7]: 基因座(locus)架构 + 前病毒规模判定.
+v7 修 P1-4: credit_components 的可用区间闸门从"全有全无"改为按剩余空闲区间折算
+(详见函数 docstring), 重叠 HSP 严重时 best_locus_ncomp 会比旧版更紧。
 模块 v6.2 只把 provirus / multi_locus 两个判据抽成函数以便测试, 输出逐字节不变.
 
 v3 的做法: architecture_score = 非重叠病毒基因座数, 判定里"loci>=2 或 span>=1500"
@@ -76,16 +78,22 @@ def fmt_comps(cs):
 
 
 def subtract_ivs(free, lo, hi):
-    """从区间列表 free 里扣掉 [lo,hi)."""
+    """从闭区间列表 free (每个元素 [a,b], 含端点) 里扣掉闭区间 [lo,hi].
+
+    坐标口径: qs/qe 是 1 基**闭**坐标 (blastx 对齐的核苷酸跨度), 占用与空闲都按
+    闭区间算。v7 前这里用半开口径判交 (lo >= b 视为不交) —— 端点恰相接的两条
+    比对会双计 1nt; 闸门是全有全无时这 1nt 不影响结论, P1-4 改按 avail 折算
+    组件数后它会翻转结果, 统一成闭区间。
+    """
     out = []
     for a, b in free:
-        if hi <= a or lo >= b:
+        if lo > b or hi < a:            # 闭区间完全不交
             out.append((a, b))
             continue
-        if lo > a:
-            out.append((a, min(lo, b)))
-        if hi < b:
-            out.append((max(hi, a), b))
+        if lo - 1 >= a:
+            out.append((a, lo - 1))
+        if hi + 1 <= b:
+            out.append((hi + 1, b))
     return out
 
 
@@ -93,9 +101,13 @@ def credit_components(hsps, comp_aa_min=COMP_AA_MIN):
     """一个基因座里哪些组件真有独立证据 -> (组件集合, 贡献了证据的 HSP 条数).
 
     按 bits 降序遍历 HSP, 已判过的 HSP 的 query 区间视为已占用; 之后落进同一段序列的
-    比对不再证明新组件 (两段重叠的比对不可能各证一个不同蛋白)。每条 HSP 自己还受长度
-    封顶: N aa 最多证 N//comp_aa_min 个组件, 超限时按 CANON 序取前几个 —— 融合条目
-    名里的多个组件是**参考**的事实, 不是这段比对的事实。
+    比对不再证明新组件 (两段重叠的比对不可能各证一个不同蛋白)。每条 HSP 自己还受
+    双重封顶: N aa 的比对最多证 N//comp_aa_min 个组件 (融合条目 MP+CP / AP+RT / RT+RH
+    的名字带多个组件, 但那是条目的事实), **且组件总数不得超过剩余空闲区间能放下的
+    完整蛋白位数** (avail // (3*comp_aa_min)) —— v7 修 P1-4: 旧版的可用区间闸门是
+    "全有全无" (avail >= nt_min 一票放行), 封顶只看本条 HSP 的比对长度, 于是 300 aa
+    的融合比对在只剩 600 nt 未占用区间时仍记 3 个组件 (3 个蛋白本需 900 nt)。
+    超限时按 CANON 序取前几个, credit_hsps 列暴露"到底几条 HSP 撑起了几个组件"。
 
     注意单位: qs/qe 是 nt (blastx 查询坐标), aln 是 aa, 所以"可用区间够放一个蛋白"
     要按 3x 折算成 nt 再比。混着比会让 200 nt 的重叠尾巴也过关, 等于没设这道闸。
@@ -109,8 +121,10 @@ def credit_components(hsps, comp_aa_min=COMP_AA_MIN):
         avail = sum(b - a + 1 for a, b in free)
         labels = [c for c in CANON if c in h["comps"].split("+")]
         cap = max(1, h["aln"] // comp_aa_min)
-        # 可用区间要够放一个蛋白; 融合条目超限时按 CANON 序截断
-        got = labels[:cap] if avail >= nt_min else []
+        # 可用区间按"还放得下几个完整蛋白"折算 (n_fit=0 即旧版的不足闸门);
+        # 与比对长度封顶取小者, 融合条目超限时按 CANON 序截断
+        n_fit = avail // nt_min
+        got = labels[:min(cap, n_fit)]
         if got:
             n_used += 1
             credited.update(got)
@@ -265,7 +279,7 @@ def main():
                       f"{cauli_bits.get(cid, 0):.0f}\t{cauli_label.get(cid, '-')[:60]}\t"
                       f"{best_span}\t{best_n}\t{best_comps}\t{completeness}\t"
                       f"{'TRUE' if provirus else 'FALSE'}\t{multi}\t{n_credit_hsps}\n")
-    print(f"[done] s2(logic v6, credited components): {len(ids)} contigs, "
+    print(f"[done] s2(logic v7, credited components): {len(ids)} contigs, "
           f"前病毒规模(单基因座>={PROVIRUS_SPAN}nt 且>={PROVIRUS_NCOMP}/5 组件) {n_scale} 条 -> {out_tsv}")
 
 

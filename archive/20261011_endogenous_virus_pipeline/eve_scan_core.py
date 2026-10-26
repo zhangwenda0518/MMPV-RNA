@@ -45,8 +45,17 @@ from pathlib import Path
 WINDOW = 50000        # 滑窗宽度 (nt)
 EVALUE = "1e-5"       # blastx e-value 阈值
 MERGE_D = 300         # 位点合并距离 (nt)
+FLANK_NT = 3000       # 侧翼上下文长度 (nt, 两侧各扩这么多; 对齐 hi-fever context)
+FLANK_MERGE_D = 1000  # 侧翼抽取前先合并的距离 (nt; 对齐 hi-fever merge -d 1000)
 HOST_BS = 50          # Stage2 双侧判定阈值 (bitscore)
 VIRAL_BS = 50
+EPRV_MIN_BITS = 70.0  # v7.7: host_like->eprv_host_dominant 豁免的 ref_bitscore 下限
+                      # (水稻 52 个被压 Cauli 位点 min=75.5/median=125, 70 取全量并留噪声余量)
+EPRV_MAX_PLANT_RATIO = 1.5  # v7.8: 植物侧领先不得超过病毒侧该倍数 —— 全库实测发现
+                      # 仅凭 bits>=70 会误放 202 万条真宿主基因 (Picea 改判率 96%,
+                      # 植物侧 bits 411-493 vs 病毒侧 120, 是含 RT 域的宿主基因)。
+                      # 豁免只救"两侧接近、病毒侧被微弱压制"的古老 EPRV (水稻案例
+                      # 植物/病毒比约 1.1-1.5), 不救"植物侧压倒性领先"的宿主基因。
 
 OUTFMT1 = ("6 qseqid qlen sseqid slen stitle evalue bitscore "
            "qcovhsp pident length qstart qend")
@@ -119,6 +128,11 @@ except Exception:  # pragma: no cover - 脱离仓库环境的兜底
 
 SAFE_CHARS = set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-")
 
+# 批次清单文件名 (eve_screen.py -B 跑批时写在输出根下; eve_element_db.py 的
+# cluster 阶段读它把 genome 名映射回 assembly 指纹, 供 n_genomes/n_assemblies
+# 分列 —— 同一 assembly 换名重复登记时, 跨基因组支持数不再被名称集合抬高)
+BATCH_MANIFEST_NAME = "batch_manifest.tsv"
+
 
 @dataclass
 class EveConfig:
@@ -139,6 +153,12 @@ class EveConfig:
     host_bs: float = HOST_BS
     viral_bs: float = VIRAL_BS
     cmd_timeout: int = 0     # 单条外部命令超时 (秒); 0 = 不限 (防工具挂死占核)
+    # 侧翼上下文 (v7.2; 对齐 hi-fever 的 context 层)
+    flank_nt: int = FLANK_NT
+    flank_merge_d: int = FLANK_MERGE_D
+    # Stage2/3 的 diamond 灵敏度 (v7.2): 旧版硬编码 --fast。判定链的输入直接决定
+    # "哪些候选有病毒侧支持", 用 --fast 会低估召回; 需要更高灵敏度时显式改。
+    s23_sensitivity: str = "--fast"
 
 
 def logmsg(msg):
@@ -424,13 +444,21 @@ def load_id2div(path):
     return m
 
 
-def verdict_loci(raw_tsv, id2div_map, verdict_tsv, host_bs=HOST_BS, viral_bs=VIRAL_BS):
+def verdict_loci(raw_tsv, id2div_map, verdict_tsv, host_bs=HOST_BS, viral_bs=VIRAL_BS,
+                 all_loci=None):
     """Stage2 双侧判定: 拆分库内 viral 侧最高 bitscore vs plant 侧最高 bitscore.
 
     返回 (n_viral_supported, n_host_like, n_undetermined).
     verdict: viral_supported = 病毒侧过阈值且不弱于植物侧 (排除宿主基因假阳性)
              host_like        = 植物侧更强 (宿主基因/重复序列, 非 EVE)
              undetermined     = 两侧都不过阈值 (需 Stage3 深度归属)
+
+    all_loci (v7, P1-1): Stage1 的全部位点名 (loci.bed 第 4 列) —— 判定的**输出域**。
+        旧版输出域只含 S2 原始命中里出现过的位点, 于是"S1 有位点、S2 双侧库零命中"
+        的位点不写行; summarize_genome 对缺行默认 undetermined, 而 Stage3 只从
+        verdict 表收候选 —— 结果是汇总把它算成 undetermined, RVDB 深度归属却
+        拿不到它 ("未判定"计数与实际送 RVDB 的集合不一致)。传入后每个 Stage1
+        位点都有一行, 零命中显式写 undetermined (两侧最佳命中留空)。
     """
     hits = {}
     with open(raw_tsv, encoding="utf-8") as fh:
@@ -439,18 +467,27 @@ def verdict_loci(raw_tsv, id2div_map, verdict_tsv, host_bs=HOST_BS, viral_bs=VIR
             if len(c) < 11:
                 continue
             try:
-                hits.setdefault(c[0], []).append((float(c[9]), c[1]))
+                hits.setdefault(locus_key(c[0]), []).append((float(c[9]), c[1]))
             except ValueError:
                 continue
+    # 输出域 = Stage1 全部位点 ∪ 命中过的位点 (后者是防御: loci.bed 与 s2_raw
+    # 不同步时不静默丢行)。显示名优先用 loci.bed 的原始写法 (chr1:50-699),
+    # 与 summary 的 locus 列同源; 只有命中里多出来的键才退回 diamond 回显形式。
+    display = {}
+    if all_loci is not None:
+        for l in all_loci:
+            display[locus_key(l)] = l
+    for k in hits:
+        display.setdefault(k, k)
     n_v = n_h = n_u = 0
     unmapped = set()
     with open(verdict_tsv, "w", encoding="utf-8") as fo:
         fo.write("locus\tverdict\tbest_viral_id\tbest_viral_bs\t"
                  "best_plant_id\tbest_plant_bs\n")
-        for locus in sorted(hits):
+        for k in sorted(display):
             bv_id, bv = "", 0.0
             bp_id, bp = "", 0.0
-            for bs, sid in hits[locus]:
+            for bs, sid in hits.get(k, ()):
                 dv = id2div_map.get(sid, "?")
                 if dv == "?":
                     unmapped.add(sid)
@@ -458,6 +495,12 @@ def verdict_loci(raw_tsv, id2div_map, verdict_tsv, host_bs=HOST_BS, viral_bs=VIR
                     bv_id, bv = sid, bs
                 elif dv == "plant" and bs > bp:
                     bp_id, bp = sid, bs
+            if k not in hits:
+                # P1-1: S2 零命中的位点显式落 undetermined, 保证 Stage3 候选集
+                # 与汇总口径一致 (旧行为: 整行缺失, 靠下游默认值补)
+                fo.write(f"{display[k]}\tundetermined\t\t\t\t\n")
+                n_u += 1
+                continue
             if bv >= viral_bs and bv >= bp:
                 v = "viral_supported"
                 n_v += 1
@@ -467,7 +510,7 @@ def verdict_loci(raw_tsv, id2div_map, verdict_tsv, host_bs=HOST_BS, viral_bs=VIR
             else:
                 v = "undetermined"
                 n_u += 1
-            fo.write(f"{locus}\t{v}\t{bv_id}\t{fmt_num(bv)}\t"
+            fo.write(f"{display[k]}\t{v}\t{bv_id}\t{fmt_num(bv)}\t"
                      f"{bp_id}\t{fmt_num(bp)}\n")
     # 未映射的 sseqid 一律不参与两侧对比: 若 id2div 表分隔符不对或与 pv_dmnd 版本
     # 不匹配, 全部位点会静默落成 undetermined / Stage3 候选为 0 而退出码仍是 0.
@@ -537,7 +580,30 @@ def summarize_genome(name, outdir):
             b = best.get(lk, [""] * 7)
             v = verd.get(lk, ["", "undetermined", "", "", "", ""])
             r = rvdb.get(lk, ("", ""))
-            fo.write(f"{locus}\t{v[1]}\t"
+            verdict = v[1]
+            # v7.7 EPRV 豁免 (EPRV 召回验证 2026-10-20 的直接产物): Stage2 双侧
+            # 对比把宿主侧相似度更强的位点压成 host_like, 但水稻实测 52/52
+            # Caulimoviridae 位点被全数压掉 (viral_supported+Cauli = 0) —— 古老
+            # 驯化 EPRV (florendovirus/eRTBV 类) 的植物侧旁系同源本来就会盖过
+            # 高度退化的病毒侧, 这正是 vead088 反向失效模式 (宿主相似度吞掉真
+            # EVE)。Stage1 科级映射 (s1_best.ref_family) 独立于 Stage2 双侧对比,
+            # 已把该位点判进 Caulimoviridae 且 ref bitscore 过阈值时, host_like
+            # 改判 eprv_host_dominant, 不许吞。
+            if verdict == "host_like" and len(b) > 4 and b[2] == "Caulimoviridae":
+                try:
+                    _rb = float(b[4])
+                except ValueError:
+                    _rb = 0.0
+                try:
+                    _pb = float(v[5]) if len(v) > 5 and v[5] else 0.0
+                except ValueError:
+                    _pb = 0.0
+                # v7.8: 双条件 —— 病毒侧够强, 且植物侧没有压倒性领先。
+                # 全库实测: 只判 _rb>=70 会把 202 万条宿主基因误放行
+                # (Picea 改判率 96%, 植物侧 411-493 vs 病毒侧 120)。
+                if _rb >= EPRV_MIN_BITS and _pb <= _rb * EPRV_MAX_PLANT_RATIO:
+                    verdict = "eprv_host_dominant"
+            fo.write(f"{locus}\t{verdict}\t"
                      f"{b[2] if len(b) > 2 else ''}\t{b[1] if len(b) > 1 else ''}\t"
                      f"{b[4] if len(b) > 4 else ''}\t{b[5] if len(b) > 5 else ''}\t"
                      f"{v[2]}\t{v[3]}\t{v[4]}\t{v[5]}\t{r[1]}\t"
@@ -548,7 +614,6 @@ def summarize_genome(name, outdir):
 def merge_all(outdir):
     """跨基因组汇总: kingdom_summary / kingdom_loci_all / family_by_genome."""
     outdir = Path(outdir)
-    t0 = time.time()
     all_rows = []
     counts = {}
     fam_g = {}
@@ -577,14 +642,16 @@ def merge_all(outdir):
                     c = c[1:]
                     line = "\t".join(c) + "\n"
                 all_rows.append((name, line.rstrip("\n")))
-                if c[1] == "viral_supported":
+                # v7.7: eprv_host_dominant 计入 EVE 侧 (viral_supported 列) ——
+                # kingdom_summary 表头不变, 下游无感; 该判词本身就是 EVE 判定.
+                if c[1] in ("viral_supported", "eprv_host_dominant"):
                     n_v += 1
                 elif c[1] == "host_like":
                     n_h += 1
                 else:
                     n_u += 1
                 fam = c[2] or "Other_viral"
-                if c[1] == "viral_supported":
+                if c[1] in ("viral_supported", "eprv_host_dominant"):
                     fam_g.setdefault(fam, {})
                     fam_g[fam][name] = fam_g[fam].get(name, 0) + 1
         counts[name] = (n_v, n_h, n_u)
@@ -637,6 +704,11 @@ def loci_paths(outdir, name):
         "hits": d / f"{name}.s1_hits.bed",
         "loci_bed": d / f"{name}.loci.bed",
         "loci_fa": d / f"{name}.loci.fa",
+        # v7.2: 侧翼序列 (±FLANK_NT, merge FLANK_MERGE_D) —— 与 hi-fever 的
+        # strict/context 双层对齐。整合证据 (宿主侧翼连续性) 必须有这段序列才能判,
+        # 主线旧版只抽位点本身, 等于把最硬的证据留在了外面。
+        "context_bed": d / f"{name}.loci_context.bed",
+        "context_fa": d / f"{name}.loci_context.fa",
         "fai": d / f"{name}.genome.fai",
         "best": d / f"{name}.s1_best.tsv",
     }
@@ -753,6 +825,12 @@ def stage1_discover(cfg, genome, name, outdir, threads, fast, overlap,
     if force or not p["loci_fa"].exists():
         _extract(cfg, g, p["loci_bed"], p["loci_fa"], p["fai"], log)
 
+    # 5b) 抽侧翼上下文序列 (v7.2: 整合证据需要位点两侧的宿主序列)
+    if force or not p["context_fa"].exists():
+        _extract_context(cfg, g, p["loci_bed"], p["context_bed"],
+                         p["context_fa"], p["fai"], log, flank=cfg.flank_nt,
+                         merge_d=cfg.flank_merge_d)
+
     # 6) 每位点最佳 ref 命中
     if force or not p["best"].exists():
         n_best = assign_best_hits(p["hits"], p["loci_bed"], p["best"])
@@ -769,9 +847,54 @@ def _gzip_to(src, dst, timeout=0):
                        timeout=timeout or None)
 
 
+def slop_bed(bed, out_bed, flank=FLANK_NT, merge_d=FLANK_MERGE_D):
+    """位点 BED -> 侧翼上下文 BED (先按 merge_d 合并, 再两侧各扩 flank, 起点钳到 0).
+
+    v7.2 (对齐 hi-fever 的 strict/context 双层): 整合证据靠的是"位点两侧的宿主序列
+    是否连续/同一位点", 只抽位点本身拿不到这段。做法与 bedtools merge + slop 等价,
+    但用纯 Python 实现, 少一个外部依赖、坐标换算可单测:
+      1) 按 contig 分组, 0 基半开区间按 merge_d 合并 (同 bedtools merge -d);
+      2) 每段两侧各扩 flank, start 钳到 0 (负值不能写进 BED);
+      3) 第 4 列写 `<contig>:<start1>-<end>` (1 基闭区间), 与 loci 命名同一套,
+         下游可直接用 locus_key 关联。
+    返回 (n_loci, n_context): 输入位点数与输出的上下文段数 (合并会减少段数)。
+    """
+    by_contig = {}
+    n_in = 0
+    with open(bed, encoding="utf-8") as fi:
+        for line in fi:
+            s = line.strip()
+            if not s or s.startswith(("#", "track", "browser")):
+                continue
+            c = s.split("\t")
+            if len(c) < 3:
+                continue
+            try:
+                start, end = int(c[1]), int(c[2])
+            except ValueError:
+                continue
+            if end <= start:
+                continue
+            by_contig.setdefault(c[0], []).append((start, end))
+            n_in += 1
+    n_out = 0
+    with open(out_bed, "w", encoding="utf-8") as fo:
+        for contig in sorted(by_contig):
+            merged = []
+            for s, e in sorted(by_contig[contig]):
+                if merged and s <= merged[-1][1] + merge_d:
+                    merged[-1] = (merged[-1][0], max(merged[-1][1], e))
+                else:
+                    merged.append((s, e))
+            for s, e in merged:
+                cs, ce = max(0, s - flank), e + flank
+                fo.write(f"{contig}\t{cs}\t{ce}\t{contig}:{cs + 1}-{ce}\n")
+                n_out += 1
+    return n_in, n_out
+
+
 def bed_to_regions(bed, regions):
     """BED (0 基半开) → samtools 区域文件 (1 基闭区间, 一行一个 chr:FROM-TO).
-
     位点名 (第 4 列) 不使用: samtools faidx 以区域字符串本身作输出 FASTA 头,
     恰好就是本管线的位点命名 (chr1:50-699); 但下游仍统一过 locus_key()
     归一化, 不依赖这个巧合.
@@ -868,6 +991,24 @@ def _extract(cfg, genome_fa, bed, out_fa, fai, log):
     return n
 
 
+def _extract_context(cfg, genome_fa, loci_bed, context_bed, out_fa, fai, log,
+                     flank=FLANK_NT, merge_d=FLANK_MERGE_D):
+    """抽侧翼上下文序列 (v7.2). 返回 (n_loci, n_context).
+
+    与 _extract 同一套抽序列与核对路径 (samtools + check_extracted), 只是 BED 先
+    经 slop_bed 扩成上下文段。空位点同样写空文件, 保持"空文件=已完成且零结果"
+    的断点语义。
+    """
+    n_loci, n_ctx = slop_bed(loci_bed, context_bed, flank=flank, merge_d=merge_d)
+    if n_ctx == 0:
+        log.info("无位点, 写空侧翼序列文件")
+        Path(out_fa).write_text("", encoding="utf-8")
+        return n_loci, 0
+    log.info("context: %d 个位点 -> %d 段 ±%dnt 上下文", n_loci, n_ctx, flank)
+    _extract(cfg, genome_fa, context_bed, out_fa, fai, log)
+    return n_loci, n_ctx
+
+
 # ---------------- Stage 2 ----------------
 def stage2_verdict(cfg, name, outdir, threads, log, force=False):
     d = genome_dir(outdir, name, "verdict")
@@ -889,14 +1030,22 @@ def stage2_verdict(cfg, name, outdir, threads, log, force=False):
         if force or not raw.exists():
             log.info("stage2 diamond blastx vs plant_virus (loci.fa)")
             diamond_blastx(cfg, cfg.pv_dmnd, str(loci_fa), str(raw),
-                           threads, "--fast", OUTFMT2, log,
+                           threads, cfg.s23_sensitivity, OUTFMT2, log,
                            extra=["-k", "5"], err_path=d / "diamond_s2.err")
         else:
             log.info("stage2 raw hits exist, skip")
         log.info("load id2div: %s", cfg.id2div)
         div = load_id2div(cfg.id2div)
+        # P1-1: 判定输出域 = Stage1 全部位点 (loci.bed 第 4 列), 零命中位点显式
+        # 写 undetermined —— 汇总的"未判定"与 Stage3 实际送 RVDB 的集合才一致
+        all_loci = []
+        with open(p["loci_bed"], encoding="utf-8") as fh:
+            for line in fh:
+                c = line.rstrip("\n").split("\t")
+                if len(c) > 3 and c[3]:
+                    all_loci.append(c[3])
         n_v, n_h, n_u = verdict_loci(raw, div, verdict,
-                                     cfg.host_bs, cfg.viral_bs)
+                                     cfg.host_bs, cfg.viral_bs, all_loci=all_loci)
         log.info("STAGE2 COMPLETE in %.0fs (viral_supported=%d host_like=%d "
                  "undetermined=%d)", time.time() - t0, n_v, n_h, n_u)
     else:
@@ -943,7 +1092,7 @@ def stage3_annotate(cfg, name, outdir, threads, genome_fa, log, force=False):
     _extract(cfg, genome_fa, cand_bed, cand_fa, p["fai"], log)
     log.info("stage3 diamond blastx vs RVDB (%d candidates)", n)
     diamond_blastx(cfg, cfg.rvdb_dmnd, str(cand_fa), str(out),
-                   threads, "--fast", OUTFMT2, log,
+                   threads, cfg.s23_sensitivity, OUTFMT2, log,
                    extra=["-k", "5"], err_path=d / "diamond_s3.err")
     log.info("STAGE3 COMPLETE in %.0fs", time.time() - t0)
     return d

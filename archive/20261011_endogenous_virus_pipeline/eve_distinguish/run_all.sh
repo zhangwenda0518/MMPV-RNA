@@ -1,14 +1,19 @@
 #!/bin/bash
-# eve_distinguish — DNA 病毒候选 vs 内源病毒元件 (EVE) 判别, 一键后运行脚本 (v6.3)
-# v6.3 变更: ① s1 修 stop_profile 的 3nt 高估 (旧版把终止密码子自身 3nt 算进"无终止段");
-#            ② 面板升 v3 (bare polyprotein 兜底标 AP+RT+RH + build_panel --supplement
-#            属级补充, Badnavirus 13 -> 39 条, 三个零覆盖属补齐);
-#            ③ 新增 s2c 参考基因组通道 (可选 -G, 见下方"方案三")。
-#            对既有 run 目录量化影响面: python3 verify/rerun_diff.py --run-dir ... --evidence ...
-# 版本标记约定: **模块版本**只有一处权威声明 —— 本文件头与 README 标题 (当前 v6.3)。
+# eve_distinguish — DNA 病毒候选 vs 内源病毒元件 (EVE) 判别, 一键后运行脚本 (v7.0)
+# v7.0 变更 (2026-10-17 修复轮, 对应 2026-10-11 审查 P0/P1):
+#            ① P0-1: s1 读框偏移双重应用根修 —— 扫描锚点 (qs-1 / L-qe) 本就在主读框
+#            栅格上, 不再叠加 |qframe|-1; 基线两框改为相对锚点的相位 1/2。全部
+#            decay_class 分布会移动, v6.x 校准数字作废, 需 verify/ 服务器重算;
+#            ② P0-2: s3 evidence 覆盖率闸门 —— 缺行候选判 missing_evidence(REVIEW),
+#            不再可能静默滑进唯一删数据的 REMOVE 分支; verdict 表旁写 *.provenance.tsv
+#            溯源指纹; 本脚本在 s3 前加 ID 重叠预检 (零重叠中止);
+#            ③ s2 组件记功的可用区间闸门从"全有全无"改为按剩余空闲区间折算 (P1-4);
+#            ④ 面板指纹闸门: OUT 里跑过一次后, 换面板重入同一 OUT 直接中止 (P2-3)。
+# 对既有 run 目录量化影响面: python3 verify/rerun_diff.py --run-dir ... --evidence ...
+# 版本标记约定: **模块版本**只有一处权威声明 —— 本文件头与 README 标题 (当前 v7.0)。
 # 各 stage 文件里写的 `[判定逻辑最后变更: 模块 vN]` 指的是**该文件自己的逻辑**最后一次改动
 # 发生在模块的哪个版本, 不是另一套并列的版本号。所以 s2b 停在 v5.1 是正常的:
-# 它自那以后没再改过判定逻辑, 而模块整体继续往前走 (s1/s2c 的逻辑变更于 v6.3)。
+# 它自那以后没再改过判定逻辑, 而模块整体继续往前走 (s1/s3/s4 的逻辑变更于 v7)。
 # ============================================================================
 #
 # 两个方法 (详见 README.md):
@@ -65,6 +70,14 @@
 #       --subj-cap-gb N    解压后寄主组装/参考基因组超过这个体积就跳过, 防 OOM (默认 40)
 #       --no-host          不跑寄主比对 (S1/S2 仍可用; 但 host_contamination_likely 检不出)
 #   -h, --help             打印本段用法
+#
+# 环境变量:
+#   STRICT_EVE=1           严格模式: 仅凭退化通道 (evidence_tier=C/D) 的 MOVE_EVE 降为
+#                          REVIEW。退化对随机组成富集仅 1.21x, 单独不足以判 EVE。
+#   REQUIRE_FLANK=1        更严: 只有 s2c 基因组侧翼证据 (A 档) 允许 MOVE_EVE;
+#                          B 档 (转录本 scaffold 位点) 也降为 REVIEW。**投稿口径建议开**,
+#                          但前提是提供 -G (否则 A 档恒为 0, MOVE_EVE 全部转 REVIEW)。
+#                          默认 0 (保留旧行为, 便于与历史 run 对比)。
 #
 # 产物 (全部落在 -o 指定目录):
 #   panel_hits.tsv / baits_hits.tsv / all_hits.tsv   DIAMOND blastx 原始命中
@@ -239,7 +252,7 @@ fi
 
 mkdir -p "$OUT"
 cd "$OUT"
-echo "[run_all] eve_distinguish v6.3"
+echo "[run_all] eve_distinguish v7.0"
 echo "[run_all]   (各 stage 的 [done] 横幅写的是该文件逻辑的版本, 不是模块版本)"
 echo "[run_all] MOD=$MOD"
 echo "[run_all] OUT=$OUT"
@@ -253,7 +266,10 @@ fi
 if [ -n "$GENOME_MANIFEST" ]; then
     echo "[run_all] 参考基因组清单 GENOME_MANIFEST=$GENOME_MANIFEST (s2c 通道开启)"
 else
-    echo "[run_all] 未给 -G/--genome-manifest: 参考基因组通道整体跳过 (属正常用法)"
+    echo "[run_all] 未给 -G/--genome-manifest: 参考基因组通道整体跳过"
+    echo "[run_all] !! 该通道是**唯一直接整合证据** (两端宿主侧翼/外显子嵌合); 不给 -G" >&2
+    echo "           则全部候选 evidence_tier 最高只到 B_locus_architecture, 严格模式" >&2
+    echo "           (STRICT_EVE=1) 下 C 档的 MOVE_EVE 会被降为 REVIEW。投稿口径建议提供。" >&2
 fi
 
 # ─────────────────────── [0/6] 参考面板 ───────────────────────
@@ -283,6 +299,21 @@ elif [ -f "$MOD/panel.fasta" ] && [ "$MOD/panel.fasta" -nt panel.fasta ]; then
     echo "   或换一个 -o 输出目录; 面板换代后组件命中会变, 旧数字不可直接对比。" >&2
 else
     echo "panel.fasta 已存在, 跳过"
+fi
+# P2-3 面板指纹闸门: 组件命中数随面板版本变, 新旧面板混进同一个 OUT 会让
+# "同目录可复现"悄悄失效 (旧版只有一行警告, 换面板重入照样往下跑)。
+# 首次运行记录 sha256; 之后再入时指纹不一致 = 面板换代, 必须换 -o 或清掉本目录。
+if [ -f panel.fasta ]; then
+    _pfp=$(sha256sum panel.fasta | cut -d' ' -f1)
+    if [ -f .panel_used.sha256 ] && [ "$(cat .panel_used.sha256)" != "$_pfp" ]; then
+        echo "[run_all] 本 OUT 目录此前是用另一版面板跑的 (panel 指纹不一致):" >&2
+        echo "          已记录 $(cat .panel_used.sha256)" >&2
+        echo "          本次面板   $_pfp" >&2
+        echo "          面板换代后组件命中会变, 新旧产物不可比。请换一个 -o 输出目录," >&2
+        echo "          或删掉本目录整个重跑; 不允许同一目录里混两代面板的产物。" >&2
+        exit 1
+    fi
+    printf '%s\n' "$_pfp" > .panel_used.sha256
 fi
 
 # ─────────────────────── [1/6] DIAMOND 建库 ───────────────────────
@@ -466,15 +497,57 @@ if [ -n "$GENOME_MANIFEST" ]; then
 fi
 
 # ─────────────────────── [5/6] S3 合成判别 ───────────────────────
+# P0-2 预检: 候选集与 evidence 表的 ID 重叠率。零重叠几乎必然是拿错批次
+# (evidence 来自另一次发现管道运行), 直接中止; 部分缺失则继续 —— s3 的逐行
+# 闸门会把缺行候选判成 missing_evidence(REVIEW), 不会静默产出 REMOVE/MOVE_EVE。
 echo "=== [5/6] S3 合成判别 ==="
+_overlap="$OUT/.ev_id_overlap.tsv"
+grep '^>' "$QUERY" | sed 's/^>//' | awk '{print $1}' | sort > "$OUT/.ev_query_ids.txt"
+tail -n +2 "$EVIDENCE" | cut -f1 | grep -v '^[[:space:]]*$' | sort > "$OUT/.ev_evidence_ids.txt"
+comm -12 "$OUT/.ev_query_ids.txt" "$OUT/.ev_evidence_ids.txt" > "$_overlap"
+n_q=$(wc -l < "$OUT/.ev_query_ids.txt")
+n_common=$(wc -l < "$_overlap")
+rm -f "$OUT/.ev_query_ids.txt" "$OUT/.ev_evidence_ids.txt" "$_overlap"
+echo "[run_all] ID 重叠预检: $n_common/$n_q 条候选在 evidence 表里有行"
+if [ "$n_q" -gt 0 ] && [ "$n_common" -eq 0 ]; then
+    echo "[run_all] 候选集与 evidence 表零重叠 —— 八成是拿错了批次 (evidence 来自" >&2
+    echo "          另一次发现管道运行)。用 -e 指向同一批候选的 rescue_evidence_scored.tsv," >&2
+    echo "          或用 -D 让脚本按目录约定自动定位; 不改就中止, 不静默跑完一表 REVIEW。" >&2
+    exit 1
+fi
+if [ "$n_common" -lt "$n_q" ]; then
+    echo "[run_all] !! evidence 不完全覆盖候选: 缺行的候选 s3 将判 missing_evidence" >&2
+    echo "           (REVIEW, 不会进 REMOVE/MOVE_EVE/KEEP); 溯源指纹见 verdict 表旁" >&2
+    echo "           *.provenance.tsv。确认这是有意子集就忽略本警告。" >&2
+fi
 # $RG_ARG 不带引号: 为空时整体不出现 (未开 -G 的运行与 v6.2 逐字节同参)
+# v7.5: REFCLASS 环境变量指向 eve_ref_classify 的 ref_classify.tsv (可选) ——
+# s3 的 virus_candidate 分支用它做双库复查 (P0: 编码完整≠外源); 不给则行为同 v7.4
+REFCLASS_ARG=""
+[ -n "${REFCLASS:-}" ] && [ -f "${REFCLASS}" ] && REFCLASS_ARG="${REFCLASS}"
+[ -n "${REFCLASS:-}" ] && [ ! -f "${REFCLASS}" ] && {
+    echo "[run_all] !! REFCLASS=$REFCLASS 指向的文件不存在, s3 将不带双库复查运行" >&2; }
 $PYTHON "$MOD/s3_verdict.py" s1_decay.tsv s2_domains.tsv locus_architecture.tsv "$EVIDENCE" \
-    eve_distinguish_verdict.tsv $RG_ARG
+    eve_distinguish_verdict.tsv $RG_ARG $REFCLASS_ARG
 
 # ─────────────────── [6/6] verdict -> action ───────────────────
 echo "=== [6/6] verdict -> 可执行动作 ==="
-$PYTHON "$MOD/s4_filter.py" eve_distinguish_verdict.tsv -o dna_vs_eve_filter.tsv || {
-    rc=$?; echo "[run_all] s4_filter 返回 $rc: verdict 表里有未映射的新值, 已按 REVIEW 兜底" >&2; }
+# 不用数组: bash 4.x 在 set -u 下展开空数组 "${A[@]}" 会报 unbound variable
+# (bash 5.x 才修)。这里用普通变量 + 显式分支, 两边都安全。
+S4_STRICT=""
+[ "${STRICT_EVE:-0}" -eq 1 ] && S4_STRICT="--strict-eve"
+# v7.4: REQUIRE_FLANK=1 更严 —— 只有 s2c 基因组侧翼证据 (A 档) 允许 MOVE_EVE。
+# B 档来自转录本 scaffold 代理, 不是基因组位点, 该模式下也降为 REVIEW。
+[ "${REQUIRE_FLANK:-0}" -eq 1 ] && S4_STRICT="$S4_STRICT --require-flank"
+if [ -n "$S4_STRICT" ]; then
+    $PYTHON "$MOD/s4_filter.py" eve_distinguish_verdict.tsv \
+        -o dna_vs_eve_filter.tsv $S4_STRICT || {
+        rc=$?; echo "[run_all] s4_filter 返回 $rc: verdict 表里有未映射的新值, 已按 REVIEW 兜底" >&2; }
+else
+    $PYTHON "$MOD/s4_filter.py" eve_distinguish_verdict.tsv \
+        -o dna_vs_eve_filter.tsv || {
+        rc=$?; echo "[run_all] s4_filter 返回 $rc: verdict 表里有未映射的新值, 已按 REVIEW 兜底" >&2; }
+fi
 
 echo
 echo "全部完成 -> $OUT"

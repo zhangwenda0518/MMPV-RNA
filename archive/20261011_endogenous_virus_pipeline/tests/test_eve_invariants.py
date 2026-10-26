@@ -202,9 +202,25 @@ class TestS4MappingInvariants(unittest.TestCase):
                     "assembly_breakpoint_review", "compositional_noise_review",
                     "structure_intact_review", "structure_decay_review",
                     "host_contamination_likely", "host_homology_cross_species",
-                    "host_conflict_review"}
+                    "host_conflict_review", "missing_evidence",
+                    "host_homology_panel_na"}
         self.assertEqual(produced - set(s4.ACTIONS), set(),
                          "有 verdict 没有 action 映射")
+
+    def test_remove_requires_applicable_panel(self):
+        """v7.1: REMOVE 只能来自 host_contamination_likely —— 面板不适用
+        (host_homology_panel_na) 与跨物种旁证一律 REVIEW."""
+        for verdict in ("host_homology_panel_na", "host_homology_cross_species",
+                        "host_conflict_review", "missing_evidence"):
+            act, _ = s4.ACTIONS[verdict]
+            self.assertEqual(act, "REVIEW", verdict)
+
+    def test_strict_eve_keeps_only_evidence_backed_tiers(self):
+        """严格模式放行的 tier 必须都是"有位点/侧翼证据"的档."""
+        self.assertEqual(s4.STRICT_KEEP_TIERS,
+                         {"A_genomic_flank", "B_locus_architecture"})
+        self.assertNotIn("C_decay_only", s4.STRICT_KEEP_TIERS)
+        self.assertNotIn("D_none", s4.STRICT_KEEP_TIERS)
 
 
 # ─────────────────────── 2) 真实产物层（需 EVE_VERIFY_DIR） ───────────────────────

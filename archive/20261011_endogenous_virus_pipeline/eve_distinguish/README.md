@@ -1,9 +1,28 @@
-# eve_distinguish — DNA 病毒候选的 EVE 判别 (v6.3)
+# eve_distinguish — DNA 病毒候选的 EVE 判别 (v7.1)
+
+> **⚠ v7.0 (2026-10-17) 修复轮后, 本文全部 v6.x 实测数字作废**（对 1,027 条真实候选
+> 的 verdict 迁移、distributed_decay 富集 1.21x、REMOVE 2 / MOVE_EVE 174 等）——
+> 2026-10-11 审查的 P0-1（s1 读框偏移双重应用, ±2/±3 框错位）已根修, decay_class
+> 分布会整体移动; P0-2 evidence 覆盖率闸门落地后 `missing_evidence` 成为新 verdict。
+> **服务器用 `verify/rerun_diff.py` 重算并更新本节之前, 下列历史数字只能当
+> "修复前口径"引用, 不得写进投稿。**
+
+> **v7.1 (2026-10-17, 审稿意见落实) 三处口径收紧**:
+> ① **面板不适用时不再允许 REMOVE** —— 面板只含 Caulimoviridae, 非 Cauli 候选零命中是
+> "没测到"不是"没有", 新 verdict `host_homology_panel_na` (REVIEW);
+> ② **`evidence_tier` 证据分层列**: `A_genomic_flank`(s2c 侧翼/嵌合) >
+> `B_locus_architecture`(s2b 位点齐全) > `C_decay_only`(仅退化) > `D_none`;
+> ③ **`STRICT_EVE=1` 严格模式**: 仅凭退化通道 (C/D 档) 的 `MOVE_EVE` 降为 REVIEW
+> —— 退化对随机组成富集仅 1.21x, 单独不足以判 EVE。**投稿口径建议开**。
 
 对 OneKP 新候选（`<DISCOVERY>/eve_screen/evescan_query.fasta`，1,027 条 = 843 远缘 + 184 新种）
 做"结构退化 × 基因座架构"判别，与 `eve_screen.py` 的 EVE 库同源检索**相互独立、互为补充**。
 
-> **版本标记约定**：模块版本只有这里和 `run_all.sh` 头两处权威声明（当前 **v6.3**）。各 stage 文件里写的 `[判定逻辑最后变更: 模块 vN]` 指该文件自己的逻辑最后改于模块哪个版本，不是并列的另一套版本号 —— s2b 停在 v5.1 是正常的，它此后未再改动判定逻辑；s1/s2c 的判定逻辑最后变更于 v6.3。
+> **版本标记约定**：模块版本只有这里和 `run_all.sh` 头两处权威声明（当前 **v7.1**）。各 stage 文件里写的 `[判定逻辑最后变更: 模块 vN]` 指该文件自己的逻辑最后改于模块哪个版本，不是并列的另一套版本号 —— s2b 停在 v5.1 是正常的，它此后未再改动判定逻辑；s1/s2/s3/s4 的判定逻辑最后变更于 v7/v7.1。
+
+> **⚠ 数据流边界（审稿必读）**：本模块的候选来自**转录组组装的 contig**，不是基因组
+> 位点；s2b 的"位点"是转录本 scaffold 的代理，s2c 的基因组侧翼证据才是直接整合证据
+> 且默认关闭（需 `-G`）。对外表述不得把"候选判别"写成"基因组 EVE 鉴定"。
 
 > **v6.2 → v6.3 改了四件事（其中①②会改产线数字，见下方"v6.2 → v6.3"一节）**：
 > ① s1 修 `stop_profile` 的 3nt 系统性高估；② 面板升 v3（bare polyprotein 兜底 +

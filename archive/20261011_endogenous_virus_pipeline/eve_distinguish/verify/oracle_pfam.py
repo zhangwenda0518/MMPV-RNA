@@ -192,7 +192,7 @@ def compare(s2_path, domtbl, json_out):
     n = len(rows)
     # 逐候选: s2 声称的组件 vs oracle 实测的组件 (只在 oracle 覆盖的 3 种上比)
     agree = disagree_miss = disagree_extra = 0
-    both = neither = 0
+    neither = 0
     details = []
     for cid, r in rows.items():
         claim = set(c for c in (r.get("components") or "-").split("+") if c)

@@ -24,17 +24,45 @@ eve_report.py — EVE 筛查结果 HTML 报告生成器
 import argparse
 import csv
 import gzip
-import os
 import sys
 from datetime import datetime
 from html import escape
 from pathlib import Path
 
+# mmpv_common.report_style 提供 HTML 底版样式; 模块无论在仓库根还是 archive/ 下
+# (2026-10-11 归档), 逐层向上找包含 mmpv_common/ 的那一层 (v7 修 P1-2: 旧版
+# 只回退一层, 归档后 parent.parent = archive/, 那里没有 mmpv_common,
+# python eve_report.py --help 直接 ModuleNotFoundError)。实在找不到
+# (模块被单独拷走) 就用内置最小样式 —— 报告照样出, 只是版式朴素些。
+_FALLBACK_CSS = """
+:root{--success:#2b7a3d;--warning:#b58900;--warning-light:#fdf6e3;
+      --surface-alt:#f3f4f6;--ink-secondary:#6b7280}
+body{font-family:-apple-system,'Segoe UI','Microsoft YaHei',sans-serif;
+     margin:24px;color:#1f2937;background:#fff}
+h1,h2,h3{color:#111827}table{border-collapse:collapse;margin:8px 0}
+th,td{border:1px solid #d1d5db;padding:4px 10px;font-size:14px}
+th{background:#f3f4f6}code,pre{background:#f9fafb;font-size:13px}
+"""
+
+
+def _find_repo_root():
+    for base in Path(__file__).resolve().parents:
+        if (base / "mmpv_common" / "report_style.py").is_file():
+            return base
+    return None
+
+
 try:
     from mmpv_common.report_style import get_base_css
 except ImportError:
-    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-    from mmpv_common.report_style import get_base_css
+    _root = _find_repo_root()
+    if _root and str(_root) not in sys.path:
+        sys.path.insert(0, str(_root))
+    try:
+        from mmpv_common.report_style import get_base_css
+    except ImportError:
+        def get_base_css():      # 独立运行兜底: 无 mmpv_common 也能出报告
+            return _FALLBACK_CSS
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:

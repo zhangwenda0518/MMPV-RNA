@@ -57,6 +57,26 @@ COMPONENT_RULES = [
 ]
 SKIP = ["hypothetical", "unknown", "partial", "fragment", "uncharacterized"]
 
+# v7.2 (审稿意见): 参考面板里可能混入**本身来自整合元件**的条目 (NCBI 上某些
+# "virus" 记录其实是宿主基因组里发现的 EPRV 序列)。用内源参考去判"是不是内源"
+# 属于自指, 必须至少标出来, 让下游知道哪些命中可能是循环证据。
+# 只标注不删条目 —— 删了会改既有命中数与全部下游数字; 标记进 panel_report.tsv
+# 的 source_flag 列, 需要时可据此排除。
+POSSIBLE_ENDOGENOUS_HINTS = [
+    "hygrophyla virus",      # 从宿主基因组中描述的类 Caulimoviridae 序列
+    "putnam virus",          # Soybean Putnam virus: 内源来源报道
+    "florendo", "yendo", "zendo",  # 内源 pararetrovirus 命名系列
+    "endogenous",
+]
+
+
+def source_flag(title):
+    """条目标题是否提示"该参考本身可能来自内源元件" -> 'possible_endogenous' / ''."""
+    low = (title or "").lower()
+    return ("possible_endogenous"
+            if any(h in low for h in POSSIBLE_ENDOGENOUS_HINTS) else "")
+
+
 COMP_ORDER = ["MP", "CP", "AP", "RT", "RH", "GAG", "VAP"]
 # bare polyprotein 的兜底标注: 该科 pol ORF 的通用组件内容 (见模块 docstring)
 POLYPROTEIN_COMPS = ["AP", "RT", "RH"]
@@ -355,13 +375,14 @@ def rebuild(outdir):
     with open(fa_path, "w", encoding="utf-8", newline="\n") as fa, \
             open(tsv_path, "w", encoding="utf-8", newline="") as tsv:
         w = csv.writer(tsv, delimiter="\t", lineterminator="\n")
-        w.writerow(["protein_id", "title", "components", "prot_len", "species"])
+        w.writerow(["protein_id", "title", "components", "prot_len", "species",
+                    "source_flag"])
         for pid, title, comp, sp in rows:
             seq = seqs.get(accession_of(pid))
             if not seq:
                 continue
             fa.write(f">{comp}|{pid}|{title}\n{seq}\n")
-            w.writerow([pid, title, comp, len(seq), sp])
+            w.writerow([pid, title, comp, len(seq), sp, source_flag(title)])
             written += 1
     print(f"[done] 面板入库 {written} 条 -> {fa_path}")
     print("组件覆盖:", {k: comp_count[k] for k in COMP_ORDER if comp_count[k]})

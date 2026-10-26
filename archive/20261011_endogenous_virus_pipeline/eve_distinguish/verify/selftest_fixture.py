@@ -40,11 +40,16 @@ def build_region(spec):
 
 
 def scan_abs(seq, offset):
-    """s1.scan_frame_stops 的直通版 (它返回的已是相对区域起点的绝对坐标)."""
+    """s1.scan_frame_stops 的直通版。
+
+    v7 (P0-1) 相位契约: 第三参是**相对锚点(start)的相位**, 不是读框号-1。
+    这里 start=0 且设计序列本身就以 +1 帧栅格对齐, 所以 phase=o 数出的就是
+    绝对位置 ≡ o (mod 3) 的终止 —— 与旧版行为一致, 设计断言不受影响。
+    """
     return s1.scan_frame_stops(seq, 0, len(seq), offset)
 
 
-def contig(cid, region, flanks=()):
+def contig(cid, region):
     """contig 就是设计区本身 (不带侧翼): HSP qstart=1..600 与设计坐标一一同格."""
     return f">{cid}\n{region}\n"
 

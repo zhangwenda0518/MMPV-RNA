@@ -4,6 +4,8 @@ public_metadata_pipeline/public_data_pipeline_output/
 build_host_pipeline_output/
 database/*
 !database/final.cluster.ref.fasta
+# 数据库初始化脚本（代码，非数据）：mmpv_db.py 与依赖清单随版本管理
+!database/setup/
 *.jar
 *.joblib
 *.h5
@@ -30,7 +32,17 @@ metadata_gui/dist/
 metadata_gui/*.spec
 
 # Generated reports (pipeline HTML 输出, 体积大且可再生)
-reports/
+# ⚠ `reports/*` + 例外：barbarum 绘图脚本已迁至 reports/virome_analysis_pipeline/
+#   （2026-10-14）。用 `reports/*` 而非 `reports/` 才能对该子目录开例外——
+#   git 规则：父目录被整体排除时，子路径的 `!` 例外无效。
+reports/*
+!reports/virome_analysis_pipeline/
+# ↑ 只把**脚本与数据**纳入版本控制；归档 / 成品图 / 预渲资产仍不入库
+#   （_append_src/ 迁移前在 reports/sci_composite/ 里，本来就不入库）
+reports/virome_analysis_pipeline/_archive/
+reports/virome_analysis_pipeline/figures/
+reports/virome_analysis_pipeline/_append_src/
+reports/virome_analysis_pipeline/__pycache__/
 Pipeline_Summary_Report.html
 pipeline_report_*.html
 
@@ -108,3 +120,6 @@ biosoft/pyhmmersearch.py
 文献自动下载/
 external_ref/
 MMPV-RNA-paper/
+
+# 图件 1200 dpi 高清副本 (由 mmpv_common/figure_export.py 自动生成, 体积大不入库)
+_hires_1200dpi/

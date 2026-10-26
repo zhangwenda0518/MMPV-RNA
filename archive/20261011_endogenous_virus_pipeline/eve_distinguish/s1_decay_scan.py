@@ -1,5 +1,15 @@
 #!/usr/bin/env python3
-"""S1 结构通道 [判定逻辑最后变更: 模块 v6.3]: 编码退化签名 + 同链读框基线.
+"""S1 结构通道 [判定逻辑最后变更: 模块 v7]: 编码退化签名 + 同链读框基线.
+
+v7 修一处系统性坐标错误 (P0-1, 2026-10-11 审查实测): hsp_metrics 把 blastx 的
+  读框偏移用了两次 —— 扫描锚点 (qs-1 / L-qe) 本来就已落在主读框的密码子栅格上
+  (qstart-1 ≡ |qframe|-1, mod 3, NCBI BLAST 与 DIAMOND 双工具实测一致),
+  旧版 scan_frame_stops 又加了一遍 |qframe|-1, 于是 ±2/±3 框整体错位 1/2 nt:
+  无终止的干净编码段被读出几十个"提前终止"判成 distributed_decay, 且真实病毒
+  读框被算进另两框基线, 分子虚高分母被拉低。v7 起读框号只用来定链, 扫描一律
+  以"锚点 + 相对相位"表达: 病毒读框相位 0, 基线相位 1/2。**判据语义不变
+  (同链另两框做组成本底), 但全部 decay_class 分布会移动**, v6.x 的校准数字
+  (distributed_decay 富集 1.21x 等) 不可继续引用, 需用 verify/ 在服务器重算。
 
 v3 的缺陷 (2026-09-23 修订): premature_stops_region 用绝对计数 + 固定阈值 (stops>=3 判退化),
   会被组装 indel 污染 —— 一个单碱基 indel 就足以让其后全部密码子错读, 在远缘同源区
@@ -131,10 +141,23 @@ def orf_scan(seq):
     }
 
 
-def scan_frame_stops(sseq, start, end, offset):
-    """[start,end) 内指定读框的终止密码子位置列表 (坐标相对 start)."""
+def scan_frame_stops(sseq, start, end, phase=0):
+    """[start,end) 内, 相对锚点相位 phase (0/1/2) 的读框上终止密码子起点列表
+    (坐标相对 start).
+
+    坐标契约 (v7 修复 P0-1): **start 必须已经落在要数的那个读框的密码子栅格上**
+    —— 正链锚点 = qstart-1, 负链锚点 = L-qe, 都是 blastx 报告的第一个已对齐密码子
+    的起点 (0 基)。NCBI BLAST 与 DIAMOND 双工具实测 (2026-10-11 审查): 对 +frame
+    f 有 qstart-1 ≡ f-1 (mod 3), 即锚点天然在该读框栅格上。
+
+    因此本函数内部**不再加任何读框偏移**: 病毒读框 phase=0 (密码子落在
+    start+3k); 同链基线两框是相对锚点错后 1/2 nt 的另外两个相位 (phase=1/2),
+    因为"另两框"的定义就是与病毒读框共用这段碱基、栅格相对锚点平移 1/2 nt。
+    旧版把 |qframe|-1 当 phase 传进来, 等于在锚点已经对齐栅格的基础上又挪了
+    1/2 位 —— ±2/±3 框全部读错框, 真实病毒读框还被算进了基线 (P0-1)。
+    """
     pos = []
-    i = start + offset
+    i = start + phase
     while i + 3 <= end:
         if sseq[i:i + 3].upper() in STOPS:
             pos.append(i - start)
@@ -215,8 +238,10 @@ def hsp_metrics(hsps, seq):
     dom_frame = Counter(frames).most_common(1)[0][0]
     fnum = int(dom_frame)
     strand = "+" if fnum > 0 else "-"
-    offset = abs(fnum) - 1
     L = len(seq)
+    # 锚点 = 首个已对齐密码子的起点 (0 基), 它天然落在主读框的密码子栅格上
+    # (qstart-1 ≡ |fnum|-1, mod 3, 双工具实测)。读框号只用来定链, **不再换算成
+    # 偏移** —— 旧版在这里再叠加一次 |fnum|-1, 是 P0-1 的根因。
     if strand == "+":
         sseq, scan_s, scan_e = seq, qs - 1, min(qe, len(seq))
     else:
@@ -224,13 +249,10 @@ def hsp_metrics(hsps, seq):
         scan_s, scan_e = L - qe, L - (qs - 1)
         scan_e = min(scan_e, L)
     span_nt = max(0, scan_e - scan_s)
-    # 三读框同链扫描: 病毒读框 + 另外两个读框 (后者 = 本地读框基线 / 组成本底 null)
-    stops = scan_frame_stops(sseq, scan_s, scan_e, offset)
-    other = []
-    for off in range(3):
-        if off == offset:
-            continue
-        other.append(len(scan_frame_stops(sseq, scan_s, scan_e, off)))
+    # 三读框同链扫描: 病毒读框 = 锚点相位 0; 另外两个读框 = 相对锚点错后 1/2 nt
+    # 的两个相位 (本地读框基线 / 组成本底 null)
+    stops = scan_frame_stops(sseq, scan_s, scan_e, 0)
+    other = [len(scan_frame_stops(sseq, scan_s, scan_e, ph)) for ph in (1, 2)]
     other_mean = round(sum(other) / len(other), 2) if other else ""
     prof = stop_profile(stops, span_nt)
     enrich = round((len(stops) + 1) / (other_mean + 1), 3) if other_mean != "" else ""
@@ -274,7 +296,7 @@ def main():
                       f"{h['hit_bitscore']}\t{h['hit_label']}\t{h['hsp_span']}\t{h['span_len']}\t"
                       f"{h['stops_other_mean']}\t{h['stop_enrichment']}\t{h['head_stops']}\t"
                       f"{h['first_stop_frac']}\t{h['max_stopfree_frac']}\t{h['decay_class']}\n")
-    print(f"[done] s1(logic v6.3, frame baseline): {len(seqs)} contigs -> {out_tsv}")
+    print(f"[done] s1(logic v7, frame anchor baseline): {len(seqs)} contigs -> {out_tsv}")
 
 
 if __name__ == "__main__":

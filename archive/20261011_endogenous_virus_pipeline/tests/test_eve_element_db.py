@@ -507,11 +507,28 @@ class TestAggregateClusters(unittest.TestCase):
         self.assertEqual([r[0] for r in rows], ["C000000", "C000001"])
         self.assertEqual(rows[0][2], 2)                     # n_members
         self.assertEqual(rows[0][3], 2)                     # n_genomes
-        self.assertEqual(rows[0][4], "Caulimoviridae")      # 家族投票
-        self.assertEqual(rows[0][5], "")                    # 无次家族 -> 非嵌合体
-        self.assertEqual(rows[0][6], "g1__L1")              # 最佳成员按 evidence_bs
-        self.assertEqual(rows[0][7], 120.0)
+        self.assertEqual(rows[0][4], 2)                     # n_assemblies (无清单=同 n_genomes)
+        self.assertEqual(rows[0][5], "Caulimoviridae")      # 家族投票
+        self.assertEqual(rows[0][6], "")                    # 无次家族 -> 非嵌合体
+        self.assertEqual(rows[0][7], "g1__L1")              # 最佳成员按 evidence_bs
+        self.assertEqual(rows[0][8], 120.0)
         self.assertEqual(members["C000000"], ["g1__L1", "g2__L2"])
+
+    def test_n_assemblies_dedups_by_fingerprint(self):
+        """P1-5b 回归: 同一 assembly 换名登记两次, n_genomes 会虚高, n_assemblies 不会."""
+        meta = {
+            "g1__L1": ["g1", "L1", "Caulimoviridae", "viral_supported", "R", "120"],
+            "g1bis__L2": ["g1bis", "L2", "Caulimoviridae", "viral_supported", "R", "90"],
+        }
+        pairs = [("g1__L1", "g1__L1"), ("g1__L1", "g1bis__L2")]
+        # 指纹表: 两个名字其实是同一份 assembly 文件
+        rows, _ = ed.aggregate_clusters(meta, pairs,
+                                        genome_asm={"g1": "fp_a", "g1bis": "fp_a"})
+        self.assertEqual(rows[0][3], 2)                     # n_genomes (名称集合, 照旧)
+        self.assertEqual(rows[0][4], 1)                     # n_assemblies (指纹去重)
+        # 名字不在清单里: 兜底成独立 assembly, 计数不丢
+        rows2, _ = ed.aggregate_clusters(meta, pairs, genome_asm={"g1": "fp_a"})
+        self.assertEqual(rows2[0][4], 2)
 
     def test_members_sorted_and_tie_order_stable(self):
         # 两个等大簇: 并列时按 rep 名排序 -> 元件 ID 不随 mmseqs 行序漂
@@ -534,16 +551,17 @@ class TestAggregateClusters(unittest.TestCase):
             pairs = [("g0__L", m) for m in sorted(meta)]
             return ed.aggregate_clusters(meta, pairs)[0]
         # 5 个成员里 1 个次家族: 1 < max(2, 5//5) = 2 -> 不标嵌合体
-        self.assertEqual(build(1)[0][5], "")
+        self.assertEqual(build(1)[0][6], "")
         # 5 个成员里 2 个次家族: 2 >= 2 -> 标 (且不改主家族投票)
         rows = build(2)
-        self.assertEqual(rows[0][5], "possible_chimera")
-        self.assertEqual(rows[0][4], "Caulimoviridae")
+        self.assertEqual(rows[0][6], "possible_chimera")
+        self.assertEqual(rows[0][5], "Caulimoviridae")
 
     def test_unknown_member_does_not_crash(self):
         rows, _mem = ed.aggregate_clusters(self._meta(), [("ghost", "ghost")])
-        self.assertEqual(rows[0][4], "Other_viral")
+        self.assertEqual(rows[0][5], "Other_viral")
         self.assertEqual(rows[0][3], 0)
+        self.assertEqual(rows[0][4], 0)
 
     def test_empty_input(self):
         self.assertEqual(ed.aggregate_clusters({}, []), ([], {}))
@@ -596,6 +614,7 @@ class TestBatchAndRmParse(unittest.TestCase):
         源脚本 (eve_kingdom_post.py:387-391) 用 c[4]/c[5] 当 begin/end —— c[4] 是
         query 序列名, 对真实数据行永远不是数字, 于是**每一行命中都被当表头丢掉**,
         family_quant.tsv 只剩表头而退出码是 0。这里用一段真 .out 头+数据行锁住。
+        v7 (P1-5a) 起第 4 列 query 名一并带出 (拷贝数按同 contig 合并区间计数)。
         """
         text = (
             "   SW   perc perc perc  query     position in query              "
@@ -609,15 +628,15 @@ class TestBatchAndRmParse(unittest.TestCase):
             "C000000_Caulimoviridae   LTR/Gypsy    (324)   3226   1893    2\n"
             "There were no repetitive sequences detected in the query sequence\n")
         got = list(ed.parse_rm_out_lines(text.splitlines()))
-        self.assertEqual(got, [(50350, 50657, "C000000_Caulimoviridae"),
-                               (51025, 52324, "C000000_Caulimoviridae")])
+        self.assertEqual(got, [("chr4", 50350, 50657, "C000000_Caulimoviridae"),
+                               ("chr4", 51025, 52324, "C000000_Caulimoviridae")])
 
     def test_parse_rm_out_lines_strips_hash_and_ignores_short_rows(self):
         rows = ["  1 2 3 4 q 10 20 (0) + name#class/1  c  1 2 (0) 1",
                 "  1 2 3 q 10 20 30",           # 7 列 (< 11): 丢掉
                 "  1 2 3 4 q 10 20 (0) + nm c"]  # 11 列: 够解析 (尾部 ID 列可缺)
         got = list(ed.parse_rm_out_lines(rows))
-        self.assertEqual(got, [(10, 20, "name"), (10, 20, "nm")])
+        self.assertEqual(got, [("q", 10, 20, "name"), ("q", 10, 20, "nm")])
 
     def test_padded_left_column_is_skipped_not_misattributed(self):
         # 万一某版本把 (left) 写成 '(     0)': split() 会多切一列, 硬编 c[9] 就取到
@@ -625,18 +644,46 @@ class TestBatchAndRmParse(unittest.TestCase):
         row = "  1 2 3 4 q 10 20 (     0) + nm c 1 2 (0) 1"
         self.assertEqual(list(ed.parse_rm_out_lines([row])), [])
 
-    def test_accumulate_quant_counts_copies_and_bp(self):
+    def test_merge_hit_intervals_fragments_and_copies(self):
+        # 审查 R01 的对照场景: 单拷贝但多段命中 -> 合并后拷贝数仍为 1,
+        # 覆盖碱基取并集 (重叠不重复计)
+        self.assertEqual(ed.merge_hit_intervals([(100, 300), (250, 450)]),
+                         [(100, 450)])
+        # 空隙 <= gap (100nt) 算同一位点 (b=200 即空 99nt... 精确说: 下一命中起点
+        # b 满足 b <= 前一终点 + gap 才并); 再远一点就是独立拷贝
+        self.assertEqual(ed.merge_hit_intervals([(1, 100), (200, 300)]),
+                         [(1, 300)])
+        self.assertEqual(ed.merge_hit_intervals([(1, 100), (201, 300)]),
+                         [(1, 100), (201, 300)])
+        # 无序输入 / 空输入 / 倒挂区间
+        self.assertEqual(ed.merge_hit_intervals([(500, 600), (1, 50)]),
+                         [(1, 50), (500, 600)])
+        self.assertEqual(ed.merge_hit_intervals([]), [])
+        self.assertEqual(ed.merge_hit_intervals([(50, 40)]), [])
+
+    def test_accumulate_quant_segments_copies_and_union_bp(self):
+        """P1-5a 回归: 三个计数分开 —— 命中行数 != 拷贝数, 覆盖度取并集."""
         lib = {"C000000": "Caulimoviridae", "C000001": "Geminiviridae"}
-        hits = [(50350, 50657, "C000000_Caulimoviridae"),
-                (51025, 52324, "C000000_Caulimoviridae"),
-                (100, 150, "C000001_Geminiviridae")]
+        hits = [("chr4", 50350, 50657, "C000000_Caulimoviridae"),
+                ("chr4", 50600, 50700, "C000000_Caulimoviridae"),   # 与上条重叠
+                ("chr4", 51025, 52324, "C000000_Caulimoviridae"),   # 隔 367nt: 独立拷贝
+                ("chr1", 100, 150, "C000001_Geminiviridae")]
         q = ed.accumulate_quant(hits, lib, "G1")
-        self.assertEqual(q[("Caulimoviridae", "G1")], [2, 308 + 1300])
-        self.assertEqual(q[("Geminiviridae", "G1")], [1, 51])
+        self.assertEqual(q[("Caulimoviridae", "G1")],
+                         [3, 2, (50700 - 50350 + 1) + (52324 - 51025 + 1)])
+        self.assertEqual(q[("Geminiviridae", "G1")], [1, 1, 51])
+
+    def test_accumulate_quant_same_coords_on_different_contigs_are_separate(self):
+        # 同坐标命中落在不同 contig 上是两次独立整合, 不许合并
+        lib = {"C000000": "Caulimoviridae"}
+        q = ed.accumulate_quant(
+            [("chr1", 100, 300, "C000000_Caulimoviridae"),
+             ("chr2", 100, 300, "C000000_Caulimoviridae")], lib, "G1")
+        self.assertEqual(q[("Caulimoviridae", "G1")], [2, 2, 402])
 
     def test_accumulate_quant_unknown_id_falls_back_to_repeat_name(self):
         # 文库头不认识时至少留下名字本身, 不要静默归到某个家族名下
-        q = ed.accumulate_quant([(1, 10, "ODD_name")], {}, "G1")
+        q = ed.accumulate_quant([("chr1", 1, 10, "ODD_name")], {}, "G1")
         self.assertEqual(list(q), [("ODD_name", "G1")])
 
 
@@ -763,13 +810,13 @@ class TestElementLayerEndToEnd(unittest.TestCase):
     def test_element_table(self):
         rows = [r.split("\t") for r in self.read("element_table.tsv")[1:]]
         self.assertEqual(len(rows), 2)
-        self.assertEqual(rows[0][:5], ["C000000", "G1__chr1:100-300", "3", "2",
+        self.assertEqual(rows[0][:6], ["C000000", "G1__chr1:100-300", "3", "2", "2",
                                        "Caulimoviridae"])
-        self.assertEqual(rows[0][5], "")                      # 无次家族
-        self.assertEqual(rows[0][6], "G1__chr1:100-300")      # 最佳 evidence_bs
-        self.assertEqual(rows[0][7], "200.0")
+        self.assertEqual(rows[0][6], "")                      # 无次家族
+        self.assertEqual(rows[0][7], "G1__chr1:100-300")      # 最佳 evidence_bs
+        self.assertEqual(rows[0][8], "200.0")
         self.assertEqual(rows[1][0], "C000001")
-        self.assertEqual(rows[1][4], "Geminiviridae")
+        self.assertEqual(rows[1][5], "Geminiviridae")
 
     def test_member_files_written_sorted(self):
         self.assertEqual(self.read("_members_C000000.txt"),
@@ -785,13 +832,15 @@ class TestElementLayerEndToEnd(unittest.TestCase):
         self.assertIn("(longest-member)", self.res.stderr)
 
     def test_family_quant_counts_hits_per_family_and_genome(self):
-        """RepeatMasker .out 的列序回归 (源脚本在这里取错一列 -> 表恒空)."""
+        """RepeatMasker .out 的列序回归 (源脚本在这里取错一列 -> 表恒空).
+        v7 三列口径: hit_segments=命中行数, copies=碎片合并后拷贝数,
+        covered_bp_union=非冗余覆盖碱基。夹具每家族每基因组只写 1 行命中。"""
         rows = [r.split("\t") for r in self.read("family_quant.tsv")[1:]]
-        self.assertEqual(sorted((r[0], r[1], r[2], r[3]) for r in rows),
-                         [("Caulimoviridae", "G1", "1", "200"),
-                          ("Caulimoviridae", "G2", "1", "200"),
-                          ("Geminiviridae", "G1", "1", "200"),
-                          ("Geminiviridae", "G2", "1", "200")])
+        self.assertEqual(sorted((r[0], r[1], r[2], r[3], r[4]) for r in rows),
+                         [("Caulimoviridae", "G1", "1", "1", "200"),
+                          ("Caulimoviridae", "G2", "1", "1", "200"),
+                          ("Geminiviridae", "G1", "1", "1", "200"),
+                          ("Geminiviridae", "G2", "1", "1", "200")])
 
     def test_tool_arguments_are_not_retuned(self):
         """算法参数是继承来的, 不许悄悄改: 从调用记录里核对."""

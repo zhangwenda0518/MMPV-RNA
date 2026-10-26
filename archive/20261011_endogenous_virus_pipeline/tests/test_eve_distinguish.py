@@ -122,7 +122,8 @@ def verdict_rows(verdicts):
                  decay_class="distributed_decay", stop_enrichment="2.0",
                  premature_stops_region="12", frame_switches="0", orf_max_fraction="0.4",
                  te_flag="FALSE", host_wpid="0", host_cov="0",
-                 host_scope="own_species", verdict=v, verdict_reason="reason")
+                 host_scope="own_species", evidence_tier="B_locus_architecture",
+                 verdict=v, verdict_reason="reason")
         rows.append("\t".join(r[c] for c in VERDICT_COLS) + "\n")
     return ''.join(rows)
 
@@ -162,9 +163,15 @@ class TestS4Filter(unittest.TestCase):
         self.assertEqual(len(lines) - 1, len(ACTIONS))
         acts = [ln.split('\t')[-2] for ln in lines[1:]]
         self.assertEqual(set(acts), {'MOVE_EVE', 'KEEP_virus', 'REVIEW', 'REMOVE_host_contamination'})
-        # REVIEW 共 9 行 = 6 个 *_review + EVE_suspect + review + v6 起的
+        # REVIEW 共 12 行 = 6 个 *_review + EVE_suspect + review + v6 起的
         # host_homology_cross_species / host_conflict_review (后两个旧版会删数据)
-        self.assertEqual(acts.count('REVIEW'), 9)
+        # + v7 起的 missing_evidence (P0-2 闸门: evidence 缺行不自动判)
+        # + v7.1 起的 host_homology_panel_na (面板不适用时不许 REMOVE)
+        # + v7.5 起的 virus_eve_conflict_review (编码完好+位点齐全但双库 EVE 侧领先)
+        self.assertEqual(acts.count('REVIEW'), 12)
+        self.assertIn('missing_evidence', sorted(ACTIONS))
+        self.assertIn('host_homology_panel_na', sorted(ACTIONS))
+        self.assertIn('virus_eve_conflict_review', sorted(ACTIONS))
 
     def test_carry_columns_preserved(self):
         r, out = self._filter(sorted(ACTIONS))
@@ -184,6 +191,93 @@ class TestS4Filter(unittest.TestCase):
         lines = out.read_text(encoding='utf-8').splitlines()
         self.assertEqual(len(lines) - 1, len(ACTIONS) + 1)
         self.assertEqual(lines[-1].split('\t')[-2], 'REVIEW')
+
+    def test_evidence_tier_is_carried(self):
+        r, out = self._filter(['EVE_STRONG_provirus'])
+        self.assertEqual(r.returncode, 0, r.stderr)
+        hdr = out.read_text(encoding='utf-8').splitlines()[0].split('\t')
+        self.assertIn('evidence_tier', hdr)
+        self.assertLess(hdr.index('evidence_tier'), hdr.index('verdict'))
+        row = out.read_text(encoding='utf-8').splitlines()[1].split('\t')
+        self.assertEqual(row[hdr.index('evidence_tier')], 'B_locus_architecture')
+
+    def _filter_with_tier(self, verdict, tier, strict, extra=None):
+        """按指定 evidence_tier 造一行并跑 s4 (可选 --strict-eve / 额外参数)."""
+        extra = list(extra or [])
+        src = self.tmp / f'v_{verdict}_{tier}_{strict}_{len(extra)}.tsv'
+        rows = [S3_HDR]
+        r = {c: "" for c in VERDICT_COLS}
+        r.update(contig_id='c1', verdict=verdict, evidence_tier=tier,
+                 verdict_reason='x')
+        rows.append("\t".join(r[c] for c in VERDICT_COLS) + "\n")
+        src.write_text(''.join(rows), encoding='utf-8')
+        out = self.tmp / f'f_{verdict}_{tier}_{strict}_{len(extra)}.tsv'
+        args = [PY, str(MOD / 's4_filter.py'), str(src), '-o', str(out)]
+        if strict:
+            args.append('--strict-eve')
+        args.extend(extra)
+        p = subprocess.run(args, capture_output=True, text=True,
+                           encoding='utf-8', errors='replace')
+        return p, out.read_text(encoding='utf-8').splitlines()
+
+    def test_strict_eve_downgrades_decay_only_move(self):
+        """v7.1 回归 (审稿意见): 仅退化通道的 MOVE_EVE 在严格模式下必须降级.
+
+        退化对随机组成富集仅 1.21x, 单凭它把候选搬去 EVE 证据不足。
+        """
+        p, lines = self._filter_with_tier('ancient_EVE', 'C_decay_only', strict=True)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(lines[1].split('\t')[-2], 'REVIEW')
+        self.assertIn('严格模式降级', lines[1].split('\t')[-1])
+        self.assertIn('C_decay_only', lines[1].split('\t')[-1])
+        self.assertIn('1 条 MOVE_EVE', p.stderr)
+
+    def test_strict_eve_keeps_locus_and_flank_tiers(self):
+        for tier in ('A_genomic_flank', 'B_locus_architecture'):
+            p, lines = self._filter_with_tier('EVE_STRONG_provirus', tier, strict=True)
+            self.assertEqual(p.returncode, 0, p.stderr)
+            self.assertEqual(lines[1].split('\t')[-2], 'MOVE_EVE', tier)
+
+    def test_strict_eve_off_by_default_keeps_old_behaviour(self):
+        p, lines = self._filter_with_tier('ancient_EVE', 'C_decay_only', strict=False)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(lines[1].split('\t')[-2], 'MOVE_EVE')
+
+    def test_strict_eve_does_not_touch_keep_or_remove(self):
+        # 严格模式只拦 MOVE_EVE: KEEP_virus / REMOVE 的判据本身已含位点或面板适用性
+        p, lines = self._filter_with_tier('virus_candidate', 'B_locus_architecture',
+                                          strict=True)
+        self.assertEqual(lines[1].split('\t')[-2], 'KEEP_virus')
+        p, lines = self._filter_with_tier('host_contamination_likely', 'D_none',
+                                          strict=True)
+        self.assertEqual(lines[1].split('\t')[-2], 'REMOVE_host_contamination')
+
+    def test_require_flank_downgrades_locus_tier(self):
+        """v7.4: --require-flank 下, B 档 (转录本位点) 也不再允许 MOVE_EVE.
+
+        B 档的"位点"来自转录本 scaffold 代理, 不是基因组位点; 投稿口径下
+        "整合"必须有基因组层面的直接证据 (A 档)。
+        """
+        p, lines = self._filter_with_tier('EVE_STRONG_provirus',
+                                          'B_locus_architecture', strict=False,
+                                          extra=['--require-flank'])
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(lines[1].split('\t')[-2], 'REVIEW')
+        self.assertIn('require-flank', lines[1].split('\t')[-1])
+        self.assertIn('B_locus_architecture', lines[1].split('\t')[-1])
+
+    def test_require_flank_keeps_flank_tier(self):
+        p, lines = self._filter_with_tier('EVE_STRONG_provirus',
+                                          'A_genomic_flank', strict=False,
+                                          extra=['--require-flank'])
+        self.assertEqual(lines[1].split('\t')[-2], 'MOVE_EVE')
+
+    def test_require_flank_reports_locus_count(self):
+        p, lines = self._filter_with_tier('EVE_STRONG_provirus',
+                                          'B_locus_architecture', strict=False,
+                                          extra=['--require-flank'])
+        self.assertIn('B 档转录本位点', p.stderr)
+        self.assertIn('A 档', p.stderr)
 
 
 class TestRunAllCLI(unittest.TestCase):

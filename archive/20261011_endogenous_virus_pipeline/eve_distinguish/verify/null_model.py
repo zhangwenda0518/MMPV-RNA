@@ -180,7 +180,7 @@ def emit(run_dir, mode, out_fa, seed, null_mode="mono"):
                 if reg is None:            # 没有可用同源区: 原样保留, 只洗有区间的那批
                     new = seq
                 else:
-                    sseq, s, e, _ = reg
+                    sseq, s, e = reg
                     sh = shuffler(sseq[s:e], rng, null_mode)
                     n_reg += 1
                     if sseq is seq:
@@ -197,7 +197,11 @@ def emit(run_dir, mode, out_fa, seed, null_mode="mono"):
 
 
 def align_region(hsps, seq):
-    """最佳 subject 的 HSP 覆盖区间 -> (sseq, start, end, offset)."""
+    """最佳 subject 的 HSP 覆盖区间 -> (sseq, start, end).
+
+    v7 起 (P0-1): start = 首个已对齐密码子的锚点 (正链 qs-1 / 负链 L-qe), 它天然
+    落在主读框栅格上, 读框号不再换算成偏移 —— 与 s1.hsp_metrics 同一契约。
+    """
     if not hsps:
         return None
     best = max(hsps, key=lambda h: h["bits"])["sid"]
@@ -213,15 +217,17 @@ def align_region(hsps, seq):
         s, e = L - qe, min(L - (qs - 1), L)
     if e - s < s1.MIN_SPAN:
         return None
-    return sseq, s, e, abs(fnum) - 1
+    return sseq, s, e
 
 
 # ─────────────────── 同源区细粒度空模型（纯计算） ───────────────────
-def classify_region(sseq, s, e, offset):
-    """在给定区间跑 s1 的判据 (与 hsp_metrics 内部逐行同源)."""
-    stops = s1.scan_frame_stops(sseq, s, e, offset)
-    other = [len(s1.scan_frame_stops(sseq, s, e, o))
-             for o in range(3) if o != offset]
+def classify_region(sseq, s, e):
+    """在给定区间跑 s1 的判据 (与 s1.hsp_metrics 同一坐标契约, v7 P0-1).
+
+    s 是主读框栅格上的锚点: 病毒读框相位 0, 基线两框相位 1/2 (相对锚点)。
+    """
+    stops = s1.scan_frame_stops(sseq, s, e, 0)
+    other = [len(s1.scan_frame_stops(sseq, s, e, ph)) for ph in (1, 2)]
     om = sum(other) / len(other) if other else 0.0
     prof = s1.stop_profile(stops, e - s)
     return (s1.classify_decay(len(stops), om, prof, e - s),
@@ -245,14 +251,14 @@ def region_null(run_dir, k, seed, json_out, null_mode="mono", quiet=False):
                 n_nohit += 1
             continue
         n_used += 1
-        sseq, s, e, off = reg
-        rc, rh, rm, re_, span = classify_region(sseq, s, e, off)
+        sseq, s, e = reg
+        rc, rh, rm, re_, span = classify_region(sseq, s, e)
         real_c[rc] += 1
         region = sseq[s:e]
         nd = collections.Counter()
         for _ in range(k):
             sh = shuffler(region, rng, null_mode)
-            nc = classify_region(sh, 0, len(sh), off)[0]
+            nc = classify_region(sh, 0, len(sh))[0]
             nd[nc] += 1
             null_c[nc] += 1
         rows.append({"contig": cid, "span": span, "real": rc,

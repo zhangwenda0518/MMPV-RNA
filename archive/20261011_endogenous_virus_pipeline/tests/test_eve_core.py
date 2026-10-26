@@ -24,7 +24,7 @@ from eve_scan_core import (EveConfig, assign_best_hits, bed_to_regions,
                            cleanup_stage_files, extract_cmd, family_of,
                            load_id2div, locus_key, merge_all, merge_loci,
                            restore_coordinates, run, samtools_too_old,
-                           sliding_cmd, summarize_genome, verdict_loci)
+                           slop_bed, sliding_cmd, summarize_genome, verdict_loci)
 from eve_genome_scan import genome_done, parse_stages, resolve_genome_fa
 
 
@@ -189,6 +189,32 @@ class TestVerdict(unittest.TestCase):
         self.assertEqual(rows["L1"][3], "120")
         self.assertEqual(rows["L2"][1], "host_like")
         self.assertEqual(rows["L3"][1], "undetermined")
+
+    def test_zero_hit_locus_gets_explicit_row(self):
+        """P1-1 回归: Stage1 有、S2 双侧库零命中的位点必须显式落 undetermined 行.
+
+        旧版输出域只含 S2 命中过的位点: 汇总把缺行当成 undetermined 统计,
+        Stage3 却收不到它 —— "未判定"计数与实际送 RVDB 的集合不一致。
+        """
+        div = load_id2div(self.id2div)
+        nv, nh, nu = verdict_loci(self.raw, div, self.out, 50, 50,
+                                  all_loci=["L1", "L2", "L3", "L4"])
+        self.assertEqual((nv, nh, nu), (1, 1, 2))
+        rows = {l.split("\t")[0]: l.split("\t") for l in
+                self.out.read_text().splitlines()[1:]}
+        self.assertEqual(rows["L4"][1], "undetermined")
+        self.assertEqual(rows["L4"][2], "")          # 两侧最佳命中留空
+        self.assertEqual(rows["L4"][4], "")
+        # 有命中的位点判定不受影响, 且 locus 列用传入的原始名 (chr-style) 形式
+        self.assertEqual(rows["L1"][1], "viral_supported")
+
+    def test_all_loci_display_form_prefers_bed_names(self):
+        """diamond 把 ':' 回显成 '_' 时, 行名仍以 loci.bed 的原始位点名为准
+        (与 summary 的 locus 列同源; join 双方都过 locus_key, 不依赖写法)."""
+        div = load_id2div(self.id2div)
+        verdict_loci(self.raw, div, self.out, 50, 50, all_loci=["L1"])
+        rows = {l.split("\t")[0] for l in self.out.read_text().splitlines()[1:]}
+        self.assertIn("L1", rows)
 
 
 class TestFamilyOf(unittest.TestCase):
@@ -660,6 +686,64 @@ class TestSamtoolsVersionProbe(unittest.TestCase):
             self.assertIsNone(samtools_too_old("/x/samtools"))
 
 
+class TestSlopBed(unittest.TestCase):
+    """侧翼上下文 BED (v7.2): 先按 merge_d 合并, 再两侧各扩 flank, 起点钳到 0."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.d = Path(self.tmp.name)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _run(self, lines, flank=3000, merge_d=1000):
+        bed = self.d / "loci.bed"
+        out = self.d / "ctx.bed"
+        bed.write_text("".join(lines), encoding="utf-8")
+        return slop_bed(bed, out, flank=flank, merge_d=merge_d), out
+
+    def test_flank_and_merge(self):
+        # 两个位点相距 500nt (<= merge_d 1000): 先并成一段, 再两侧扩 3000
+        (n_in, n_out), out = self._run([
+            "chr1\t10000\t10300\tchr1:10001-10300\n",
+            "chr1\t10800\t11100\tchr1:10801-11100\n"])
+        self.assertEqual((n_in, n_out), (2, 1))
+        c = out.read_text(encoding="utf-8").splitlines()[0].split("\t")
+        self.assertEqual(c[0], "chr1")
+        self.assertEqual((int(c[1]), int(c[2])), (7000, 14100))
+        self.assertEqual(c[3], "chr1:7001-14100")
+
+    def test_start_clamped_to_zero(self):
+        (_, n_out), out = self._run(["chr1\t100\t400\tchr1:101-400\n"])
+        self.assertEqual(n_out, 1)
+        c = out.read_text(encoding="utf-8").splitlines()[0].split("\t")
+        self.assertEqual(int(c[1]), 0)          # 负值钳到 0, 不写非法 BED
+        self.assertEqual(int(c[2]), 3400)
+
+    def test_distant_loci_stay_separate(self):
+        (_, n_out), out = self._run(
+            ["chr1\t1000\t1300\tx\n", "chr1\t50000\t50300\ty\n"])
+        self.assertEqual(n_out, 2)
+
+    def test_contigs_are_independent(self):
+        (_, n_out), out = self._run(
+            ["chr1\t1000\t1300\tx\n", "chr2\t1000\t1300\ty\n"])
+        self.assertEqual(n_out, 2)
+        self.assertEqual([l.split("\t")[0] for l in
+                          out.read_text(encoding="utf-8").splitlines()],
+                         ["chr1", "chr2"])
+
+    def test_empty_and_invalid(self):
+        (n_in, n_out), out = self._run(["# comment\n", "bad\n"])
+        self.assertEqual((n_in, n_out), (0, 0))
+        self.assertEqual(out.read_text(encoding="utf-8"), "")
+
+    def test_zero_flank_keeps_locus_span(self):
+        (_, _), out = self._run(["chr1\t1000\t1300\tx\n"], flank=0)
+        c = out.read_text(encoding="utf-8").splitlines()[0].split("\t")
+        self.assertEqual((int(c[1]), int(c[2])), (1000, 1300))
+
+
 class TestBedToRegions(unittest.TestCase):
     """BED(0基半开) → samtools 区域文件(1基闭区间): 坐标差一位全批位点静默错位."""
 
@@ -860,14 +944,24 @@ class TestGenomeDone(unittest.TestCase):
     def test_stage1_only_does_not_satisfy_later_stages(self):
         self._mk(f"04_Summary/{self.n}_eve_summary.tsv")
         self._mk(f"01_Loci/{self.n}/{self.n}.loci.bed")
+        self._mk(f"01_Loci/{self.n}/{self.n}.loci_context.fa")
         self.assertTrue(genome_done(self.out, self.n, {"discover"}))
         self.assertFalse(genome_done(self.out, self.n, {"verdict"}))
         self.assertFalse(genome_done(self.out, self.n, {"annotate"}))
         self.assertFalse(genome_done(self.out, self.n, self.all_stages))
 
+    def test_missing_context_is_not_done(self):
+        """v7.2: 侧翼上下文缺失时 discover 不算完成 —— 否则旧 run 永不补抽."""
+        self._mk(f"04_Summary/{self.n}_eve_summary.tsv")
+        self._mk(f"01_Loci/{self.n}/{self.n}.loci.bed")
+        self.assertFalse(genome_done(self.out, self.n, {"discover"}))
+        self._mk(f"01_Loci/{self.n}/{self.n}.loci_context.fa")
+        self.assertTrue(genome_done(self.out, self.n, {"discover"}))
+
     def test_all_artifacts_present_is_done(self):
         self._mk(f"04_Summary/{self.n}_eve_summary.tsv")
         self._mk(f"01_Loci/{self.n}/{self.n}.loci.bed")
+        self._mk(f"01_Loci/{self.n}/{self.n}.loci_context.fa")
         self._mk(f"02_Verdict/{self.n}/{self.n}.s2_verdict.tsv")
         self._mk(f"03_RVDB/{self.n}/{self.n}.s3_rvdb.tsv")
         self.assertTrue(genome_done(self.out, self.n, self.all_stages))
@@ -875,6 +969,7 @@ class TestGenomeDone(unittest.TestCase):
     def test_skip_s3_does_not_require_rvdb_artifact(self):
         self._mk(f"04_Summary/{self.n}_eve_summary.tsv")
         self._mk(f"01_Loci/{self.n}/{self.n}.loci.bed")
+        self._mk(f"01_Loci/{self.n}/{self.n}.loci_context.fa")
         self._mk(f"02_Verdict/{self.n}/{self.n}.s2_verdict.tsv")
         self.assertTrue(genome_done(self.out, self.n, self.all_stages,
                                     skip_s3=True))
@@ -886,6 +981,7 @@ class TestGenomeDone(unittest.TestCase):
     def test_viroid_layer_is_part_of_completion(self):
         for rel in (f"04_Summary/{self.n}_eve_summary.tsv",
                     f"01_Loci/{self.n}/{self.n}.loci.bed",
+                    f"01_Loci/{self.n}/{self.n}.loci_context.fa",
                     f"02_Verdict/{self.n}/{self.n}.s2_verdict.tsv",
                     f"03_RVDB/{self.n}/{self.n}.s3_rvdb.tsv"):
             self._mk(rel)
@@ -980,6 +1076,65 @@ class TestBatchJobs(unittest.TestCase):
         jobs = self.build_jobs(args, self._STAGES, _Log())
         self.assertEqual(len(jobs), 2)
         self.assertEqual({j["name"] for j in jobs}, {"A", "B"})
+
+    def _real_batch(self, lines, extra=()):
+        """真实文件的批次 (指纹要读得到字节)."""
+        a = self.d / "a.fa"
+        b = self.d / "b.fa"
+        a.write_text(">x\nACGT\n", encoding="utf-8", newline="\n")
+        b.write_text(">y\nTTTT\n", encoding="utf-8", newline="\n")
+        return self.build_parser().parse_args(
+            ["-B", str(self._write("batch.tsv", lines)), "-o",
+             str(self.d / "out"), *extra])
+
+    def _write(self, name, text):
+        p = self.d / name
+        p.write_text(text, encoding="utf-8", newline="\n")
+        return p
+
+    def setUp_d(self):
+        import tempfile
+        self.d = Path(tempfile.mkdtemp(prefix="eve_batch_fp_"))
+
+    def test_duplicate_assembly_fingerprint_aborts(self):
+        """P1-5b 回归: 同一文件换名登记两次必须开跑前挡住 (跨基因组支持数会被抬高)."""
+        self.setUp_d()
+        same = self.d / "same.fa"
+        same.write_text(">x\nACGT\n", encoding="utf-8", newline="\n")
+        args = self._write("batch.tsv", f"A\t{same}\nB\t{same}\n")
+        args = self.build_parser().parse_args(
+            ["-B", str(args), "-o", str(self.d / "out")])
+        with self.assertRaises(SystemExit) as ctx:
+            self.build_jobs(args, self._STAGES, _Log())
+        self.assertIn("重复 assembly", str(ctx.exception))
+
+    def test_duplicate_assembly_allowed_with_flag_and_manifest_written(self):
+        self.setUp_d()
+        same = self.d / "same.fa"
+        same.write_text(">x\nACGT\n", encoding="utf-8", newline="\n")
+        tsv = self._write("batch.tsv", f"A\t{same}\nB\t{same}\n")
+        args = self.build_parser().parse_args(
+            ["-B", str(tsv), "-o", str(self.d / "out"),
+             "--allow-duplicate-assembly"])
+        jobs = self.build_jobs(args, self._STAGES, _Log())
+        self.assertEqual(len(jobs), 2)
+        from eve_scan_core import BATCH_MANIFEST_NAME
+        manifest = (self.d / "out" / BATCH_MANIFEST_NAME).read_text(
+            encoding="utf-8").splitlines()
+        self.assertEqual(manifest[0].split("\t"),
+                         ["name", "genome_path", "size_bytes", "fingerprint",
+                          "fingerprint_mode"])
+        fps = {ln.split("\t")[3] for ln in manifest[1:]}
+        self.assertEqual(len(fps), 1)          # 两个名字, 一个指纹 (记录在案)
+
+    def test_missing_files_get_empty_fingerprint_no_abort(self):
+        # 路径不存在 (延后到 Stage1 才报的错) 不在这里炸: 指纹记 missing, 不参与去重
+        args = self._args(["A\t/p/a.fa\n", "B\t/p/b.fa\n"])
+        jobs = self.build_jobs(args, self._STAGES, _Log())
+        from eve_scan_core import BATCH_MANIFEST_NAME
+        manifest = (Path(self.tmp.name) / "out" / BATCH_MANIFEST_NAME)
+        self.assertTrue(manifest.is_file())
+        self.assertIn("missing", manifest.read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":

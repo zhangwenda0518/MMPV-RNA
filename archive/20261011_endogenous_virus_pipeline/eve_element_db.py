@@ -69,8 +69,8 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
 from eve_genome_scan import setup_logger                    # noqa: E402
-from eve_scan_core import (SAFE_CHARS, STAGE_DIRS, clean_name, logmsg,  # noqa: E402
-                           locus_key, run, safe_dir, tool_path)
+from eve_scan_core import (BATCH_MANIFEST_NAME, SAFE_CHARS, STAGE_DIRS,  # noqa: E402
+                           clean_name, logmsg, locus_key, run, safe_dir, tool_path)
 
 # ---------------- 路径与默认参数 ----------------
 ELEM_DIR = "05_Elements"          # 元件层产物目录 (接在 01_Loci/02_Verdict/03_RVDB/04_Summary 之后)
@@ -98,13 +98,21 @@ STAGE_OUTPUTS = {
 # 表头常量: 与写盘处共用同一份字面量, 测试拿它跟真实产物第一行逐列比.
 # 表头是跨脚本契约 (下游 build_eve_db.py 按列名读), 在别处再抄一份就会悄悄错位.
 CAND_META_HDR = "genome\tlocus\tfamily\tverdict\tref_sseqid\tevidence_bs"
-ELEMENT_TABLE_HDR = ("cluster_id\trep\tn_members\tn_genomes\tfamily\t"
+# v7 (P1-5b) 加 n_assemblies 列 (紧跟 n_genomes): 元件簇的"跨基因组支持数"按
+# genome 名集合算会被"同一 assembly 换名重复登记"抬高; 有 batch_manifest.tsv
+# (eve_screen.py -B 写) 时按 assembly 指纹去重, 没有时退回名称集合 (两列相等)。
+ELEMENT_TABLE_HDR = ("cluster_id\trep\tn_members\tn_genomes\tn_assemblies\tfamily\t"
                      "chimera_flag\tbest_member\tbest_bs")
 ELEMENT_REGIONS_HDR = "genome\tregion_id\tcontig\tstart\tend\tn_families\tfamilies"
-FAMILY_QUANT_HDR = "family\tgenome\tcopies\tcovered_bp"
+# v7 (P1-5a): copies 不再等于 RepeatMasker 命中行数 —— hit_segments 是原始命中
+# 行数, copies 是碎片合并后的拷贝数, covered_bp_union 是非冗余覆盖碱基 (并集)。
+FAMILY_QUANT_HDR = "family\tgenome\thit_segments\tcopies\tcovered_bp_union"
 # mmseqs convertalis 不写表头, 列序就写在这里 (下游按位置解析这 9 列)
 CDD_CONVERT_FIELDS = "query,target,evalue,bits,qstart,qend,tstart,tend,tlen"
 PHYLO_SCRIPT = "phylo_commands.sh"
+# element_table 的 family 列下标从表头常量派生 (v7 加 n_assemblies 列后 family
+# 从第 4 列挪到第 5 列 —— 再按裸下标读就取到别的列, 共识文库名/phylo 分组全错)
+ETBL_FAMILY_IDX = ELEMENT_TABLE_HDR.split("\t").index("family")
 
 # 算法参数 (与源脚本逐项一致; 不做重新调参)
 MIN_BS = 50.0             # collect 的 evidence_bs 下限 (原 --min-bs)
@@ -340,11 +348,13 @@ def candidates_from_rows(name, hdr, rows, verdicts, min_bs=None):
     return keep
 
 
-def aggregate_clusters(meta, pairs):
+def aggregate_clusters(meta, pairs, genome_asm=None):
     """聚类聚合 (源脚本 p_cluster 的核心): 家族投票 + 嵌合体初筛 + 最佳成员.
 
     meta:  member_id -> [genome, locus, family, verdict, ref_sseqid, evidence_bs]
     pairs: cluster_members.tsv 的行 (rep, member)
+    genome_asm: genome 名 -> assembly 指纹 (来自 batch_manifest.tsv; 缺省 None =
+               没有清单, n_assemblies 退回 genome 名集合数 —— 两列相等, 见 P1-5b)
     返回 (rows, members_by_cid); rows 列序 == ELEMENT_TABLE_HDR.
 
     两处相对源脚本的**确定性**硬化 (成员集合不变, 只固定顺序):
@@ -365,6 +375,13 @@ def aggregate_clusters(meta, pairs):
         fams = Counter(meta.get(m, ["", "", "Other_viral"])[2] for m in ms)
         fam = fams.most_common(1)[0][0] if fams else "Other_viral"
         genomes = {meta[m][0] for m in ms if m in meta}
+        # P1-5b: 同一 assembly 换名重复登记时, 名称集合数会被抬高; 有清单就按
+        # 指纹去重。不在清单里的名字兜底成独立 assembly (计数不丢, 只是不去重;
+        # "\0" 前缀保证兜底键不会与真指纹撞车)。
+        if genome_asm:
+            n_asm = len({genome_asm.get(g, "\0" + g) for g in genomes})
+        else:
+            n_asm = len(genomes)
         minor = [f for f, k in fams.items()
                  if f != fam and k >= max(2, len(ms) // 5)]
         best_m, best_bs = "", 0.0
@@ -375,7 +392,7 @@ def aggregate_clusters(meta, pairs):
                 continue
             if bs > best_bs:
                 best_m, best_bs = m, bs
-        rows.append((cid, rep, len(ms), len(genomes), fam,
+        rows.append((cid, rep, len(ms), len(genomes), n_asm, fam,
                      "possible_chimera" if minor else "", best_m, best_bs))
         members[cid] = ms
     return rows, members
@@ -472,6 +489,32 @@ def pending_rm_jobs(todo, rm_root):
             if not (rm_root / n / f"{n}.out").exists()]
 
 
+def load_assembly_map(manifest_path):
+    """batch_manifest.tsv -> {genome 名: assembly 指纹} (缺文件返回 None).
+
+    P1-5b: 指纹由 eve_screen.py -B 跑批时写入 (见 eve_screen.assembly_fingerprint)。
+    只收非空指纹行 —— 没算出指纹的 genome 与"无清单"同口径, 不假装去重。
+    """
+    p = Path(manifest_path)
+    if not p.is_file():
+        return None
+    m = {}
+    with open(p, encoding="utf-8") as fh:
+        hdr = fh.readline().rstrip("\n").split("\t")
+        try:
+            i_name = hdr.index("name")
+            i_fp = hdr.index("fingerprint")
+        except ValueError:
+            logmsg(f"WARN cluster: {p} 缺 name/fingerprint 列, "
+                   f"n_assemblies 退回 genome 名称集合")
+            return None
+        for line in fh:
+            c = line.rstrip("\n").split("\t")
+            if len(c) > max(i_name, i_fp) and c[i_fp]:
+                m[c[i_name]] = c[i_fp]
+    return m
+
+
 def build_lib_fam_map(headers):
     """consensus 文库头 -> {cluster_id: 家族}, 纯逻辑.
 
@@ -486,7 +529,7 @@ def build_lib_fam_map(headers):
 
 
 def parse_rm_out_lines(lines):
-    """RepeatMasker .out 数据行 -> (query_begin, query_end, repeat_name).
+    """RepeatMasker .out 数据行 -> (query 名, query_begin, query_end, repeat_name).
 
     .out 的官方列序 (0 基): 0 SW score, 1-3 perc div/del/ins, 4 query 名,
     5 query begin, 6 query end, 7 (left), 8 链 ('+' / 'C'), 9 matching repeat,
@@ -502,28 +545,68 @@ def parse_rm_out_lines(lines):
     只剩表头 (退出码 0, 日志还写着 "RM QUANT DONE (0 families x 0 genomes)");
     反过来若 contig 名恰好是纯数字 ('1','2'…), 守卫放行, 又按
     int(c[5]) - int(c[4]) + 1 = 起点 - contig号 + 1 算出垃圾 covered_bp。
-    这里按官方列序取 5/6。
+    这里按官方列序取 5/6; v7 (P1-5a) 起把 query 名 (第 4 列) 一并带出 ——
+    拷贝数按"同一家族在同一 contig 上的合并区间"计数, 没有 contig 就做不到。
     """
     for line in lines:
         c = line.split()
         if (len(c) < 11 or not c[5].isdigit() or not c[6].isdigit()
                 or c[8] not in ("+", "C")):
             continue
-        yield int(c[5]), int(c[6]), c[9].split("#")[0]
+        yield c[4], int(c[5]), int(c[6]), c[9].split("#")[0]
+
+
+# 同一家族在同一 contig 上, 命区间隔 <= 这个值就算同一次插入的碎片 (v7 P1-5a)。
+# RepeatMasker 对同一个插入的碎片化命中通常相邻或少量重叠; 真正的独立拷贝之间
+# 一般隔着 kb 级。保守取 100nt, 只合并"明显是同一位点"的碎片 —— 它是可追溯的
+# 显式规则 (常量可测), 不是隐式魔法数。
+RM_MERGE_GAP = 100
+
+
+def merge_hit_intervals(ivs, gap=RM_MERGE_GAP):
+    """重叠或间隔 <= gap 的命中区间合并成"位点" (闭区间, [begin,end]).
+
+    输入 [(begin, end), ...] 任意序; 返回 [(begin, end), ...] 按 begin 排序、
+    互不重叠且间隔 > gap。这是拷贝数碎片校正的核心: 合并后的块数 = 拷贝数,
+    块长之和 = 非冗余覆盖碱基 (并集, 重叠不重复计)。
+    """
+    out = []
+    for b, e in sorted(ivs):
+        if e < b:                       # 防御: 倒挂区间按空处理
+            continue
+        if out and b <= out[-1][1] + gap:
+            out[-1] = (out[-1][0], max(out[-1][1], e))
+        else:
+            out.append((b, e))
+    return out
 
 
 def accumulate_quant(hits, lib_fam, genome):
-    """把 (begin, end, name) 命中累加进 {(family, genome): [copies, covered_bp]}.
+    """把 (contig, begin, end, name) 命中累加进 {(family, genome): [segments, copies, bp]}.
 
-    一个家族在一个基因组里的"拷贝数"按 RepeatMasker 命中条数算 (碎片化校正交给
-    regions 阶段的元件区归并), covered_bp 是该家族全部命中的碱基和.
+    v7 (P1-5a) 起三个数分得开 (旧版把 RepeatMasker 命中**行数**直接当拷贝数、
+    逐行碱基求和当覆盖度 —— 同一插入被分段命中/同家族区间重叠时全部虚高):
+      [0] hit_segments     原始命中行数 (不校正)
+      [1] copies           拷贝数 = 同 (家族, contig) 内合并后的位点数
+                           (重叠或间隔 <= RM_MERGE_GAP 的碎片并成一位点)
+      [2] covered_bp_union 非冗余覆盖碱基 = 合并后块长之和 (区间并集)
     """
-    quant = defaultdict(lambda: [0, 0])
-    for b, e, name in hits:
+    ivs_by_key = defaultdict(list)
+    segments = Counter()
+    for contig, b, e, name in hits:
         cid = name.split("_")[0]
         fam = lib_fam.get(cid, name)
-        quant[(fam, genome)][0] += 1
-        quant[(fam, genome)][1] += e - b + 1
+        key = (fam, genome, contig)
+        segments[key] += 1
+        ivs_by_key[key].append((b, e))
+    quant = defaultdict(lambda: [0, 0, 0])
+    for key, ivs in ivs_by_key.items():
+        fam, _genome, _contig = key
+        merged = merge_hit_intervals(ivs)
+        cell = quant[(fam, genome)]
+        cell[0] += segments[key]
+        cell[1] += len(merged)
+        cell[2] += sum(e - b + 1 for b, e in merged)
     return quant
 
 
@@ -622,7 +705,9 @@ def stage_cluster(cfg, log):
             c = line.rstrip("\n").split("\t")
             if len(c) == 2:
                 pairs.append((c[0], c[1]))
-    rows, members = aggregate_clusters(meta, pairs)
+    # P1-5b: 有 batch_manifest (eve_screen -B 产物) 就按 assembly 指纹去重
+    genome_asm = load_assembly_map(Path(cfg.outdir) / BATCH_MANIFEST_NAME)
+    rows, members = aggregate_clusters(meta, pairs, genome_asm)
     write_table(elem / "element_table.tsv", ELEMENT_TABLE_HDR, rows)
     for cid, ms in sorted(members.items()):
         with open(elem / f"_members_{cid}.txt", "w", encoding="utf-8",
@@ -704,8 +789,8 @@ def stage_consensus(cfg, log):
         fh.readline()
         for line in fh:
             c = line.rstrip("\n").split("\t")
-            if len(c) >= 5:
-                names[c[0]] = c[4]
+            if len(c) > ETBL_FAMILY_IDX:
+                names[c[0]] = c[ETBL_FAMILY_IDX]
     rows, n_mafft, n_lost = [], 0, 0
     for cid in sorted(names):
         members = read_members(elem, cid)
@@ -804,7 +889,7 @@ def stage_rm(cfg, log):
                                f"失败: {', '.join(sorted(failed)[:5])}"
                                + (" ..." if len(failed) > 5 else ""))
     lib_fam = build_lib_fam_map(fa_headers(lib))
-    quant = defaultdict(lambda: [0, 0])
+    quant = defaultdict(lambda: [0, 0, 0])
     for name, _genome in todo:
         outf = rm_root / name / f"{name}.out"
         if not outf.is_file():
@@ -814,9 +899,10 @@ def stage_rm(cfg, log):
         for key, v in part.items():
             quant[key][0] += v[0]
             quant[key][1] += v[1]
+            quant[key][2] += v[2]
     fams = sorted({f for f, _ in quant})
     genomes = sorted({g for _, g in quant})
-    rows = [(f, g, quant[(f, g)][0], quant[(f, g)][1])
+    rows = [(f, g, quant[(f, g)][0], quant[(f, g)][1], quant[(f, g)][2])
             for f in fams for g in genomes if quant[(f, g)][0]]
     write_table(elem / "family_quant.tsv", FAMILY_QUANT_HDR, rows)
     return len(fams), len(genomes)
@@ -873,8 +959,8 @@ def stage_phylo(cfg, log):
         fh.readline()
         for line in fh:
             c = line.rstrip("\n").split("\t")
-            if len(c) >= 5:
-                fam_cids[c[4]].append(c[0])
+            if len(c) > ETBL_FAMILY_IDX:
+                fam_cids[c[ETBL_FAMILY_IDX]].append(c[0])
     pdir = elem / "phylo"
     pdir.mkdir(parents=True, exist_ok=True)
     cmd_lines = ["#!/bin/bash", "set -euo pipefail"]

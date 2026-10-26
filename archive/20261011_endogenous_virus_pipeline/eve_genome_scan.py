@@ -18,7 +18,6 @@ eve_genome_scan.py — 单基因组 EVE 筛查 worker (断点续传)
 
 import argparse
 import logging
-import os
 import sys
 import time
 from pathlib import Path
@@ -26,10 +25,11 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
-from eve_scan_core import (EVALUE, HOST_BS, MERGE_D, VIRAL_BS, WINDOW, EveConfig,
-                           STAGE_DIRS, check_tools, cleanup_stage_files, logmsg,
-                           safe_dir, stage1_discover, stage2_verdict,
-                           stage3_annotate, stage_viroid, summarize_genome)
+from eve_scan_core import (EVALUE, FLANK_MERGE_D, FLANK_NT, HOST_BS, MERGE_D,
+                           VIRAL_BS, WINDOW, EveConfig, STAGE_DIRS, check_tools,
+                           cleanup_stage_files, safe_dir, stage1_discover,
+                           stage2_verdict, stage3_annotate, stage_viroid,
+                           summarize_genome)
 
 SUMMARY_SUFFIX = "_eve_summary.tsv"
 
@@ -80,6 +80,9 @@ def genome_done(outdir, name, stages, viroid=False, skip_s3=False):
     need = [base / STAGE_DIRS["summary"] / f"{name}{SUMMARY_SUFFIX}"]
     if "discover" in stages:
         need.append(base / STAGE_DIRS["loci"] / name / f"{name}.loci.bed")
+        # v7.2: 侧翼上下文也是 discover 的产物 —— 不列入完成判定的话, 旧 run
+        # 会被判"已完成", 侧翼永远不会补抽 (而它正是整合证据的输入)
+        need.append(base / STAGE_DIRS["loci"] / name / f"{name}.loci_context.fa")
     if "verdict" in stages:
         need.append(base / STAGE_DIRS["verdict"] / name / f"{name}.s2_verdict.tsv")
     if "annotate" in stages and not skip_s3:
@@ -225,6 +228,10 @@ def build_parser():
     g.add_argument("--viral-bs", type=float, default=VIRAL_BS)
     g.add_argument("--cmd-timeout", type=int, default=0,
                    help="单条外部命令超时 (秒); 0=不限 (防工具挂死占核)")
+    g.add_argument("--flank-nt", type=int, default=FLANK_NT,
+                   help="侧翼上下文长度 (nt, 两侧各扩; 0=不抽)")
+    g.add_argument("--flank-merge-d", type=int, default=FLANK_MERGE_D,
+                   help="抽侧翼前先合并位点的距离 (nt)")
     return p
 
 
@@ -244,7 +251,8 @@ def main(argv=None):
                     samtools=args.samtools or "", window=args.window,
                     merge_d=args.merge_distance, evalue=args.evalue,
                     host_bs=args.host_bs, viral_bs=args.viral_bs,
-                    cmd_timeout=args.cmd_timeout)
+                    cmd_timeout=args.cmd_timeout,
+                    flank_nt=args.flank_nt, flank_merge_d=args.flank_merge_d)
     missing = check_tools(cfg, need_viroid=args.blastn_viroid,
                           skip_s3=args.skip_s3)
     if missing:

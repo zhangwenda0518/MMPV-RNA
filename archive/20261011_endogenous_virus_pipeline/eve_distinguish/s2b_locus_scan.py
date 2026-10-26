@@ -43,6 +43,11 @@ from collections import defaultdict
 CANON = ["MP", "CP", "AP", "RT", "RH"]
 BLASTN_MIN_COLS = 14          # qseqid..slen; 少于这个数说明 outfmt 配错了
 NOHOST_LABEL = "__no_host__"  # 未寄主映射候选的位点组名 (每组只剩自己)
+# v7.4: 同一 scaffold 上两个候选的 subject 区间间隔 <= 此值才归为同一位点。
+# 转录组 scaffold 可能很长 (整条染色体级或大 contig), 只按 scaffold 名分组会把
+# 相隔几十 kb 的两个病毒片段误并成一个位点, 进而把组件并集凑成"齐全"。
+# 取 10kb: 一个前病毒基因组 ~8kb, 同一位点的碎片应落在这个尺度内。
+LOCUS_MAX_GAP = 10_000
 
 
 def read_tsv(path):
@@ -76,20 +81,25 @@ def parse_blastn(path):
     """寄主比对 -> 每 contig 每物种的同源强度 + 解析统计.
 
     返回 (out, stats):
-      out   cid -> {code: {wpid, cov, aln, best_scaffold, best_bits, n_scafs}}
+      out   cid -> {code: {wpid, cov, aln, best_scaffold, best_bits, n_scafs,
+                           subj_ivs}}
               wpid      比对长度加权平均一致性
               cov       该物种全部 scaffold 对 query 的区间并集覆盖率 (并集而非单条:
                         OneKP 转录组组装是碎的, 一个寄主基因常被打断在多个 scaffold 上,
                         单条覆盖率会严重低估)
               n_scafs   该物种下命中了几条不同 scaffold。位点归并只取最佳那条 scaffold,
                         这个数用来暴露"同源区实际被打断在多条 scaffold 上"的漏并风险.
+              subj_ivs  v7.4: 该物种下 (scaffold, sstart, send) 列表 —— 位点归并
+                        需要**subject 坐标**判断"同一 scaffold 上的两个候选是否相邻",
+                        只用 scaffold 名分组会把同一 scaffold 上相隔几十 kb 的两个
+                        病毒片段误并成一个位点。
       stats dict(n_rows, n_bad): 行数与列数不足被跳过的行数。n_bad>0 而解析行数为 0
                         时基本就是 outfmt 配错了, 调用方必须报错而不是让全部候选静默
                         变成"无寄主映射"。
     """
     agg = defaultdict(lambda: defaultdict(
         lambda: {"aln": 0, "pid_w": 0.0, "ivs": [], "qlen": 0,
-                 "best": (0.0, 0, "", 0.0), "scafs": set()}))
+                 "best": (0.0, 0, "", 0.0), "scafs": set(), "subj_ivs": []}))
     stats = {"n_rows": 0, "n_bad": 0}
     with open(path) as f:
         for line in f:
@@ -102,6 +112,7 @@ def parse_blastn(path):
                 continue
             q, s, pid, aln, bits = p[0], p[1], float(p[2]), int(p[3]), float(p[11])
             qs, qe, qlen = int(p[6]), int(p[7]), int(p[12])
+            ss, se = int(p[8]), int(p[9])          # v7.4: subject 坐标
             code = scaffold_code(s)
             a = agg[q][code]
             a["aln"] += aln
@@ -109,6 +120,7 @@ def parse_blastn(path):
             a["ivs"].append((min(qs, qe), max(qs, qe)))
             a["qlen"] = qlen
             a["scafs"].add(s)
+            a["subj_ivs"].append((s, min(ss, se), max(ss, se), bits))
             if (bits, aln) > (a["best"][3], a["best"][1]):
                 a["best"] = (pid, aln, s, bits)
     out = {}
@@ -121,13 +133,59 @@ def parse_blastn(path):
                             "aln": a["aln"],
                             "best_scaffold": a["best"][2],
                             "best_bits": a["best"][3],
-                            "n_scafs": len(a["scafs"])}
+                            "n_scafs": len(a["scafs"]),
+                            "subj_ivs": a["subj_ivs"]}
     return out, stats
 
 
+def best_subject_interval(rec):
+    """该候选在最佳 scaffold 上的代表区间 -> (scaffold, start, end) 或 None.
+
+    v7.4: 取 bitscore 最高的那条命中作代表 (与 `best_scaffold` 同一口径)。
+    位点归并用它判断"同一 scaffold 上的两个候选是否落在同一段"。
+    """
+    ivs = rec.get("subj_ivs") or []
+    if not ivs:
+        return None
+    scaf, s, e, _bits = max(ivs, key=lambda x: x[3])
+    return scaf, s, e
+
+
+def cluster_by_subject(entries, max_gap=LOCUS_MAX_GAP):
+    """把同一 scaffold 上的候选按 subject 区间聚类 -> [[cid, ...], ...].
+
+    entries: [(cid, scaffold, start, end), ...]
+    规则: 同一 scaffold 上, 两个候选的区间间隔 <= max_gap 才归为同一位点;
+    超过就是两个独立位点 (即使 scaffold 名相同)。
+    v7.4 修: 旧版只按 scaffold 名分组, 同一 scaffold 上相隔几十 kb 的两个病毒
+    片段会被当成一个位点, 从而把组件并集凑成"齐全" (伪造 locus_full)。
+    返回的每个簇内按 cid 排序 (输出确定)。
+    """
+    by_scaf = defaultdict(list)
+    for cid, scaf, s, e in entries:
+        by_scaf[scaf].append((s, e, cid))
+    clusters = []
+    for scaf in sorted(by_scaf):
+        ivs = sorted(by_scaf[scaf])
+        cur = [ivs[0]]
+        cur_end = ivs[0][1]
+        for s, e, cid in ivs[1:]:
+            if s <= cur_end + max_gap:
+                cur.append((s, e, cid))
+                cur_end = max(cur_end, e)
+            else:
+                clusters.append(sorted(c[2] for c in cur))
+                cur = [(s, e, cid)]
+                cur_end = e
+        clusters.append(sorted(c[2] for c in cur))
+    return clusters
+
+
 HDR = ("contig_id\tsample\tsample_flag\thost_scaffold\thost_code\thost_scope\thost_wpid\t"
-       "host_cov\thost_xeno\tn_host_scaffolds\tcomps_contig\tbest_locus_comps\tdecay_class\t"
-       "te_flag\tlocus_key\tlocus_arch\tlocus_ncomp\tlocus_comps\tlocus_members\tlocus_hint\n")
+       "host_cov\thost_xeno\tn_host_scaffolds\tsubj_start\tsubj_end\t"
+       "comps_contig\tbest_locus_comps\tdecay_class\t"
+       "te_flag\tlocus_key\tlocus_arch\tlocus_ncomp\tlocus_comps\tlocus_members\t"
+       "locus_span\tlocus_hint\n")
 
 
 def comps_of(s):
@@ -210,8 +268,10 @@ def main():
                                          h["best_scaffold"], h["n_scafs"])
             xeno = max(((v["wpid"], v["aln"], c) for c, v in per_code.items() if c != code),
                        default=(0.0, 0, ""))
+            subj = best_subject_interval(h)
         else:
             wpid, cov, scaff, n_scafs, xeno = "", 0.0, "-", 0, (0.0, 0, "")
+            subj = None
         rows[cid] = {
             "sample": sample,
             "sample_flag": sflag,
@@ -222,6 +282,7 @@ def main():
             "host_cov": cov,
             "host_xeno": "%s/%dnt" % (xeno[2], xeno[1]) if xeno[2] else "-",
             "n_host_scaffolds": n_scafs,
+            "subj": subj,
             "comps_contig": set(comps_of(d2.get("components", "-"))),
             "best_locus_comps": set(comps_of(d2.get("best_locus_comps", "-"))),
             "decay": s1.get(cid, {}).get("decay_class", ""),
@@ -229,15 +290,25 @@ def main():
         }
 
     # ---- 位点级汇总 ----
-    # 真位点 = (样本, 寄主 scaffold)。未寄主映射的候选**不归组**: 旧版把同样本的它们
-    # 全部塌缩进 ("-") 一个位点, 若干各带一两个组件的 contig 并起来就能凑出"单位点
-    # 齐全", 这是伪造 EVE 判定的直接原因。现在每条自成一位点, arch=no_host_locus。
-    loci = defaultdict(list)
+    # 真位点 = (样本, 寄主 scaffold, subject 区间簇)。两条约束:
+    #   ① 未寄主映射的候选**不归组** (旧版把同样本的它们塌缩成一个位点, 伪造 locus_full);
+    #   ② v7.4: 同一 scaffold 上还要**按 subject 坐标聚类** (间隔 > LOCUS_MAX_GAP
+    #      就是两个独立位点)。旧版只按 scaffold 名分组, 同一 scaffold 上相隔几十 kb
+    #      的两个病毒片段会被并成一个位点, 组件并集凑成"齐全"。
+    loci = {}
+    nohost_cids = []
+    per_sample = defaultdict(list)
     for cid, r in rows.items():
-        if r["host_scaffold"] in ("-", ""):
-            loci[(NOHOST_LABEL, cid)].append(cid)
+        if r["host_scaffold"] in ("-", "") or r["subj"] is None:
+            nohost_cids.append(cid)
         else:
-            loci[(r["sample"], r["host_scaffold"])].append(cid)
+            per_sample[(r["sample"], r["host_scaffold"])].append(
+                (cid, r["host_scaffold"], r["subj"][1], r["subj"][2]))
+    for (sample, scaff), entries in per_sample.items():
+        for k, members in enumerate(cluster_by_subject(entries)):
+            loci[(sample, scaff, k)] = members
+    for cid in nohost_cids:
+        loci[(NOHOST_LABEL, cid, 0)] = [cid]
 
     for key, members in loci.items():
         nohost = key[0] == NOHOST_LABEL
@@ -249,6 +320,14 @@ def main():
         has_decay = any(d == "distributed_decay" for d in decays)
         has_break = any(d == "assembly_breakpoint" for d in decays)
         pol_only = bool(union) and not (union & {"MP", "CP", "AP"})
+        # v7.4: 位点跨度 = 该簇内 subject 区间的**首尾跨度** (max_end - min_start + 1),
+        # 不是并集长度 —— 簇内的空隙也是这个位点的一部分 (前病毒内部非编码区)。
+        # 用来审计"这个位点有多宽", 并让下游能判断它是否超出单个前病毒的合理尺度。
+        spans = [(rows[m]["subj"][1], rows[m]["subj"][2]) for m in members
+                 if rows[m]["subj"]]
+        locus_span = 0
+        if spans:
+            locus_span = max(e for _s, e in spans) - min(s for s, _e in spans) + 1
         if nohost:
             # 没有寄主位点就没有"位点级"证据: 只描述这条 contig 自己带了什么组件,
             # 不与其他候选合成架构, 更不许当 locus_full
@@ -274,14 +353,17 @@ def main():
                 hint = "host_mapped_no_cauli_domain"
             else:
                 hint = "insufficient_info"
+        # v7.4: 真位点键带簇序号 —— 同一 scaffold 被距离约束切成两簇时,
+        # 两簇必须有不同 locus_key, 否则下游按键 join 会当成一个位点。
         lkey = ("%s|nohost:%s" % (rows[members[0]]["sample"], members[0])
-                if nohost else "%s|%s" % (key[0], key[1]))
+                if nohost else "%s|%s#%d" % (key[0], key[1], key[2]))
         for m in members:
             rows[m].update({
                 "locus_arch": arch,
                 "locus_ncomp": n,
                 "locus_comps": "+".join(c for c in CANON if c in union) or "-",
                 "locus_members": len(members),
+                "locus_span": locus_span,
                 "locus_hint": hint,
                 "locus_key": lkey,
             })
@@ -294,11 +376,14 @@ def main():
                       f"{r.get('host_code','')}\t{r.get('host_scope','none')}\t"
                       f"{r.get('host_wpid','')}\t{r.get('host_cov','')}\t{r.get('host_xeno','-')}\t"
                       f"{r.get('n_host_scaffolds',0)}\t"
+                      f"{(r.get('subj') or ('', '', ''))[1]}\t"
+                      f"{(r.get('subj') or ('', '', ''))[2]}\t"
                       f"{'+'.join(c for c in CANON if c in r.get('comps_contig',set())) or '-'}\t"
                       f"{'+'.join(c for c in CANON if c in r.get('best_locus_comps',set())) or '-'}\t"
                       f"{r.get('decay','')}\t{r.get('te','FALSE')}\t{r.get('locus_key','')}\t"
                       f"{r.get('locus_arch','unresolved')}\t{r.get('locus_ncomp','')}\t"
                       f"{r.get('locus_comps','-')}\t{r.get('locus_members','')}\t"
+                      f"{r.get('locus_span','')}\t"
                       f"{r.get('locus_hint','no_host_assembly')}\n")
 
     # ---- 运行摘要: 位点通道到底覆盖了多少候选, 一眼可见 ----

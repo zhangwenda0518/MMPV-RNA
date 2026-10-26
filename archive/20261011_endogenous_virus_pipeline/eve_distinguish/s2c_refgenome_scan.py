@@ -59,6 +59,7 @@ SPLICE_GAP = 500              # 相邻宿主段的 subject 间隔 >= 此值 = �
 MAX_FLANK_GAP = 500_000       # 两端侧翼在同一条染色体上的最大间隔 (Cauli 基因组 ~8kb,
                               # 放宽到 500kb 容纳局部组装空缺; 再远就是两个位点)
 HOSTDOM_PID, HOSTDOM_COV = 90.0, 0.80   # 与 s3_verdict.HOST_PIDENT/HOST_COV 同一闸门
+MIN_REL_BITS = 0.5            # v7.3: 只保留 bits >= best*该值 的命中参与结构判定
 
 RG_HDR = ("contig_id\tsample\tsample_flag\trg_code\trg_scope\trg_call\t"
           "flank_left\tflank_right\tflank_same_locus\tflank_gap\tsplice_pattern\t"
@@ -100,10 +101,22 @@ def parse_refgenome_blastn(path):
     return hits, blasted, stats
 
 
-def merge_segments(hsps):
+def merge_segments(hsps, min_rel_bits=MIN_REL_BITS):
     """qualifying HSP -> query 区间段. 同一染色体同链且 query 重叠/相接的 HSP 并成一段,
     段的 subject 位点取贡献碱基最多的那条 HSP (代表侧翼落点). 不同染色体/异链的
-    HSP **不并** —— 那是转位/嵌合信号, 合并会把 conflict 洗成同一位点."""
+    HSP **不并** —— 那是转位/嵌合信号, 合并会把 conflict 洗成同一位点.
+
+    v7.3 (真实数据实测, 两处修正):
+      ① 先按 bitscore **相对阈值**过滤 —— 重复序列会让一条候选拿到上万条次优
+         命中 (实测一条 8kb 候选有 42,886 条 HSP), 弱命中会把左右翼落点带偏。
+         只保留 `bits >= best * min_rel_bits` (默认 0.5)。
+      ② 段代表改按 **bitscore** 取 (旧版按 aln 长度): 实测一条 aln 只长 20bp
+         但落点完全不同的命中会抢走代表权, 把真实侧翼顶掉。同 bits 时才比 aln。
+    """
+    if not hsps:
+        return []
+    best = max(h["bits"] for h in hsps)
+    hsps = [h for h in hsps if h["bits"] >= best * min_rel_bits]
     segs = []
     for h in sorted(hsps, key=lambda x: (x["qs"], x["qe"])):
         for s in segs:
@@ -111,13 +124,15 @@ def merge_segments(hsps):
                     and h["qs"] <= s["qe"]):
                 s["qe"] = max(s["qe"], h["qe"])
                 s["ivs"].append((h["qs"], h["qe"]))
-                if h["aln"] > s["rep_aln"]:
-                    s.update(rep_aln=h["aln"], sm=h["sm"], sM=h["sM"], pid=h["pid"])
+                if (h["bits"], h["aln"]) > (s["rep_bits"], s["rep_aln"]):
+                    s.update(rep_bits=h["bits"], rep_aln=h["aln"],
+                             sm=h["sm"], sM=h["sM"], pid=h["pid"])
                 break
         else:
             segs.append({"qs": h["qs"], "qe": h["qe"], "sseqid": h["sseqid"],
                          "strand": h["strand"], "sm": h["sm"], "sM": h["sM"],
-                         "pid": h["pid"], "rep_aln": h["aln"],
+                         "pid": h["pid"], "rep_bits": h["bits"],
+                         "rep_aln": h["aln"],
                          "ivs": [(h["qs"], h["qe"])]})
     return segs
 

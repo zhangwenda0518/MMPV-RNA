@@ -1,5 +1,42 @@
 # endogenous_virus_pipeline — 内源性病毒元件 (EVE) 筛查流程文档
 
+> **v7.0 (2026-10-17 修复轮)**: 本文档的方法结构仍然有效, 但 eve_distinguish
+> 在 2026-10-11 审查 (P0/P1) 后做了根因修复, **全部 v6.x 实测数字作废**:
+> ① P0-1 s1 读框偏移双重应用已修 (±2/±3 框不再错位, decay_class 全体分布会移动);
+> ② P0-2 s3 evidence 覆盖率闸门 (缺行 -> missing_evidence/REVIEW, 不再可能静默
+>    滑进唯一删数据的 REMOVE 分支; verdict 表旁多出 *.provenance.tsv 溯源);
+> ③ P1-1 Stage2 输出域补齐到 Stage1 全部位点 (零命中显式 undetermined);
+> ④ P1-4 s2 组件记功的可用区间闸门改为按剩余空闲折算 (subtract_ivs 同步改闭区间);
+> ⑤ P1-5 family_quant 三列分拆 (hit_segments/copies/covered_bp_union) +
+>    batch assembly 指纹去重 (element_table 增 n_assemblies 列);
+> ⑥ P1-2 eve_report.py 归档位置可运行 (mmpv_common 逐层向上找 + 内置兜底样式)。
+> 服务器复算入口: `eve_distinguish/verify/rerun_diff.py`; 复算完成前引用 v6.x
+> 数字 (REMOVE 2 / MOVE_EVE 174 / KEEP_virus 2 / REVIEW 849、distributed_decay
+> 富集 1.21x 等) 一律视为**修复前口径**, 不可写进投稿。
+>
+> **v7.1 (2026-10-17, 审稿意见落实)**: ① 面板不适用 (非 Cauli 零命中) 时不再允许
+> REMOVE, 新 verdict `host_homology_panel_na` (REVIEW); ② 新增 `evidence_tier`
+> 证据分层列 (A 基因组侧翼 > B 位点架构 > C 仅退化 > D 无); ③ `STRICT_EVE=1`
+> 严格模式把 C/D 档的 `MOVE_EVE` 降为 REVIEW (退化通道单独不足以判 EVE)。
+> **对外表述口径**: 本模块判别的是"转录组候选 contig", s2b 位点是转录本 scaffold
+> 代理, 不得写成"基因组 EVE 鉴定"; 投稿建议开严格模式并按 tier 分层报告。
+>
+> **v7.2 (2026-10-17, 与 hi-fever/CAULIFINDER/detectEVE/EEfinder 对比后的补齐)**:
+> ① **侧翼上下文序列**: Stage1 新增 `<NAME>.loci_context.bed/.fa` (±3kb, 抽前按
+>    1kb 合并), 对齐 hi-fever 的 strict/context 双层 —— 整合证据必须有位点两侧的
+>    宿主序列 (旧版主线完全不抽, 最硬的证据留在外面);
+> ② **蛋白重建层** `eve_reconstruct.py`: 可插拔后端 (**miniprot 优先** / genewise
+>    兼容 / 都没有则记 `tool_missing` 不伪造)。miniprot 的 `--fs` 原生建模移码、
+>    CIGAR `F`/`N` 给移码与内含子事件, **判定用途可替代 GeneWise**; 若要"逐密码子
+>    模型与 GeneWise 逐列一致"则需保留 genewise 后端做对照。
+>    输出 `05_Reconstruct/<NAME>.recon.tsv` (n_frameshift/n_stop/n_intron/...)。
+> ③ Stage2/3 灵敏度从硬编码 `--fast` 改为 `s23_sensitivity` 可配;
+> ④ 面板新增 `source_flag` 审计列 + `panel_source_audit.tsv` —— 已提交的 291 条
+>    面板里有 **7 条** 命中"可能内源来源" (`Hygrophyla virus 1` ×4、
+>    `Soybean Putnam virus` ×3), 用内源参考判内源是循环证据, 已标注供下游排除。
+> ⑤ 未给 `-G` (参考基因组通道) 时脚本会明确警告: 该通道是唯一直接整合证据,
+>    缺失时全部候选 tier 最高只到 B, 严格模式下 C 档 MOVE_EVE 会被降级。
+
 ## 数据流总览
 
 ```
@@ -173,9 +210,13 @@ error 而不中断整批）。
 │   ├── <NAME>.fna                     归一化后的基因组 FASTA (tar.gz 自动解出)
 │   ├── <NAME>.chunks.fna              50kb 滑窗切块 (seqkit sliding -s 50kb)
 │   ├── <NAME>.s1_raw.tsv              diamond blastx 原始输出 (块内坐标)
-│   ├── <NAME>.s1_hits.bed             坐标还原后的命中 (BED3 + 第4列内嵌原始行, 共4列)
+│   ├── <NAME>.s1_hits.bed             坐标还原后的命中 (BED3 + diamond 原始 12 列
+│   │                                   内嵌展开, 共 15 列; assign_best_hits 的
+│   │                                   len(c)<15 守卫与此对齐)
 │   ├── <NAME>.loci.bed                300nt 间隔合并后的 EVE 位点
 │   ├── <NAME>.loci.fa                 位点序列 (samtools faidx 按区域文件抽取)
+│   ├── <NAME>.loci_context.bed        侧翼上下文 BED (±3kb, 抽前按 1kb 合并; v7.2)
+│   ├── <NAME>.loci_context.fa         侧翼上下文序列 (整合证据的输入; v7.2)
 │   ├── <NAME>.loci.fa.regions.txt     抽序列用的区域文件 (chr:FROM-TO, 1基闭区间)
 │   ├── <NAME>.genome.fai              基因组索引 (固定写输出目录, 不依赖参考目录可写)
 │   └── <NAME>.s1_best.tsv             每位点最佳命中 (科级粗分类 ref_family)
@@ -360,13 +401,17 @@ locus 与 `loci.fa` 头两侧都过 `locus_key()` 再 join（与 Stage2/3 同一
 ├── cluster_members.tsv                mmseqs linclust 原始簇表 (rep<TAB>member)
 ├── _clu*_seq.fasta, _clu_tmp/         mmseqs 中间产物 (可删; 大基因组下 _clu_tmp 不小)
 ├── element_table.tsv                  元件主表 (cluster_id/rep/n_members/n_genomes/
-│                                      family/chimera_flag/best_member/best_bs)
+│                                      n_assemblies/family/chimera_flag/best_member/
+│                                      best_bs; n_assemblies 按 batch_manifest 指纹
+│                                      去重, 无清单时与 n_genomes 相等)
 ├── _members_C000000.txt …             每簇成员清单 (consensus/phylo 复用)
 ├── element_regions.tsv                元件区 (genome/region_id/contig/start/end/
 │                                      n_families/families), ±5kb 同家族归并
 ├── eve_consensus_library.fa           consensus 文库, 头 = <cluster_id>_<家族>
 ├── rm/<NAME>/<NAME>.out               RepeatMasker 逐基因组产物 (断点粒度到基因组)
-├── family_quant.tsv                   每家族 x 每基因组 拷贝数 / 覆盖碱基
+├── family_quant.tsv                   每家族 x 每基因组: hit_segments (命中行数) /
+│                                      copies (碎片合并后拷贝数) / covered_bp_union
+│                                      (非冗余覆盖碱基, v7 P1-5a 三列分拆)
 ├── _cdd_mm/                           mmseqs 中间库 (可删, 每次重跑前清掉)
 ├── consensus_domains.tsv              cdd 命中 (query/target/evalue/bits/q…/tlen,
 │                                      convertalis 直出, 无表头)

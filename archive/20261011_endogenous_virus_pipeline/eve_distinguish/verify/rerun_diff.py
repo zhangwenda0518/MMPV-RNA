@@ -28,7 +28,6 @@ import argparse
 import collections
 import subprocess
 import sys
-import tempfile
 from pathlib import Path
 
 MOD = Path(__file__).resolve().parent.parent     # eve_distinguish/

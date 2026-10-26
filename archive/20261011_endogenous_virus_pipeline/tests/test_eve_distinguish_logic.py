@@ -35,7 +35,7 @@ import s2_domain_scan as s2                  # noqa: E402
 import s2b_locus_scan as s2b                 # noqa: E402
 from s1_decay_scan import S1_HDR             # noqa: E402
 from s2_domain_scan import S2_HDR            # noqa: E402
-from s3_verdict import VERDICT_HDR           # noqa: E402
+from s3_verdict import VERDICT_COLS, VERDICT_HDR   # noqa: E402
 from s4_filter import CARRY, OUT_HDR         # noqa: E402
 
 PY = sys.executable
@@ -75,9 +75,9 @@ def s2_row(cid, comps, best_n, best_comps, provirus="FALSE", multi="FALSE",
 
 
 def bn_row(qseqid, sseqid, pid="99.0", aln="500", qs="10", qe="509",
-           bits="900", qlen="1000", slen="5000"):
+           bits="900", qlen="1000", slen="5000", sstart="100", send="1000"):
     d = dict(qseqid=qseqid, sseqid=sseqid, pident=pid, length=aln, mismatch="5", gaps="0",
-             qstart=qs, qend=qe, sstart="100", send="1000", evalue="1e-100",
+             qstart=qs, qend=qe, sstart=sstart, send=send, evalue="1e-100",
              bitscore=bits, qlen=qlen, slen=slen)
     return "\t".join(d[c] for c in BN_COLS) + "\n"
 
@@ -200,9 +200,71 @@ class TestS1Helpers(unittest.TestCase):
         ivs, n_stops = s1.frame_intervals(base[:999] + orf + base[999:], 0)
         self.assertIn((999, 1902), ivs)
 
+    # ---- P0-1 真值用例: 期望值从 blastx 坐标契约推出, 不照实现重抄公式 ----
+    # 契约: qstart/qend 是首个/末个已对齐密码子的核苷酸坐标 (1 基), 所以
+    #   正链锚点 = qstart-1, 负链锚点 = L-qe, 都已在主读框栅格上;
+    # 双工具实测 (NCBI BLAST / DIAMOND, 2026-10-11 审查): qstart-1 ≡ |qframe|-1 (mod 3)。
+    _ORF = "ATG" + "GCT" * 219          # 660nt, 不含任何终止密码子
+
+    def _plus_probe(self, f):
+        """同一条无终止编码段放进 +f 读框: 前置 f-1 个填充碱基。"""
+        seq = "N" * (f - 1) + self._ORF
+        hsps = [{"sid": "s1", "pident": 35.0, "qstart": f, "qend": f - 1 + len(self._ORF),
+                 "evalue": 1e-50, "bits": 400.0, "frame": f"+{f}", "label": "lab"}]
+        return seq, hsps
+
+    def _minus_probe(self, k):
+        """无终止编码段放进 -k 读框: revcomp 后前置 k-1 个填充碱基。
+
+        revcomp(seq)[k-1:] 从编码段第一个密码子开始, 对应 plus 坐标
+        qstart = L-(k-1), qend = qstart-659 (负链 qstart > qend)。
+        """
+        seq = s1.revcomp(self._ORF) + "N" * (k - 1)
+        L = len(seq)
+        qstart = L - (k - 1)
+        hsps = [{"sid": "s1", "pident": 35.0, "qstart": qstart, "qend": qstart - 659,
+                 "evalue": 1e-50, "bits": 400.0, "frame": f"-{k}", "label": "lab"}]
+        return seq, hsps
+
+    def test_hsp_metrics_six_frame_clean_orf_has_zero_stops(self):
+        """P0-1 回归: 6 个读框里的同一条无终止编码段, 提前终止必须都是 0。
+
+        旧版把 |qframe|-1 在锚点上又加了一遍: ±2/±3 框错位读框, 干净编码段被
+        读出 35 个"终止"判成 distributed_decay (真值 0 / coding_intact)。
+        """
+        for f in (1, 2, 3):
+            seq, hsps = self._plus_probe(f)
+            m = s1.hsp_metrics(hsps, seq)
+            self.assertEqual(m["premature_stops_region"], 0, f"+{f}")
+            self.assertEqual(m["decay_class"], "coding_intact", f"+{f}")
+            self.assertEqual(m["span_len"], len(self._ORF), f"+{f}")
+        for k in (1, 2, 3):
+            seq, hsps = self._minus_probe(k)
+            m = s1.hsp_metrics(hsps, seq)
+            self.assertEqual(m["premature_stops_region"], 0, f"-{k}")
+            self.assertEqual(m["decay_class"], "coding_intact", f"-{k}")
+            self.assertEqual(m["span_len"], len(self._ORF), f"-{k}")
+
+    def test_hsp_metrics_stops_are_counted_on_aligned_frame_grid(self):
+        """+2 读框的终止只在"1 基位置 2 起步"的栅格上数: 手工构造, 逐个可核算。
+
+        seq = N + TAATAGTGA + A*150: +2 读框 (1 基 2,5,8,...) 的前三个密码子是
+        TAA/TAG/TGA -> 恰 3 个终止; 相对锚点错后 1/2 nt 的两个基线相位无终止。
+        旧版 (offset 双重应用) 会去数 +1/+3 框, 终止数读成 0。
+        """
+        seq = "N" + "TAATAGTGA" + "A" * 150
+        hsps = [{"sid": "s1", "pident": 35.0, "qstart": 2, "qend": 160,
+                 "evalue": 1e-50, "bits": 400.0, "frame": "+2", "label": "lab"}]
+        m = s1.hsp_metrics(hsps, seq)
+        self.assertEqual(m["premature_stops_region"], 3)
+        self.assertEqual(m["stops_other_mean"], 0.0)
+        self.assertEqual(m["head_stops"], 3)
+        self.assertEqual(m["span_len"], 159)
+
     def test_hsp_metrics_minus_strand_span_and_stops(self):
         # 锁 minus 链坐标换算: span_len 必须等于 qe-qs+1; 病毒读框的终止数必须
-        # 等于在 revcomp(seq)[L-qe : L-(qs-1)] 这个区段上独立数出来的结果
+        # 等于在 revcomp(seq)[L-qe : L-(qs-1)] 区段上、以区段起点为锚点
+        # (相位 0) 独立数出来的结果; 基线 = 锚点相位 +1/+2 的两个读框。
         seq = ("ACGTTCGAAGCCTTAAGGGATCCATCGATTACGGATCCTTAAGGCCTTAAGGGCC"
                "TTAAGGCCTTAAGGGATCCATCGATTACGGATCCTTAAGGCCAATTGGCCAATT"
                "TTAAGGCCTTAAGGGATCCATCGATTACGGATCCTTAAGGCCTTAAGGGCCAAT" * 3)
@@ -212,21 +274,15 @@ class TestS1Helpers(unittest.TestCase):
                  "evalue": 1e-50, "bits": 400.0, "frame": "-2", "label": "lab"}]
         m = s1.hsp_metrics(hsps, seq)
         self.assertEqual(m["span_len"], qe - qs + 1)
-        # 独立复算: 该读框的区段是 revcomp 上从 L-qe 起、长 span 的那一段
         region = s1.revcomp(seq)[L - qe: L - (qs - 1)]
         self.assertEqual(len(region), m["span_len"])
-        off = abs(int("-2")) - 1
-        want = sum(1 for i in range(off, len(region) - 2, 3)
-                   if region[i:i + 3].upper() in s1.STOPS)
-        self.assertEqual(m["premature_stops_region"], want)
-        # 另两框的基线必须是同一区段上另两个 offset 的终止数
-        others = []
-        for off in range(3):
-            if off == abs(int("-2")) - 1:
-                continue
-            others.append(sum(1 for i in range(off, len(region) - 2, 3)
-                              if region[i:i + 3].upper() in s1.STOPS))
-        self.assertAlmostEqual(m["stops_other_mean"], round(sum(others) / 2, 2), places=2)
+        # 独立复算 (按定义, 不引用实现): 锚点 = 区段起点, 相位 0/1/2 各数一遍
+        def stops_at(ph):
+            return sum(1 for i in range(ph, len(region) - 2, 3)
+                       if region[i:i + 3].upper() in s1.STOPS)
+        self.assertEqual(m["premature_stops_region"], stops_at(0))
+        self.assertAlmostEqual(m["stops_other_mean"],
+                               round((stops_at(1) + stops_at(2)) / 2, 2), places=2)
 
 
 # ══════════════════════════════════════════════════════════════════ S2
@@ -325,13 +381,38 @@ class TestS2EndToEnd(unittest.TestCase):
         self.assertEqual(r2['best_locus_ncomp'], '4')
         self.assertEqual(r2['provirus_scale'], 'TRUE')
 
+    def test_available_interval_caps_components_not_all_or_nothing(self):
+        """P1-4 回归: 可用区间闸门必须按'剩余空闲能放几个完整蛋白'折算.
+
+        审查实测场景: 300 aa 融合比对 (cap=3), 但它先被一条重叠比对占掉大半,
+        只剩 600 nt 空闲 —— 3 个组件需要 900 nt, 旧版 avail>=nt_min 一票放行
+        照记 3 个; v7 起只能记 2 个。
+        """
+        # 第一条占 1-2799; 第二条 2700-3399 (300aa, cap=3),
+        # 扣掉占用后空闲 = 2800-3399 = 600nt -> n_fit = 2
+        hsps = [
+            {"qs": 1, "qe": 2799, "comps": "MP", "bits": 500, "aln": 200},
+            {"qs": 2700, "qe": 3399, "comps": "MP+CP+AP", "bits": 400, "aln": 300},
+        ]
+        credited, n_used = s2.credit_components(hsps)
+        self.assertEqual(credited, {"MP", "CP"})       # 600nt 只放得下 2 个蛋白
+        self.assertEqual(n_used, 2)
+        # 对照: 空闲够 3 个蛋白 (900nt) 时, 300aa 融合比对记满 3 个
+        hsps2 = [
+            {"qs": 1, "qe": 2399, "comps": "MP", "bits": 500, "aln": 200},
+            {"qs": 2300, "qe": 3599, "comps": "MP+CP+AP", "bits": 400, "aln": 300},
+        ]
+        credited2, _ = s2.credit_components(hsps2)
+        self.assertEqual(credited2, {"MP", "CP", "AP"})
+
     def test_multi_locus_arch_not_tautological(self):
         # 单基因座 4 组件: 旧定义也给 TRUE(永真式), 新定义要求 >=2 个基因座
         r = self._run([self._hsp(1, 1999, "MP+CP+AP+RT")])
         self.assertEqual(r['multi_locus_arch'], 'FALSE')
-        # 两个远隔基因座, 合计 4 个不同组件 -> TRUE (每条比对 200 aa, 够撑 2 个组件)
-        r2 = self._run([self._hsp(10, 500, "MP+CP", aln=200),
-                        self._hsp(3000, 3500, "AP+RT", aln=200)])
+        # 两个远隔基因座, 合计 4 个不同组件 -> TRUE (每个基因座 >=600nt, 按剩余
+        # 空闲折算够放 2 个蛋白; v7 P1-4 起 491nt 的短基因座只撑得起 1 个组件)
+        r2 = self._run([self._hsp(10, 1699, "MP+CP", aln=200),
+                        self._hsp(3000, 4699, "AP+RT", aln=200)])
         self.assertEqual(r2['multi_locus_arch'], 'TRUE')
         self.assertEqual(r2['components'], 'MP+CP+AP+RT')
         self.assertEqual(len(r2['loci_detail'].split(';')), 2)
@@ -510,19 +591,81 @@ class TestS2bLocusGrouping(unittest.TestCase):
         self.assertEqual(r.stdout, S2B_HDR)
         self.assertEqual('host_scope', S2B_HDR.split('\n')[0].split('\t')[5])
         self.assertIn('locus_key', S2B_HDR)
+        # v7.4: 距离约束归并的审计列
+        for col in ('subj_start', 'subj_end', 'locus_span'):
+            self.assertIn(col, S2B_HDR, col)
+
+    def test_same_scaffold_far_apart_not_pooled(self):
+        """v7.4 回归: 同一 scaffold 上相隔很远的两个候选不得并成一个位点.
+
+        旧版只按 scaffold 名分组, 于是同一 scaffold 上相隔几十 kb 的两个病毒
+        片段会把组件并集凑成"齐全" (伪造 locus_full)。现在按 subject 坐标聚类,
+        间隔 > LOCUS_MAX_GAP (10kb) 就是两个独立位点。
+        """
+        bl = (bn_row("S1_clean_1", "scaffold-IAJW-1-x", sstart="1000", send="2000") +
+              bn_row("S1_clean_2", "scaffold-IAJW-1-x", sstart="90000", send="91000"))
+        r, rows = self._run(bl)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        # 两条各自成位点: 组件不合并, 都是 partial (各 2 组件)
+        self.assertNotEqual(rows['S1_clean_1']['locus_key'],
+                            rows['S1_clean_2']['locus_key'])
+        self.assertEqual(rows['S1_clean_1']['locus_members'], '1')
+        self.assertEqual(rows['S1_clean_2']['locus_members'], '1')
+        self.assertEqual(rows['S1_clean_1']['locus_arch'], 'locus_partial')
+
+    def test_same_scaffold_nearby_pooled(self):
+        """同一 scaffold 上相邻 (间隔 < 10kb) 的候选仍要并成一个位点."""
+        bl = (bn_row("S1_clean_1", "scaffold-IAJW-1-x", sstart="1000", send="2000") +
+              bn_row("S1_clean_2", "scaffold-IAJW-1-x", sstart="3000", send="4000"))
+        r, rows = self._run(bl)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(rows['S1_clean_1']['locus_key'],
+                         rows['S1_clean_2']['locus_key'])
+        self.assertEqual(rows['S1_clean_1']['locus_members'], '2')
+        self.assertEqual(rows['S1_clean_1']['locus_arch'], 'locus_full')
+        self.assertEqual(rows['S1_clean_1']['locus_span'], '3001')
+
+    def test_locus_key_distinguishes_clusters_on_same_scaffold(self):
+        """两簇在同一 scaffold 上时 locus_key 必须不同 (带簇序号)."""
+        bl = (bn_row("S1_clean_1", "scaffold-IAJW-1-x", sstart="1000", send="2000") +
+              bn_row("S1_clean_2", "scaffold-IAJW-1-x", sstart="2000", send="3000") +
+              bn_row("S1_clean_3", "scaffold-IAJW-1-x", sstart="90000", send="91000") +
+              bn_row("S1_clean_4", "scaffold-IAJW-1-x", sstart="91000", send="92000"))
+        r, rows = self._run(bl)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        k1 = rows['S1_clean_1']['locus_key']
+        k3 = rows['S1_clean_3']['locus_key']
+        self.assertNotEqual(k1, k3)
+        self.assertTrue(k1.endswith('#0'))
+        self.assertTrue(k3.endswith('#1'))
 
 
 # ══════════════════════════════════════════════════════════════════ S3
 def s2b_row(cid, arch, ncomp, comps, members, hint, scope="none", code="",
-            scaff="-", wpid="0", cov="0", decay="", flag="clean", sample="S1"):
-    """按 s2b.HDR 的 20 列拼一行 (列名必须与 s2b_locus_scan.HDR 完全一致)."""
-    vals = [cid, sample, flag, scaff, code, scope, wpid, cov, "-", "1",
-            comps, comps, decay, "FALSE",
-            f"{sample}|nohost:{cid}" if scaff in ("-", "") else f"{sample}|{scaff}",
-            arch, str(ncomp), comps, str(members), hint]
+            scaff="-", wpid="0", cov="0", decay="", flag="clean", sample="S1",
+            subj_start="", subj_end="", locus_span="0"):
+    """按 s2b.HDR 的列拼一行 (列名必须与 s2b_locus_scan.HDR 完全一致).
+
+    v7.4: 新增 subj_start / subj_end / locus_span 三列 (距离约束归并的审计列)。
+    这里按列名填, 不按位置 —— HDR 加列时只有这一处要改。
+    """
     hdr = S2B_HDR.split("\n")[0].split("\t")
-    assert len(vals) == len(hdr), (len(vals), len(hdr))
-    return "\t".join(vals) + "\n"
+    vals = {c: "" for c in hdr}
+    vals.update({
+        "contig_id": cid, "sample": sample, "sample_flag": flag,
+        "host_scaffold": scaff, "host_code": code, "host_scope": scope,
+        "host_wpid": wpid, "host_cov": cov, "host_xeno": "-",
+        "n_host_scaffolds": "1",
+        "subj_start": subj_start, "subj_end": subj_end,
+        "comps_contig": comps, "best_locus_comps": comps,
+        "decay_class": decay, "te_flag": "FALSE",
+        "locus_key": (f"{sample}|nohost:{cid}" if scaff in ("-", "")
+                      else f"{sample}|{scaff}#0"),
+        "locus_arch": arch, "locus_ncomp": str(ncomp), "locus_comps": comps,
+        "locus_members": str(members), "locus_span": locus_span,
+        "locus_hint": hint,
+    })
+    return "\t".join(vals[c] for c in hdr) + "\n"
 
 
 class TestS3Verdict(unittest.TestCase):
@@ -710,6 +853,144 @@ class TestS3Verdict(unittest.TestCase):
         self.assertEqual(rows['A_provirus_nolocus']['locus_arch'], 'no_host_locus')
         self.assertEqual(rows['A_provirus_nolocus']['verdict'], 'EVE_suspect')
         self.assertNotEqual(rows['A_provirus_nolocus']['verdict'], 'EVE_STRONG_provirus')
+
+    def test_missing_evidence_row_cannot_reach_remove(self):
+        """P0-2 回归: evidence 表缺行时, 候选不得滑进唯一删数据的 REMOVE 分支.
+
+        B_hostown 本该是 host_contamination_likely (自身物种强同源 + 上游三通道全空),
+        但把它的 evidence 行抽掉后, "三通道全空"就不再是被评估出来的事实 —— 旧版
+        ev.get(cid, {}) 取空照样判 REMOVE; v7 起必须 missing_evidence (REVIEW)。
+        """
+        kept = [ln for ln in self.ev.read_text().splitlines()[1:]
+                if not ln.startswith("B_hostown")]
+        # splitlines() 会剥掉行尾换行, 拼回去时必须补 (否则整个表只剩一行)
+        ev = write(self.tmp / 'ev_partial.tsv', EV_HDR + "\n".join(kept) + "\n")
+        out = self.tmp / 'verdict_partial.tsv'
+        r = run_py('s3_verdict.py', self.s1, self.s2, self.s2b, ev, out)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        rows = {row['contig_id']: row for row in read_tsv_rows(out)}
+        self.assertEqual(rows['B_hostown']['verdict'], 'missing_evidence')
+        self.assertIn('从未评估', rows['B_hostown']['verdict_reason'])
+        self.assertIn('P0-2', rows['B_hostown']['verdict_reason'])
+        # evidence 在场的候选照常走各自分支, 不受闸门影响
+        self.assertEqual(rows['B_conflict']['verdict'], 'host_conflict_review')
+        self.assertEqual(rows['B_coding']['verdict'], 'virus_candidate')
+        # 溯源指纹: 双方 sha256 + 覆盖账目落在 verdict 表旁
+        prov = (self.tmp / 'verdict_partial.tsv.provenance.tsv').read_text()
+        self.assertIn('evidence_sha256\t', prov)
+        self.assertIn('query_sha256\t', prov)
+        self.assertIn('missing_evidence_ids\tB_hostown', prov)
+        self.assertIn('extra_evidence_ids\t', prov)
+        # stdout 报账 (失败不静默)
+        self.assertIn('[gate] evidence 覆盖 11/12', r.stdout)
+        self.assertIn('missing_evidence', r.stdout)
+
+    def test_panel_not_applicable_blocks_remove(self):
+        """v7.1 回归 (审稿意见): 面板不适用的候选不得 REMOVE.
+
+        同一条"自身物种强同源 + 上游三通道全空"的候选, 如果它在 Cauli 面板上
+        零命中 (no_panel), "无 MP/CP/AP" 就是"没测到"而非"没有"; 旧版只加注脚
+        仍判 host_contamination_likely, 用单科面板给非 Cauli 候选下寄主结论。
+        """
+        # D_review 在夹具里没有 MP/CP/AP (只有 RT), 且无上游病毒信号;
+        # 把它改造成"自身物种 99%/0.9 + 面板零命中"的候选
+        s2 = write(self.tmp / 's2_nopanel.tsv', S2_HDR +
+                   s2_row("D_review", "-", 0, "-", cauli_bits="0", credit="0"))
+        s2b = write(self.tmp / 's2b_nopanel.tsv', S2B_HDR +
+                    s2b_row("D_review", "no_host_locus", 0, "-", 1,
+                            "no_host_mapping", scope="own_species", code="IAJW",
+                            scaff="scaffold-IAJW-9", wpid="99.0", cov="0.90",
+                            decay="coding_intact"))
+        out = self.tmp / 'verdict_nopanel.tsv'
+        r = run_py('s3_verdict.py', self.s1, s2, s2b, self.ev, out)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        rows = {row['contig_id']: row for row in read_tsv_rows(out)}
+        self.assertEqual(rows['D_review']['verdict'], 'host_homology_panel_na')
+        self.assertIn('面板不适用', rows['D_review']['verdict_reason'])
+        self.assertNotEqual(rows['D_review']['verdict'], 'host_contamination_likely')
+        # 对照: 面板适用 (有组件命中) 时同强度寄主同源仍走 REMOVE 分支
+        s2b_ok = write(self.tmp / 's2b_panel.tsv', S2B_HDR +
+                       s2b_row("B_hostown", "no_host_locus", 1, "RT", 1,
+                               "no_host_mapping", scope="own_species", code="IAJW",
+                               scaff="scaffold-IAJW-2", wpid="99.0", cov="0.9",
+                               decay="coding_intact"))
+        out2 = self.tmp / 'verdict_panel.tsv'
+        r2 = run_py('s3_verdict.py', self.s1, self.s2, s2b_ok, self.ev, out2)
+        self.assertEqual(r2.returncode, 0, r2.stderr)
+        rows2 = {row['contig_id']: row for row in read_tsv_rows(out2)}
+        self.assertEqual(rows2['B_hostown']['verdict'], 'host_contamination_likely')
+
+    def test_evidence_tier_column(self):
+        """v7.1: evidence_tier 按可用证据的最强形态分层, 与 verdict 解耦."""
+        rows = self._run()
+        # A 档: s2c 侧翼证据 (本夹具没给 -G, 所以全部无 A 档)
+        self.assertTrue(all(r['evidence_tier'] != 'A_genomic_flank'
+                            for r in rows.values()))
+        # B 档: 位点齐全 (locus_full)
+        self.assertEqual(rows['A_distributed']['evidence_tier'], 'B_locus_architecture')
+        self.assertEqual(rows['B_coding']['evidence_tier'], 'B_locus_architecture')
+        # C 档: 只有退化通道, 没有位点
+        self.assertEqual(rows['A_distributed2']['evidence_tier'], 'C_decay_only')
+        # D 档: 两者都没有
+        self.assertEqual(rows['D_review']['evidence_tier'], 'D_none')
+        self.assertIn('evidence_tier', VERDICT_HDR)
+        # 列位置: evidence_tier 必须在 verdict 之前 (s4 按列名搬, 但人读要顺)
+        self.assertLess(VERDICT_COLS.index('evidence_tier'),
+                        VERDICT_COLS.index('verdict'))
+
+    def test_recon_contradiction_downgrades_to_review(self):
+        """v7.3: 重建层报 0 事件而 s1 判 distributed_decay -> 转 REVIEW.
+
+        s1 在原始序列上数终止, 会被组装 indel 的错读框污染; 重建层每个 X 都
+        核对过密码子, 是独立通道。两者矛盾时不许各自坚持。
+        """
+        recon = write(self.tmp / 'recon.tsv',
+                      "locus\tbackend\tn_frameshift\tn_stop\tn_intron\taln_aa\t"
+                      "identity\tcoverage\tearliest_event_frac\t"
+                      "local_flank_identity\tstatus\n"
+                      "A_distributed\tminiprot+genewise\t0\t0\t0\t400\t0.9\t0.9\t\t\tok\n")
+        out = self.tmp / 'v_recon.tsv'
+        r = run_py('s3_verdict.py', self.s1, self.s2, self.s2b, self.ev, out,
+                   "", str(recon))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        rows = {row['contig_id']: row for row in read_tsv_rows(out)}
+        self.assertEqual(rows['A_distributed']['verdict'], 'review')
+        self.assertIn('重建层 0 终止', rows['A_distributed']['verdict_reason'])
+        self.assertEqual(rows['A_distributed']['recon_stop'], '0')
+        self.assertEqual(rows['A_distributed']['recon_status'], 'ok')
+
+    def test_recon_confirms_decay_and_keeps_verdict(self):
+        """重建层确认有事件 -> 支持退化判定, verdict 不变."""
+        recon = write(self.tmp / 'recon2.tsv',
+                      "locus\tbackend\tn_frameshift\tn_stop\tn_intron\taln_aa\t"
+                      "identity\tcoverage\tearliest_event_frac\t"
+                      "local_flank_identity\tstatus\n"
+                      "A_distributed\tminiprot+genewise\t1\t8\t0\t400\t0.9\t0.9\t0.2\t0.8\tok\n")
+        out = self.tmp / 'v_recon2.tsv'
+        r = run_py('s3_verdict.py', self.s1, self.s2, self.s2b, self.ev, out,
+                   "", str(recon))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        rows = {row['contig_id']: row for row in read_tsv_rows(out)}
+        self.assertEqual(rows['A_distributed']['verdict'], 'EVE_STRONG_provirus')
+        self.assertIn('重建层确认 9 个事件', rows['A_distributed']['verdict_reason'])
+        self.assertEqual(rows['A_distributed']['recon_stop'], '8')
+        self.assertEqual(rows['A_distributed']['recon_frameshift'], '1')
+
+    def test_recon_filtered_blocks_eve_move(self):
+        """重建层过滤器判突变不可靠 -> EVE 类降为 REVIEW."""
+        recon = write(self.tmp / 'recon3.tsv',
+                      "locus\tbackend\tn_frameshift\tn_stop\tn_intron\taln_aa\t"
+                      "identity\tcoverage\tearliest_event_frac\t"
+                      "local_flank_identity\tstatus\n"
+                      "A_distributed\tminiprot+genewise\t0\t3\t0\t400\t0.9\t0.9\t0.95\t0.2\tfiltered\n")
+        out = self.tmp / 'v_recon3.tsv'
+        r = run_py('s3_verdict.py', self.s1, self.s2, self.s2b, self.ev, out,
+                   "", str(recon))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        rows = {row['contig_id']: row for row in read_tsv_rows(out)}
+        self.assertEqual(rows['A_distributed']['verdict'], 'review')
+        self.assertIn('重建层过滤', rows['A_distributed']['verdict_reason'])
+        self.assertEqual(rows['A_distributed']['recon_status'], 'filtered')
 
 
 # ══════════════════════════════════════════════════════════════════ S4

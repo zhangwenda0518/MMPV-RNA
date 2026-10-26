@@ -46,7 +46,7 @@ eve_screen.py — 内源性病毒元件 (EVE) 筛查编排器
 """
 
 import argparse
-import logging
+import hashlib
 import os
 import re
 import sys
@@ -57,7 +57,8 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
-from eve_scan_core import (EVALUE, HOST_BS, MERGE_D, VIRAL_BS, WINDOW, EveConfig,
+from eve_scan_core import (BATCH_MANIFEST_NAME, EVALUE, FLANK_MERGE_D, FLANK_NT,
+                           HOST_BS, MERGE_D, VIRAL_BS, WINDOW, EveConfig,
                            check_tools, clean_name, merge_all, safe_dir)
 from eve_genome_scan import parse_stages, run_genome, setup_logger
 
@@ -203,6 +204,8 @@ def build_parser():
                    help="附加类病毒 blastn 层 (默认关)")
     g.add_argument("--cleanup", action="store_true",
                    help="完成后删除已无用中间文件 (chunks/raw/hits)")
+    g.add_argument("--allow-duplicate-assembly", action="store_true",
+                   help="放行 assembly 指纹重复的批次登记 (默认中止; 放行也记录在案)")
     g.add_argument("--config", default=None,
                    help="YAML 配置文件 (默认: 自动查找 pipeline_config.yaml)")
     g.add_argument("--profile", default="default",
@@ -231,10 +234,55 @@ def build_parser():
                    help="Stage2 病毒侧判定阈值 (bitscore)")
     g.add_argument("--cmd-timeout", type=int, default=0,
                    help="单条外部命令超时 (秒); 0=不限 (防工具挂死占核)")
+    g.add_argument("--flank-nt", type=int, default=FLANK_NT,
+                   help="侧翼上下文长度 (nt, 两侧各扩; 0=不抽)")
+    g.add_argument("--flank-merge-d", type=int, default=FLANK_MERGE_D,
+                   help="抽侧翼前先合并位点的距离 (nt)")
     return p
 
 
-def build_jobs(args, stages, log):
+def assembly_fingerprint(path, tail=65536):
+    """基因组文件的 assembly 指纹 (P1-5b): sha256(头 64KB + 尾 64KB), 大文件不读中间.
+
+    目的只有一个: 抓"同一文件在批次里换名登记两次" —— 这种重复会把元件聚类里的
+    跨基因组支持数 (n_genomes) 抬高 (审查 R02)。小文件 (<=64KB) 整文件哈希
+    (mode=full); 大文件只读头尾 (mode=head_tail_64k), 上 TB 级批量不能在开跑前
+    做全量哈希。**保证**: 同一字节序列必得同一指纹; **不承诺**: 同一基因组重新
+    打包/重压缩后字节变了就抓不到 (那要解开包才算得出)。文件读不到返回
+    ("", "missing") —— 输入存在性由 Stage1 负责, 这里不做第二套校验。
+    """
+    p = Path(path)
+    try:
+        size = p.stat().st_size
+    except OSError:
+        return "", "missing"
+    h = hashlib.sha256()
+    with open(p, "rb") as fh:
+        head = fh.read(tail)
+        h.update(head)
+        if size > len(head):
+            fh.seek(max(0, size - tail))
+            h.update(fh.read(tail))
+    return h.hexdigest(), ("full" if size <= tail else "head_tail_64k")
+
+
+def write_batch_manifest(outdir, todo):
+    """批次清单 (溯源 + 元件层 n_assemblies 去重的依据) -> <outdir>/batch_manifest.tsv."""
+    p = Path(outdir) / BATCH_MANIFEST_NAME
+    p.parent.mkdir(parents=True, exist_ok=True)   # safe_dir 只归一化不建目录
+    with open(p, "w", encoding="utf-8", newline="\n") as fo:
+        fo.write("name\tgenome_path\tsize_bytes\tfingerprint\tfingerprint_mode\n")
+        for t in sorted(todo, key=lambda x: x["name"]):
+            try:
+                size = os.path.getsize(t["genome"])
+            except OSError:
+                size = ""
+            fo.write(f"{t['name']}\t{t['genome']}\t{size}\t"
+                     f"{t.get('fingerprint', '')}\t{t.get('fp_mode', '')}\n")
+    return p
+
+
+def build_jobs(args, stages, log, fingerprint=True):
     """从 -g / -B 构建任务列表."""
     spec_common = dict(threads=args.threads, stages=stages, fast=args.fast,
                        overlap=args.overlap, viroid=args.blastn_viroid,
@@ -272,14 +320,42 @@ def build_jobs(args, stages, log):
             log.error("批次重名 '%s' (来自 %s) — 请改 TSV 里的名字", n,
                       ", ".join(srcs))
         raise SystemExit(f"批次中有 {len(dups)} 个重名, 已中止")
+    # P1-5b: assembly 指纹去重 —— 同一文件换名登记两次会把元件层的跨基因组
+    # 支持数抬高, 且没有任何其他机制能发现它。指纹重复默认中止, 显式
+    # --allow-duplicate-assembly 才放行 (放行也记录在案, n_assemblies 列可见)。
+    n_unique_asm = len(todo)
+    if fingerprint:
+        for t in todo:
+            t["fingerprint"], t["fp_mode"] = assembly_fingerprint(t["genome"])
+        by_fp = {}
+        for t in todo:
+            if t["fingerprint"]:
+                by_fp.setdefault(t["fingerprint"], []).append(t)
+        dup_asm = {fp: ts for fp, ts in by_fp.items()
+                   if len({x["name"] for x in ts}) > 1}
+        if dup_asm:
+            for fp, ts in sorted(dup_asm.items()):
+                names = ", ".join(f"{x['name']} <- {x['genome']}" for x in ts)
+                log.error("批次 assembly 指纹重复 (%s…): %s",
+                          fp[:12], names)
+            if not getattr(args, "allow_duplicate_assembly", False):
+                raise SystemExit(
+                    f"批次中有 {len(dup_asm)} 组重复 assembly 登记 (同一文件多个名字), "
+                    f"已中止; 确属有意请加 --allow-duplicate-assembly")
+        n_unique_asm = len({t["fingerprint"] or f"name:{t['name']}" for t in todo})
+        log.info("assembly 指纹: %d 个登记名 / %d 个唯一 assembly", len(todo),
+                 n_unique_asm)
     outdir = safe_dir(args.outdir)
+    if fingerprint:
+        write_batch_manifest(outdir, todo)
     cfg = EveConfig(ref_dmnd=args.ref_db or "", pv_dmnd=args.pv_db or "",
                     id2div=args.id2div or "", rvdb_dmnd=args.rvdb_db or "",
                     viroids_fa=args.viroids_db or "",
                     diamond=args.diamond or "", samtools=args.samtools or "",
                     window=args.window, merge_d=args.merge_distance,
                     evalue=args.evalue, host_bs=args.host_bs,
-                    viral_bs=args.viral_bs, cmd_timeout=args.cmd_timeout)
+                    viral_bs=args.viral_bs, cmd_timeout=args.cmd_timeout,
+                    flank_nt=args.flank_nt, flank_merge_d=args.flank_merge_d)
     jobs = []
     for t in todo:
         jobs.append(dict(t, outdir=str(outdir), cfg=cfg,
@@ -299,7 +375,8 @@ def main(argv=None):
         return 0
 
     stages = parse_stages(args.stage)
-    jobs = build_jobs(args, stages, log)
+    # --list 是干跑: 不为它做指纹 (可能上 TB 的哈希只为打印一行名单)
+    jobs = build_jobs(args, stages, log, fingerprint=not args.list)
     if args.list:
         for j in jobs:
             print(f"{j['name']}\t{j['genome']}")
