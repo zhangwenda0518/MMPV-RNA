@@ -96,6 +96,9 @@ def load_taxonomy(taxonomy_path):
                 'Genus': row.get('Genus', ''),
                 'Species': row.get('Species', ''),
                 'completeness': completeness,
+                # ③ annotate_nucleic_acid.py 追加的核酸大类列 (DNA/RNA/NA);
+                # 未跑该步骤时此列不存在, 桥按缺省处理 (2026-10-15 接线)
+                'Nucleic_acid': row.get('Nucleic_acid', ''),
             }
     return tax_map
 
@@ -140,6 +143,8 @@ def load_centroids(fasta_path, min_length):
 
 def main():
     args = parse_args()
+    from_discovery_root = None      # --from-discovery 的发现管线根 (登记台账用)
+    from_discovery_tax_n = 0        # 合并的逐样本 taxonomy 份数
 
     # ── --from-discovery: 自动定位输入 (兼容 legacy / standard 布局) ──
     if args.from_discovery:
@@ -185,13 +190,10 @@ def main():
         print(f"[INFO] --from-discovery 自动定位 (布局感知):")
         print(f"       centroids: {cen}")
         print(f"       taxonomy:  {args.taxonomy}")
-        manifest = _iol.write_boundary(
-            droot, "discovery->analysis",
-            {"centroids": args.centroids, "taxonomy": args.taxonomy, "taxonomy_files": str(len(tax_list)),
-             "reference": f"{args.output_prefix}.reference.fasta",
-             "ref_info": f"{args.output_prefix}.ref_info.tsv"},
-            produced_by="discovery2analysis.py --from-discovery")
-        print(f"       handoff:   {manifest}")
+        from_discovery_root = droot
+        from_discovery_tax_n = len(tax_list)
+        # 台账登记挪到产物写出之后 (2026-10-15): 原在转换前登记, 转换中途失败
+        # 时台账已宣称交接; 产物路径也改记绝对路径。
 
     # 验证输入
     missing = [(getattr(args, k), label) for k, label in
@@ -239,6 +241,19 @@ def main():
                     skipped += 1
                     continue
 
+            # 核酸类型映射 (2026-10-15): 消费 ③ annotate_nucleic_acid.py 补的
+            # Nucleic_acid 列 (DNA/RNA/NA)。恒填 RNA/ssRNA 的旧行为会让 DNA 候选
+            # 走 ④ 的 RNA 宽松阈值并被当 RNA 基因组提取。无该列 (未跑 annotate)
+            # 时维持历史默认 (RNA/ssRNA)。
+            nucleic = (tax.get('Nucleic_acid') or '').strip().upper() if tax else ''
+            if nucleic == 'DNA':
+                mol_type, mol_type2 = 'DNA', 'DNA'
+            elif nucleic == 'RNA':
+                # 大类可判; 极性 (±) 该列不含, polyA 判定仍靠 ④ 侧 ref_info 兜底
+                mol_type, mol_type2 = 'RNA', 'ssRNA'
+            else:
+                mol_type, mol_type2 = args.molecule_type, args.molecule_type2
+
             if tax:
                 matched += 1
                 species_label = resolve_species(tax)
@@ -262,14 +277,21 @@ def main():
                 species_label,                   # Species_NCBI
                 species_label,                   # Species_ICTV
                 args.segment_col,                # Segment
-                args.molecule_type,              # Molecule_type
-                args.molecule_type2,             # Molecule_Type2
+                mol_type,                        # Molecule_type
+                mol_type2,                       # Molecule_Type2
                 str(length),                     # Genome_Length
                 completeness,                    # Taxonomic_Completeness
                 realm, kingdom, phylum, klass, order, family, genus, species
             ]) + '\n')
 
             f_fa.write(f">{header}\n{seq}\n")
+
+    # 零序列守卫 (2026-10-15): 空 centroids / 全被 min_length 滤掉时, 空参考喂给
+    # ④ 只会在分析阶段深处莫名崩溃 —— 桥在此显式失败, 退出码非零。
+    if matched + unmatched == 0:
+        print(f"[ERROR] 转换结果为 0 条序列 (centroids 为空或全部短于 "
+              f"min_length={args.min_length}), 拒绝产出空参考", file=sys.stderr)
+        sys.exit(1)
 
     print(f"\n[DONE] Conversion complete:")
     print(f"   Reference FASTA: {ref_fasta} ({matched + unmatched} sequences)")
@@ -278,6 +300,20 @@ def main():
     print(f"   Unmatched:        {unmatched}")
     if skipped:
         print(f"   Filtered (completeness): {skipped}")
+
+    # 90_Handoff 台账登记 (2026-10-15: 挪到产物写出之后, 记绝对路径 —— 原在转换前
+    # 登记, 转换中途失败时台账已宣称交接)
+    if from_discovery_root is not None:
+        manifest = _iol.write_boundary(
+            from_discovery_root, "discovery->analysis",
+            {"centroids": str(Path(args.centroids).resolve()),
+             "taxonomy": str(Path(args.taxonomy).resolve()),
+             "taxonomy_files": str(from_discovery_tax_n),
+             "reference": str(Path(ref_fasta).resolve()),
+             "ref_info": str(Path(ref_info).resolve())},
+            produced_by="discovery2analysis.py --from-discovery")
+        print(f"       handoff:   {manifest}")
+
     print(f"\nUsage with virome_analysis_pipeline:")
     print(f"   python virome_analysis_pipeline/auto_known_virus.py \\")
     print(f"       --reference {ref_fasta} \\")

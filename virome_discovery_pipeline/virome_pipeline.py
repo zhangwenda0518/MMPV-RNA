@@ -428,10 +428,15 @@ class ViromePipeline:
                 getattr(self.args, 'coassembly', False)
                 or any(
                     (cobra_d and cobra_d.is_dir() and any(
-                        # 样本目录内必须确有延伸产物 fasta (P1-5c):
-                        # *cobra*.fa / *extended*.fa / 目录下除 .log 外的 .fa|.fasta 文件;
-                        # 旧判据任意文件 (含纯任务 .log) 即通过 → 失败残留的空壳目录也算完成
-                        f.is_file() and f.suffix.lower() in ('.fa', '.fasta', '.fna')
+                        # 真实延伸产物只认非空 *.cobra.fa / *.extended.fa (P1-5c 收紧,
+                        # 2026-10-15): {task_id}.contigs.fa / {task_id}.virus.fa 是任务
+                        # 启动时写入的输入副本, 失败路径不清理 —— 旧判据"任意 .fa|.fasta
+                        # 即通过"会被残渣骗过 → .ok 照写 + resume 永久跳过失败样本。
+                        # (cobra_pipeline 实际只写 *.cobra.fa; *.extended.fa 为更老代际
+                        #  存量目录兜底)
+                        f.is_file()
+                        and (f.name.endswith('.cobra.fa') or f.name.endswith('.extended.fa'))
+                        and f.stat().st_size > 0
                         for f in p.rglob('*')
                     ))
                     for cobra_d in d.get('_cobra_dirs', [d['cobra']])
@@ -473,8 +478,10 @@ class ViromePipeline:
             'checkv':   lambda: len(_vg.glob(str(d['checkv_dir'] / '*' / 'completeness.tsv'))) > 0,
             'rescue':   lambda: (
                 # 真实产物 = HQ 汇总 fasta (P1-9); 旧判据"目录非空"会被中途失败残留骗过。
-                # run_rescue 任何正常路径 (含早退) 均已落该文件, 缺失=空跑, 删标记重跑
+                # run_rescue 任何正常路径 (含早退) 均已落该文件, 缺失=空跑, 删标记重跑。
+                # 2026-10-15: 补非空校验 —— 空跑早退可能落 0 字节空文件。
                 (d['rescue_dir'] / 'HQ_plant_viruses.fasta').is_file()
+                and (d['rescue_dir'] / 'HQ_plant_viruses.fasta').stat().st_size > 0
             ),
         }
         if stage in checks:
@@ -635,6 +642,15 @@ class ViromePipeline:
 
         # Co-assembly 模式: 合并所有样本 reads → 单次组装
         asm_input = str(self.reads_dir)
+        # 分阶段独立调用 (--stage assembly) 时 reads_dir 停留在 __init__ 的原始输入
+        # 目录, SE 样本会拿未去宿主 reads 组装 (VIROMOCK D5 实测回归);
+        # 去宿主产物存在时优先使用
+        if not getattr(self.args, 'coassembly', False) \
+                and self.d['hostdep'].is_dir() \
+                and any(self.d['hostdep'].glob("*.fastq.gz")):
+            asm_input = str(self.d['hostdep'])
+            self.reads_dir = str(self.d['hostdep'])
+            self.log.info("  [assembly] reads -> 去宿主目录 %s", asm_input)
         if getattr(self.args, 'coassembly', False):
             self.log.info("  [co-assembly] 合并所有样本 reads → 单次组装")
             merged_dir = self.d['asm'] / "coassembly_merged"
@@ -900,6 +916,14 @@ class ViromePipeline:
             f"-t {total_threads}",
             f"--split-by-prefix",
         ]
+        # 样本名透传: contig 头 = {样本}_NODE..., 拆分需按最长前缀匹配;
+        # 不传则回退首段 _ 截断 (Dataset_01 → Dataset), 镜像样本目录全错 (2026-10-18 D1-D10 实测)
+        sample_names_csv = ','.join(s for s, _ in candidates)
+        parts.append(f"--sample-names {sample_names_csv}")
+        # --force 透传 (2026-10-15): 与逐样本分支同口径 —— 上次运行若在 split 清理
+        # 前崩溃, 残留的合并 uniprot/ 中间产物需可被强制重算。
+        if getattr(self.args, 'force', False):
+            parts.append("--force")
         uniprot_db = getattr(self.args, 'uniprot_db', None)
         if uniprot_db:
             parts.append(f"--uniprot-db {uniprot_db}")
@@ -1032,6 +1056,10 @@ class ViromePipeline:
     # ── Step 3a: COBRA 延伸 ──
     def run_cobra(self):
         self._resolve_cobra_dir()
+        # 分阶段独立调用 (--stage cobra) 时 reads_dir 停留在 __init__ 的原始输入,
+        # COBRA 将找不到去宿主 reads; 去宿主产物存在时显式回落
+        if self.d['hostdep'].is_dir() and any(self.d['hostdep'].glob("*.fastq.gz")):
+            self.reads_dir = str(self.d['hostdep'])
         # co-assembly 模式: reads 已合并为单一 ALL_merged, 无逐样本延伸意义,
         # 直接跳过 (merge 阶段会改从 02a/02b 收集病毒候选作为合并输入)
         if getattr(self.args, 'coassembly', False):
@@ -1071,9 +1099,15 @@ class ViromePipeline:
         self.log.info("  病毒候选来源 (raw): %s", virsorter_src)
         cobra_virus_mode = 'raw'
 
+        # 显式传样本名 (取自组装目录, 与 contig 头一致): 否则 cobra 会从 reads
+        # 目录自行发现出带 _clean 后缀的样本名, 与组装目录对不上
+        _sample_names = [q.name for q in sorted(self.d["asm"].iterdir())
+                         if q.is_dir() and q.name not in ("logs", "tmp")]
+
         parts = [
             f"python {self.sc['cobra']}",
             f"--mode mix",
+            f"--samples {','.join(_sample_names)}",
             f"--reads-dir {self.reads_dir}",
             f"--contigs-dir {self.d['asm']}",
             f"--virsorter-dir {virsorter_src}",
@@ -1094,8 +1128,19 @@ class ViromePipeline:
         ok, _ = run_cmd(' '.join(parts), self.log, "COBRA Pipeline", str(self.d['cobra'] / "cobra.log"))
         # 失败必须抛出: 主循环 except 会记入 failed_stages 且【不写 .ok】。
         # 旧行为只 warning → 失败阶段也被标记完成, 下轮被旧 .ok 跳过 (241/246 实测复现)。
+        def _cobra_has_product(pdir):
+            # 与 _stage_validated('cobra') 同口径 (2026-10-15): 只认非空
+            # *.cobra.fa / *.extended.fa。输入副本残渣 ({task_id}.contigs.fa/
+            # .virus.fa, 失败路径不清理) 不算产物, 旧判据"目录非空"会被残渣
+            # 骗过 → 全失败也只 warning + .ok 照写。
+            return any(
+                f.is_file()
+                and (f.name.endswith('.cobra.fa') or f.name.endswith('.extended.fa'))
+                and f.stat().st_size > 0
+                for f in pdir.rglob('*')
+            )
         produced = [p for p in self.d['cobra'].iterdir()
-                    if p.is_dir() and any(p.iterdir())
+                    if p.is_dir() and _cobra_has_product(p)
                     and p.name not in ('cobra.log', 'checkpoint_status.json')]
         if not ok and not produced:
             raise RuntimeError(
@@ -1177,6 +1222,26 @@ class ViromePipeline:
                         with open(vf) as inf:
                             out.write(inf.read())
                             n_virus += 1
+
+        # SE 样本无 COBRA 产物 (延伸需成对 reads), 从 filter 候选镜像兜底并入,
+        # 否则 SE 样本在合并目录/最终 catalog 中整体缺失 (VIROMOCK D5/D6/D10 实测)
+        try:
+            _headers = [_ln[1:].strip().split()[0] for _ln in open(merged_fa)
+                        if _ln.startswith('>')]
+            for _cf in sorted(self.d['filter'].glob('candidates/*/*candidate*.fasta')):
+                _sd = _cf.parent.name
+                if any(_h == _sd or _h.startswith(_sd + '_') for _h in _headers):
+                    continue
+                _data = _cf.read_text()
+                if _data.strip():
+                    with open(merged_fa, 'a') as _out:
+                        _out.write(_data)
+                    n_virus += 1
+                    _headers += [_ln[1:].strip().split()[0]
+                                 for _ln in _data.splitlines() if _ln.startswith('>')]
+                    self.log.info("  [merge] 无COBRA产物样本兜底并入: %s", _sd)
+        except Exception as _me:
+            self.log.warning("  [merge] SE 兜底并入失败: %s", _me)
 
         if merged_fa.stat().st_size == 0:
             self.log.error("合并后 FASTA 为空, 未找到任何 COBRA 或 virus 结果")
@@ -2061,6 +2126,8 @@ class ViromePipeline:
                 f"MMPV_GENUS_FAMILY_REF={ref_path}",
                 "Rscript", str(self.sc['classifier_R']),
                 "--combined", str(combined_tsv),
+                # 丢弃审计输入全集: R 脚本在 .classed/ 同级找不到 FASTA（输入在 centroids/）
+                f"--fasta {centroids}",
                 "--output", str(int_dir),
             ]
             ok, _ = run_cmd(' '.join(parts), self.log, "R consensus", str(self.d['taxonomy'] / "r_consensus.log"))
@@ -2579,6 +2646,101 @@ class ViromePipeline:
                         f'{cs.get("Nucleic_acid","")}\n')
         self.log.info('  HQ_plant_viruses_info.tsv (%d 条)', len(seq_lens))
 
+    def _run_eve_discriminate(self, dest_fasta, consensus_tax, validate_out):
+        """[9b] KEEP 前的 EVE 判别: 有科标签的候选走 16 科 ML.
+
+        位置刻意放在 integrate_rescue_evidence.py 之前: EVE_like 必须能**否决 KEEP**
+        (KEEP -> REVIEW), 而不是等目录定稿后再贴标签。无模型/无科标签时返回空串,
+        下游按"未提供 EVE 证据"处理, 不阻断主链。
+        """
+        if not getattr(self.args, 'eve_discriminate', True):
+            self.log.info('  [9b] EVE 判别 — 已禁用 (--no-eve-discriminate)')
+            return ''
+        mod = SCRIPT_DIR / 'eve_discriminate'
+        scorer = mod / 'no_ref_genome' / 'eve_score_genome.py'
+        if not scorer.is_file():
+            self.log.warning('  [9b] EVE 判别跳过: 缺 %s', scorer)
+            return ''
+        repo_root = SCRIPT_DIR.parent
+        models = getattr(self.args, 'eve_models', '') or str(
+            repo_root / 'database' / 'eve_ml' / 'models')
+        index = getattr(self.args, 'eve_index', '') or str(
+            repo_root / 'database' / 'eve_ml' / 'index.json')
+        if not (Path(models).is_dir() and Path(index).is_file()):
+            self.log.warning('  [9b] EVE 判别跳过: 模型/index 不存在 (%s, %s)',
+                             models, index)
+            return ''
+        if not (dest_fasta and Path(dest_fasta).is_file() and
+                consensus_tax and Path(consensus_tax).is_file()):
+            self.log.warning('  [9b] EVE 判别跳过: 缺候选 fasta 或 taxonomy 表')
+            return ''
+
+        eve_dir = Path(validate_out) / 'eve'
+        eve_dir.mkdir(parents=True, exist_ok=True)
+        (Path(validate_out) / 'logs').mkdir(parents=True, exist_ok=True)
+        meta = eve_dir / 'meta.tsv'
+        n_meta = 0
+        import csv as _csv
+        with open(consensus_tax, encoding='utf-8', errors='replace') as fi, open(
+                meta, 'w', encoding='utf-8', newline='\n') as fo:
+            rd = _csv.DictReader(fi, delimiter='\t')
+            fo.write('contig_id\tfamily\n')
+            for r in rd:
+                cid = (r.get('contig_id', '') or '').strip().strip('"')
+                fam = (r.get('Family', '') or r.get('family', '') or '').strip()
+                if cid and fam:
+                    fo.write(f'{cid}\t{fam}\n')
+                    n_meta += 1
+        if not n_meta:
+            self.log.warning('  [9b] EVE 判别跳过: taxonomy 表无 contig_id/Family')
+            return ''
+
+        calls = eve_dir / 'eve_calls.tsv'
+        if getattr(self.args, 'force', False) or not calls.is_file():
+            cmd = (f"{sys.executable} {scorer} "
+                   f"--candidates {dest_fasta} --meta {meta} "
+                   f"--models {models} --index {index} --out {calls}")
+            run_cmd(cmd, self.log, 'EVE discriminate (ML)',
+                    str(Path(validate_out) / 'logs' / 'eve_discriminate.log'))
+        if not calls.is_file():
+            self.log.warning('  [9b] EVE 判别未产出 %s', calls)
+            return ''
+
+        rep = mod / 'eve_classify_report.py'
+        if rep.is_file():
+            html = eve_dir / 'eve_report.html'
+            rcmd = (f"{sys.executable} {rep} --out {html} "
+                    f"--table \"EVE ML={calls}\"")
+            run_cmd(rcmd, self.log, 'EVE classify report',
+                    str(Path(validate_out) / 'logs' / 'eve_report.log'))
+        # 可选第二路: Δbit-score (需要 EVE 蛋白库 + 外源库)
+        eve_faa = getattr(self.args, 'eve_faa', '') or ''
+        exo = getattr(self.args, 'eve_exo_dmnd', '') or ''
+        dbit = eve_dir / 'dbitscore.tsv'
+        if eve_faa and exo and Path(eve_faa).is_file() and Path(exo).is_file():
+            dscript = mod / 'no_ref_genome' / 'eve_dbitscore.py'
+            if dscript.is_file() and (getattr(self.args, 'force', False)
+                                      or not dbit.is_file()):
+                dcmd = (f"{sys.executable} {dscript} --queries {dest_fasta} "
+                        f"--labels {meta} --id-col contig_id --fam-col family "
+                        f"--exo-dmnd {exo} --eve-faa {eve_faa} "
+                        f"--eve-dmnd {eve_dir / 'eve_ref.dmnd'} "
+                        f"--out {dbit}")
+                run_cmd(dcmd, self.log, 'EVE discriminate (dbit)',
+                        str(Path(validate_out) / 'logs' / 'eve_dbitscore.log'))
+            if dbit.is_file() and rep.is_file():
+                dhtml = eve_dir / 'eve_report.html'
+                dcmd = (f"{sys.executable} {rep} --out {dhtml} "
+                        f"--table \"EVE ML={calls}\" --table \"EVE dbit={dbit}\"")
+                run_cmd(dcmd, self.log, 'EVE classify report (ML+dbit)',
+                        str(Path(validate_out) / 'logs' / 'eve_report.log'))
+        elif exo and not eve_faa:
+            self.log.info('  [9b] Δbit-score 跳过: 未给 --eve-faa (宿主管线 eve-report 可产出)')
+
+        self.log.info('  [9b] EVE 判别: %d 条有科标签 -> %s (EVE_like 将否决 KEEP)',
+                      n_meta, calls)
+        return str(calls)
+
     def run_analysis_verify(self):
         """[9b] 分析验证 — KEEP 序列的 ACVirus 重新分类 + 新病毒鉴定 + 按科进化树
 
@@ -2675,6 +2837,10 @@ class ViromePipeline:
                 if hmm_summary.is_file():
                     hmm_report_arg = hmm_summary
 
+            # EVE 判别放在 KEEP 之前: EVE_like 必须能否决 KEEP
+            eve_calls = self._run_eve_discriminate(dest_fasta, consensus_tax,
+                                                   validate_out)
+
             integrate_script = SCRIPT_DIR / "integrate_rescue_evidence.py"
             judgement_tsv = self.d['root'] / "final_judgement_table.tsv"
             prevalence_tsv = self.d['root'] / "prevalence_full_table.tsv"
@@ -2691,6 +2857,8 @@ class ViromePipeline:
                             f"--outdir {validate_out}")
                     if hmm_report_arg:
                         icmd += f" --hmm-report {hmm_report_arg}"
+                    if eve_calls:
+                        icmd += f" --eve-calls {eve_calls}"
                     # rescue 默认开 (integrate_rescue_evidence.py 侧 default True)
                     if getattr(self.args, 'hmm_min_specific', 1) != 1:
                         icmd += f" --hmm-min-specific {self.args.hmm_min_specific}"
@@ -3075,26 +3243,33 @@ class ViromePipeline:
         self.log.info("[9] Virome Report — 流水线总结报告")
         report_script = SCRIPT_DIR / "report_pipeline.py"
         if not report_script.is_file():
-            self.log.error("  report_pipeline.py not found at %s", report_script)
-            return
+            # 缺脚本同样按阶段失败处理 (2026-10-15): 不再静默 return + .ok 照写
+            raise RuntimeError(f"report_pipeline.py not found at {report_script}")
         cmd = [sys.executable, str(report_script), "-o", str(self.d['root'])]
         self.log.info("  → %s", " ".join(cmd))
+        rc = 1
         try:
             import time as _t
             _t0 = _t.time()
             # 报告需遍历全流程产物 (含数千目录), 600s 不够 → 3600s
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=3600)
-            self.log.info("  report_pipeline 耗时 %.1fs (rc=%d)", _t.time() - _t0, result.returncode)
+            rc = result.returncode
+            self.log.info("  report_pipeline 耗时 %.1fs (rc=%d)", _t.time() - _t0, rc)
             if result.stdout:
                 for line in result.stdout.strip().split('\n')[-30:]:
                     self.log.info("  %s", line)
-            if result.returncode != 0:
-                self.log.error("  Report generation failed (rc=%d)", result.returncode)
+            if rc != 0:
+                self.log.error("  Report generation failed (rc=%d)", rc)
                 if result.stderr:
                     for line in result.stderr.strip().split('\n')[-8:]:
                         self.log.error("  %s", line)
         except Exception as e:
             self.log.error("  Report generation error: %s", e)
+        if rc != 0:
+            # 失败必须抛出 (2026-10-15): 主循环记入 failed_stages 且【不写 .ok】——
+            # 旧行为只 log.error → 报告失败也 exit 0 + .ok 照写, 批处理无法感知。
+            raise RuntimeError(
+                f"Report generation failed (rc={rc}) — 检查 {self.d['reports']}")
 
 STAGE_HELP = {
     'clean':         '00a: Fastp质控 + Seqkit转FASTA + Clumpify聚类重排',
@@ -3132,6 +3307,11 @@ STAGE_ARGS = {
     "report":        [],
 }
 
+# 阶段执行顺序 (main() 的按序执行 / profile 阶段跳过展开 / OVERVIEW 说明均以此为准)
+STAGE_ORDER = ['clean', 'deplete', 'assembly', 'identification', 'filter', 'cobra', 'merge',
+               'cluster', 'taxonomy', 'host', 'checkv', 'rescue', 'analysis',
+               'analysis_verify', 'report']
+
 OVERVIEW = """
 ╔══════════════════════════════════════════════════════════════╗
 ║   MMPV-RNA — 宏病毒组端到端全自动分析流水线          ║
@@ -3152,7 +3332,7 @@ Stage 流程 (顺序执行, 共15个, 与 STAGE_ORDER 一致; graph 为 filter �
   checkv          → 完整性评估 (CheckV)
   rescue          → 两支路级联拯救 (CheckV 直通 → VSI reads 延伸; C/D 已归档)
   analysis        → 病毒组下游分析
-  analysis_verify → 分析复核 (HMM/CT3 证据)
+  analysis_verify → 分析复核 (HMM/CT3 证据 + KEEP 前 EVE 判别)
   report          → HTML 报告生成
 
 用法:
@@ -3238,6 +3418,21 @@ def _build_parser(add_help=True):
                    help='SDT 属级矩阵单属序列上限 (超过则跳过, 防 O(N^2) 组合爆炸)')
     g.add_argument('--tree-min-ratio', type=float, default=0.7, help='建树 KEEP 最小 len_ratio (接近属平均长度比例, 0=不过滤; 属长缺失不过滤)')
     g.add_argument('--keep-min-len', type=int, default=0, help='KEEP 最小长度 bp (默认 0=不过滤; 因 RNA 数据里 DNA 病毒常只拼到基因级, 短 contig 也应保留。设 >0 才启用长度门; HMM 比对命中的仍豁免)')
+    g.add_argument('--eve-discriminate', dest='eve_discriminate', action='store_true',
+                   default=True,
+                   help='[9b] KEEP 前做 EVE 判别 (16 科 ML); EVE_like 的 KEEP 降为 REVIEW (默认开)')
+    g.add_argument('--no-eve-discriminate', dest='eve_discriminate', action='store_false',
+                   help='关闭 9b 的 EVE 判别')
+    g.add_argument('--eve-models', default='',
+                   help='EVE 16 科模型目录 (默认 <repo>/database/eve_ml/models)')
+    g.add_argument('--eve-index', default='',
+                   help='EVE 模型 index.json (默认 <repo>/database/eve_ml/index.json)')
+    g.add_argument('--eve-faa', default='',
+                   help='EVE 蛋白参考库 (宿主管线 eve-report 产出的 '
+                        'eve_consensus_library.sixframe.faa); 给了且给 --eve-exo-dmnd 时'
+                        '额外跑 Δbit-score')
+    g.add_argument('--eve-exo-dmnd', default='',
+                   help='外源病毒蛋白 DIAMOND 库 (ICTV 等); 与 --eve-faa 一起启用 Δbit-score')
     g.add_argument('--ct3-hmm-dir', default=None,
                    help='CT3 病毒 HMM 库目录 (默认 ~/database/virus-db/ct3_DBs/hmmscan_DBs/v3.1.1, 内含 RDRP/DNA_rep/Virion/Useful_Annotation/phrogs 五个 .h3m; 缺则 09b 第三路探针优雅跳过)')
     g.add_argument('--skip-ct3-hmm', action='store_true', help='跳过 09b 的 CT3-HMM 第三路探针')
@@ -3517,6 +3712,14 @@ def _expand_env_config(obj):
     return obj
 
 
+def _cfg_bool(v):
+    """YAML 布尔归一: 兼容裸布尔与 "true"/"false"/"yes"/"no"/"1"/"0"/"on"/"off" 字符串
+    (不经 YAML 解析或写成带引号字符串时不至于 bool("false") == True)。"""
+    if isinstance(v, str):
+        return v.strip().lower() in ('1', 'true', 'yes', 'y', 'on')
+    return bool(v)
+
+
 def _load_config(args):
     """加载 YAML 配置, CLI 参数覆盖配置文件值。返回更新后的 args。"""
     config_path = args.config
@@ -3563,13 +3766,25 @@ def _load_config(args):
 
     # 运行参数: CLI 显式指定 > YAML profile > argparse 默认值
     rt = profile.get('runtime', {})
+    # deplete 段的 args 都有非 None 的 argparse 默认值 (0.2 / '10239' / 256 / ...),
+    # "current is None" 判据恒不成立, 只能扫描 sys.argv 判断 CLI 是否显式给了值。
+    _deplete_flags = {
+        '--deplete_tmp': 'deplete_tmp', '--kraken2_confidence': 'kraken2_confidence',
+        '--keep_rrna': 'keep_rrna', '--keep_taxids': 'keep_taxids',
+        '--vmtouch': 'vmtouch', '--rrna_chunk_size': 'rrna_chunk_size',
+        '--rrna_report': 'rrna_report', '--deplete_steps': 'deplete_steps',
+        '--align_config': 'align_config', '--deplete_debug': 'deplete_debug',
+        '--kraken2_db': 'kraken2_db',
+    }
     _cli_set = set()
     for i, a in enumerate(sys.argv):
+        a = a.split('=', 1)[0]            # 兼容 --flag=value 写法 (flag 名不含 '=')
         if a in ('-t', '--threads'): _cli_set.add('threads')
         if a in ('-j', '--jobs'): _cli_set.add('jobs')
         if a == '--tax_jobs': _cli_set.add('tax_jobs')
         if a == '--assembler': _cli_set.add('assembler')
         if a == '--rrna': _cli_set.add('rrna')
+        if a in _deplete_flags: _cli_set.add(_deplete_flags[a])
     for key in ['threads','jobs','tax_jobs']:
         if key in rt and key not in _cli_set:  # CLI 没显式传 → 用 YAML 值
             setattr(args, key, int(rt[key]))
@@ -3646,7 +3861,65 @@ def _load_config(args):
         if key in graph_cfg and f'--graph-{key}' not in sys.argv:
             setattr(args, f'graph_{key}', bool(graph_cfg[key]))
 
+    # deplete (2026-10-26 接线: 此前本段整段不被消费, 改了不生效)
+    #   优先级: CLI 显式参数 (sys.argv 探测) > YAML profile > argparse 默认值
+    #   注: YAML 默认值 (keep_taxids 10239 / confidence 0.2 / vmtouch false) 与
+    #   argparse 默认完全一致, 故接线后默认行为不变, 改名/改值才生效。
+    dep_cfg = profile.get('deplete', {})
+    _deplete_map = {
+        # YAML key         : (args 属性, 类型归一)
+        'kraken2_db':       ('kraken2_db', str),        # 空 = 不覆盖 host_db 自动探测
+        'keep_taxids':      ('keep_taxids', str),       # YAML 整数 10239 → '10239'
+        'confidence':       ('kraken2_confidence', float),
+        'vmtouch':          ('vmtouch', _cfg_bool),
+        # 以下为可选键 (YAML 默认不写, 写了即生效)
+        'keep_rrna':        ('keep_rrna', _cfg_bool),
+        'rrna_chunk_size':  ('rrna_chunk_size', int),
+        'rrna_report':      ('rrna_report', str),
+        'deplete_steps':    ('deplete_steps', str),
+        'align_config':     ('align_config', str),
+        'deplete_debug':    ('deplete_debug', _cfg_bool),
+        'tmp':              ('deplete_tmp', str),
+    }
+    for key, (attr, conv) in _deplete_map.items():
+        if key not in dep_cfg or attr in _cli_set:   # CLI 显式给了 → 不覆盖
+            continue
+        val = dep_cfg[key]
+        # 空值/空路径: 保留 argparse 默认 (kraken2_db 空 = 由 --host_db 自动推导,
+        # tmp 空 = 用子脚本默认)。keep_taxids 例外: 空串按文档语义 = 关闭 taxid 保留。
+        if val is None or (key != 'keep_taxids' and str(val).strip() == ''):
+            continue
+        try:
+            setattr(args, attr, conv(val))
+        except (TypeError, ValueError):
+            continue                                  # 配置类型写错 → 保持默认, 不崩
+
+    # downstream profile 的阶段跳过开关 (2026-10-26 接线): YAML 只声明"跳过哪些阶段",
+    # main() 在 --stage 含 all 时按 STAGE_ORDER 剔除它们; 显式 --stage 不受影响。
+    _skip_stages = []
+    for _sec_name, _key, _stage in (
+            ('cleanup', 'skip_clean', 'clean'),
+            ('cleanup', 'skip_depletion', 'deplete'),
+            ('assembly', 'skip_assembly', 'assembly'),
+            ('identification', 'skip_identification', 'identification')):
+        _sec = profile.get(_sec_name) or {}
+        if _key in _sec and _cfg_bool(_sec[_key]):
+            _skip_stages.append(_stage)
+    args.skip_stages = [s for s in STAGE_ORDER if s in _skip_stages]
+
     return args
+
+
+def _apply_skip_stages(stages, skip_stages):
+    """--stage all + profile 阶段跳过 → 展开为显式阶段集合 (2026-10-26)。
+
+    只处理 'all': 显式 --stage 列表保持字面语义 (--stage cluster 就只跑 cluster,
+    不受 profile 的 skip 键影响)。返回 (阶段集合, 实际生效的跳过阶段列表)。
+    """
+    skip = [s for s in (skip_stages or []) if s in STAGE_ORDER]
+    if not skip or 'all' not in set(stages):
+        return set(stages), []
+    return {s for s in STAGE_ORDER if s not in set(skip)}, skip
 
 
 def _validate_config(args, logger):
@@ -3878,6 +4151,16 @@ def main():
 
     stages = set(args.stage)  # 支持多阶段: --stage clean deplete
 
+    # profile 阶段跳过 (pipeline_config.yaml: cleanup.skip_clean/skip_depletion,
+    # assembly.skip_assembly, identification.skip_identification) 只在 --stage all 时生效:
+    # 展开成显式阶段集合后剔除被跳过者, 后续 skip 标志/Flow 日志/DB 校验/执行全部沿用
+    # 同一个 stages 集合; 显式 --stage 列表保持字面语义 (2026-10-26 接线)。
+    stages, _applied_skip = _apply_skip_stages(stages, getattr(args, 'skip_stages', None))
+    if _applied_skip:
+        args.stage = [s for s in STAGE_ORDER if s in stages]
+        logger.info("  Skip:     %s (profile '%s' 的阶段跳过配置)",
+                    ','.join(_applied_skip), args.profile)
+
     logger.info("=" * 50)
     logger.info("Virome Pipeline v2.3")
     logger.info("  Stage:    %s", ','.join(sorted(stages)))
@@ -3995,9 +4278,8 @@ def main():
         'analysis': pipe.run_analysis, 'analysis_verify': pipe.run_analysis_verify,
         'report': pipe.run_reports,
     }
-    # 按流水线顺序排列
-    stage_order = ['clean','deplete','assembly','identification','filter','cobra','merge','cluster',
-                   'taxonomy','host','checkv','rescue','analysis','analysis_verify','report']
+    # 按流水线顺序排列 (模块级 STAGE_ORDER, 与 profile 阶段跳过机制共用同一份顺序)
+    stage_order = list(STAGE_ORDER)
     # co-assembly 模式: 03a(COBRA) 无逐样本延伸意义, 03b(merge+Flye) 也一并跳过
     # (cluster 的 coassembly 兑底已改从 02a/02b 收集 ALL_merged 候选)
     if getattr(args, 'coassembly', False):

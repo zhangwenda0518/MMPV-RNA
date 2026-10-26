@@ -592,8 +592,18 @@ class CobraPipeline:
             sample_variants.append(sample[:-6])  # 去掉 _clean
         elif '_clean_' in sample:
             sample_variants.append(sample.replace('_clean', ''))
+        # 去宿主产物命名为 {s}_clean_R1.fastq.gz — 增加 _clean 插入变体
+        if not sample.endswith('_clean'):
+            sample_variants.append(sample + '_clean')
 
         read_patterns = [
+            # 去宿主产物 _R1/_R2 命名 ({s}_clean_R1.fastq.gz)
+            (f"{s}_R1.fastq.gz", f"{s}_R2.fastq.gz")
+            for s in sample_variants
+        ] + [
+            (f"{s}_R1.fq.gz", f"{s}_R2.fq.gz")
+            for s in sample_variants
+        ] + [
             # FASTQ
             (f"{s}.R1.fq.gz", f"{s}.R2.fq.gz")
             for s in sample_variants

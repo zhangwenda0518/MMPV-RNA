@@ -7,9 +7,14 @@ import random
 import subprocess
 import sys
 
-ROOT = "/home/zhangwenda/N20220441-06-01/02a_GraphProp_test"
-SHADOW = "/home/zhangwenda/N20220441-06-01/graph_asm_shadow"
-RVDB = "/home/zhangwenda/database/virus-db/RVDB-v31/RVDB_nucl"
+# 项目根 (246 实跑结果 + 影子组装目录都在其下)。
+# 可用环境变量 MMPV_GP_PROJECT_ROOT 覆盖; 默认值与服务器现网路径一致。
+_PROJECT_ROOT = os.environ.get("MMPV_GP_PROJECT_ROOT", "/home/zhangwenda/N20220441-06-01")
+ROOT = _PROJECT_ROOT + "/02a_GraphProp_test"
+SHADOW = _PROJECT_ROOT + "/graph_asm_shadow"
+# 病毒数据库根。可用环境变量 MMPV_DB_ROOT 覆盖; 默认值与服务器现网路径一致。
+_DB_ROOT = os.environ.get("MMPV_DB_ROOT", "/home/zhangwenda/database/virus-db")
+RVDB = _DB_ROOT + "/RVDB-v31/RVDB_nucl"
 WORK = "/tmp/gp_summary"
 cols = ["contig", "source_tool", "length", "gc", "depth", "votes", "seed_label",
         "community_id", "community_size", "community_viral", "community_nonviral",

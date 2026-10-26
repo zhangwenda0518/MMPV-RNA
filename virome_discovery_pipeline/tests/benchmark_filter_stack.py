@@ -6,7 +6,9 @@ import collections
 import os
 import sys
 
-ROOT = "/home/zhangwenda/gp_eval"
+# 评测工作根目录 (ident/filter/graph 各层输出都在其下)。
+# 可用环境变量 MMPV_GP_EVAL_ROOT 覆盖; 默认值与服务器现网路径一致。
+ROOT = os.environ.get("MMPV_GP_EVAL_ROOT", "/home/zhangwenda/gp_eval")
 N_TOTAL_POS = 1344
 CLASSES = ["positive", "negative_A", "negative_B", "negative_C"]
 CLS_CN = {"positive": "正类(病毒)", "negative_A": "negA随机",

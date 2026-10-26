@@ -698,6 +698,17 @@ def decision_tree(row):
 def run_ensemble(args, rvh_csv, pb2_tsv, c9_tsv):
     print(f"\n{'='*75}\n[Ensemble] {'Cascade' if args.mode == 'all' else 'Parallel'} Decision Tree Integration\n{'='*75}")
     df = pd.read_csv(args.tax, sep='\t') if check_file(args.tax) else pd.DataFrame(columns=['contig_id', 'Class'])
+    # 2026-10-19: 丢弃审计 — 记录 tax 表与输入 FASTA 的 ID 全集
+    _tax_ids_raw = list(df['contig_id'].astype(str)) if 'contig_id' in df.columns else []
+    _tax_ids = set(_tax_ids_raw)
+    _fa_ids = set()
+    try:
+        with open(args.input) as _fh:
+            for _ln in _fh:
+                if _ln.startswith('>'):
+                    _fa_ids.add(_ln[1:].strip().split()[0])
+    except Exception:
+        pass
 
     if check_file(c9_tsv):
         _c9_cols = ['contig_id', 'Predicted_Host']
@@ -753,6 +764,38 @@ def run_ensemble(args, rvh_csv, pb2_tsv, c9_tsv):
 
     out_tsv = os.path.join(args.output_dir, "ensemble_host_summary.tsv")
     df.to_csv(out_tsv, sep='\t', index=False)
+
+    # 2026-10-19: 丢弃审计。三类缺口分别记录，避免 1047 条无声消失。
+    try:
+        _out_ids = set(df['contig_id'].astype(str))
+        _rows = []
+        # (1) tax 表里有、输出里没有（merge 过程中丢行，理论上应为 0）
+        for _i in sorted(_tax_ids - _out_ids):
+            _rows.append((_i, "lost_in_merge"))
+        # (2) FASTA 里有、tax 表里没有（上游分类阶段就没覆盖）
+        for _i in sorted(_fa_ids - _tax_ids):
+            _rows.append((_i, "absent_from_taxonomy"))
+        # (3) tax 表重复 ID（会导致 merge 后行数膨胀，非丢失但需告警）
+        _dup = [k for k, v in pd.Series(_tax_ids_raw).value_counts().items() if v > 1]
+        _drop_path = os.path.join(args.output_dir, "dropped_ids.tsv")
+        with open(_drop_path, 'w') as _fh:
+            _fh.write("contig_id\treason\n")
+            for _i, _r in _rows:
+                _fh.write(f"{_i}\t{_r}\n")
+        print(f"  [drop-log] tax={len(_tax_ids)} fasta={len(_fa_ids)} out={len(_out_ids)}")
+        print(f"             lost_in_merge={len(_tax_ids - _out_ids)} "
+              f"absent_from_taxonomy={len(_fa_ids - _tax_ids)} "
+              f"duplicate_ids={len(_dup)}")
+        print(f"             -> {_drop_path}")
+        if _dup:
+            _dup_path = os.path.join(args.output_dir, "duplicate_tax_ids.tsv")
+            with open(_dup_path, 'w') as _fh:
+                _fh.write("contig_id\tn_occurrences\n")
+                for _d in _dup:
+                    _fh.write(f"{_d}\t{int(pd.Series(_tax_ids_raw).value_counts()[_d])}\n")
+            print(f"             duplicate list -> {_dup_path}")
+    except Exception as _e:
+        print(f"  [drop-log] WARN: {_e}")
 
     print("\n  [Summary]")
     for host, cnt in df['Final_Host'].value_counts().items():

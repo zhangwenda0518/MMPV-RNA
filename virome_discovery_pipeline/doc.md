@@ -28,10 +28,12 @@ Raw FASTQ
   │              └── split_fastas/
   │
 [05_Taxonomy] ← virus_classifier.py + virus_classifier_analysis.R
-  │              └── final_integrated_classification.tsv
+  │              ├── final_integrated_classification.tsv
+  │              └── dropped_ids.tsv             (丢弃审计: 输入集 - 保留集, 带原因)
   │
 [06_HostPrediction] ← run_host_prediction.py
-  │                    └── ensemble_host_summary.tsv
+  │                    ├── ensemble_host_summary.tsv
+  │                    └── dropped_ids.tsv       (丢弃审计: 合并丢失 / 分类缺失)
   │
 [07_Checkv] ← checkv (直接调用)
   │
@@ -53,7 +55,7 @@ Raw FASTQ
 |------|--------|------|
 | `--input_reads` | — | 原始 FASTQ 目录 |
 | `--output_dir` / `-o` | 必需 | 项目输出根目录 |
-| `--stage` | `all` | 阶段选择: all,clean,deplete,assembly,identification,cobra,cluster,taxonomy,host,checkv,rescue,report |
+| `--stage` | `all` | 阶段选择: all,clean,deplete,assembly,identification,cobra,cluster,taxonomy,host,checkv,rescue,analysis,analysis_verify,report |
 | `--config` / `--profile` | `default` | YAML 配置文件和 profile |
 | `--coassembly` | False | 合并所有样本 reads 进行共组装 |
 | `--assembler` | `penguin` | 组装工具: megahit, rnaviralspades, penguin |
@@ -82,7 +84,8 @@ Raw FASTQ
   03_COBRA/              ← {sample}.{tool}.cobra.fa
   04_CLUSTER/centroids/  ← final_centroids.fasta
   05_Taxonomy/integrated/← final_integrated_classification.tsv
-  06_HostPrediction/     ← ensemble_host_summary.tsv
+  05_Taxonomy/           ← dropped_ids.tsv (丢弃审计)
+  06_HostPrediction/     ← ensemble_host_summary.tsv + dropped_ids.tsv (丢弃审计)
   07_Checkv/             ← CheckV 质量报告
   08_Rescue/Plant/centroids/ ← HQ vOTU catalog
   09_Reports/            ← pipeline_report.html + TSV 汇总
@@ -482,6 +485,7 @@ Centroids FASTA；各工具数据库
 {output}/{sample}.classed/
   {sample}_{tool}_taxonomy.tsv       ← 各工具原始结果
   {sample}_combined_taxonomy.tsv     ← 8 级合并 taxonomy
+  {sample}_dropped_ids.tsv           ← 丢弃审计 (no_valid_lineage / no_tool_hit, 含 tools_that_saw_it)
   {tool}_output/                     ← 各工具工作目录
 ```
 
@@ -498,6 +502,7 @@ Centroids FASTA；各工具数据库
 | 参数 | 说明 |
 |------|------|
 | `--combined` | virus_classifier.py 的 combined_taxonomy.tsv |
+| `--fasta` | 分类输入 FASTA (centroids)；不给则尝试 `--combined` 同级 `.fasta/.fa/.fna` |
 | `--mmseqs` / `--vcontact3` / `--vitap` 等 | 各工具独立输出 (可选) |
 | `-o` / `--output` | 输出目录 (默认 `.`) |
 | `--cores` | 线程数 |
@@ -511,6 +516,7 @@ combined_taxonomy.tsv；可选各工具独立输出
   final_integrated_classification.tsv   ← 加权投票共识 (8 级 + agree + confidence)
   agreement_stats.tsv                   ← 各工具各层级一致性
   consistency_summary.tsv               ← 一致性汇总
+  dropped_ids.tsv                       ← 丢弃审计 (no_consensus / no_tool_hit)
   intersection_venn.pdf / upset.pdf     ← 工具交集可视化
   agreement_rates.pdf                   ← 一致率柱状图
 ```
@@ -544,6 +550,8 @@ Centroids FASTA + taxonomy TSV
   phabox2_output/       ← PhaBOX2 输出
   C9_ICTV_result/       ← ICTV C9 分类
   ensemble_host_summary.tsv  ← 集成宿主预测
+  dropped_ids.tsv            ← 丢弃审计 (lost_in_merge / absent_from_taxonomy)
+  duplicate_tax_ids.tsv      ← 分类表中重复出现的序列名
   host_classified_fasta/     ← 按宿主分类的 FASTA
 ```
 
@@ -631,6 +639,13 @@ Centroids FASTA + clusters.tsv + split_fastas/ + reads 目录
 | `terminal_repeats.py` | 末端重复检测 (DTR/ITR) + 环形判断 + 起点归一 | 独立运行 |
 
 ### 09b 证据链脚本（analysis_verify 阶段）
+
+> **EVE 判别（默认开）**：`eve_discriminate/no_ref_genome/eve_score_genome.py` 在 CDD 验证之后、
+> `integrate_rescue_evidence.py` 之前运行，用 taxonomy 科标签给 `HQ_plant_viruses.fasta` 打 16 科 ML 分。
+> `EVE_like` 且 verdict=KEEP 的候选经 `--eve-calls` 降为 REVIEW（只降不删）。可选 Δbit-score：
+> `--eve-faa`（`eve_genome` 产出的 `.sixframe.faa`）+ `--eve-exo-dmnd`。关闭用 `--no-eve-discriminate`。
+> 产物：`09b_Analysis_Verify/virus_validation/eve/{eve_calls.tsv,eve_report.html}`；
+> `pipeline_report.html` 的 09b 卡片会追加 EVE 区块。
 
 「一道门 + 两次补票 + 整合」结构：
 

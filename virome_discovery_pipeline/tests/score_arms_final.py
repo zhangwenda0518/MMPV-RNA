@@ -2,9 +2,11 @@
 # -*- coding: utf-8 -*-
 """score_arms_final.py — 恢复主链契约后的四臂真值评分 (在 246 运行)"""
 import collections
+import os
 import subprocess
 
-ROOT = "/home/zhangwenda/gp_benchmark"
+# benchmark 工作根目录。可用环境变量 MMPV_GP_BENCH_ROOT 覆盖; 默认值与服务器现网路径一致。
+ROOT = os.environ.get("MMPV_GP_BENCH_ROOT", "/home/zhangwenda/gp_benchmark")
 NAMES = {"NC_001367": "TMV", "NC_011532": "LYMov", "NC_001841": "SPFMV", "NC_001495": "AMV"}
 TRUTH_LEN = {"TMV": 6395, "LYMov": 12926, "SPFMV": 10820, "AMV": 3644}
 VORDER = ("TMV", "LYMov", "SPFMV", "AMV")

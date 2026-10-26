@@ -6,7 +6,11 @@ import os
 import subprocess
 import sys
 
-ROOT = "/home/zhangwenda/gp_eval"
+# 仓库根 (filter_virus.py / graph_propagation.py 所在)。
+# 可用环境变量 MMPV_REPO_ROOT 覆盖; 默认值与服务器现网路径一致。
+REPO_ROOT = os.environ.get("MMPV_REPO_ROOT", "/home/zhangwenda/MMPV-RNA")
+# 评测工作根目录。可用环境变量 MMPV_GP_EVAL_ROOT 覆盖; 默认值与服务器现网路径一致。
+ROOT = os.environ.get("MMPV_GP_EVAL_ROOT", "/home/zhangwenda/gp_eval")
 IDENT = ROOT + "/ident/eval"
 ASM = ROOT + "/asm/eval/eval_megahit.contig.fasta"
 NAMES = {"positive": "positive", "negative_A": "negA(随机)",
@@ -43,7 +47,7 @@ print("工具数:", len(tool_files), "候选池:", n, "票数分布:", dict(sort
 # ── 2) filter (纯过滤; graph 未跑, 直通镜像) ──
 os.makedirs(ROOT + "/filter/eval", exist_ok=True)
 r = subprocess.run(
-    ["python", "/home/zhangwenda/MMPV-RNA/virome_discovery_pipeline/filter_virus.py",
+    ["python", REPO_ROOT + "/virome_discovery_pipeline/filter_virus.py",
      "-i", IDENT + "/eval_virus.all.candidate.fasta",
      "-o", ROOT + "/filter/eval", "-m", "filter", "-t", "16"],
     capture_output=True, text=True)
@@ -52,7 +56,7 @@ print(r.stdout[-600:])
 
 # ── 3) graph (裁决 filter 无证据保留结果, 更新 COBRA 镜像) ──
 r = subprocess.run(
-    ["python", "/home/zhangwenda/MMPV-RNA/virome_discovery_pipeline/graph_propagation.py",
+    ["python", REPO_ROOT + "/virome_discovery_pipeline/graph_propagation.py",
      "--asm-dir", ROOT + "/asm", "--ident-dir", ROOT + "/ident",
      "--reads-dir", ROOT + "/reads", "--filter-dir", ROOT + "/filter",
      "--output-dir", ROOT + "/graph", "-t", "16", "--force"],

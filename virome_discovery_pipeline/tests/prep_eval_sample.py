@@ -3,8 +3,10 @@
 """prep_eval_sample.py — 把 step3_identification_eval 评测集整理成管线样本结构"""
 import os
 
-D = "/home/zhangwenda/snap/simulator-data/step3_identification_eval"
-OUT = "/home/zhangwenda/gp_eval"
+# 输入: 评测集源目录。可用环境变量 MMPV_EVAL_SRC_DIR 覆盖; 默认值与服务器现网路径一致。
+D = os.environ.get("MMPV_EVAL_SRC_DIR", "/home/zhangwenda/snap/simulator-data/step3_identification_eval")
+# 输出: 评测工作根目录。可用环境变量 MMPV_GP_EVAL_ROOT 覆盖; 默认值与服务器现网路径一致。
+OUT = os.environ.get("MMPV_GP_EVAL_ROOT", "/home/zhangwenda/gp_eval")
 os.makedirs(OUT + "/asm/eval", exist_ok=True)
 os.makedirs(OUT + "/reads", exist_ok=True)
 

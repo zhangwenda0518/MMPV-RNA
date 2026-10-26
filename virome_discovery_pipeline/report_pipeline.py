@@ -23,6 +23,7 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 from mmpv_common.io_layout import layout_dirs as _layout_dirs, build_discovery_dirs as _build_discovery_dirs
+from mmpv_common.table_widgets import TABLE_WIDGET_CSS as _TW_CSS, TABLE_WIDGET_JS as _TW_JS
 _D = _layout_dirs(os.environ.get("MMPV_IO_LAYOUT"))
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -142,8 +143,9 @@ def _en(t):
         t = t.replace(zh, _EN_MAP[zh])
     return t
 
-_esf_js = '(function(){function esf(){document.querySelectorAll(\'table.app-table\').forEach(function(t){var wrap=t.closest(\'div\')||t.parentNode;var box=document.createElement(\'div\');box.style.cssText=\'margin:6px 0;display:flex;gap:8px;align-items:center;flex-wrap:wrap;\';var inp=document.createElement(\'input\');inp.type=\'text\';inp.placeholder=\'Filter...\';inp.style.cssText=\'width:200px;padding:4px 8px;border:1px solid #ccc;border-radius:4px;font-size:11px;\';var ex=document.createElement(\'button\');ex.textContent=\'Export CSV\';ex.style.cssText=\'padding:3px 8px;font-size:11px;border:1px solid #ccc;border-radius:4px;background:#fff;cursor:pointer;\';box.appendChild(inp);box.appendChild(ex);wrap.insertBefore(box,t);function applyFilter(){var q=inp.value.toLowerCase();t.querySelectorAll(\'tbody tr\').forEach(function(tr){tr.style.display=tr.textContent.toLowerCase().indexOf(q)>=0?\'\':\'none\';});}inp.addEventListener(\'input\',applyFilter);ex.onclick=function(){var out=[];t.querySelectorAll(\'tr\').forEach(function(tr){var row=[];tr.querySelectorAll(\'th,td\').forEach(function(c){row.push(\'"\'+c.innerText.replace(/"/g,\'""\')+\'"\');});out.push(row.join(\',\'));});var blob=new Blob([out.join(\'\\n\')],{type:\'text/csv\'});var a=document.createElement(\'a\');a.href=URL.createObjectURL(blob);a.download=(t.id||\'table\')+\'.csv\';a.click();};var ths=t.querySelectorAll(\'thead th\');ths.forEach(function(th,ci){th.style.cursor=\'pointer\';th.title=\'Click to sort\';th.addEventListener(\'click\',function(){var tb=t.tBodies[0];var rows=Array.from(tb.rows);var dir=th._asc?-1:1;th._asc=!th._asc;rows.sort(function(a,b){var av=(a.cells[ci]?a.cells[ci].textContent.trim():\'\');var bv=(b.cells[ci]?b.cells[ci].textContent.trim():\'\');var na=parseFloat(av),nb=parseFloat(bv);if(!isNaN(na)&&!isNaN(nb))return (na-nb)*dir;return av.localeCompare(bv)*dir;});rows.forEach(function(r){tb.appendChild(r);});ths.forEach(function(h,i){h.textContent=h.textContent.replace(/ [\\u25B2\\u25BC]$/,\'\');});th.textContent=th.textContent+(dir<0?\' \\u25B2\':\' \\u25BC\');applyFilter();});});});document.querySelectorAll(\'canvas\').forEach(function(cv){if(cv.closest(\'.chart-box\')&&!cv._ex){cv._ex=true;var b=document.createElement(\'button\');b.textContent=\'PNG\';b.style.cssText=\'position:absolute;top:6px;right:8px;padding:2px 8px;font-size:11px;border:1px solid #ccc;border-radius:4px;background:#fff;cursor:pointer;z-index:5;\';var cb=cv.closest(\'.chart-box\');cb.style.position=\'relative\';cb.appendChild(b);b.onclick=function(){try{var u=cv.toDataURL(\'image/png\');var a=document.createElement(\'a\');a.href=u;a.download=(cv.id||\'chart\')+\'.png\';a.click();}catch(e){}};}});document.querySelectorAll(\'.stage\').forEach(function(st){if(st.querySelector(\'.stage-header\')&&!st.querySelector(\'.chart-box\')&&!st.querySelector(\'.stage-table\')&&!st.querySelector(\'.stage-charts\')){var d=document.createElement(\'div\');d.style.cssText=\'padding:12px;color:var(--muted);font-size:12px;\';d.textContent=\'No data for this stage\';st.appendChild(d);}});}if(document.readyState===\'loading\')document.addEventListener(\'DOMContentLoaded\',esf);else esf();})();'
-_keep_js = "(function(){var kt=document.getElementById('keep-table');if(!kt)return;var ths=kt.querySelectorAll('thead th');var btn=document.createElement('button');btn.textContent='Columns';btn.style.cssText='margin:4px 0 6px;padding:3px 8px;font-size:11px;border:1px solid #ccc;border-radius:4px;background:#fff;cursor:pointer;';var wrap=kt.closest('div')||kt.parentNode;wrap.insertBefore(btn,kt);var panel=document.createElement('div');panel.style.cssText='display:none;margin:4px 0;padding:6px;background:#faf9f5;border:1px solid #eee;font-size:11px;';ths.forEach(function(th,i){var lab=document.createElement('label');lab.style.cssText='display:inline-block;margin:2px 8px;';var cb=document.createElement('input');cb.type='checkbox';cb.checked=true;cb.dataset.ci=i;lab.appendChild(cb);lab.appendChild(document.createTextNode(th.textContent.slice(0,22)));panel.appendChild(lab);});wrap.insertBefore(panel,kt);btn.onclick=function(){panel.style.display=panel.style.display==='none'?'block':'none';};panel.querySelectorAll('input').forEach(function(cb){cb.addEventListener('change',function(){var ci=+cb.dataset.ci;kt.querySelectorAll('tr').forEach(function(tr){if(tr.cells[ci])tr.cells[ci].style.display=cb.checked?'':'none';});});});})();"
+_esf_js = "(function(){function esf(){document.querySelectorAll('canvas').forEach(function(cv){if(cv.closest('.chart-box')&&!cv._ex){cv._ex=true;var b=document.createElement('button');b.textContent='PNG';b.style.cssText='position:absolute;top:6px;right:8px;padding:2px 8px;font-size:11px;border:1px solid #ccc;border-radius:4px;background:#fff;cursor:pointer;z-index:5;';var cb=cv.closest('.chart-box');cb.style.position='relative';cb.appendChild(b);b.onclick=function(){try{var u=cv.toDataURL('image/png');var a=document.createElement('a');a.href=u;a.download=(cv.id||'chart')+'.png';a.click();}catch(e){}};}});document.querySelectorAll('.stage').forEach(function(st){if(st.querySelector('.stage-header')&&!st.querySelector('.chart-box')&&!st.querySelector('.stage-table')&&!st.querySelector('.stage-charts')){var d=document.createElement('div');d.style.cssText='padding:12px;color:var(--muted);font-size:12px;';d.textContent='No data for this stage';st.appendChild(d);}});}if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',esf);else esf();})();"
+# 表格四件套 (筛选/排序/列可选/列固定 + CSV 导出) 统一来自 mmpv_common.table_widgets
+_keep_js = _TW_JS
 
 def _resolve_acv_dir(base):
     """返回 09b 目录: 优先新目录 09b_Analysis_Verify, 回退旧名 09b_ACVirus_Analysis"""
@@ -430,22 +432,30 @@ def _collect_identification(root, report_dir, _add):
     if filter_dir.is_dir():
         filter_data = []; modes_seen = set()
         with open(report_dir / "filter_summary.tsv", "w", encoding='utf-8') as fs:
-            fs.write("Sample\tMode\tAll_Candidate\tPassed\tRetained(%)\n")
+            fs.write("Sample\tMode\tAll_Candidate\tPassed\tRetained(%)\tNote\n")
             for d in sorted(filter_dir.iterdir()):
                 if not d.is_dir(): continue
                 all_n = _count_fasta(d / f"{d.name}_virus.all.candidate.fasta")
                 for fm, ff in [('filter', d / f"{d.name}.virus.candidate_uniprot_filtered.fasta"),
                                ('strict', d / f"{d.name}.virus.candidate_filtered.fasta")]:
-                    nf = _count_fasta(ff) if ff.is_file() else 0
-                    if nf > 0:
-                        fs.write(f"{d.name}\t{fm}\t{all_n}\t{nf}\t{round(nf/max(all_n,1)*100,1)}\n")
-                        filter_data.append({'Sample': d.name, 'Mode': fm, 'All': all_n, 'Passed': nf})
-                        modes_seen.add(fm)
+                    # 2026-10-19: 原实现用 ff.is_file() 判定，失效符号链接会被判 False
+                    # 导致整表写 0 行。改为 is_symlink() 也纳入，并对失效链接单独计数。
+                    nf = _count_fasta(ff) if (ff.is_file() or ff.is_symlink()) else 0
+                    note = ''
+                    if ff.is_symlink() and not ff.exists():
+                        note = 'BROKEN_LINK'
+                    # 始终写行（0 也是有效信息），避免报告整表为空
+                    pct = "NA" if all_n == 0 else round(nf / all_n * 100, 1)
+                    if all_n == 0:
+                        note = (note + ";" if note else "") + "ZERO_CANDIDATES"
+                    fs.write(f"{d.name}\t{fm}\t{all_n}\t{nf}\t{pct}\t{note}\n")
+                    filter_data.append({'Sample': d.name, 'Mode': fm, 'All': all_n, 'Passed': nf})
+                    modes_seen.add(fm)
             if filter_data:
                 for m in sorted(modes_seen):
                     mr = [r for r in filter_data if r['Mode'] == m]
                     t_all = sum(r['All'] for r in mr); t_pass = sum(r['Passed'] for r in mr)
-                    fs.write(f"TOTAL\t{m}\t{t_all}\t{t_pass}\t{round(t_pass/max(t_all,1)*100,1)}\n")
+                    fs.write(f"TOTAL\t{m}\t{t_all}\t{t_pass}\t{round(t_pass/max(t_all,1)*100,1)}\t\n")
     # Per-tool raw/filter/strict 统计 (raw 取 02a 工具结果, filter/strict 回退 02b)
     with open(report_dir / "tool_filter_summary.tsv", "w", encoding='utf-8') as tfs:
         tfs.write("Tool\tRaw\tFilter\tStrict\n")
@@ -942,6 +952,10 @@ def _collect_analysis_files(root, report_dir):
         _resolve_acv_dir(analysis.parent) / "virus_validation" / "hmm_ct3_hits.tsv": "hmm_ct3_hits.tsv",
         _resolve_acv_dir(analysis.parent) / "virus_validation" / "hmm_ct3_rescue_candidates.tsv": "hmm_ct3_rescue_candidates.tsv",
         _resolve_acv_dir(analysis.parent) / "keep_summary.tsv": "keep_summary.tsv",
+        # s11 (09b) 章节表格: ACVirus 重分类/新病毒鉴定结果 (通用渲染循环只认
+        # report_dir 相对文件名, 原目录不在其路径基准内 → 一并复制)
+        _resolve_acv_dir(analysis.parent) / "acvirus_classify" / "final_result_with_confidence.tsv": "final_result_with_confidence.tsv",
+        _resolve_acv_dir(analysis.parent) / "acvirus_identify" / "identification_result_score.csv": "identification_result_score.csv",
         analysis / "rescue_detection" / "frequency_table.tsv": "frequency_table.tsv",
         analysis / "rescue_detection" / "summary" / "all_viruses.best.summary.tsv": "rescue_detection_summary.tsv",
     }
@@ -2150,14 +2164,14 @@ def write_html_report(report_dir, stage_stats):
         ("s00c","BBNorm","00c BBNorm","BBN","#00838f"),
         ("s01","Assembly","01 Assembly","ASM","#0072B2"),
         ("s02","Ident","02 Identification","ID","#537D96"),
-        ("s03","COBRA","03 COBRA Extension","COBRA","#009E73"),
-        ("s04","Cluster","04 Clustering","CLU","#D55E00"),
-        ("s05","Taxonomy","05 Taxonomy Classification","TAX","#CC79A7"),
+        ("s03","COBRA","03 COBRA Extension","COBRA","#007A59"),
+        ("s04","Cluster","04 Clustering","CLU","#A84400"),
+        ("s05","Taxonomy","05 Taxonomy Classification","TAX","#9B4B72"),
         ("s06","Host","06 Host Prediction","HOST","#8B2C1F"),
         ("s07","CheckV","07 CheckV Quality","CV","#4A6B4A"),
         ("s08","Rescue","08 Rescue","RESCUE","#1B365D"),
         # ("s09","PlantVirus") removed,
-        ("s10","Analysis","09 Virome Analysis","AN","#CC79A7"),
+        ("s10","Analysis","09 Virome Analysis","AN","#9B4B72"),
         ("s11","Verify","09b Analysis & Validation","AV","#537D96"),
     ]
 
@@ -2192,10 +2206,18 @@ def write_html_report(report_dir, stage_stats):
             return 's11'
         return 's' + (sn.split('_')[0] if '_' in sn else sn)
 
+    def _tbl_id(sk, tsv_name):
+        """表容器 id 规则 (唯一真源, 与通用渲染循环共用): '.' → '_'。
+        大表 (>500 行) 实际 id 追加 _large, 由渲染循环补同名空 span 别名锚。"""
+        return f"stagetbl_{sk}_{tsv_name.replace(chr(46),chr(95))}"
+
     _subnav = {
-        's02': [('#stagetbl_s02_ident_summary','02a Identification'),('#stagetbl_s02_filter_summary','02b Filter'),
-                ('#stagetbl_s02_graph_verdict_summary_tsv','graph verdicts')],
-        's03': [('#stagetbl_s03_cobra_summary','03a COBRA'),('#merge-flye','03b Merge')],
+        # _subnav 硬编码锚点必须与实际生成的 id 一致 (旧写法缺 _tsv 后缀 → 死锚),
+        # 现与渲染循环共用 _tbl_id 规则: 大表也由别名锚保证恒命中
+        's02': [('#' + _tbl_id('s02','ident_summary.tsv'),'02a Identification'),
+                ('#' + _tbl_id('s02','filter_summary.tsv'),'02b Filter'),
+                ('#' + _tbl_id('s02','graph_verdict_summary.tsv'),'graph verdicts')],
+        's03': [('#' + _tbl_id('s03','cobra_summary.tsv'),'03a COBRA'),('#merge-flye','03b Merge')],
         's05': [('#upset-container','Tool UpSet')],
         's11': [('#keep-table','KEEP Sequences'),('#s11-tree','Phylogeny'),('#s11-sdt','SDT Matrix'),('#s11-cv','Coverage')],
     }
@@ -2230,6 +2252,9 @@ def write_html_report(report_dir, stage_stats):
     }
 
     # 每个阶段对应的 TSV 文件, 用于在卡片内嵌入数据表
+    # ⚠ 键必须存在于 stage_defs: 旧 's09' 键在 s09 章节移除后成死键 ——
+    #   hmm_ct3_hits.tsv / hmm_ct3_rescue_candidates.tsv 被复制进报告目录却
+    #   永不渲染, 's09' 其余条目已由 s08/s10 覆盖。现移入 s11 (09b) 章节。
     stage_tsv_map = {
         's00a': ['data_summary.tsv'],
         's00b': ['hostdep_summary.tsv'],
@@ -2241,14 +2266,15 @@ def write_html_report(report_dir, stage_stats):
         's06':  ['host_distribution.tsv', 'host_decision_method.tsv', 'host_ictv_classification_summary.tsv', 'host_ictv_confidence.tsv'],
         's07':  ['checkv_summary.tsv', 'checkv_confidence.tsv'],
         's08':  ['rescue_report.tsv', 'plant_virus_summary.tsv'],
-        's09':  ['plant_virus_summary.tsv', 'Viroid.species_info.tsv',
-                 'All_plant.viruses_info.tsv', 'all_plant_viruses_genus_summary.tsv',
-                 'rescue_evidence_scored.tsv', 'frequency_table.tsv',
-                 'hmm_ct3_hits.tsv', 'hmm_ct3_rescue_candidates.tsv'],
         's10':  ['hq_genome_type_summary.tsv', 'hq_genome_type_family.tsv', 'hq_genome_type_genus.tsv',
                   'HQ_plant_viruses_info.tsv', 'rescue_evidence_scored.tsv',
                   'frequency_table.tsv', 'All_plant.viruses_info.tsv',
                   'Viroid.species_info.tsv', 'all_plant_viruses_genus_summary.tsv'],
+        # 09b 验证章节: ACVirus 重分类/新病毒鉴定 + CT3-HMM 探针证据
+        # (通用渲染循环只认 report_dir 内的相对文件名 → 前两份由
+        #  _collect_analysis_files 的 copy_map 一并复制进报告目录)
+        's11':  ['final_result_with_confidence.tsv', 'identification_result_score.csv',
+                 'hmm_ct3_hits.tsv', 'hmm_ct3_rescue_candidates.tsv'],
     }
 
     _sd = {}
@@ -2266,6 +2292,40 @@ def write_html_report(report_dir, stage_stats):
     if _s10_note:
         stage_extra_html['s10'] = _s10_note
 
+    # ── 分组查表: 科/属/contig → 核酸类型 (DNA/RNA/Viroid/Other) ──
+    # 供 s11 进化树与 SDT 分组、s11b KEEP 表核酸列共用。
+    # 查表源: All_plant.viruses_info.tsv (全量) → HQ_plant_viruses_info.tsv (补充),
+    # 列名兼容新 Nucleic_acid / 旧 Genome_Type, 同名多行取多数派;
+    # 反转录科按 VMR 规则兜底 (与 utils/annotate_nucleic_acid.py 的判定一致)。
+    def _s11_na_lookup():
+        vf, vg, cid_na = {}, {}, {}
+        for name in ("All_plant.viruses_info.tsv", "HQ_plant_viruses_info.tsv"):
+            p = report_dir / name
+            if not p.is_file(): continue
+            try: rows = _read_tsv(p)
+            except Exception: continue
+            for r in rows:
+                f = (r.get('Family','') or '').strip()
+                g = (r.get('Genus','') or '').strip()
+                t = (r.get('Nucleic_acid') or r.get('Genome_Type') or '').strip().upper()
+                if t not in ("DNA", "RNA"): continue
+                cid = (r.get('contig_id','') or '').strip()
+                if cid and cid not in cid_na:
+                    cid_na[cid] = t
+                if f:
+                    vf.setdefault(f, {"DNA": 0, "RNA": 0})[t] += 1
+                if g:
+                    vg.setdefault(g, {"DNA": 0, "RNA": 0})[t] += 1
+        fm = {k: max(v.items(), key=lambda kv: kv[1])[0] for k, v in vf.items()}
+        gm = {k: max(v.items(), key=lambda kv: kv[1])[0] for k, v in vg.items()}
+        for f in ("Metaviridae", "Pseudoviridae", "Belpaoviridae", "Retroviridae"):
+            fm.setdefault(f, "RNA")
+        for f in ("Caulimoviridae", "Hepadnaviridae"):
+            fm.setdefault(f, "DNA")
+        return fm, gm, cid_na
+
+    _fam_na, _gen_na, _na_by_contig = _s11_na_lookup()
+
     # ── s03 Flye co-assembly 报告图 (03b_MergeSamples/flye_coassembly/flye_report.png) ──
     try:
         flye_png = report_dir.parent / _D['d_merge'] / "flye_coassembly" / "flye_report.png"
@@ -2276,6 +2336,89 @@ def write_html_report(report_dir, stage_stats):
                                            '<img src="data:image/png;base64,' + _fb + '" loading="lazy" '
                                            'onclick="openLightbox(this.src)" title="Click to view" '
                                            'style="width:100%;height:auto;max-height:560px;object-fit:contain;display:block;cursor:zoom-in"></div>')
+    except Exception:
+        pass
+
+    # ── S01/S02/S03 明细目录文件清单 ──
+    # assembly_detail/ident_detail/cobra_detail 由 utils/*_stats.py 落盘到报告目录,
+    # 此前复制后无任何链接入口 (文件在目录里但报告里找不到) → 章节末尾加折叠块,
+    # 列目录内文件的相对链接 (新窗口打开); 目录不存在则整块不渲染。
+    def _detail_files_block(dirname):
+        _dd = report_dir / dirname
+        if not _dd.is_dir(): return ""
+        _dfiles = sorted(p for p in _dd.rglob("*") if p.is_file())
+        if not _dfiles: return ""
+        _lis = ""
+        for _p in _dfiles:
+            _rel = _p.relative_to(report_dir).as_posix()
+            _lis += ('<li style="margin:2px 0"><a href="' + _esc(_rel) + '" target="_blank" rel="noopener" '
+                     'style="color:var(--blue);font-size:.78rem">' + _esc(_rel) + '</a></li>')
+        return ('<details class="stage-table-detail"><summary>Detail files ('
+                + str(len(_dfiles)) + ' · ' + _esc(dirname) + ')</summary>'
+                '<ul style="margin:6px 0 0 18px;padding:0;list-style:disc">' + _lis + '</ul></details>')
+
+    for _det_sk, _det_dir in (('s01', 'assembly_detail'), ('s02', 'ident_detail'), ('s03', 'cobra_detail')):
+        _det_blk = _detail_files_block(_det_dir)
+        if _det_blk:
+            stage_extra_html[_det_sk] = stage_extra_html.get(_det_sk, '') + _det_blk
+
+    # ── S02 识别阶段图 (02_Identification) ──
+    # summary_plots/All_Samples_Comparison.png 汇总图直接内嵌;
+    # 逐样本 comparison_plots/{sample}_{venn_diagram,upset_plot,bar_charts}.png
+    # 按样本分 details 折叠组 (默认折叠, 每样本最多 3 张全收); 样本数 >12 时
+    # 仅内嵌前 12 个, 其余只列文件名清单。图片大小上限沿用 _img_to_base64。
+    try:
+        _ident_root = report_dir.parent / _D['d_ident']
+        _s02_extra = ""
+        _sum_png = _ident_root / "summary_plots" / "All_Samples_Comparison.png"
+        if _sum_png.is_file():
+            _b64s = _img_to_base64(_sum_png)
+            if _b64s:
+                _s02_extra += ('<div class="stage-charts" style="grid-template-columns:1fr"><div class="chart-box">'
+                               '<div class="chart-title">All Samples Comparison</div>'
+                               '<img src="data:image/png;base64,' + _b64s + '" loading="lazy" '
+                               'onclick="openLightbox(this.src)" title="Click to zoom" '
+                               'style="width:100%;height:auto;max-height:620px;object-fit:contain;display:block;cursor:zoom-in">'
+                               '</div></div>')
+        _s02_samples = []
+        if _ident_root.is_dir():
+            for _sd in sorted(_ident_root.iterdir()):
+                if not _sd.is_dir(): continue
+                _cp = _sd / "comparison_plots"
+                if not _cp.is_dir(): continue
+                _imgs = [(k, _cp / f"{_sd.name}_{k}.png")
+                         for k in ("venn_diagram", "upset_plot", "bar_charts")]
+                _imgs = [(k, p) for k, p in _imgs if p.is_file()]
+                if _imgs: _s02_samples.append((_sd.name, _imgs))
+        _S02_EMBED_MAX = 12
+        _s02_blocks = ""
+        for _sn, _imgs in _s02_samples[:_S02_EMBED_MAX]:
+            _inner = ""
+            for _kind, _p in _imgs[:3]:
+                _b64i = _img_to_base64(_p)
+                if not _b64i: continue
+                _inner += ('<div class="chart-box"><div class="chart-title">' + _esc(_sn + " · " + _kind) + '</div>'
+                           '<img src="data:image/png;base64,' + _b64i + '" loading="lazy" '
+                           'onclick="openLightbox(this.src)" title="Click to zoom" '
+                           'style="width:100%;height:auto;max-height:480px;object-fit:contain;display:block;cursor:zoom-in"></div>')
+            if _inner:
+                _ncol = "1fr 1fr 1fr" if len(_imgs) >= 3 else ("1fr 1fr" if len(_imgs) == 2 else "1fr")
+                _s02_blocks += ('<details class="stage-table-detail"><summary>' + _esc(_sn) + ' — '
+                                + str(len(_imgs)) + ' plots</summary>'
+                                '<div class="stage-charts" style="grid-template-columns:' + _ncol
+                                + ';padding:8px 0">' + _inner + '</div></details>')
+        if _s02_blocks:
+            _s02_extra += '<div class="stage-tables">' + _s02_blocks + '</div>'
+        if len(_s02_samples) > _S02_EMBED_MAX:
+            _rest = ""
+            for _sn, _imgs in _s02_samples[_S02_EMBED_MAX:]:
+                _rest += ('<li style="margin:2px 0">' + _esc(_sn) + ': '
+                          + _esc(", ".join(k + ".png" for k, _p in _imgs)) + '</li>')
+            _s02_extra += ('<div class="stage-tables"><details class="stage-table-detail"><summary>'
+                           + str(len(_s02_samples) - _S02_EMBED_MAX) + ' more samples (file names only)</summary>'
+                           '<ul style="margin:6px 0 0 18px;padding:0;list-style:disc">' + _rest + '</ul></details></div>')
+        if _s02_extra:
+            stage_extra_html['s02'] = stage_extra_html.get('s02', '') + _s02_extra
     except Exception:
         pass
 
@@ -2309,7 +2452,7 @@ def write_html_report(report_dir, stage_stats):
                 except Exception:
                     _ct3_by_cid = {}
             cols = ['contig_id','length','length_status','genus_avg_len','len_ratio',
-                    'Realm','Kingdom','Phylum','Class','Order','Family','Genus','Species','cf_max_conf',
+                    'Realm','Kingdom','Phylum','Class','Order','Family','Genus','Species','Nucleic_acid','cf_max_conf',
                     'cdd_evidence','n_t1','cdd_top','max_cov_to_db','n_samples','prevalence_%',
                     'checkv_completeness','checkv_confidence',
                     'nt_pident','nt_qcovs','nt_species','aa_pident','aa_species','blastn_score','blastx_score',
@@ -2323,6 +2466,11 @@ def write_html_report(report_dir, stage_stats):
                 cid = (r.get('contig_id','') or '').strip()
                 if cid in _ct3_by_cid:
                     r = {**_ct3_by_cid[cid], **r}
+                # 核酸类型: contig 级左连 All_plant/HQ 表 (_na_by_contig),
+                # 缺失时回退科/属多数派映射 (_fam_na/_gen_na, 含反转录科兜底)
+                _na = (_na_by_contig.get(cid)
+                       or _fam_na.get((r.get('Family','') or '').strip())
+                       or _gen_na.get((r.get('Genus','') or '').strip()) or '')
                 lr = (r.get('len_ratio','') or '').strip()
                 try: lrf = float(lr)
                 except: lrf = None
@@ -2333,6 +2481,13 @@ def write_html_report(report_dir, stage_stats):
                 for c in cols:
                     if c == 'contig_id':
                         tds.append('<td><a class="kseq" href="javascript:void(0)" data-cid="'+_esc(cid)+'">'+_esc(cid)+'</a></td>')
+                    elif c == 'Nucleic_acid':
+                        _nc = {"DNA":"#1565c0","RNA":"#2e7d32","Viroid":"#6a1b9a"}.get(_na)
+                        if _nc:
+                            tds.append('<td><span style="display:inline-block;padding:1px 9px;border-radius:9px;'
+                                       'font-size:.72rem;font-weight:600;color:#fff;background:'+_nc+'">'+_esc(_na)+'</span></td>')
+                        else:
+                            tds.append('<td style="color:var(--muted,#99a)">-</td>')
                     else:
                         tds.append('<td>'+_esc(r.get(c,''))+'</td>')
                 tds.append('<td><span class="kflag '+st+'">'+st+'</span></td>')
@@ -2350,6 +2505,9 @@ def write_html_report(report_dir, stage_stats):
                 'Array.prototype.forEach.call(document.querySelectorAll(".kseq"),function(el){el.onclick=function(){cp(el.getAttribute("data-cid"));};});})();</script>')
     except Exception:
         keep_table_html = ""
+    # ── S05 Taxonomy 额外图区 (组件先累积, 末尾一次性挂载) ──
+    # 组件: taxonomy_images.json 静态 PNG + 交互 UpSet 容器 + 07_Taxonomy 四类图
+    _s05_extra = ""
     tax_img_json = report_dir / "taxonomy_images.json"
     if tax_img_json.is_file():
         try:
@@ -2361,18 +2519,92 @@ def write_html_report(report_dir, stage_stats):
                 img_html += '<div class="chart-box"><div class="chart-title">' + _esc(label) + '</div>'
                 img_html += '<img src="data:image/png;base64,' + b64 + '" loading="lazy" onclick="openLightbox(this.src)" title="Click to zoom" style="width:100%;height:auto;max-height:650px;object-fit:contain;display:block;cursor:zoom-in"></div>'
             if img_html:
-                stage_extra_html['s05'] = '<div class="stage-charts" style="grid-template-columns:1fr">' + img_html + '</div>'
+                _s05_extra += '<div class="stage-charts" style="grid-template-columns:1fr">' + img_html + '</div>'
         except Exception: pass
     if upset_container_html:
-        stage_extra_html['s05'] = '<div class="stage-charts" style="grid-template-columns:1fr">' + upset_container_html + '</div>'
+        _s05_extra += '<div class="stage-charts" style="grid-template-columns:1fr">' + upset_container_html + '</div>'
+
+    # ── S05 补充: 07_Taxonomy/{sample}.integrated 四类图 ──
+    # intersection_venn / consensus_summary / classification_counts / agreement_rates,
+    # 逐样本 {Votus}.integrated 目录; 优先 PNG base64 内嵌, 缺 PNG 回退 PDF 用
+    # <embed type=application/pdf> (同 SDT 通道既有写法, 大小上限沿用其 15000KB 阈值)。
+    try:
+        _tax_root = report_dir.parent / _D['d_taxonomy']
+        _tax_boxes = []
+        if _tax_root.is_dir():
+            for _idir in sorted(_tax_root.glob("*.integrated")):
+                if not _idir.is_dir(): continue
+                for _base, _lbl in (("intersection_venn", "Intersection Venn"),
+                                    ("consensus_summary", "Consensus Summary"),
+                                    ("classification_counts", "Classification Counts"),
+                                    ("agreement_rates", "Agreement Rates")):
+                    _pngf = _idir / f"{_base}.png"
+                    _pdff = _idir / f"{_base}.pdf"
+                    _imgf = _pngf if _pngf.is_file() else (_pdff if _pdff.is_file() else None)
+                    if not _imgf: continue
+                    _b64t = _img_to_base64(_imgf, max_kb=15000)
+                    if not _b64t: continue
+                    if _imgf.suffix.lower() == '.pdf':
+                        _body = ('<embed src="data:application/pdf;base64,' + _b64t + '" type="application/pdf" '
+                                 'style="width:100%;height:600px;display:block">')
+                    else:
+                        _body = ('<img src="data:image/png;base64,' + _b64t + '" loading="lazy" '
+                                 'onclick="openLightbox(this.src)" title="Click to zoom" '
+                                 'style="width:100%;height:auto;max-height:620px;object-fit:contain;display:block;cursor:zoom-in">')
+                    _tax_boxes.append('<div class="chart-box"><div class="chart-title">'
+                                      + _esc(_idir.name.replace(".integrated", "")) + ' · ' + _lbl
+                                      + '</div>' + _body + '</div>')
+        if _tax_boxes:
+            _s05_extra += ('<div class="stage-charts" style="grid-template-columns:1fr 1fr">'
+                           + ''.join(_tax_boxes) + '</div>')
+    except Exception:
+        pass
+    # subnav #upset-container 指向 UpSet 图区, 但交互容器仅在 upset_data.json 存在时
+    # 渲染 → 无 upset 时成死锚。恒存在的稳定别名锚: 交互容器未渲染时补一个空 span
+    # 承载该 id (与实际容器互斥, 不产生重复 id), 交互/静态回退两条路径都命中。
+    if upset_container_html:
+        stage_extra_html['s05'] = _s05_extra
+    else:
+        stage_extra_html['s05'] = '<span id="upset-container"></span>' + _s05_extra
 
     _s11_tree = ""; _s11_sdt = ""; _s11_cv = ""
 
-    # ── S11 SDT 属级序列一致性矩阵图区 ──
+    # ── S11 分组展示 helper (核酸类型查表 _s11_na_lookup 见本函数前部) ──
+    def _s11_bucket(name, tmap):
+        if (name or '') in _VIROID_FAMS or "viroid" in (name or '').lower():
+            return "Viroid"
+        return tmap.get(name) or "Other"
+
+    _S11_GROUPS = (("DNA", "DNA virus"), ("RNA", "RNA virus"), ("Viroid", "Viroid"), ("Other", "Unassigned type"))
+    _S11_GROUP_COLOR = {"DNA": "#1565c0", "RNA": "#2e7d32", "Viroid": "#6a1b9a", "Other": "#78909c"}
+    _S11_FAM_LABEL = {"DNA": "DNA virus families", "RNA": "RNA virus families",
+                      "Viroid": "Viroid families", "Other": "Unassigned-type families"}
+    _S11_GEN_LABEL = {"DNA": "DNA virus genera", "RNA": "RNA virus genera",
+                      "Viroid": "Viroid genera", "Other": "Unassigned-type genera"}
+
+    def _s11_grouped(entries, tmap):
+        """entries: [(名称, box_html)] → {组: [box_html]}, 组内按名称排序"""
+        buckets = {}
+        for name, box in entries:
+            buckets.setdefault(_s11_bucket(name, tmap), []).append((name, box))
+        return {g: [b for _n, b in sorted(buckets.get(g, []), key=lambda x: x[0].lower())]
+                for g, _ in _S11_GROUPS}
+
+    def _s11_group_html(prefix, glbl, gkey, boxes, cols):
+        color = _S11_GROUP_COLOR[gkey]
+        head = (f'<div style="margin:2px 0 0;padding:7px 12px;border:1px solid {color};'
+                'background:rgba(0,0,0,0.035);border-radius:4px;font-size:.92rem;">'
+                f'{prefix} · <b style="color:{color}">{glbl}</b> '
+                f'<span style="font-weight:400;color:var(--muted,#667)">(n={len(boxes)})</span></div>')
+        grid = ('<div class="stage-charts" style="grid-template-columns:'
+                + ' '.join(['1fr']*max(cols, 1)) + '">' + ''.join(boxes) + '</div>')
+        return head + grid
+
+    # ── S11 SDT 属级序列一致性矩阵图区 (DNA 属 / RNA 属分组) ──
     try:
         sdt_root = (_resolve_acv_dir(report_dir.parent) / "SDT_matrix")
         if sdt_root.is_dir():
-            sdt_imgs = []
+            entries = []
             for d in sorted(sdt_root.iterdir()):
                 if not d.is_dir(): continue
                 png = d / f"SDT_{d.name}_heatmap.png"
@@ -2383,7 +2615,7 @@ def write_html_report(report_dir, stage_stats):
                 if not b64: continue
                 csvf = d / f"sdt_matrix_{d.name}.csv"
                 csv_uri = _tsv_data_uri(csvf) if csvf.is_file() else ""
-                dl = (f' <a href="{csv_uri}" download style="font-size:.75rem;color:#00838f" title="Download {d.name} matrix CSV">matrix.csv</a>'
+                dl = (f' <a href="{csv_uri}" download style="font-size:.75rem;color:#00646e" title="Download {d.name} matrix CSV">matrix.csv</a>'
                       if csv_uri else '')
                 # PDF 回退不能塞进 data:image/png (浏览器不识别) → 用 <embed type=application/pdf>
                 if imgf.suffix.lower() == '.pdf':
@@ -2393,13 +2625,18 @@ def write_html_report(report_dir, stage_stats):
                     body = ('<img src="data:image/png;base64,' + b64 + '" loading="lazy" '
                             'onclick="openLightbox(this.src)" title="Click to zoom" '
                             'style="width:100%;height:auto;max-height:600px;object-fit:contain;display:block;cursor:zoom-in">')
-                sdt_imgs.append(
+                entries.append((d.name,
                     '<div class="chart-box"><div class="chart-title">SDT · ' + _esc(d.name) + dl + '</div>'
-                    + body + '</div>')
-            if sdt_imgs:
-                ncol = 2 if len(sdt_imgs) >= 2 else 1
-                _s11_sdt = ('<div class="stage-charts" id="s11-sdt" style="grid-template-columns:'
-                            + ' '.join(['1fr']*min(ncol,3)) + '">' + ''.join(sdt_imgs) + '</div>')
+                    + body + '</div>'))
+            if entries:
+                _sdt_grp = _s11_grouped(entries, _gen_na)
+                _sdt_parts = []
+                for gkey, _glbl in _S11_GROUPS:
+                    boxes = _sdt_grp.get(gkey) or []
+                    if not boxes: continue
+                    _sdt_parts.append(_s11_group_html("SDT matrix", _S11_GEN_LABEL[gkey], gkey, boxes,
+                                                      cols=(2 if len(boxes) >= 2 else 1)))
+                _s11_sdt = '<div id="s11-sdt">' + ''.join(_sdt_parts) + '</div>'
     except Exception:
         pass
 
@@ -2425,28 +2662,78 @@ def write_html_report(report_dir, stage_stats):
         pass
 
     # ── S11 进化树图区 (acvirus_trees/<Family>/Tree_Synteny_Composite.png) ──
+    # DNA 科与 RNA 科分开展示 (组内按科名字母序)
     try:
         tr_root = (_resolve_acv_dir(report_dir.parent) / "acvirus_trees")
         if tr_root.is_dir():
-            tr_imgs = []
+            entries = []
             for d in sorted(tr_root.iterdir()):
                 if not d.is_dir(): continue
                 imgf = d / "Tree_Synteny_Composite.png"
                 if not imgf.is_file(): continue
                 b64 = _img_to_base64(imgf, max_kb=22000)
                 if not b64: continue
-                tr_imgs.append(
+                entries.append((d.name,
                     '<div class="chart-box"><div class="chart-title">Phylogeny · ' + _esc(d.name) + '</div>'
                     '<img src="data:image/png;base64,' + b64 + '" loading="lazy" '
                     'onclick="openLightbox(this.src)" title="Click to zoom" '
-                    'style="width:100%;height:auto;max-height:560px;object-fit:contain;display:block;cursor:zoom-in"></div>')
-            if tr_imgs:
-                ncol3 = 2 if len(tr_imgs) >= 2 else 1
-                _s11_tree = ('<div class="stage-charts" id="s11-tree" style="grid-template-columns:'
-                             + ' '.join(['1fr']*min(ncol3,2)) + '">' + ''.join(tr_imgs) + '</div>')
+                    'style="width:100%;height:auto;max-height:560px;object-fit:contain;display:block;cursor:zoom-in"></div>'))
+            if entries:
+                _tr_grp = _s11_grouped(entries, _fam_na)
+                _tr_parts = []
+                for gkey, _glbl in _S11_GROUPS:
+                    boxes = _tr_grp.get(gkey) or []
+                    if not boxes: continue
+                    _tr_parts.append(_s11_group_html("Phylogeny", _S11_FAM_LABEL[gkey], gkey, boxes,
+                                                     cols=(2 if len(boxes) >= 2 else 1)))
+                _s11_tree = '<div id="s11-tree">' + ''.join(_tr_parts) + '</div>'
     except Exception:
         pass
-    stage_extra_html['s11'] = (_s11_tree or '') + (_s11_sdt or '') + (_s11_cv or '')
+    # ── EVE 判别 (KEEP 前的否决层) ──
+    _s11_eve = ''
+    try:
+        from collections import Counter as _Counter
+        _acv = _resolve_acv_dir(Path(report_dir).parent)
+        _scored = _acv / 'virus_validation' / 'rescue_evidence_scored.tsv'
+        if _scored.is_file():
+            _cnt = _Counter()
+            _veto = 0
+            with open(_scored, encoding='utf-8', errors='replace') as _f:
+                for _r in csv.DictReader(_f, delimiter='	'):
+                    _c = (_r.get('eve_call') or '').strip()
+                    if _c:
+                        _cnt[_c] += 1
+                    if (_r.get('eve_flag') or '').strip() == 'KEEP->REVIEW':
+                        _veto += 1
+            if _cnt:
+                _n = sum(_cnt.values())
+                _cards = (f'<div class="kpi-card"><div class="kpi-value">{_n}</div>'
+                          f'<div class="kpi-label">Candidates scored</div></div>'
+                          f'<div class="kpi-card"><div class="kpi-value">{_cnt.get("EVE_like", 0)}</div>'
+                          f'<div class="kpi-label">EVE-like</div></div>'
+                          f'<div class="kpi-card"><div class="kpi-value">{_cnt.get("virus_like", 0)}</div>'
+                          f'<div class="kpi-label">Virus-like</div></div>'
+                          f'<div class="kpi-card"><div class="kpi-value">{_veto}</div>'
+                          f'<div class="kpi-label">KEEP to REVIEW (EVE veto)</div></div>')
+                _link = ''
+                _eh = _acv / 'virus_validation' / 'eve' / 'eve_report.html'
+                if _eh.is_file():
+                    _dst = Path(report_dir) / 'EVE_discrimination.html'
+                    try:
+                        if (not _dst.is_file()
+                                or _dst.stat().st_mtime < _eh.stat().st_mtime):
+                            _dst.write_bytes(_eh.read_bytes())
+                        _link = ('<p style="font-size:12px;margin-top:8px">'
+                                 '<a href="EVE_discrimination.html" target="_blank">'
+                                 'Open EVE discrimination report</a></p>')
+                    except OSError:
+                        pass
+                _s11_eve = ('<div style="margin-top:18px">'
+                            '<h3 style="margin:0 0 8px">EVE discrimination (before KEEP)</h3>'
+                            '<div class="kpi-row">' + _cards + '</div>' + _link + '</div>')
+    except Exception:
+        pass
+    stage_extra_html['s11'] = _s11_eve + (_s11_tree or '') + (_s11_sdt or '') + (_s11_cv or '')
     for sk, short, full, icon, color in stage_defs:
         st = stage_status.get(sk, 'skip'); metric = stage_metric.get(sk, '')
         if st == 'pass': badge_cls, badge_txt, border_cls = 's-pass','✓ PASS','stage-pass'
@@ -2528,6 +2815,7 @@ def write_html_report(report_dir, stage_stats):
 
         # 在卡片内嵌入对应 TSV 数据表
         table_html = ""
+        _anchor_ids = set()                      # 本 section 表格锚点 id (真实 id + 别名锚)
         for tsv_name in stage_tsv_map.get(sk, []):
             tsv_path = report_dir / tsv_name
             if not tsv_path.is_file(): continue
@@ -2543,7 +2831,7 @@ def write_html_report(report_dir, stage_stats):
                 import json as _json3
                 _load_rows = tsv_rows[:500]
                 _js_data = _json3.dumps([{c: str(r.get(c,''))[:100] for c in cols} for r in _load_rows], ensure_ascii=False)
-                tbid = f"stagetbl_{sk}_{tsv_name.replace(chr(46),chr(95))}_large"
+                tbid = _tbl_id(sk, tsv_name) + "_large"
                 tr_h = '<tr><td colspan="' + str(len(cols)) + '" style="text-align:center;color:var(--muted)">Loading...</td></tr>'
             elif use_pagination:
                 for r in tsv_rows:
@@ -2551,14 +2839,15 @@ def write_html_report(report_dir, stage_stats):
             else:
                 for r in preview:
                     tr_h += "<tr>" + "".join(f"<td>{_esc(str(r.get(c,'')))[:60]}</td>" for c in cols) + "</tr>"
-            more = f'<span style="color:var(--muted);font-size:10px">({len(tsv_rows)} rows{" - showing first 500" if is_large else ""})</span>'
+            more = f'<span style="color:var(--muted);font-size:11px">({len(tsv_rows)} rows{" - showing first 500" if is_large else ""})</span>'
             if is_large:
                 dl_uri = ""
             else:
                 dl_uri = _tsv_data_uri(tsv_path)
-            dl_link = f'<a href="{dl_uri}" download="{tsv_name}" style="font-size:10px;margin-left:6px;color:var(--blue)">[download]</a>' if dl_uri else ''
+            dl_link = f'<a href="{dl_uri}" download="{tsv_name}" style="font-size:11px;margin-left:6px;color:var(--blue)">[download]</a>' if dl_uri else ''
+            _short_tbid = _tbl_id(sk, tsv_name)      # 与 _subnav 共用同一 id 规则
             if not is_large:
-                tbid = f"stagetbl_{sk}_{tsv_name.replace(chr(46),chr(95))}"
+                tbid = _short_tbid
             pager_html = ""
             if is_large:
                 pager_html = f'<div id="pager_{tbid}" style="display:flex;justify-content:center;align-items:center;gap:8px;padding:8px;font-size:11px;color:var(--muted)"><button onclick="tblPrev_{tbid}()" style="border:1px solid #ccc;background:#fff;padding:3px 10px;border-radius:4px;cursor:pointer;font-size:11px">Prev</button><span id="info_{tbid}">Page 1</span><button onclick="tblNext_{tbid}()" style="border:1px solid #ccc;background:#fff;padding:3px 10px;border-radius:4px;cursor:pointer;font-size:11px">Next</button></div>'
@@ -2600,7 +2889,12 @@ tblShow_{tbid}(0);
   show(0);
 }})();
 """
-            table_html += f'''<details class="stage-table-detail" open>
+            # 大表 (>500 行) id 带 _large 后缀 → _subnav 写死的短名锚点 (_short_tbid)
+            # 会变死锚; 大表恒补一个稳定别名锚承载短名 (小表 id 即短名, 不重复输出)
+            alias_anchor = f'<span id="{_short_tbid}"></span>' if is_large else ""
+            _anchor_ids.add(tbid)
+            if alias_anchor: _anchor_ids.add(_short_tbid)
+            table_html += f'''{alias_anchor}<details class="stage-table-detail" open>
 <summary>{tsv_name} {more} {dl_link}</summary>
 <div style="overflow-x:auto;margin-top:6px">
 <table class="app-table" id="{tbid}"><thead><tr>{th_h}</tr></thead><tbody>{tr_h}</tbody></table>
@@ -2616,8 +2910,19 @@ tblShow_{tbid}(0);
         extra_html = stage_extra_html.get(sk, "")
         if sk == 's11' and keep_table_html:
             extra_html = keep_table_html + extra_html
+        # subnav 二级锚兜底: 对应表/图未渲染 (阶段未跑/无产物) 时同样补一个
+        # 稳定别名锚, 保证 sidebar 二级锚不失效 (聚合本 section 实际输出的全部 id)
+        _section_ids = set(_anchor_ids)
+        # 只认属性位上的 id= (前导空白), 避免误匹配 data-id= / data-cid= 之类
+        _section_ids |= set(re.findall(r'\sid="([^"]+)"', table_html + chart_html + extra_html))
+        _subnav_anchor_html = ""
+        for _shref, _slbl in _subnav.get(sk, []):
+            _aid = _shref.lstrip('#')
+            if _aid and _aid not in _section_ids:
+                _subnav_anchor_html += f'<span id="{_aid}"></span>'
         sections_html += f'''
 <section class="stage {border_cls}" id="stage-{short}">
+  {_subnav_anchor_html}
   <div class="stage-header">
     <div class="stage-icon" style="background:{color}">{icon}</div>
     <div class="stage-title"><h2>{full} <button onclick="runStageAI('{sk}')" class="ai-stage-btn" title="AI summarize">AI</button></h2><span class="stage-metric">{_esc(metric)}</span></div>
@@ -2767,6 +3072,7 @@ document.getElementById("ai-model").value=sessionStorage.getItem("ai_model")||"g
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
+<!-- impeccable-disable numbered-section-markers,em-dash-overuse: stage IDs are pipeline identifiers; CJK scientific copy -->
 <title>MMPV-RNA {VERSION} — Pipeline Report</title>
 <script>/*! Chart.js | https://www.chartjs.org | MIT License */
 {{CHART_JS_INLINE}}</script>
@@ -2795,18 +3101,18 @@ body{{font-family:'EB Garamond','Noto Serif SC','Source Han Serif SC','Songti SC
 .kpi-label{{font-size:11px;color:var(--muted);margin-top:4px;text-transform:uppercase;letter-spacing:.5px}}
 .sidebar{{position:fixed;top:0;left:0;width:224px;height:100vh;background:var(--card-bg);border-right:1px solid var(--border);box-shadow:2px 0 8px rgba(0,0,0,.04);z-index:200;display:flex;flex-direction:column;padding-top:12px;overflow-y:auto}}
 .sb-title{{font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;padding:8px 16px 6px;margin:0}}
-.sb-item{{display:flex;align-items:center;gap:10px;padding:9px 16px;text-decoration:none;color:var(--text);font-size:12.5px;font-weight:500;border-left:3px solid transparent;transition:all .15s}}
-.sb-item:hover{{background:rgba(83,125,150,.08);border-left-color:var(--blue)}}
+.sb-item{{display:flex;align-items:center;gap:10px;padding:9px 16px 9px 19px;text-decoration:none;color:var(--text);font-size:12.5px;font-weight:500;transition:all .15s}}
+.sb-item:hover{{background:rgba(83,125,150,.08);color:#3F6179}}
 .sb-dot{{width:10px;height:10px;border-radius:50%;flex-shrink:0}}
 .sb-label{{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}}
-.sb-sub{{display:flex;align-items:center;gap:8px;padding:6px 16px 6px 34px;text-decoration:none;color:var(--muted);font-size:11.5px;font-weight:400;border-left:3px solid transparent;transition:all .15s}}
-.sb-sub:hover{{color:var(--text);background:rgba(83,125,150,.06);border-left-color:var(--blue)}}
+.sb-sub{{display:flex;align-items:center;gap:8px;padding:6px 16px 6px 37px;text-decoration:none;color:var(--muted);font-size:11.5px;font-weight:400;transition:all .15s}}
+.sb-sub:hover{{color:var(--text);background:rgba(83,125,150,.06)}}
 .sb-dot-sub{{width:6px;height:6px;border-radius:50%;flex-shrink:0;background:var(--blue)}}
 #keep-table th:first-child,#keep-table td:first-child{{position:sticky;left:0;background:#FCFAF5;z-index:1;border-right:1px solid var(--border)}}
-.sb-pass{{border-left-color:var(--green)}}.sb-fail{{border-left-color:var(--red)}}.sb-skip{{border-left-color:var(--border)}}
-.sb-active{{background:rgba(83,125,150,.1);font-weight:500;border-left-color:var(--blue)!important}}
+.sb-pass{{background:rgba(74,107,74,.05)}}.sb-fail{{background:rgba(139,58,58,.05)}}.sb-skip{{background:rgba(107,111,115,.035)}}
+.sb-active{{background:rgba(83,125,150,.1);font-weight:500;color:#3F6179}}
 .stage{{background:var(--card-bg);border-radius:var(--radius);box-shadow:var(--shadow);margin-bottom:20px;overflow:hidden}}
-.stage-pass{{border-left:4px solid var(--green)}}.stage-fail{{border-left:4px solid var(--red)}}.stage-skip{{border-left:4px solid var(--border)}}
+.stage-pass{{border:1px solid rgba(74,107,74,.38);background:rgba(74,107,74,.045)}}.stage-fail{{border:1px solid rgba(139,58,58,.38);background:rgba(139,58,58,.045)}}.stage-skip{{border:1px solid var(--border);background:rgba(107,111,115,.04)}}
 .stage-header{{display:flex;align-items:center;gap:16px;padding:18px 22px;border-bottom:1px solid var(--border);background:var(--bg)}}
 .stage-icon{{width:44px;height:44px;border-radius:var(--radius-sm);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:500;color:#FFFDF7;flex-shrink:0}}
 .stage-title{{flex:1;min-width:0}}
@@ -2832,32 +3138,32 @@ body{{font-family:'EB Garamond','Noto Serif SC','Source Han Serif SC','Songti SC
 table{{width:100%;border-collapse:collapse;font-size:13px}}
 th{{background:var(--bg);text-align:left;padding:10px 16px;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:2px solid var(--border)}}
 td{{padding:9px 16px;border-bottom:1px solid var(--border)}}
-.tr-pass td:first-child{{border-left:3px solid var(--green)}}.tr-fail td:first-child{{border-left:3px solid var(--red)}}.tr-skip td:first-child{{border-left:3px solid var(--border)}}
+.tr-pass{{background:rgba(74,107,74,.07)}}.tr-fail{{background:rgba(139,58,58,.07)}}.tr-skip{{background:rgba(107,111,115,.05)}}
 .td-num{{text-align:center;color:var(--muted);font-size:11px;width:36px}}
 .td-sub{{padding-left:40px!important;color:var(--muted);font-size:12px}}
 .td-metric{{font-size:12px;color:var(--muted)}}
-.tb-badge{{display:inline-block;padding:1px 8px;border-radius:var(--radius-sm);font-size:10px;font-weight:500}}
+.tb-badge{{display:inline-block;padding:1px 8px;border-radius:var(--radius-sm);font-size:11px;font-weight:500}}
 .tb-pass{{background:rgba(74,107,74,.12);color:var(--green)}}.tb-fail{{background:rgba(139,58,58,.12);color:var(--red)}}.tb-skip{{background:rgba(0,0,0,.05);color:var(--muted)}}
 .app-table{{width:100%;border-collapse:collapse;font-size:11px;margin-bottom:8px}}
-.app-table th{{background:#f5f5f5;padding:6px 8px;font-size:10px;text-align:left;border:1px solid #e0e0e0;white-space:nowrap}}
+.app-table th{{background:#f5f5f5;padding:6px 8px;font-size:11px;text-align:left;border:1px solid #e0e0e0;white-space:nowrap}}
 .app-table td{{padding:4px 8px;border:1px solid #f0f0f0;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px}}
-.ai-section{{background:var(--card-bg);border-radius:var(--radius);box-shadow:var(--shadow);padding:20px 24px;margin-bottom:28px;border-top:4px solid var(--blue)}}
+.ai-section{{background:var(--card-bg);border-radius:var(--radius);box-shadow:var(--shadow);padding:20px 24px;margin-bottom:28px;border:1px solid var(--border)}}
 .ai-header{{display:flex;align-items:center;gap:10px;margin-bottom:14px;border-bottom:1px solid var(--border);padding-bottom:10px}}
 .ai-title{{font-size:15px;font-weight:500;color:var(--blue)}}
-.ai-model-tag{{font-size:10px;background:var(--blue);color:#FFFDF7;padding:2px 8px;border-radius:var(--radius-sm)}}
-.ai-format-tag{{font-size:10px;background:rgba(83,125,150,.12);color:var(--blue);padding:2px 8px;border-radius:var(--radius-sm);font-weight:500}}
+.ai-model-tag{{font-size:11px;background:var(--blue);color:#FFFDF7;padding:2px 8px;border-radius:var(--radius-sm)}}
+.ai-format-tag{{font-size:11px;background:rgba(83,125,150,.12);color:var(--blue);padding:2px 8px;border-radius:var(--radius-sm);font-weight:500}}
 .ai-brief{{font-size:14px;line-height:1.8;color:var(--text);background:var(--bg);padding:14px 18px;border-radius:var(--radius-sm);margin-bottom:14px;text-align:justify;font-weight:400}}
 .ai-detail-toggle{{margin-top:8px}}
 .ai-detail-toggle summary{{cursor:pointer;font-size:13px;font-weight:500;color:var(--blue);padding:10px 14px;background:var(--bg);border-radius:var(--radius-sm);user-select:none;transition:all .15s}}
 .ai-detail-toggle summary:hover{{background:rgba(83,125,150,.1)}}
 .ai-detail-content{{margin-top:14px}}
-.ai-block{{margin-bottom:14px;padding-left:16px;border-left:3px solid var(--border)}}
+.ai-block{{margin-bottom:14px;padding:12px 14px;border:1px solid var(--border);border-radius:var(--radius-sm);background:rgba(83,125,150,.04)}}
 .ai-block:last-child{{margin-bottom:0}}
 .ai-block-title{{font-size:12px;font-weight:500;color:var(--blue);margin-bottom:4px}}
 .ai-block-text{{font-size:13px;line-height:1.9;color:var(--text);text-align:justify}}
-.ai-bg{{border-left-color:#537D96}}.ai-methods{{border-left-color:#4A6B4A}}.ai-results{{border-left-color:#9D5F4D}}.ai-discussion{{border-left-color:#6B6F73}}
+.ai-bg{{border-color:rgba(83,125,150,.45)}}.ai-methods{{border-color:rgba(74,107,74,.45)}}.ai-results{{border-color:rgba(157,95,77,.45)}}.ai-discussion{{border-color:rgba(107,111,115,.45)}}
 .ai-error{{color:var(--red);font-size:12px;padding:8px}}
-.ai-stage-btn{{font-size:10px;font-weight:500;padding:1px 8px;margin-left:8px;background:#537D96;color:#fff;border:none;border-radius:var(--radius-sm);cursor:pointer;vertical-align:middle;opacity:.85}}
+.ai-stage-btn{{font-size:11px;font-weight:500;padding:1px 8px;margin-left:8px;background:#537D96;color:#fff;border:none;border-radius:var(--radius-sm);cursor:pointer;vertical-align:middle;opacity:.85}}
 .ai-stage-btn:hover{{opacity:1}}
 .ai-stage-summary{{font-size:12px;line-height:1.6;padding:8px 12px;margin:6px 22px;background:var(--bg);border-radius:var(--radius-sm);display:none}}
 #chat-btn{{position:fixed;bottom:72px;right:24px;width:38px;height:38px;background:#537D96;color:#fff;border:none;border-radius:50%;font-size:16px;font-weight:500;cursor:pointer;z-index:200;box-shadow:0 2px 8px rgba(60,48,40,.15);transition:background .15s}}
@@ -2874,18 +3180,17 @@ td{{padding:9px 16px;border-bottom:1px solid var(--border)}}
 #ai-btn{{position:fixed;bottom:72px;right:72px;width:38px;height:38px;background:#537D96;color:#fff;border:none;border-radius:50%;font-size:13px;font-weight:500;cursor:pointer;z-index:200;box-shadow:0 2px 8px rgba(60,48,40,.15);transition:background .15s}}
 #ai-btn:hover{{background:#3F6179}}
 #ai-panel{{position:fixed;bottom:120px;right:24px;width:300px;background:var(--card-bg);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow-lg);z-index:198;display:none}}
-.footer{{text-align:center;padding:24px;color:var(--muted);font-size:11px;line-height:1.8}}
+.footer{{text-align:center;padding:24px;color:var(--muted);font-size:12px;line-height:1.8}}
 .footer a{{color:var(--blue);text-decoration:none}}
 @media(prefers-reduced-motion:reduce){{.kpi-card,.sb-item,.pct-btn,#chat-btn,#ai-btn,.stage-table-detail summary{{transition:none!important}}
 .chart-box img{{transition:none!important}}}}
-@media(max-width:768px){{
-  .sidebar{{display:none}}
-  .container{{padding-left:20px}}
+/* 断点 560px（2026-10-17 用户裁定：侧栏常驻，不再随宽度隐藏） */
+@media(max-width:560px){{
   .hero{{padding:24px 20px 20px}}.hero h1{{font-size:20px}}
   .kpi-row{{grid-template-columns:repeat(2,1fr)}}
   .stage-header{{flex-wrap:wrap;gap:10px}}
   .stage-charts{{grid-template-columns:1fr!important}}
-  .footer{{font-size:10px}}}}
+  .footer{{font-size:12px}}}}
 @media print{{
   body{{background:#fff;font-size:11px}}
   .hero{{background:#1B365D!important;-webkit-print-color-adjust:exact}}
@@ -2893,11 +3198,12 @@ td{{padding:9px 16px;border-bottom:1px solid var(--border)}}
   .sidebar{{display:none}}
   .container{{padding-left:20px}}
 }}
+{_TW_CSS}
 </style>
 </head>
 <body>
 <div id="lightbox" onclick="closeLightbox()" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.85);z-index:999;cursor:zoom-out;align-items:center;justify-content:center">
-  <img id="lightbox-img" src="" style="max-width:95%;max-height:95%;object-fit:contain" onclick="event.stopPropagation()">
+  <img id="lightbox-img" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7" alt="" style="max-width:95%;max-height:95%;object-fit:contain" onclick="event.stopPropagation()">
 </div>
 <button id="chat-btn" onclick="toggleChat()" title="Ask questions about this report">?</button>
 <div id="chat-panel" style="display:none">

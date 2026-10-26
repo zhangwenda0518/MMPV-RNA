@@ -128,11 +128,45 @@ def test_validated_cobra_rejects_empty_sample_dirs(tmp_path):
 
 
 def test_validated_cobra_accepts_real_products(tmp_path):
+    """真实延伸产物命名 = cobra_pipeline 的 {base}.{mode}.{asm}.cobra.fa
+    (2026-10-15 收紧: 只认 *.cobra.fa / *.extended.fa, 非空)"""
+    pipe = make_pipe(tmp_path)
+    sample = pipe.d["cobra"] / "S1"
+    sample.mkdir()
+    (sample / "S1.mix.megahit.cobra.fa").write_text(">a\nACGT\n")
+    assert pipe._stage_validated("cobra") is True
+
+
+def test_validated_cobra_accepts_legacy_extended_products(tmp_path):
+    """更老代际存量目录的 *.extended.fa 仍兜底可用"""
     pipe = make_pipe(tmp_path)
     sample = pipe.d["cobra"] / "S1"
     sample.mkdir()
     (sample / "S1.cobra.extended.fa").write_text(">a\nACGT\n")
     assert pipe._stage_validated("cobra") is True
+
+
+def test_validated_cobra_rejects_input_copy_residue(tmp_path):
+    """输入副本残渣 ({task_id}.contigs.fa / {task_id}.virus.fa, 失败路径不清理)
+    不能让 cobra 校验通过 — 2026-10-15 收紧的核心场景:
+    旧判据'任意 .fa 即通过'会被残渣骗过 → .ok 照写 + resume 永久跳过失败样本"""
+    pipe = make_pipe(tmp_path)
+    sample = pipe.d["cobra"] / "S1"
+    sample.mkdir()
+    (sample / "S1.cleanset.contigs.fa").write_text(">c1\nACGT\n")   # 输入副本残渣
+    (sample / "S1.cleanset.virus.fa").write_text(">v1\nACGT\n")     # 输入副本残渣
+    (sample / "S1.cleanset.coverage.tsv").write_text("cov\t1.0\n")
+    (sample / "S1.cleanset.log").write_text("COBRA failed\n")
+    assert pipe._stage_validated("cobra") is False
+
+
+def test_validated_cobra_rejects_empty_product_fasta(tmp_path):
+    """0 字节的 *.cobra.fa (中途失败残留) 不算产物"""
+    pipe = make_pipe(tmp_path)
+    sample = pipe.d["cobra"] / "S1"
+    sample.mkdir()
+    (sample / "S1.mix.megahit.cobra.fa").write_text("")
+    assert pipe._stage_validated("cobra") is False
 
 
 def test_validated_cobra_true_when_coassembly(tmp_path):

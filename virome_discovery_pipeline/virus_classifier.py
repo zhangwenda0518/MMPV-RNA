@@ -432,9 +432,11 @@ def postproc_phagcn3(inp, s, out):
 # 合并输出
 # ==========================================================
 
-def merge_taxonomy_results(sample, output_dir, tools_ran):
+def merge_taxonomy_results(sample, output_dir, tools_ran, input_fasta=None):
     combined = os.path.join(output_dir, f"{sample}_combined_taxonomy.tsv")
     rows = []
+    # 2026-10-19: 记录每个工具实际覆盖到的 seq_name，用于审计丢弃
+    _tool_ids = {}
     tf_map = {
         "genomad": os.path.join(output_dir, f"{sample}_genomad_taxonomy.tsv"),
         "metabuli": os.path.join(output_dir, f"{sample}_metabuli_taxonomy.tsv"),
@@ -450,6 +452,7 @@ def merge_taxonomy_results(sample, output_dir, tools_ran):
         if not tf or not os.path.exists(tf): continue
         with open(tf, encoding='utf-8') as f: lines = f.readlines()
         has_hdr = bool(lines) and lines[0].startswith("seq_name")
+        _ids_this_tool = set()
         for line in lines[int(has_hdr):]:
             line = line.strip()
             if not line or line.startswith("#"): continue
@@ -460,16 +463,58 @@ def merge_taxonomy_results(sample, output_dir, tools_ran):
                 r = lineage_to_ranks(parts[2])
             else:
                 continue
+            _ids_this_tool.add(parts[0])
             rows.append([parts[0], tool] + [r.get(rn,"NA") for rn in RANK_NAMES])
+        _tool_ids[tool] = _ids_this_tool
     with open(combined, 'w', encoding='utf-8') as f:
         f.write('\t'.join(HEADER) + '\n')
         for row in rows:
             line = '\t'.join(row)
             if line.strip(): f.write(line + '\n')
     safe_print(f"  [合并] {len(rows)} 条 -> {os.path.basename(combined)}")
+    # 2026-10-19: 审计日志 — 输入 FASTA 中未出现在任何工具输出里的 ID
+    _write_classifier_drop_log(sample, output_dir, rows, _tool_ids, input_fasta=input_fasta)
     # NCBI→ICTV 纠正 (用 fullnamelineage.dmp 替换 NCBI 名为 ICTV 名)
     fill_taxonomy_na(combined, combined)
     return combined
+
+
+def _write_classifier_drop_log(sample, output_dir, rows, tool_ids, input_fasta=None):
+    """输出 {sample}_dropped_ids.tsv: 输入序列中没有任何分类工具命中的条目及原因。
+
+    之前该环节静默丢弃，导致 610425 -> 535485 的 74943 条缺口无据可查。
+
+    input_fasta: 分类输入 FASTA（-g）。管线里它在 centroids/ 下，不在 output_dir，
+    必须显式传入；未传时退回「在 output_dir 里按 {sample}*.fasta|fa|fna 找」。
+    """
+    import glob as _glob
+    drop_path = os.path.join(output_dir, f"{sample}_dropped_ids.tsv")
+    hit_ids = set(r[0] for r in rows)
+    cands = []
+    if input_fasta and os.path.exists(input_fasta):
+        cands = [input_fasta]
+    else:
+        for pat in (f"{sample}*.fasta", f"{sample}*.fa", f"{sample}*.fna"):
+            cands.extend(_glob.glob(os.path.join(output_dir, pat)))
+    input_ids = []
+    if cands:
+        try:
+            with open(cands[0]) as fh:
+                for ln in fh:
+                    if ln.startswith('>'):
+                        input_ids.append(ln[1:].strip().split()[0])
+        except Exception:
+            input_ids = []
+    if not input_ids:
+        return
+    dropped = [i for i in input_ids if i not in hit_ids]
+    with open(drop_path, 'w') as fh:
+        fh.write("seq_name\treason\ttools_that_saw_it\n")
+        for i in dropped:
+            seen = [t for t, ids in tool_ids.items() if i in ids]
+            reason = "no_valid_lineage" if seen else "no_tool_hit"
+            fh.write(f"{i}\t{reason}\t{','.join(seen) if seen else 'NONE'}\n")
+    safe_print(f"  [drop-log] 未进入合并的输入序列 {len(dropped)}/{len(input_ids)} -> {os.path.basename(drop_path)}")
 
 # ==========================================================
 # taxonkit 回填 NA
@@ -825,7 +870,7 @@ class VirusClassifier:
                     tools_ran.append(res)
 
         if len(tools_ran)>=1:
-            merged = merge_taxonomy_results(s, out, tools_ran)
+            merged = merge_taxonomy_results(s, out, tools_ran, input_fasta=inp)
             # 2026-09-16 (fill-fix1): 此处原有一次重复的 fill_taxonomy_na(merged, merged),
             # 而 merge_taxonomy_results 内部已回填。重复回填会把第一遍写入的通用名
             # (environmental samples / Bracoviriform / Polydnaviriformidae) 再次当键查询,

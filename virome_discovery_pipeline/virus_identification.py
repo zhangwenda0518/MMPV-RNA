@@ -1,3 +1,23 @@
+
+# ── 图件四格式导出 (SVG / PNG / PDF / PNG@1200dpi) — 默认开启 ──────────
+# 2026-10-20: 所有出图脚本统一口径; 用 MMPV_FIG_EXPORT=0 可整体关闭,
+# MMPV_FIG_FORMATS=svg,png,pdf,hires 可裁剪, MMPV_FIG_HIRES_DPI 可改高清 dpi。
+try:
+    from mmpv_common.figure_export import install_savefig_hook as _install_fig_hook
+except ImportError:  # 仓库根不在 sys.path (脚本被单独执行) → 向上找 mmpv_common/
+    import os as _os
+    import sys as _sys
+    _d = _os.path.dirname(_os.path.abspath(__file__))
+    while _d and not _os.path.isdir(_os.path.join(_d, "mmpv_common")):
+        _parent = _os.path.dirname(_d)
+        if _parent == _d:
+            break
+        _d = _parent
+    if _d and _d not in _sys.path:
+        _sys.path.insert(0, _d)
+    from mmpv_common.figure_export import install_savefig_hook as _install_fig_hook
+_install_fig_hook()
+# ──────────────────────────────────────────────────────────────────────
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 # virus_identification_pipeline_v16_complete.py
@@ -1319,6 +1339,32 @@ def process_sample(filepath, sample, args):
         t0 = time.time()
         run_viroid_identification(viroids_fasta, sample, output_dir, args)
         log_step("类病毒")
+        # 类病毒分支此前从不并入 {sample}_virus.all.candidate.fasta, 下游
+        # filter/COBRA/聚类/最终目录永远看不到类病毒 (VIROMOCK D4 实测: 362 bp /
+        # 100% identity / 252x 的完美组装被整体丢弃)。类病毒无蛋白, 刻意放在
+        # UniProt/NR 后置过滤之后并入, 避免被蛋白库误杀。
+        try:
+            _vid_ids = os.path.join(output_dir, f"{sample}_viroids.result.id")
+            _all_fa = os.path.join(output_dir, f"{sample}_virus.all.candidate.fasta")
+            _all_ids = os.path.join(output_dir, f"{sample}_virus.all.result.id")
+            if (os.path.exists(_vid_ids) and os.path.getsize(_vid_ids) > 0
+                    and os.path.exists(viroids_fasta) and os.path.getsize(viroids_fasta) > 0):
+                _wanted = {ln.strip().split()[0] for ln in open(_vid_ids) if ln.strip()}
+                _have = set()
+                if os.path.exists(_all_ids):
+                    _have = {ln.strip().split()[0] for ln in open(_all_ids) if ln.strip()}
+                _new = _wanted - _have
+                if _new:
+                    from Bio import SeqIO as _SeqIO
+                    with open(_all_fa, 'a') as _out:
+                        for _rec in _SeqIO.parse(viroids_fasta, "fasta"):
+                            if _rec.id in _new:
+                                _SeqIO.write(_rec, _out, "fasta")
+                    with open(_all_ids, 'a') as _f:
+                        _f.write("\n".join(sorted(_new)) + "\n")
+                    safe_print(f"  [{sample}] 类病毒候选并入 all.candidate: +{len(_new)} 条")
+        except Exception as _e:
+            safe_print(f"  [{sample}] 类病毒并入 all.candidate 失败: {_e}")
 
     if not args.skip_plots and has_virus:
         t0 = time.time()

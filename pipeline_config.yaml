@@ -76,17 +76,32 @@ profiles:
       tax_jobs: 4
 
     deplete: &deplete_default
-      # ⚠ 未接线 (2026-10-13 核实): host_depletion.py 只认自身 CLI 参数, 本段的
-      #    kraken2_db/keep_taxids/vmtouch/confidence 改了不生效 —— 仅供文档参考。
-      kraken2_db:   ${MMPV_KRAKEN2_DB:-/home/zhangwenda/database/kraken2/k2_pluspfp_20260226}   # 可选通用库; 默认流程=自建宿主库(host_db)
-      keep_taxids:  10239    # 从 Kraken2 classified 池中救回病毒 reads; 设空字符串关闭
+      # 已接线 (2026-10-26): virome_pipeline.py 的 _load_config() 把本段映射到
+      #   --kraken2_db / --keep_taxids / --kraken2_confidence / --vmtouch。
+      #   优先级: CLI 显式参数 > 本段 > argparse 默认值。
+      #   下列值与 argparse 默认完全一致 (10239 / false / 0.2), 故默认行为不变;
+      #   换环境/换库改这里即可, 不必每次敲 CLI。
+      # 空 = 不覆盖: 默认流程用 host_db 下自建宿主库
+      #   (host_db 内 kraken2/kraken2_db/kraken 子目录自动探测)。
+      #   仅当缺 kraken2 库会报致命错误、或要整体换库时才填具体路径, 例:
+      #   ${MMPV_KRAKEN2_DB:-/home/zhangwenda/database/kraken2/k2_pluspfp_20260226}
+      kraken2_db:   ${MMPV_KRAKEN2_DB:-}
+      keep_taxids:  10239    # 从 Kraken2 classified 池中救回病毒 reads (整数自动转 '10239'); 设空字符串关闭
       vmtouch:      false    # 将 Kraken2 数据库锁定到 page cache 加速 I/O
-      confidence:   0.2     # Kraken2 分类置信度阈值 (默认: 0.2)
+      confidence:   0.2      # Kraken2 分类置信度阈值 (默认: 0.2)
+      # 以下键同样已接线, 默认不写 (= 沿用 argparse 默认), 需要时取消注释:
+      # keep_rrna:        false   # 保留 rRNA reads (跳过 ribodetector)
+      # rrna_chunk_size:  256
+      # rrna_report:      ribodetector.report.txt
+      # deplete_steps:    kraken2,align,rrna
+      # align_config:     ''      # 宿主比对参考配置文件 (空 = 用子脚本默认)
+      # deplete_debug:    false
+      # tmp:              ''      # 去宿主中间目录 (空 = 子脚本默认)
 
-    assembly:
+    assembly: &assembly_default
       assembler: megahit
 
-    identification:
+    identification: &identification_default
       virus_mode: filter
       blast_mode: both
 
@@ -139,8 +154,18 @@ profiles:
       map_min_len:      1000    # 映射参考只保留 >= 该长度的 contigs (0=全量);
                                 # 短 contig 无可执行判定, 1000 可省 30-60% 映射时间
 
-    # 内源性病毒 (EVE) 筛查参数 (⑥ 已归档 2026-10-11 →
+    # 内源性病毒 (EVE) 筛查参数 (⑥ 已于 2026-10-11 移出主流水线并归档 →
     # archive/20261011_endogenous_virus_pipeline; 参数保留, 恢复即用)
+    # 接线状态 (2026-10-26 核实):
+    #   主控 virome_pipeline.py 的 _load_config() **不读本段** —— 主流水线当前没有 EVE
+    #   阶段, 改这里不影响 --stage all 的任何环节。
+    #   实际消费方是 EVE 筛查编排器 eve_screen.py (现役 public_metadata_pipeline/
+    #   eve_genome/, 归档副本 archive/20261011_endogenous_virus_pipeline/): 其
+    #   _load_config() 按 --profile 读本段, 把 EVE_PARAM_KEYS (window / merge_distance /
+    #   evalue / host_bs / viral_bs / cmd_timeout) 映射到 --window / --merge-distance /
+    #   --evalue / --host-bs / --viral-bs / --cmd-timeout, 优先级 CLI > 本段 > 默认值。
+    #   => 单独跑 EVE 筛查时本段有效; 要并入主流水线, 需在主控新增 EVE 阶段调用
+    #      eve_screen.py (或照 deplete 段的 _cli_set 写法在主控 _load_config 里接线)。
     eve:
       window:         50000   # Stage1 滑窗宽度 (nt)
       merge_distance: 300     # 位点合并间隔 (nt)
@@ -152,19 +177,27 @@ profiles:
   # ── 仅下游阶段 (已有 clusters, 跳过 00-03) ──
   downstream:
     <<: *default  # 继承 default 配置 (需 PyYAML merge, 也可直接复制)
-    # ⚠ 本 profile 的 cleanup/assembly.skip_assembly/identification.skip_identification
-    #   为**未接线的死配置** (2026-10-13 核实: _load_config 不消费这些键, --stage 由
-    #   CLI 决定) —— 显式传 --stage 才是有效的跳过方式。
+    # 阶段跳过开关已接线 (2026-10-26): _load_config() 把这 4 个键收进
+    #   args.skip_stages, main() 在 --stage 含 all 时按 STAGE_ORDER 展开再剔除。
+    #   => --profile downstream 等价于 --stage filter cobra merge cluster taxonomy
+    #      host checkv rescue analysis analysis_verify report (跳过 clean/deplete/
+    #      assembly/identification)。
+    #   显式 --stage 不受影响 (--stage cluster 仍只跑 cluster); 值改 false 或删键
+    #   即恢复对应阶段。
+    #   注: 本文件 YAML merge 是浅合并, 故下面 assembly/identification 用锚点
+    #   补齐 default 的差异项 (否则会丢掉 assembler/virus_mode/blast_mode)。
 
     cleanup:
-      skip_clean:    true
-      skip_depletion: true
+      skip_clean:      true   # 跳过 00a CleanData
+      skip_depletion:  true   # 跳过 00b HostDepletion
 
     assembly:
-      skip_assembly: true
+      <<: *assembly_default
+      skip_assembly:        true   # 跳过 01 Assembly
 
     identification:
-      skip_identification: true
+      <<: *identification_default
+      skip_identification:  true   # 跳过 02a 鉴定
 
   # ── 植物病毒专用 (高灵敏度) ──
   # 只写与 default 的差异；其余（deplete/tools/taxonomy/cobra/rescue/host_filter 等）自动继承

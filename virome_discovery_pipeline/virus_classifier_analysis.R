@@ -1,4 +1,32 @@
 #!/usr/bin/env Rscript
+# ── 图件四格式导出 (SVG / PNG / PDF / PNG@1200dpi) — 默认开启 ──────────
+# 2026-10-20: 所有出图脚本统一口径; MMPV_FIG_EXPORT=0 可整体关闭。
+# 钩子只拦截 ggsave(); pdf()/png() 直写的老代码请改用 save_figure()。
+local({
+  .find_repo <- function(start) {
+    d <- normalizePath(start, mustWork = FALSE)
+    repeat {
+      if (dir.exists(file.path(d, "mmpv_common"))) return(d)
+      p <- dirname(d)
+      if (identical(p, d)) return(NA_character_)
+      d <- p
+    }
+  }
+  .here <- tryCatch({
+    a <- commandArgs(FALSE)
+    f <- sub("^--file=", "", a[grep("^--file=", a)])
+    if (length(f)) dirname(normalizePath(f[1], mustWork = FALSE)) else getwd()
+  }, error = function(e) getwd())
+  .root <- .find_repo(.here)
+  if (is.na(.root)) .root <- .find_repo(getwd())
+  if (!is.na(.root)) {
+    source(file.path(.root, "mmpv_common", "figure_export.R"), local = FALSE)
+    install_ggsave_hook()
+  } else {
+    message("[figure_export] 未找到 mmpv_common/, 跳过四格式导出")
+  }
+})
+# ──────────────────────────────────────────────────────────────────────
 
 # ==============================================================================
 # 病毒分类软件结果整合分析脚本 v6.2 (The Pinnacle & Uncompromised Edition)
@@ -1018,10 +1046,10 @@ plot_intersection_diagram <- function(data_list, output_dir) {
         x=id_lists, filename=NULL, category.names=names(data_list),
         fill=colors, cex=1.2, cat.cex=1.2, cat.fontface="bold", main="序列交集 (Venn)"
       )
-      pdf(file.path(output_dir, "intersection_venn.pdf"), width=10, height=10)
-      grid.draw(venn.plot); dev.off()
-      png(file.path(output_dir, "intersection_venn.png"), width=10, height=10, units="in", res=300)
-      grid.draw(venn.plot); dev.off()
+      # 2026-10-20: 四格式统一 (SVG/PNG/PDF/PNG@1200dpi)
+      draw_figure_formats(function() grid.draw(venn.plot),
+                          file.path(output_dir, "intersection_venn.pdf"),
+                          width = 10, height = 10)
     }, error=function(e) log_msg("WARN", "Venn生成失败: %s", e$message))
 
   } else if (requireNamespace("ComplexUpset", quietly=TRUE)) {
@@ -1270,6 +1298,8 @@ generate_grouped_consistent_files <- function(data_list, common_ids, output_dir)
 # ==============================================================================
 option_list <- list(
   make_option("--combined", type="character", default=NULL),
+  make_option("--fasta", type="character", default=NULL,
+              help="分类输入 FASTA（-g）。用于丢弃审计的输入全集；不给则尝试 --combined 同级"),
   make_option("--mmseqs", type="character", default=NULL),
   make_option("--vcontact3", type="character", default=NULL),
   make_option("--vitap", type="character", default=NULL),
@@ -1318,6 +1348,44 @@ for (tn in names(all_data)) {
 all_ids <- unique(unlist(lapply(all_data, function(d) d$contig_id)))
 n_total <- length(all_ids)
 cat(sprintf("\n总序列数: %d\n", n_total))
+
+# 2026-10-19: 从 --combined 同级的 FASTA 读输入全集，用于共识阶段丢弃审计。
+# 2026-10-26: 管线里 FASTA 在 centroids/ 下而非 .classed/ 内，故优先用 --fasta 显式传入；
+# 若读不到，退化为「工具命中全集」，此时只记录共识未覆盖的已命中条目。
+input_all_ids <- all_ids
+.fa_src <- NULL
+if (!is.null(opt$fasta) && file.exists(opt$fasta)) {
+  .fa_src <- opt$fasta
+} else if (!is.null(opt$combined) && file.exists(opt$combined)) {
+  .fa_cands <- c(
+    sub("_combined_taxonomy\\.tsv$", ".fasta", opt$combined),
+    sub("_combined_taxonomy\\.tsv$", ".fa",    opt$combined),
+    sub("_combined_taxonomy\\.tsv$", ".fna",   opt$combined)
+  )
+  .fa_hit <- .fa_cands[file.exists(.fa_cands)]
+  if (length(.fa_hit) > 0) .fa_src <- .fa_hit[1]
+}
+if (!is.null(.fa_src)) {
+  # 纯 R 分块读 header（不用 grep 子进程：Windows 下 cmd 不认单引号，会静默读不到）
+  .hdr <- tryCatch({
+    con <- file(.fa_src, "r"); on.exit(close(con), add = TRUE)
+    acc <- character(0)
+    repeat {
+      chunk <- readLines(con, n = 100000L, warn = FALSE)
+      if (length(chunk) == 0L) break
+      acc <- c(acc, grep("^>", chunk, value = TRUE))
+    }
+    acc
+  }, error = function(e) character(0))
+  if (length(.hdr) > 0) {
+    input_all_ids <- unique(sub("^>([^ \t]+).*$", "\\1", .hdr))
+    log_msg("INFO", "输入 FASTA 序列数: %d (%s)", length(input_all_ids), basename(.fa_src))
+  } else {
+    log_msg("WARN", "读不到 FASTA 序列名，丢弃审计退化为「工具命中全集」: %s", .fa_src)
+  }
+} else {
+  log_msg("WARN", "未定位到分类输入 FASTA，丢弃审计退化为「工具命中全集」（建议传 --fasta）")
+}
 
 count_stats <- plot_classification_counts(all_data, opt$output)
 mat <- matrix(0, nrow=n_total, ncol=length(all_data), dimnames=list(all_ids, names(all_data)))
@@ -1396,6 +1464,29 @@ agree_cols <- paste0(TAX_LEVELS, "_agree")
 out_cols <- c("contig_id","primary_tool","completeness","confidence", TAX_LEVELS, agree_cols)
 fwrite(final_result[, out_cols, with=FALSE], file.path(opt$output, "final_integrated_classification.tsv"), sep="\t", na="NA")
 log_msg("INFO", "最终分类输出: %d 个序列", nrow(final_result))
+
+# 2026-10-19: 共识阶段丢弃审计。区分两类原因，避免 74943 缺口继续无据可查。
+try({
+  .kept   <- as.character(final_result$contig_id)
+  .seen   <- as.character(all_ids)
+  .input  <- as.character(input_all_ids)
+  .drop   <- setdiff(.input, .kept)
+  if (length(.drop) > 0) {
+    .reason <- ifelse(.drop %in% .seen,
+                      "no_consensus",      # 工具命中过，但加权投票未产出任何阶元
+                      "no_tool_hit")       # 所有工具都没命中
+    .drop_dt <- data.table(contig_id=.drop, reason=.reason)
+    fwrite(.drop_dt, file.path(opt$output, "dropped_ids.tsv"), sep="\t")
+    .tab <- .drop_dt[, .N, by=reason]
+    for (.i in seq_len(nrow(.tab))) {
+      log_msg("INFO", "  [drop-log] %s: %d", .tab$reason[.i], .tab$N[.i])
+    }
+    log_msg("INFO", "[drop-log] 输入 %d, 保留 %d, 丢弃 %d -> dropped_ids.tsv",
+            length(.input), length(.kept), length(.drop))
+  } else {
+    log_msg("INFO", "[drop-log] 无丢弃 (输入 %d = 保留 %d)", length(.input), length(.kept))
+  }
+}, silent=FALSE)
 
 fill_counts <- sapply(TAX_LEVELS, function(l) sum(is_valid_value_vec(final_result[[l]])))
 if (nrow(final_result) > 0) {

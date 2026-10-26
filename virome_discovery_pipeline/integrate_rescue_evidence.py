@@ -165,6 +165,21 @@ def load_hmm_report(path):
     return hmm
 
 
+def load_eve_calls(path):
+    """读 EVE 判别表 (eve_score_genome.py 产出) → contig_id → {call, score, family}."""
+    d = {}
+    if not path or not os.path.exists(path):
+        return d
+    with open(path, encoding='utf-8', errors='replace') as f:
+        for r in csv.DictReader(f, delimiter='	'):
+            cid = (r.get('contig_id', '') or '').strip()
+            if cid:
+                d[cid] = {'call': (r.get('call', '') or '').strip(),
+                          'score': (r.get('score', '') or '').strip(),
+                          'family': (r.get('family', '') or '').strip()}
+    return d
+
+
 def hm_get(row, ct3_key, old_key, default=''):
     """先取 ct3_* 列, 没有就退回旧 rvdb_* 列"""
     v = row.get(ct3_key)
@@ -211,6 +226,9 @@ def main():
     ap.add_argument('--fasta', default=None, help='输入序列 fasta (用于输出 keep/review/drop 的 fasta, 可选)')
     ap.add_argument('--genus-lens', default=None, help='属平均长度表 genus_lens (属→平均基因组长度, 用于core domain validation的长度门槛)')
     ap.add_argument('--outdir', default='.', help='输出目录')
+    ap.add_argument('--eve-calls', default=None,
+                    help='EVE 判别表 (eve_calls.tsv: contig_id/score/threshold/call); '
+                         'EVE_like 的 KEEP 降为 REVIEW')
     ap.add_argument('--hmm-report', default=None,
                     help='hmm_ct3_hits.tsv (CT3-HMM 全长 profile 探针汇总; 可选, 缺则第三路列留空)')
     ap.add_argument('--hmm-rescue', dest='hmm_rescue', action='store_true', default=True,
@@ -270,7 +288,8 @@ def main():
     tax = load_taxonomy(args.taxonomy)
     seqs = load_fasta(args.fasta)
     hmm = load_hmm_report(args.hmm_report)
-    print(f'CDD 判定 {len(cdd_evidence)} | 分类 {len(jt_rows)} | checkv {len(checkv)} | taxonomy {len(tax)} | fasta {len(seqs)} | ct3-hmm {len(hmm)}')
+    eve = load_eve_calls(getattr(args, 'eve_calls', None))
+    print(f'CDD 判定 {len(cdd_evidence)} | 分类 {len(jt_rows)} | checkv {len(checkv)} | taxonomy {len(tax)} | fasta {len(seqs)} | ct3-hmm {len(hmm)} | EVE {len(eve)}')
 
     # CDD 覆盖率: 有 scored 行中多少缺 CDD 记录 (缺 → UNKNOWN, 不按已证非病毒处理)
     n_missing_cdd = sum(1 for cid in jt_rows if cid not in cdd_evidence)
@@ -452,6 +471,23 @@ def main():
             elif verdict == 'REVIEW':
                 hmm_rescue = 'REVIEW(kept)'
 
+        # ── EVE 否决 (在 KEEP 判定之后、行输出之前, 优先级高于 HMM 提升) ──
+        # 语义: 序列模型判为 EVE_like 的候选是"内源", 不应进入 KEEP 目录;
+        # 只做 KEEP->REVIEW (不直接 DROP), 留人工/其它证据复核。
+        ev = eve.get(cid, {})
+        eve_call = ev.get('call', '')
+        eve_score = ev.get('score', '')
+        eve_flag = ''
+        if eve_call == 'EVE_like' and verdict == 'KEEP':
+            verdict = 'REVIEW'
+            eve_flag = 'KEEP->REVIEW'
+            novelty = 'EVE-like / endogenous candidate'
+            fp_reason = ('eve_like: 序列模型判为 EVE_like (score=%s, family=%s); '
+                         '内源候选不进 KEEP 目录' % (eve_score or '?',
+                                                   ev.get('family', '') or '?'))
+        elif eve_call == 'EVE_like' and verdict in ('REVIEW', 'DROP'):
+            eve_flag = 'EVE_like(kept %s)' % verdict
+
         rows.append({
             'contig_id': cid, 'length': length, 'category': category,
             'cdd_evidence': cdd_evid, 'n_t1': cdd.get('n_t1', ''), 'cdd_top': cdd_top,
@@ -470,6 +506,7 @@ def main():
             'cdd_score': f'{cdd_score:.1f}', 'hmm_score': f'{hmm_score:.1f}',
             'domain_score': f'{domain_score:.1f}', 'total_score': f'{total_score:.1f}',
             'novelty': novelty, 'verdict': verdict, 'fp_reason': fp_reason,
+            'eve_call': eve_call, 'eve_score': eve_score, 'eve_flag': eve_flag,
             'ct3_hmm_evidence': hm_evidence, 'ct3_viral_evidence': hm_viral,
             'ct3_n_viral': hm_n_viral, 'ct3_n_family': hm_n_family,
             'ct3_n_ambiguous': hm_n_ambiguous,
@@ -491,6 +528,7 @@ def main():
                   'checkv_completeness','checkv_confidence',
                   'blastn_score','blastx_score','cdd_score','hmm_score','domain_score','total_score',
                   'novelty','verdict','fp_reason',
+                  'eve_call','eve_score','eve_flag',
                   'ct3_hmm_evidence','ct3_viral_evidence','ct3_n_viral','ct3_n_family',
                   'ct3_n_ambiguous',
                   'ct3_best_viral_model','ct3_best_viral_cluster','ct3_best_viral_tier',
