@@ -1,0 +1,172 @@
+{
+  "canvas": {
+    "width_in": 9.32,
+    "height_in": 9.2037,
+    "dpi": 300
+  },
+  "style": {
+    "bg": "white",
+    "frame": false,
+    "frame_color": "#bbbbbb",
+    "frame_lw": 0.6,
+    "letter_fs": 12,
+    "letter_dx": 0.0,
+    "letter_dy": 1.01,
+    "caption_fs": 6.6,
+    "caption_gap_in": 0.07,
+    "caption_linespacing": 1.15,
+    "show_letters": true
+  },
+  "title": {
+    "text": "Figure Studio — colour adjustments (same layout as demo_types)",
+    "subtitle": "image-level ops on real panels: colour remap / grayscale / tint / hue / flatten / brightness-contrast",
+    "fs": 13,
+    "sub_fs": 8.5,
+    "x_in": 0.1,
+    "y_in": 0.26
+  },
+  "items": [
+    {
+      "id": "d_A",
+      "src": "D:\\桌面\\MMPV主图档案库_20261014\\03_MLtree_circular\\成品图\\7_MLtree_circular_host.png",
+      "x_in": 0.1,
+      "y_in": 0.96,
+      "w_in": 2.9971,
+      "h_in": 2.9971,
+      "letter": "A",
+      "caption": "A · colour remap: near-miss tints snapped back to the project palette",
+      "z": 0,
+      "adjust": {
+        "remap": [
+          {
+            "from": "#0172b2",
+            "to": "#0072B2",
+            "tol": 8
+          },
+          {
+            "from": "#e6a617",
+            "to": "#E69F00",
+            "tol": 10
+          }
+        ]
+      }
+    },
+    {
+      "id": "d_B",
+      "src": "D:\\桌面\\MMPV主图档案库_20261014\\04_NeighborNet\\成品图\\8_NeighborNet_host.png",
+      "x_in": 3.2171,
+      "y_in": 0.96,
+      "w_in": 3.0068,
+      "h_in": 2.9971,
+      "letter": "B",
+      "caption": "B · grayscale (monochrome print)",
+      "z": 0,
+      "adjust": {
+        "grayscale": true
+      }
+    },
+    {
+      "id": "d_F",
+      "src": "D:\\桌面\\延伸基因组\\MMPV-RNA\\reports\\_archive\\review_dirs\\_discovery_sci_20261012\\_lt\\10_Reports\\S10_SCI_Discovery\\Fig_GojiVirome_Potexvirus_SDT.png",
+      "x_in": 6.344,
+      "y_in": 0.96,
+      "w_in": 2.876,
+      "h_in": 2.9971,
+      "letter": "F",
+      "caption": "F · brightness 0.85 / contrast 1.45 (deepen the heat map)",
+      "z": 0,
+      "adjust": {
+        "brightness": 0.85,
+        "contrast": 1.45
+      }
+    },
+    {
+      "id": "d_C",
+      "src": "D:\\桌面\\MMPV主图档案库_20261014\\07_Fig_GojiVirome_NoveltySankey\\成品图\\4_Fig_GojiVirome_NoveltySankey.png",
+      "x_in": 0.1,
+      "y_in": 4.4771,
+      "w_in": 2.3368,
+      "h_in": 2.1062,
+      "letter": "C",
+      "caption": "C · single-colour tint (alpha-blended nodes cannot be remapped)",
+      "z": 0,
+      "adjust": {
+        "tint": {
+          "color": "#0072B2",
+          "amount": 0.3
+        }
+      }
+    },
+    {
+      "id": "d_D",
+      "src": "D:\\桌面\\MMPV主图档案库_20261014\\09_UpSet_工具分类宿主\\成品图\\Fig_GojiVirome_UpsetClassification.png",
+      "x_in": 2.5568,
+      "y_in": 4.4771,
+      "w_in": 3.2716,
+      "h_in": 2.1062,
+      "letter": "D",
+      "caption": "D · hue rotation +150 deg",
+      "z": 0,
+      "adjust": {
+        "hue": 150.0
+      }
+    },
+    {
+      "id": "d_E",
+      "src": "D:\\桌面\\MMPV主图档案库_20261014\\13_HostPrediction_宿主预测\\成品图\\Fig_GojiVirome_HostPrediction_APanel.png",
+      "x_in": 5.9484,
+      "y_in": 4.4771,
+      "w_in": 3.2716,
+      "h_in": 2.1062,
+      "letter": "E",
+      "caption": "E · near-white to pure white + autocontrast",
+      "z": 0,
+      "adjust": {
+        "flatten": "#ffffff",
+        "flatten_tol": 18,
+        "autocontrast": true
+      }
+    },
+    {
+      "id": "d_G",
+      "src": "D:\\桌面\\延伸基因组\\MMPV-RNA\\reports\\_archive\\review_dirs\\_discovery_sci_20261012\\_lt\\10_Reports\\S10_SCI_Discovery\\Fig_GojiVirome_Potexvirus_SDTdist.png",
+      "x_in": 0.1,
+      "y_in": 7.1033,
+      "w_in": 2.8294,
+      "h_in": 1.6004,
+      "letter": "G",
+      "caption": "G · colour remap: off-palette red to project vermillion",
+      "z": 0,
+      "adjust": {
+        "remap": [
+          {
+            "from": "#cc0000",
+            "to": "#D55E00",
+            "tol": 12
+          }
+        ]
+      }
+    },
+    {
+      "id": "d_H",
+      "src": "D:\\桌面\\延伸基因组\\MMPV-RNA\\reports\\_archive\\review_dirs\\_discovery_sci_20261012\\_lt\\10_Reports\\S10_SCI_Discovery\\Fig_GojiVirome_Potexvirus_Coverage.png",
+      "x_in": 3.0494,
+      "y_in": 7.1033,
+      "w_in": 6.1706,
+      "h_in": 1.6004,
+      "letter": "H",
+      "caption": "H · colour remap: off-palette teal to project sky blue",
+      "z": 0,
+      "adjust": {
+        "remap": [
+          {
+            "from": "#59aeb6",
+            "to": "#56B4E9",
+            "tol": 14
+          }
+        ],
+        "saturation": 1.15
+      }
+    }
+  ]
+}

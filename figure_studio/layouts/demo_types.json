@@ -1,0 +1,118 @@
+{
+  "canvas": {
+    "width_in": 9.32,
+    "height_in": 9.2037,
+    "dpi": 300
+  },
+  "style": {
+    "bg": "white",
+    "frame": false,
+    "frame_color": "#bbbbbb",
+    "frame_lw": 0.6,
+    "letter_fs": 12,
+    "letter_dx": 0.0,
+    "letter_dy": 1.01,
+    "caption_fs": 6.6,
+    "caption_gap_in": 0.07,
+    "caption_linespacing": 1.15,
+    "show_letters": true
+  },
+  "title": {
+    "text": "Figure Studio — heterogeneous panels",
+    "subtitle": "circular tree / network / Sankey / UpSet / heat map / line, each placed at its native aspect ratio",
+    "fs": 13,
+    "sub_fs": 8.5,
+    "x_in": 0.1,
+    "y_in": 0.26
+  },
+  "items": [
+    {
+      "id": "d_A",
+      "src": "D:\\桌面\\MMPV主图档案库_20261014\\03_MLtree_circular\\成品图\\7_MLtree_circular_host.png",
+      "x_in": 0.1,
+      "y_in": 0.96,
+      "w_in": 2.9971,
+      "h_in": 2.9971,
+      "letter": "A",
+      "caption": "Maximum-likelihood phylogeny of GCVA (circular, tips coloured by host)",
+      "z": 0
+    },
+    {
+      "id": "d_B",
+      "src": "D:\\桌面\\MMPV主图档案库_20261014\\04_NeighborNet\\成品图\\8_NeighborNet_host.png",
+      "x_in": 3.2171,
+      "y_in": 0.96,
+      "w_in": 3.0068,
+      "h_in": 2.9971,
+      "letter": "B",
+      "caption": "NeighborNet split network of GCVA genomes",
+      "z": 0
+    },
+    {
+      "id": "d_F",
+      "src": "D:\\桌面\\延伸基因组\\MMPV-RNA\\reports\\_archive\\review_dirs\\_discovery_sci_20261012\\_lt\\10_Reports\\S10_SCI_Discovery\\Fig_GojiVirome_Potexvirus_SDT.png",
+      "x_in": 6.344,
+      "y_in": 0.96,
+      "w_in": 2.876,
+      "h_in": 2.9971,
+      "letter": "F",
+      "caption": "Sequence demarcation tool heat map (Potexvirus)",
+      "z": 0
+    },
+    {
+      "id": "d_C",
+      "src": "D:\\桌面\\MMPV主图档案库_20261014\\07_Fig_GojiVirome_NoveltySankey\\成品图\\4_Fig_GojiVirome_NoveltySankey.png",
+      "x_in": 0.1,
+      "y_in": 4.4771,
+      "w_in": 2.3368,
+      "h_in": 2.1062,
+      "letter": "C",
+      "caption": "Flow of known / novel virus detections (Sankey)",
+      "z": 0
+    },
+    {
+      "id": "d_D",
+      "src": "D:\\桌面\\MMPV主图档案库_20261014\\09_UpSet_工具分类宿主\\成品图\\Fig_GojiVirome_UpsetClassification.png",
+      "x_in": 2.5568,
+      "y_in": 4.4771,
+      "w_in": 3.2716,
+      "h_in": 2.1062,
+      "letter": "D",
+      "caption": "Tool x host classification intersections (UpSet)",
+      "z": 0
+    },
+    {
+      "id": "d_E",
+      "src": "D:\\桌面\\MMPV主图档案库_20261014\\13_HostPrediction_宿主预测\\成品图\\Fig_GojiVirome_HostPrediction_APanel.png",
+      "x_in": 5.9484,
+      "y_in": 4.4771,
+      "w_in": 3.2716,
+      "h_in": 2.1062,
+      "letter": "E",
+      "caption": "Host prediction, panel A (palette-mode PNG from R)",
+      "z": 0
+    },
+    {
+      "id": "d_G",
+      "src": "D:\\桌面\\延伸基因组\\MMPV-RNA\\reports\\_archive\\review_dirs\\_discovery_sci_20261012\\_lt\\10_Reports\\S10_SCI_Discovery\\Fig_GojiVirome_Potexvirus_SDTdist.png",
+      "x_in": 0.1,
+      "y_in": 7.1033,
+      "w_in": 2.8294,
+      "h_in": 1.6004,
+      "letter": "G",
+      "caption": "Pairwise SDT distance distribution",
+      "z": 0
+    },
+    {
+      "id": "d_H",
+      "src": "D:\\桌面\\延伸基因组\\MMPV-RNA\\reports\\_archive\\review_dirs\\_discovery_sci_20261012\\_lt\\10_Reports\\S10_SCI_Discovery\\Fig_GojiVirome_Potexvirus_Coverage.png",
+      "x_in": 3.0494,
+      "y_in": 7.1033,
+      "w_in": 6.1706,
+      "h_in": 1.6004,
+      "letter": "H",
+      "caption": "Read coverage profile along the reference",
+      "z": 0
+    }
+  ]
+}

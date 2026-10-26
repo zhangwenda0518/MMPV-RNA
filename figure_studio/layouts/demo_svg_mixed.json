@@ -1,0 +1,117 @@
+{
+ "canvas": {
+  "width_in": 10.0,
+  "height_in": 7.9086,
+  "dpi": 300
+ },
+ "style": {
+  "bg": "white",
+  "frame": true,
+  "frame_color": "#d9d9d9",
+  "frame_lw": 0.6,
+  "letter_fs": 11,
+  "letter_dx": 0.0,
+  "letter_dy": 1.02,
+  "show_letters": true,
+  "caption_fs": 7,
+  "caption_gap_in": 0.06,
+  "caption_linespacing": 1.2,
+  "margin_in": 0.1,
+  "pack_margin_in": 0.1,
+  "gap_in": 0.1
+ },
+ "title": {
+  "text": "SVG panels: vector-level editing",
+  "subtitle": "colour / legend / font-size edited in the XML, then composited with a raster PNG",
+  "fs": 13,
+  "sub_fs": 8.5,
+  "x_in": 0.1,
+  "y_in": 0.3
+ },
+ "items": [
+  {
+   "id": "i_A",
+   "src": "D:\\桌面\\延伸基因组\\MMPV-RNA\\figure_studio\\outputs\\_svgdemo\\panel_net.svg",
+   "x_in": 0.1,
+   "y_in": 0.72,
+   "w_in": 6.626,
+   "h_in": 2.7265,
+   "letter": "A",
+   "caption": "SVG: recoloured to the project palette, text enlarged 1.35x",
+   "z": 0,
+   "adjust": {
+    "svg": {
+     "colors": [
+      {
+       "from": "#0f4d92",
+       "to": "#0072B2"
+      },
+      {
+       "from": "#d9544d",
+       "to": "#D55E00"
+      }
+     ],
+     "font_scale": 1.35
+    }
+   }
+  },
+  {
+   "id": "i_B",
+   "src": "D:\\桌面\\延伸基因组\\MMPV-RNA\\figure_studio\\outputs\\_svgdemo\\panel_tracks.svg",
+   "x_in": 6.826,
+   "y_in": 0.72,
+   "w_in": 3.074,
+   "h_in": 2.7265,
+   "letter": "B",
+   "caption": "SVG: both legends hidden, text enlarged 1.2x",
+   "z": 0,
+   "adjust": {
+    "svg": {
+     "legend": {
+      "action": "hide"
+     },
+     "font_scale": 1.2
+    }
+   }
+  },
+  {
+   "id": "i_C",
+   "src": "D:\\桌面\\延伸基因组\\MMPV-RNA\\figure_studio\\outputs\\_svgdemo\\panel_pca.svg",
+   "x_in": 0.1,
+   "y_in": 3.8465,
+   "w_in": 4.0116,
+   "h_in": 3.6621,
+   "letter": "C",
+   "caption": "SVG (R output): recoloured, text enlarged 1.25x",
+   "z": 0,
+   "adjust": {
+    "svg": {
+     "colors": [
+      {
+       "from": "#1b9e77",
+       "to": "#0072B2"
+      }
+     ],
+     "font_scale": 1.25
+    }
+   }
+  },
+  {
+   "id": "i_D",
+   "src": "D:\\桌面\\MMPV主图档案库_20261014\\13_HostPrediction_宿主预测\\成品图\\Fig_GojiVirome_HostPrediction_APanel.png",
+   "x_in": 4.2116,
+   "y_in": 3.8465,
+   "w_in": 5.6884,
+   "h_in": 3.6621,
+   "letter": "D",
+   "caption": "PNG: grayscale image-level adjust after a vector step",
+   "z": 0,
+   "adjust": {
+    "svg": {
+     "font_scale": 1.15
+    },
+    "grayscale": true
+   }
+  }
+ ]
+}

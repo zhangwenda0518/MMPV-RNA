@@ -1,0 +1,19 @@
+# AI 密钥（只存本机，绝不入库）
+.ai_keys.json
+
+# 运行期缓存与产物
+__pycache__/
+*.pyc
+cache/
+server.log
+
+# 生成产物（版式/出图结果，可重跑；成品图另行归档到 doc/figures 或 reports/）
+outputs/
+
+# 测试 / 精修过程产物
+outputs/_svgedit_test/
+outputs/_flex_shot/
+outputs/_svguest_backup/
+outputs/_svguest_autosave/
+outputs/_svguest_export/
+outputs/_ui/

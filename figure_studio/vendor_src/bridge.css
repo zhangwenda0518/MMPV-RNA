@@ -1,0 +1,127 @@
+/* ═══════════════════════════════════════════════════════════════════
+ * Figure Studio ⇄ svguest 桥接样式
+ *
+ * ⚠⚠ 本文件会原样注入到 <style> 里，**只能出现 CSS 注释**。
+ *    曾经因为在 <style> 开头混进一行 Markdown 标题
+ *    （`# Figure Studio ⇄ svguest 桥接样式…`），浏览器把 `#` 当成 ID 选择器，
+ *    于是紧随其后的整条 `#fsBar{…}` 规则被当作无效选择器**静默丢弃** ——
+ *    浮条失去 position:fixed，挤进了底部状态栏，且零报错。
+ *    现在由 tools/build_vendor.py 构建，并在 e2e 里断言 computed style。
+ * ═══════════════════════════════════════════════════════════════════ */
+
+#fsBar {
+  position: fixed;
+  left: 50%;
+  bottom: 40px;
+  transform: translateX(-50%);
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px 7px 14px;
+  border-radius: 12px;
+  background: #1f2430f2;
+  color: #eef1f6;
+  font: 13px/1.4 system-ui, "Segoe UI", "Microsoft YaHei", sans-serif;
+  box-shadow: 0 10px 34px #0007;
+  backdrop-filter: blur(8px);
+  max-width: calc(100vw - 40px);
+}
+
+#fsBar .fs-brand {
+  font-weight: 600;
+  letter-spacing: .2px;
+  white-space: nowrap;
+  padding-right: 8px;
+  border-right: 1px solid #ffffff26;
+  margin-right: 2px;
+}
+
+#fsBar .fs-name {
+  opacity: .62;
+  font-size: 12px;
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#fsBar .fs-n {
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 20px;
+  background: #ffffff1f;
+  opacity: .85;
+  white-space: nowrap;
+}
+
+/* 自动快照状态：只在真的存过之后才出现，平时不占位 */
+#fsBar .fs-auto {
+  font-size: 11px;
+  padding: 1px 7px;
+  border-radius: 20px;
+  background: #157f3c33;
+  color: #9ee6b8;
+  white-space: nowrap;
+}
+
+#fsBar button {
+  border: 1px solid #ffffff2e;
+  background: #ffffff14;
+  color: #eef1f6;
+  padding: 5px 12px;
+  border-radius: 7px;
+  cursor: pointer;
+  white-space: nowrap;
+  font: 13px/1.4 system-ui, "Segoe UI", "Microsoft YaHei", sans-serif;
+  transition: background .12s;
+}
+
+#fsBar button:hover { background: #ffffff26; }
+#fsBar button:active { transform: translateY(1px); }
+
+#fsBar button.fs-p {
+  background: #3b82f6;
+  border-color: #3b82f6;
+  font-weight: 600;
+}
+#fsBar button.fs-p:hover { background: #2f74e0; }
+
+#fsBar button:disabled {
+  opacity: .4;
+  cursor: default;
+  transform: none;
+}
+
+/* 折叠态：只留一个圆角小标，避免挡住画布 */
+#fsBar.fs-min { padding: 5px 10px; gap: 6px; }
+#fsBar.fs-min .fs-name,
+#fsBar.fs-min .fs-n,
+#fsBar.fs-min .fs-auto,
+#fsBar.fs-min .fs-act { display: none; }
+
+#fsToast {
+  position: fixed;
+  left: 50%;
+  top: 14px;
+  transform: translateX(-50%) translateY(-8px);
+  z-index: 60;
+  padding: 8px 16px;
+  border-radius: 9px;
+  background: #1f2430f2;
+  color: #eef1f6;
+  opacity: 0;
+  pointer-events: none;
+  max-width: 70vw;
+  font: 13px/1.45 system-ui, "Segoe UI", "Microsoft YaHei", sans-serif;
+  box-shadow: 0 8px 28px #0006;
+  transition: opacity .18s, transform .18s;
+}
+
+#fsToast.on {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
+#fsToast.bad { background: #b3261ef2; }
+#fsToast.good { background: #157f3cf2; }

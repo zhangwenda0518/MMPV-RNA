@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:,">
+<title>Figure Studio · 组图工作台</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="logo"></span>
+    <span>Figure Studio</span>
+    <span class="sub">组图工作台</span>
+  </div>
+  <div class="rootbar">
+    <input id="rootInput" list="rootList" placeholder="面板图所在目录（PNG / JPG / PDF / SVG）">
+    <datalist id="rootList"></datalist>
+    <button id="btnScan" class="primary">扫描</button>
+  </div>
+  <div class="actions">
+    <input id="stemInput" class="stem" value="Figure_composite" title="导出文件名">
+    <button id="btnSaveLayout">保存布局</button>
+    <button id="btnOpenLayout">打开布局</button>
+    <button id="btnSvguest" title="用 svguest（交互式矢量编辑器）精修选中的 SVG 面板；改完保存回工作台">svguest 精修</button>
+    <button id="btnExport" class="primary">导出 PNG + PDF</button>
+  </div>
+</header>
+
+<main>
+  <aside class="panel-lib">
+    <div class="lib-head">
+      <input id="searchInput" placeholder="按文件名 / 目录过滤…">
+      <button id="btnClearSearch" class="ghost" title="清空">×</button>
+    </div>
+    <div class="lib-opts">
+      <label class="chk"><input type="checkbox" id="chkOnlyNew" checked> 只显示最近 600</label>
+      <span class="lib-stat" id="libStat">未扫描</span>
+    </div>
+    <div id="libGrid" class="lib-grid"></div>
+    <div class="lib-foot">
+      <span>单击加入画布 · 拖拽可直接落位</span>
+    </div>
+  </aside>
+
+  <section class="canvas-wrap">
+    <div class="canvas-toolbar">
+      <button id="btnUndo" class="ghost" title="撤销（Ctrl+Z）" disabled>↶ 撤销</button>
+      <button id="btnRedo" class="ghost" title="重做（Ctrl+Shift+Z）" disabled>↷ 重做</button>
+      <span class="sep"></span>
+      <button data-tool="row">横排一行</button>
+      <button data-tool="col">纵排一列</button>
+      <button data-tool="grid">网格 2 列</button>
+      <button data-tool="autoletter">自动字母</button>
+      <span class="sep"></span>
+      <button data-align="left" title="把选中面板的左边缘对齐">左对齐</button>
+      <button data-align="hcenter" title="把选中面板水平居中于画布">水平居中</button>
+      <button data-align="right" title="把选中面板的右边缘对齐">右对齐</button>
+      <button data-align="top" title="把选中面板的上边缘对齐">顶对齐</button>
+      <button data-align="vcenter" title="把选中面板垂直居中于画布">垂直居中</button>
+      <button data-align="bottom" title="把选中面板的下边缘对齐">底对齐</button>
+      <button data-align="hdist">水平均分</button>
+      <button data-align="vdist">垂直均分</button>
+      <span class="sep"></span>
+      <button data-tool="sameh">统一高</button>
+      <button data-tool="samew">统一宽</button>
+      <button data-tool="fit1to1">1:1 尺寸</button>
+      <button data-tool="trim">裁到内容</button>
+      <span class="sep"></span>
+      <label class="chk"><input type="checkbox" id="chkSnap" checked> 吸附</label>
+      <label class="chk"><input type="checkbox" id="chkGrid" checked> 网格</label>
+      <span class="sep"></span>
+      <button id="btnZoomOut" class="ghost">−</button>
+      <span id="zoomLabel" class="zoom">100%</span>
+      <button id="btnZoomIn" class="ghost">+</button>
+      <button id="btnFit">适应</button>
+    </div>
+    <div class="canvas-scroll" id="canvasScroll">
+      <div class="canvas-stage" id="canvasStage">
+        <div class="canvas" id="canvas">
+          <div class="guides" id="guides"></div>
+        </div>
+      </div>
+    </div>
+    <div class="canvas-hint" id="canvasHint"></div>
+  </section>
+
+  <aside class="inspector">
+    <div class="ins-block">
+      <h3>画布</h3>
+      <div class="row"><label>宽 (in)</label><input type="number" step="0.1" data-bind="canvas.width_in"></div>
+      <div class="row"><label>高 (in)</label><input type="number" step="0.1" data-bind="canvas.height_in"></div>
+      <div class="row"><label>DPI</label><input type="number" step="50" data-bind="canvas.dpi"></div>
+      <div class="row"><label>底边距</label><input type="number" step="0.01" data-bind="style.margin_in"></div>
+      <div class="row"><label>自动排版留边</label><input type="number" step="0.01" data-bind="style.pack_margin_in"></div>
+      <div class="row"><label>行/列间距</label><input type="number" step="0.01" data-bind="style.gap_in"></div>
+      <div class="row"><label>细边框</label><input type="checkbox" data-bind="style.frame"></div>
+    </div>
+
+    <div class="ins-block">
+      <h3>选中面板 <span id="selTag" class="tag">未选中</span></h3>
+      <div class="grid2">
+        <div class="row"><label>X</label><input type="number" step="0.01" data-sel="x_in"></div>
+        <div class="row"><label>Y</label><input type="number" step="0.01" data-sel="y_in"></div>
+        <div class="row"><label>宽</label><input type="number" step="0.01" data-sel="w_in"></div>
+        <div class="row"><label>高</label><input type="number" step="0.01" data-sel="h_in"></div>
+        <div class="row"><label>字母</label><input type="text" data-sel="letter" maxlength="4"></div>
+        <div class="row"><label>层级</label><input type="number" step="1" data-sel="z"></div>
+      </div>
+      <div class="row"><label>锁定比例</label><input type="checkbox" data-sel="lock"></div>
+      <div class="row col"><label>题注</label><textarea data-sel="caption" rows="3" placeholder="可留空；支持换行"></textarea></div>
+      <div class="btnrow">
+        <button data-item="top">置顶</button>
+        <button data-item="bottom">置底</button>
+        <button data-item="dup">复制</button>
+        <button data-item="nat">按源比例</button>
+        <button data-item="del" class="danger">删除</button>
+      </div>
+      <div class="selinfo" id="selInfo"></div>
+    </div>
+
+    <div class="ins-block" id="adjBlock">
+      <h3>调色（图像级）<span class="tag" id="adjTag">未选中</span></h3>
+      <div class="adj-empty" id="adjEmpty">
+        <b>还没选中面板</b> —— 在画布上<b>点一个面板图</b>（出现蓝框 = 选中），
+        下面的调色才起作用；SVG 面板选中后还会多出「矢量编辑」块。
+      </div>
+      <div class="adj-ctrls" id="adjControls">
+      <div class="pal-strip" id="palStrip" title="项目调色板：点色块 → 填入最近点过的颜色框"></div>
+
+      <div class="slider" data-adj="brightness"><label>亮度</label>
+        <input type="range" min="0.2" max="2" step="0.01" value="1"><span class="val">1.00</span></div>
+      <div class="slider" data-adj="contrast"><label>对比度</label>
+        <input type="range" min="0.2" max="2.5" step="0.01" value="1"><span class="val">1.00</span></div>
+      <div class="slider" data-adj="saturation"><label>饱和度</label>
+        <input type="range" min="0" max="2.5" step="0.01" value="1"><span class="val">1.00</span></div>
+      <div class="slider" data-adj="sharpness"><label>锐度</label>
+        <input type="range" min="0" max="3" step="0.01" value="1"><span class="val">1.00</span></div>
+      <div class="slider" data-adj="gamma"><label>伽马</label>
+        <input type="range" min="0.3" max="2.5" step="0.01" value="1"><span class="val">1.00</span></div>
+      <div class="slider" data-adj="hue"><label>色相</label>
+        <input type="range" min="-180" max="180" step="1" value="0"><span class="val">0°</span></div>
+
+      <div class="grid2 chk-grid">
+        <label class="chk"><input type="checkbox" data-adjt="grayscale"> 灰度</label>
+        <label class="chk"><input type="checkbox" data-adjt="invert"> 反相</label>
+        <label class="chk"><input type="checkbox" data-adjt="autocontrast"> 自动对比度</label>
+        <label class="chk"><input type="checkbox" data-adjt="trim" title="裁掉四周纯色边框（会改变面板比例）"> 裁白边</label>
+      </div>
+
+      <div class="grid2">
+        <div class="row"><label>二值化</label><input type="number" min="0" max="255" step="1" data-adjn="threshold" title="0 = 关闭"></div>
+        <div class="row"><label>分离位数</label><input type="number" min="0" max="8" step="1" data-adjn="posterize" title="0 = 关闭；2–8 = 每通道位数"></div>
+      </div>
+
+      <div class="row"><label class="chk"><input type="checkbox" data-adjc-on="bg"> 透明底色</label>
+        <input type="color" data-adjc="bg" value="#ffffff"></div>
+
+      <div class="row"><label class="chk"><input type="checkbox" data-adjc-on="flatten"> 近白替换</label>
+        <input type="color" data-adjc="flatten" value="#ffffff"></div>
+      <div class="slider" data-adj="flatten_tol"><label>容差</label>
+        <input type="range" min="0" max="80" step="1" value="12"><span class="val">12</span></div>
+
+      <div class="row"><label class="chk"><input type="checkbox" data-adjc-on="tint"> 单色着色</label>
+        <input type="color" data-adjc="tint" value="#0072B2"></div>
+      <div class="slider" data-adj="tint_amount"><label>强度</label>
+        <input type="range" min="0" max="1" step="0.01" value="0"><span class="val">0.00</span></div>
+
+      <div class="sub-h">颜色替换
+        <button class="ghost" id="btnLoadColors" title="提取该面板的主要颜色，填成候选行">取主要颜色</button>
+        <button class="ghost" id="btnAddRemap" title="手动加一行">+</button>
+      </div>
+      <div class="remap" id="remapList"></div>
+      <div class="hint" id="adjHint"></div>
+
+      <div class="btnrow">
+        <button id="btnAdjApplyAll" title="把当前面板的调色复制到画布上所有面板">应用到全部</button>
+        <button id="btnAdjReset">重置本面板</button>
+      </div>
+        <div class="adj-cover" id="adjCover">
+          <b>请先点选面板</b>
+          <span>在画布上点一个面板图，出现蓝框即选中</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="ins-block" id="svgBlock" style="display:none">
+      <h3>矢量编辑（SVG 专用）<span class="tag" id="svgTag"></span></h3>
+      <div class="hint" id="svgMeta"></div>
+
+      <div class="sub">颜色替换（DOM 级，精确色值、无抗锯齿偏色）</div>
+      <div class="btnrow">
+        <button class="ghost" id="btnSvgColors" title="列出 SVG 里的语义色（按 DOM 出现次数），生成颜色替换行">取 SVG 语义色</button>
+      </div>
+      <div class="remap" id="svgColorList"></div>
+
+      <div class="sub">文本替换（图例标签、轴标题可直接改）</div>
+      <div class="btnrow">
+        <button class="ghost" id="btnSvgTexts" title="列出 SVG 里的文本节点，生成文本替换行">取文本清单</button>
+      </div>
+      <div class="remap" id="svgTextList"></div>
+
+      <div class="sub">图例</div>
+      <div class="grid2">
+        <div class="row"><label>动作</label>
+          <select id="svgLegendAction">
+            <option value="hide">隐藏</option>
+            <option value="move">移动</option>
+            <option value="scale">缩放文字</option>
+          </select></div>
+        <div class="row"><label>dx</label><input type="number" step="1" id="svgLegendDx" value="0"></div>
+        <div class="row"><label>dy</label><input type="number" step="1" id="svgLegendDy" value="0"></div>
+        <div class="row"><label>字号倍</label><input type="number" step="0.05" id="svgLegendFs" value="1"></div>
+      </div>
+      <div class="btnrow">
+        <button id="btnSvgLegend" title="按上面的动作修改所有图例组（id/class 含 legend）">应用到图例</button>
+      </div>
+
+      <div class="sub">文字 / 线宽</div>
+      <div class="grid2">
+        <div class="row"><label>字号倍</label><input type="number" step="0.05" id="svgFontScale" value="1"></div>
+        <div class="row"><label>文字色</label><input type="color" id="svgTextColor" value="#222222"></div>
+        <div class="row"><label>线宽倍</label><input type="number" step="0.05" id="svgStrokeScale" value="1"></div>
+        <div class="row"><label>字体</label><input type="text" id="svgFontFamily" placeholder="Arial / SimHei …"></div>
+      </div>
+      <div class="btnrow">
+        <button id="btnSvgFontApply">应用文字/线宽</button>
+        <button class="ghost" id="btnSvgFontReset">重置</button>
+      </div>
+
+      <div class="sub">隐藏元素（选择器：#id / .class / tag）</div>
+      <div class="btnrow">
+        <input type="text" id="svgHideSel" placeholder="例如 #text_12 或 axes_2" style="flex:1">
+        <button id="btnSvgHide">隐藏</button>
+      </div>
+      <div id="svgHideList"></div>
+
+      <div class="btnrow">
+        <button id="btnSvgReset">重置本面板矢量编辑</button>
+      </div>
+    </div>
+
+    <div class="ins-block" id="sgBlock">
+      <h3>精修（svguest 交互式）<span class="tag" id="sgTag"></span></h3>
+      <div class="hint">
+        上面那块是<b>批量语义编辑</b>（改色/改字/隐藏，可重复、可复现）；
+        要<b>逐点</b>调形状、连线、位置、加标注，用这里打开交互式编辑器，
+        改完直接写回原文件，不用下载再搬。
+      </div>
+      <div class="btnrow">
+        <button id="btnSgOne" title="用 svguest 精修当前选中的 SVG 面板（Ctrl+E）">精修选中面板</button>
+        <button class="ghost" id="btnSgAll" title="把所有 SVG 面板一次性作为标签页打开，改完可一键全部保存">全部 SVG 面板</button>
+      </div>
+      <div class="hint" id="sgHint"></div>
+      <div class="sub">磁盘自动快照<span class="tag" id="asTag"></span></div>
+      <div class="hint">
+        在 svguest 里编辑停顿 15 秒就自动落一份到
+        <code>outputs/_svguest_autosave/</code>，<b>不覆盖原文件</b>；
+        断电或改崩了可以拿它回来。每张图保留最近 12 份。
+      </div>
+      <div class="sg-hist" id="asList"><div class="hint">选中一个 SVG 面板后显示</div></div>
+      <div class="sub">备份历史（每次写回/回滚前都会留一份，点「回滚」可撤销）</div>
+      <div class="sg-hist" id="sgHistory"><div class="hint">选中一个 SVG 面板后显示</div></div>
+    </div>
+
+    <div class="ins-block" id="aiBlock">
+      <h3>AI 绘图（SVG Chat）<span class="tag" id="aiTag">未配置</span></h3>
+      <div class="hint">
+        svguest 内置的对话式改图：描述你要的画法或改法，它直接改画布。
+        请求统一经本机服务端转发 —— <b>GLM 的浏览器预检不带 CORS 头，直连必被拦</b>；
+        DeepSeek 虽然能直连，但走代理可以让 key 只留在本机
+        <code>.ai_keys.json</code>，不落浏览器、不随布局文件走。
+      </div>
+      <div class="grid2">
+        <div class="row"><label title="DeepSeek API key">DeepSeek</label>
+          <input type="password" id="aiKeyDs" placeholder="sk-…" autocomplete="off"></div>
+        <div class="row"><label title="智谱 GLM API key">GLM</label>
+          <input type="password" id="aiKeyGlm" placeholder="…" autocomplete="off"></div>
+      </div>
+      <div class="btnrow">
+        <button id="btnAiSave">保存密钥</button>
+        <button class="ghost" id="btnAiChat" title="在 svguest 里打开 SVG Chat 侧栏（先选中一个 SVG 面板）">打开 SVG Chat</button>
+      </div>
+      <div class="hint" id="aiHint"></div>
+    </div>
+
+    <div class="ins-block">
+      <h3>面板字母 / 题注样式</h3>
+      <div class="grid2">
+        <div class="row"><label>字号</label><input type="number" step="0.5" data-bind="style.letter_fs"></div>
+        <div class="row"><label>显示字母</label><input type="checkbox" data-bind="style.show_letters"></div>
+        <div class="row"><label>题注字号</label><input type="number" step="0.5" data-bind="style.caption_fs"></div>
+        <div class="row"><label>字母 dx</label><input type="number" step="0.01" data-bind="style.letter_dx"></div>
+        <div class="row"><label>字母 dy</label><input type="number" step="0.01" data-bind="style.letter_dy"></div>
+        <div class="row"><label>题注间距</label><input type="number" step="0.01" data-bind="style.caption_gap_in"></div>
+        <div class="row"><label>边框粗</label><input type="number" step="0.1" data-bind="style.frame_lw"></div>
+      </div>
+      <div class="grid2">
+        <div class="row"><label>字母颜色</label><input type="color" data-bind="style.letter_color"></div>
+        <div class="row"><label>题注颜色</label><input type="color" data-bind="style.caption_color"></div>
+        <div class="row"><label>边框颜色</label><input type="color" data-bind="style.frame_color"></div>
+      </div>
+    </div>
+
+    <div class="ins-block">
+      <h3>总标题</h3>
+      <div class="row col"><label>标题</label><input type="text" data-bind="title.text"></div>
+      <div class="row col"><label>副标题</label><input type="text" data-bind="title.subtitle"></div>
+      <div class="grid2">
+        <div class="row"><label>字号</label><input type="number" step="0.5" data-bind="title.fs"></div>
+        <div class="row"><label>Y (in)</label><input type="number" step="0.05" data-bind="title.y_in"></div>
+        <div class="row"><label>标题色</label><input type="color" data-bind="title.color"></div>
+        <div class="row"><label>副标题色</label><input type="color" data-bind="title.sub_color"></div>
+      </div>
+    </div>
+
+    <div class="ins-block">
+      <h3>输出</h3>
+      <div class="btnrow">
+        <button id="btnExport2" class="primary">导出 PNG + PDF</button>
+        <button id="btnSaveLayout2">保存布局</button>
+      </div>
+      <div class="outlist" id="outList"></div>
+    </div>
+  </aside>
+</main>
+
+<div class="statusbar">
+  <span id="statusText">就绪</span>
+  <span class="spacer"></span>
+  <span id="statusCanvas"></span>
+</div>
+
+<!-- svguest 精修浮层（同源 iframe，内嵌而非弹窗）
+     ⚠ 用 iframe 而不是 window.open：不触发弹窗拦截、保存后不用切窗口、
+       关掉浮层即销毁会话。同源是前提 —— 桥接的 postMessage 和
+       /api/svg/* 的 same-origin cookie 都依赖它。
+     三档布局（data-mode）：full 全屏 / split 右侧分屏（工作台仍可点）/
+     float 浮动窗口（可拖、右下角可缩放）。 -->
+<div class="sg-layer" id="sgLayer" data-mode="full">
+  <div class="sg-head" id="sgHead">
+    <span class="sg-dot"></span>
+    <b>svguest 精修</b>
+    <span class="sg-sub" id="sgLayerSub">改完按 Ctrl+S 写回工作台</span>
+    <span class="spacer"></span>
+    <button class="ghost" id="btnSgMode" title="切换布局：全屏 → 右侧分屏 → 浮动窗口（双击标题栏也可切换）">布局：全屏</button>
+    <button class="ghost" id="btnSgClose" title="关闭精修面板（焦点在平台上时也可按 Esc）">关闭 ✕</button>
+  </div>
+  <iframe id="sgFrame" name="svguest" title="svguest 精修" src="about:blank"></iframe>
+</div>
+
+<div class="modal-mask" id="modalMask">
+  <div class="modal" id="modalBox"></div>
+</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

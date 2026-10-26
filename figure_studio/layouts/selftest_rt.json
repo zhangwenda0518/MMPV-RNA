@@ -1,0 +1,83 @@
+{
+  "canvas": {
+    "width_in": 10.0,
+    "height_in": 5.7661,
+    "dpi": 300
+  },
+  "style": {
+    "bg": "white",
+    "frame": true,
+    "frame_color": "#bbbbbb",
+    "frame_lw": 0.6,
+    "letter_fs": 11,
+    "letter_dx": 0.0,
+    "letter_dy": 1.02,
+    "caption_fs": 7,
+    "caption_gap_in": 0.06
+  },
+  "title": {
+    "text": "Figure Studio selftest",
+    "subtitle": "aspect-preserving composite",
+    "fs": 13,
+    "sub_fs": 9.5,
+    "x_in": 0.1,
+    "y_in": 0.34
+  },
+  "items": [
+    {
+      "id": "t_A",
+      "src": "D:\\桌面\\延伸基因组\\MMPV-RNA\\reports\\_archive\\review_dirs\\_discovery_sci_20261012\\local_test\\panels\\panel_A.png",
+      "x_in": 0.1,
+      "y_in": 0.9,
+      "w_in": 3.2582,
+      "h_in": 1.4168,
+      "letter": "A",
+      "caption": "panel A · 1957×851 px",
+      "z": 0
+    },
+    {
+      "id": "t_B",
+      "src": "D:\\桌面\\延伸基因组\\MMPV-RNA\\reports\\_archive\\review_dirs\\_discovery_sci_20261012\\local_test\\panels\\panel_B.png",
+      "x_in": 3.4782,
+      "y_in": 0.9,
+      "w_in": 3.1416,
+      "h_in": 1.4168,
+      "letter": "B",
+      "caption": "panel B · 1887×851 px",
+      "z": 0
+    },
+    {
+      "id": "t_C",
+      "src": "D:\\桌面\\延伸基因组\\MMPV-RNA\\reports\\_archive\\review_dirs\\_discovery_sci_20261012\\local_test\\panels\\panel_C.png",
+      "x_in": 6.7398,
+      "y_in": 0.9,
+      "w_in": 3.1602,
+      "h_in": 1.4168,
+      "letter": "C",
+      "caption": "panel C · 1887×846 px",
+      "z": 0
+    },
+    {
+      "id": "t_D",
+      "src": "D:\\桌面\\延伸基因组\\MMPV-RNA\\reports\\_archive\\review_dirs\\_discovery_sci_20261012\\local_test\\panels\\panel_D.png",
+      "x_in": 0.1,
+      "y_in": 2.6768,
+      "w_in": 6.0536,
+      "h_in": 2.7493,
+      "letter": "D",
+      "caption": "panel D · 1887×857 px",
+      "z": 0
+    },
+    {
+      "id": "t_L",
+      "src": "D:\\桌面\\延伸基因组\\MMPV-RNA\\reports\\_archive\\review_dirs\\_discovery_sci_20261012\\local_test\\panels\\panel_L.pdf",
+      "x_in": 6.2736,
+      "y_in": 2.6768,
+      "w_in": 3.6264,
+      "h_in": 2.7493,
+      "letter": "L",
+      "caption": "panel L · 1075×815 px",
+      "z": 0
+    }
+  ]
+}
