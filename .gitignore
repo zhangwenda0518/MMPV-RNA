@@ -37,6 +37,8 @@ metadata_gui/*.spec
 #   git 规则：父目录被整体排除时，子路径的 `!` 例外无效。
 reports/*
 !reports/virome_analysis_pipeline/
+# 顶层补丁/审计/诊断脚本按「代码」入库（2026-10-26）；报告产物与子目录仍不入库
+!reports/*.py
 # ↑ 只把**脚本与数据**纳入版本控制；归档 / 成品图 / 预渲资产仍不入库
 #   （_append_src/ 迁移前在 reports/sci_composite/ 里，本来就不入库）
 reports/virome_analysis_pipeline/_archive/
