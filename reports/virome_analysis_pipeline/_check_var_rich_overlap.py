@@ -26,10 +26,10 @@ def _arg(name, default=None):
 TOL = float(_arg("--tol", 0.5))
 _dd = _arg("--data-dir")
 DATA = ([d for d in _dd.split(os.pathsep) if d] if _dd else [
-    os.path.abspath(os.path.join(HERE, "..", "..", "reports",
+    os.path.abspath(os.path.join(HERE, "_archive", "fig_revisions",
                                  "sci_composite", "_diag", "data"))])
 OUT = _arg("--out", os.path.abspath(os.path.join(
-    HERE, "..", "..", "reports", "sci_composite", "_try_dbg")))
+    HERE, "_archive", "fig_revisions", "sci_composite", "_try_dbg")))
 os.makedirs(OUT, exist_ok=True)
 print(f"[data] {DATA}")
 print(f"[out ] {OUT}")

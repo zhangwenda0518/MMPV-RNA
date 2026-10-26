@@ -36,12 +36,32 @@
 
 用法
 ----
-    python scripts/barbarum/make_goji_virome_phylosynteny_fig.py \
+    python reports/virome_analysis_pipeline/make_goji_virome_phylosynteny_fig.py \
       --trees <dir containing <Family>/Tree_Synteny_Composite.png> \
       --outdir <...>/S10_SCI_Discovery \
       [--virus-name "Lycium barbarum"] [--dpi 300]
 """
 from __future__ import annotations
+
+# ── 图件四格式导出 (SVG / PNG / PDF / PNG@1200dpi) — 默认开启 ──────────
+# 2026-10-20: 所有出图脚本统一口径; 用 MMPV_FIG_EXPORT=0 可整体关闭,
+# MMPV_FIG_FORMATS=svg,png,pdf,hires 可裁剪, MMPV_FIG_HIRES_DPI 可改高清 dpi。
+try:
+    from mmpv_common.figure_export import install_savefig_hook as _install_fig_hook
+except ImportError:  # 仓库根不在 sys.path (脚本被单独执行) → 向上找 mmpv_common/
+    import os as _os
+    import sys as _sys
+    _d = _os.path.dirname(_os.path.abspath(__file__))
+    while _d and not _os.path.isdir(_os.path.join(_d, "mmpv_common")):
+        _parent = _os.path.dirname(_d)
+        if _parent == _d:
+            break
+        _d = _parent
+    if _d and _d not in _sys.path:
+        _sys.path.insert(0, _d)
+    from mmpv_common.figure_export import install_savefig_hook as _install_fig_hook
+_install_fig_hook()
+# ──────────────────────────────────────────────────────────────────────
 
 import argparse
 import json
@@ -141,11 +161,18 @@ def save(fig, outdir: Path, stem: str, dpi: int):
     return png, pdf
 
 
-def _collect(trees_dir: Path):
-    """按 PHYLUM_FAMILIES 的顺序收集 (phylum, family, img, w, h, n, own)。"""
+def _collect(trees_dir: Path, exclude=frozenset()):
+    """按 PHYLUM_FAMILIES 的顺序收集 (phylum, family, img, w, h, n, own)。
+
+    ⚠ `exclude`（2026-10-15 v24 新增）：跳过的科名集合。用于出**补充附图** ——
+      Alphaflexiviridae 已被提升进主图（`Fig_GojiVirome_Discovery` 面板 R），
+      其余 20 科走 `Fig_GojiVirome_PhyloSynteny_Supp`，**同一科不得两处重复交付**。
+    """
     rows = []
     for ph, fams in PHYLUM_FAMILIES.items():
         for fam in fams:
+            if fam in exclude:
+                continue
             img = trees_dir / fam / "Tree_Synteny_Composite.png"
             if not img.is_file():
                 continue
@@ -157,9 +184,16 @@ def _collect(trees_dir: Path):
     return rows
 
 
-def build_composite(trees_dir: Path, outdir: Path, dpi: int, virus_name: str):
-    """21 行 × 1 列，一科一行，全幅嵌入管线原图（不重绘、不拉伸）。"""
-    rows = _collect(trees_dir)
+def build_composite(trees_dir: Path, outdir: Path, dpi: int, virus_name: str,
+                    exclude=frozenset(), stem: str = "Fig_GojiVirome_PhyloSynteny",
+                    supp_note: str = ""):
+    """21 行 × 1 列，一科一行，全幅嵌入管线原图（不重绘、不拉伸）。
+
+    ⚠ v24：`exclude` / `stem` / `supp_note` 三个参数用于出**补充附图** ——
+      `exclude={"Alphaflexiviridae"}` → 20 科；`stem` 换成 `..._Supp`；
+      `supp_note` 追加到 suptitle 第二行，说明本图是补充图、主图已收录哪一科。
+    """
+    rows = _collect(trees_dir, exclude)
     if not rows:
         sys.exit("[fatal] no Tree_Synteny_Composite.png found under --trees")
 
@@ -246,23 +280,27 @@ def build_composite(trees_dir: Path, outdir: Path, dpi: int, virus_name: str):
         f"Comparative synteny and homology of plant-associated virus families in the "
         f"{virus_name} RNA virome\n"
         f"per-family maximum-likelihood phylogeny (left) with pairwise protein-identity "
-        f"co-linearity (right); own contigs highlighted",
+        f"co-linearity (right); own contigs highlighted"
+        + (f"\n{supp_note}" if supp_note else ""),
         fontsize=8.6, fontweight="bold", y=y_title)
-    png, pdf = save(fig, outdir, "Fig_GojiVirome_PhyloSynteny", dpi)
+    png, pdf = save(fig, outdir, stem, dpi)
     plt.close(fig)
     return png, pdf, manifest
 
 
-def build_panels(trees_dir: Path, outdir: Path, dpi: int):
+def build_panels(trees_dir: Path, outdir: Path, dpi: int, exclude=frozenset()):
     """单科面板：原图**整幅嵌入**（不缩放不裁切），供排版单独取用。
 
     ⚠ 面板画布 = 原图本身的尺寸（等比），不做任何重绘。
+    ⚠ `exclude`（2026-10-15 v24）：跳过的科（已进主图者），避免重复交付。
     """
     pdir = outdir / "panels_phylosynteny"
     pdir.mkdir(parents=True, exist_ok=True)
     made = []
     for ph, fams in PHYLUM_FAMILIES.items():
         for fam in fams:
+            if fam in exclude:
+                continue
             img = trees_dir / fam / "Tree_Synteny_Composite.png"
             if not img.is_file():
                 continue

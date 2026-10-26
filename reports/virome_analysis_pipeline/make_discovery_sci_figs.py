@@ -7,7 +7,7 @@
 `virome_discovery_pipeline` 的产物（`02_novel_virus/RNA-Lycium_barbarum_out/`）此前只有
 一份交互式 HTML 报告（`report_pipeline.py` → `10_Reports/pipeline_report.html`），
 **没有任何静态出版级图件**。已知病毒模块有 `S9_SCI_Composite/Fig_KnownVirome_Composite.*`
-（`scripts/barbarum/make_sci_composite_figs.py`），发现模块缺一张对应主图 —— 本脚本补这张。
+（`reports/virome_analysis_pipeline/make_sci_composite_figs.py`），发现模块缺一张对应主图 —— 本脚本补这张。
 
 数据口径（全部来自 `10_Reports/` 的汇总表，脚本不重算任何统计量）
 --------------------------------------------------------------
@@ -30,7 +30,7 @@
 
 用法
 ----
-    python scripts/barbarum/make_discovery_sci_figs.py \
+    python reports/virome_analysis_pipeline/make_discovery_sci_figs.py \
       --root  <RNA-Lycium_barbarum_out> \
       --outdir <...>/10_Reports/S10_SCI_Discovery \
       --virus-name "Lycium barbarum" \
@@ -38,8 +38,8 @@
 
 产出
 ----
-    <outdir>/Fig_GojiVirome_Discovery.{png,pdf}   组合主图 (A–I, v13 九面板)
-    <outdir>/panels/panel_A..I_*.{png,pdf}        单面板（供排版/审稿人索取）
+    <outdir>/Fig_GojiVirome_Discovery.{png,pdf}   组合主图 (v22：A/J/D/O/P/N/Q)
+    <outdir>/panels/panel_A..Q_*.{png,pdf}        单面板（供排版/审稿人索取）
     <outdir>/_build/fig_manifest.json             面板清单 + 每个面板的数值来源
     <outdir>/_assets/sankey_flow.png              桑基预渲染图（供无 Chrome 的服务器复用）
 
@@ -61,6 +61,26 @@ v15（2026-10-12，对齐参考论文 Viruses 2025, 17, 624 的 Fig2 版式）
     至此 12 面板 A–L。
 """
 from __future__ import annotations
+
+# ── 图件四格式导出 (SVG / PNG / PDF / PNG@1200dpi) — 默认开启 ──────────
+# 2026-10-20: 所有出图脚本统一口径; 用 MMPV_FIG_EXPORT=0 可整体关闭,
+# MMPV_FIG_FORMATS=svg,png,pdf,hires 可裁剪, MMPV_FIG_HIRES_DPI 可改高清 dpi。
+try:
+    from mmpv_common.figure_export import install_savefig_hook as _install_fig_hook
+except ImportError:  # 仓库根不在 sys.path (脚本被单独执行) → 向上找 mmpv_common/
+    import os as _os
+    import sys as _sys
+    _d = _os.path.dirname(_os.path.abspath(__file__))
+    while _d and not _os.path.isdir(_os.path.join(_d, "mmpv_common")):
+        _parent = _os.path.dirname(_d)
+        if _parent == _d:
+            break
+        _d = _parent
+    if _d and _d not in _sys.path:
+        _sys.path.insert(0, _d)
+    from mmpv_common.figure_export import install_savefig_hook as _install_fig_hook
+_install_fig_hook()
+# ──────────────────────────────────────────────────────────────────────
 
 import argparse
 import csv
@@ -1194,7 +1214,7 @@ def _sankey_data_dirs():
       本项目已因这个坑静默漏过资产一次（见 `_find_asset` docstring）。
     """
     return [
-        _HERE.parent / "novelty_sankey_data",          # scripts/barbarum/novelty_sankey_data
+        _HERE.parent / "novelty_sankey_data",          # reports/virome_analysis_pipeline/novelty_sankey_data
     ]
 
 
@@ -1230,9 +1250,9 @@ def panel_D_sankey(ax, D: Data):
 
     ⭐⭐ **现行口径（2026-10-13，用户「主图改通栏」）= 09b 五层桑基（121 单位）**：
         `Known/Novel → DNA/RNA/Viroid → family → genus → species`
-        · 唯一权威数据源 = `scripts/barbarum/make_novelty_sankey_data.py`
+        · 唯一权威数据源 = `reports/virome_analysis_pipeline/make_novelty_sankey_data.py`
           （`novelty_sankey_data/contigs.tsv`，121 条 = Known 40 + Novel 81）；
-        · 唯一绘图实现 = `scripts/barbarum/fig_novelty_sankey.py`
+        · 唯一绘图实现 = `reports/virome_analysis_pipeline/fig_novelty_sankey.py`
           （`--embed-asset-plain` 产出的 `sankey_novelty_embed.png`）。
       ⚠⚠ **本面板不自行重画桑基**：历史上本项目吃过「同一面板两份标题副本/两份实现
         静默漂移」的亏（见 §9 硬规则）。这里只负责**贴图**，与旧 `sankey_flow_plant.png`
@@ -1279,7 +1299,7 @@ def panel_D_sankey(ax, D: Data):
                     transform=ax.transAxes, fontsize=5.0, color="#555555",
                     ha="left", va="top")
             D.manifest["D"] = {
-                "source": "scripts/barbarum/novelty_sankey_data/contigs.tsv "
+                "source": "reports/virome_analysis_pipeline/novelty_sankey_data/contigs.tsv "
                           "(via fig_novelty_sankey.py --embed-asset-plain)",
                 "render": f"pre-rendered PNG: {pre09.name} (matplotlib, single "
                           f"implementation)",
@@ -1466,6 +1486,540 @@ def panel_D_sankey(ax, D: Data):
     if warn:
         man["warning"] = warn
     D.manifest["D"] = man
+
+
+# ══════════════════════════════════════════════════════════════════
+# 面板 N：⑧「鉴定 × 过滤」一体式堆叠 UpSet（2026-10-14 从独立图整合进主图）
+# ══════════════════════════════════════════════════════════════════
+#   来源图 = `Fig_GojiVirome_IdentFilterStackedAll`（R / ComplexUpset，
+#   `reports/virome_analysis_pipeline/fig_ident_filter_stacked_all.R`），本轮用 **`_norm`** 变体
+#   （`--set-size fill`：左侧 set-size 面板按过滤结局归一化到 100 %）。
+#   ⚠⚠ 为什么必须用 `_norm`：7 条轨道的绝对命中数相差 **750 倍**
+#      （viralverify 452,885 vs viroid_blastn 604）→ `stack`（绝对条长）下后 3 根
+#      在 2 in 宽面板里只有 0–4 px，段完全不可见。归一化后每根等宽、构成可读，
+#      绝对数由行标签 `virbot (3,219)` 承载。
+#   ⚠⚠ **本面板只贴图、不重画**（同面板 D 的纪律）：UpSet 矩阵、交集柱、6 工具 Venn、
+#      set-size 堆叠条、耗时条全部由 R 脚本单点决定 → 口径零漂移。
+#   ⚠⚠ **贴图前必须裁掉源图顶部标题块**（用户 2026-10-14 选「裁掉」）：
+#      · 源图 11.4 × 7.4 in（`W_FIG`/`H_FIG`）；标题块占 y **58..253 px**
+#        （1 行主标题 + 4 行说明，第 4 行底 = 253 px）；
+#      · 最高内容元素 = 右上 **Venn**，其顶边在 **y = 407 px**（1.357 in）
+#        —— 实测各 x 带的「首个内容块」：左(耗时条) 573、中(交集柱) 522、
+#        右(Venn) 407、最右(图例) 787 → **407 是全局最高**；
+#      · 故裁切线取 **y = 398 px**（留 9 px 净空），裁后 **3420 × 1822 px
+#        = 11.4 × 6.073 in（比 1.87706）**。
+#      ⚠ 裁切**在内存里做**（不落中间资产）→ 源图重出后自动跟随，不会留陈旧副本
+#        （本项目吃过「预渲资产不随参数更新」的亏）。
+#   ⚠⚠ **裁切线与 `H_FIG = 7.4` 强耦合**：R 脚本若改 `H_FIG`，源图高就变、398 px
+#      不再是 Venn 顶边 → 故下面加了**高度自检**，不匹配时回退为「不裁」并告警，
+#      **绝不静默裁错位置**。
+IF_CROP_TOP_PX = 398          # 源图 300 dpi 下的裁切线（Venn 顶边 407 px 之上）
+IF_SRC_H_PX    = 2220         # 源图高（= H_FIG 7.4 in × 300 dpi），用于自检
+
+
+def panel_N_identfilter(ax, D: Data):
+    """N 鉴定 × 过滤一体式堆叠 UpSet（贴 `_norm` 变体，贴前裁掉顶部标题块）。"""
+    p = _find_asset("Fig_GojiVirome_IdentFilterStackedAll_norm.png", D)
+    if p is None:
+        return _empty(ax, "panel N: ident-filter asset missing")
+    try:
+        from PIL import Image
+        img = Image.open(p)
+        if img.height == IF_SRC_H_PX:
+            img = img.crop((0, IF_CROP_TOP_PX, img.width, img.height))
+        else:
+            # ⚠ 源图高变了 → 裁切线不再可信；宁可不裁（顶部多一块标题），
+            #   也不裁错位置（会切掉 Venn 顶部或留半行标题）。
+            print(f"[warn] panel N: \u2467 \u6e90\u56fe\u9ad8 {img.height} != "
+                  f"{IF_SRC_H_PX} px \u2192 \u8df3\u8fc7\u6807\u9898\u88c1\u5207"
+                  f"\uff08\u8bf7\u540c\u6b65 IF_CROP_TOP_PX / IF_SRC_H_PX\uff09")
+        ax.imshow(np.asarray(img), aspect="auto")
+        ax.axis("off")
+        ax.set_title("Identification \u00d7 filtering of virome candidates",
+                     fontsize=7.2, fontweight="bold", loc="left")
+        ax.text(0.0, -0.030,
+                "7 identification tracks (6 viral tools + a separate viroid track); "
+                "left panel normalised to 100 % per track; top 16 intersections shown",
+                transform=ax.transAxes, fontsize=5.0, color="#555555",
+                ha="left", va="top")
+        D.manifest["N"] = {
+            "source": "reports/virome_analysis_pipeline/identfilter_data/ident_filter_upset_signature.tsv "
+                      "(via fig_ident_filter_stacked_all.R --set-size fill)",
+            "render": f"pre-rendered PNG: {p.name} (R/ComplexUpset, single "
+                      f"implementation); top title block cropped at y={IF_CROP_TOP_PX} px",
+            "scope": "union 556,923 sequences; CDD 473,487; UniProt 94,818 = 17.03 %; "
+                     "top 16 of 64 intersections (99.39 % of sequences)",
+            "note": "Both bar panels stacked by filter outcome (Retained / Removed by "
+                    "UniProt / Removed by CDD / Viroid track). \u26a0 Normalised set-size "
+                    "panel chosen because the 7 tracks span 750\u00d7 (452,885 vs 604). "
+                    "\u26a0 separate unit pool from panel A (445 calls) and D (61 units).",
+        }
+    except Exception as e:
+        traceback.print_exc()
+        _empty(ax, f"panel N failed: {type(e).__name__}")
+
+
+# ══════════════════════════════════════════════════════════════════════
+# 面板 O / P：宿主预测（2026-10-14 v22 从独立图整合进主图，用户「放进主图」）
+# ══════════════════════════════════════════════════════════════════════
+#   来源图（R，`reports/virome_analysis_pipeline/`，均**只贴图、不重画** → 口径零漂移）：
+#     O = `fig_host_prediction_a_panel.R` → `Fig_GojiVirome_HostPrediction_APanel.png`
+#         （`host_distribution.tsv` 柱状图，9 个宿主类；与 `fig_host_prediction.R`
+#          面板 a 同一 ggplot 代码，OKABE_ITO 前 9 色）
+#     P = `fig_host_prediction_b_panel.R` → `Fig_GojiVirome_HostPrediction_BPanel.png`
+#         （耗时 + 四预测器 Venn + UpSet 三件套；与全图面板 b 同口径）
+#   ⚠⚠ 嵌入前**裁掉源图标题块**（同 N 的纪律）：主图自带面板标题 + 题注，
+#     源图标题（title + subtitle 两行）留在图上会重复。裁切线按成品图像素实测：
+#       APanel：title 26–70 / subtitle 95–120 / 内容 293 起（y 轴顶 8000）→ 裁 **283**
+#       BPanel：title 26–70 / subtitle 95–120 / 内容 195 起（Venn 图上缘）→ 裁 **185**
+#   ⚠⚠ 裁切线与源图画布高（`W_IN 9.32 × H_IN 6.0` in → **1800 px**）**强耦合**：
+#     R 脚本若改 `H_IN`，源图高就变、裁切线不再可信 → 下面做**高度自检**，
+#     不匹配时回退「不裁」并告警（宁多一块标题，绝不裁错位置）。
+#   ⚠⚠⚠ **必须 `img.convert("RGB")` 再 `np.asarray`**（2026-10-14 v22 实测踩坑）：
+#     R 侧 `ggsave` / `grDevices::png`（Windows GDI+ 设备）会写出**调色板 PNG
+#     （PIL mode='P'）**；此时 `np.asarray(img)` 返回 **(H,W) 索引** 而非 (H,W,3)，
+#     `imshow` 把它当**标量场**套上当前 `image.cmap`（本项目 = viridis）→
+#     白底变**亮黄**、柱色全错，**零报错**。实测：APanel = mode 'P'（中招）、
+#     BPanel / Family = mode 'RGB'（正常）→ 故三处**一律 convert("RGB")** 兜底
+#     （对 RGB 输入是 no-op，对 P 输入是修复）。
+HP_A_CROP_TOP_PX = 283        # APanel：内容 293 px 之上（留 10 px 净空）
+HP_B_CROP_TOP_PX = 185        # BPanel：内容 195 px 之上（留 10 px 净空）
+HP_SRC_H_PX = 1800            # 两源图画布高 = H_IN 6.0 in × 300 dpi
+
+
+def panel_O_hostclass(ax, D: Data):
+    """O 宿主分类分布（ensemble host call 柱状图，贴 APanel，裁顶部标题块）。"""
+    p = _find_asset("Fig_GojiVirome_HostPrediction_APanel.png", D)
+    if p is None:
+        return _empty(ax, "panel O: host-classification asset missing")
+    try:
+        from PIL import Image
+        img = Image.open(p)
+        if img.height == HP_SRC_H_PX:
+            img = img.crop((0, HP_A_CROP_TOP_PX, img.width, img.height))
+        else:
+            print(f"[warn] panel O: \u6e90\u56fe\u9ad8 {img.height} != "
+                  f"{HP_SRC_H_PX} px \u2192 \u8df3\u8fc7\u6807\u9898\u88c1\u5207"
+                  f"\uff08\u8bf7\u540c\u6b65 HP_A_CROP_TOP_PX / HP_SRC_H_PX\uff09")
+        ax.imshow(np.asarray(img.convert("RGB")), aspect="auto")
+        ax.axis("off")
+        ax.set_title("Host prediction distribution (ensemble host call)",
+                     fontsize=7.2, fontweight="bold", loc="left")
+        ax.text(0.0, -0.030,
+                "Ensemble host call per vOTU (n = 20,892; four predictors); "
+                "colour = predicted host class; Protist 7,595 / Animal 6,204 "
+                "dominate, Plant = 1,063 (== report denominator)",
+                transform=ax.transAxes, fontsize=5.0, color="#555555",
+                ha="left", va="top")
+        D.manifest["O"] = {
+            "source": "upset_data/host_distribution.tsv "
+                      "(via fig_host_prediction_a_panel.R; same ggplot as "
+                      "fig_host_prediction.R panel a)",
+            "render": f"pre-rendered PNG: {p.name} (R/ggplot2, single "
+                      f"implementation); top title block cropped at "
+                      f"y={HP_A_CROP_TOP_PX} px",
+            "scope": "20,892 vOTUs; 9 host classes: Protist 7,595 / Animal "
+                     "6,204 / Bacteria 1,950 / Mammalia 1,490 / Algae 1,172 / "
+                     "Plant 1,063 / Fungi 920 / Unknown 482 / Archaea 16",
+            "note": "\u26a0 Ensemble call per vOTU (multi-predictor vote), NOT a "
+                    "per-run count. Plant 1,063 == discovery report denominator; "
+                    "same unit pool as panels O/P host prediction, but a "
+                    "separate pool from A (445 calls), D (61 units) and N.",
+        }
+    except Exception as e:
+        traceback.print_exc()
+        _empty(ax, f"panel O failed: {type(e).__name__}")
+
+
+def panel_P_hostpred(ax, D: Data):
+    """P 宿主预测器证据（BPanel：耗时 + Venn + UpSet，裁顶部标题块）。"""
+    p = _find_asset("Fig_GojiVirome_HostPrediction_BPanel.png", D)
+    if p is None:
+        return _empty(ax, "panel P: host-predictor evidence asset missing")
+    try:
+        from PIL import Image
+        img = Image.open(p)
+        if img.height == HP_SRC_H_PX:
+            img = img.crop((0, HP_B_CROP_TOP_PX, img.width, img.height))
+        else:
+            print(f"[warn] panel P: \u6e90\u56fe\u9ad8 {img.height} != "
+                  f"{HP_SRC_H_PX} px \u2192 \u8df3\u8fc7\u6807\u9898\u88c1\u5207"
+                  f"\uff08\u8bf7\u540c\u6b65 HP_B_CROP_TOP_PX / HP_SRC_H_PX\uff09")
+        ax.imshow(np.asarray(img.convert("RGB")), aspect="auto")
+        ax.axis("off")
+        ax.set_title("Host-predictor evidence",
+                     fontsize=7.2, fontweight="bold", loc="left")
+        ax.text(0.0, -0.030,
+                "Wall time (left inset), Venn overlap (top-right inset), and "
+                "UpSet intersections - n = 20,443 vOTUs with >= 1 predictor "
+                "hit; Rule = taxonomy-class fallback",
+                transform=ax.transAxes, fontsize=5.0, color="#555555",
+                ha="left", va="top")
+        D.manifest["P"] = {
+            "source": "upset_data/host_timing.tsv + host_predictor_matrix.tsv "
+                      "(via fig_host_prediction_b_panel.R)",
+            "render": f"pre-rendered PNG: {p.name} (R/ComplexUpset + two "
+                      f"pre-rendered insets); top title block cropped at "
+                      f"y={HP_B_CROP_TOP_PX} px",
+            "scope": "20,443 of 20,892 vOTUs with >= 1 predictor hit; four "
+                     "predictors ICTV / RNAVirHost / PhaBOX2 (Cherry) / Rule; "
+                     "wall time from a single full-set run (2026-08-12)",
+            "note": "\u26a0 Rule = taxonomy-class fallback (not an independent "
+                    "sequence hit). Universe of the UpSet = full table 20,892; "
+                    "四路全空者不入图.",
+        }
+    except Exception as e:
+        traceback.print_exc()
+        _empty(ax, f"panel P failed: {type(e).__name__}")
+
+
+# ══════════════════════════════════════════════════════════════════════
+# 面板 Q：科级分类一致性 UpSet（2026-10-14 v22 从独立图整合进主图）
+# ══════════════════════════════════════════════════════════════════════
+#   来源图 = `Fig_GojiVirome_UpsetClassification_Family.png`（R / ComplexUpset，
+#   `fig_upset_classification.R --rank family` —— ⑨ 的科级变体，与已交付的
+#   Species 版**同脚本同口径、只换阶元**；内嵌耗时条 inset 为左上）。
+#   ⚠⚠ 同样「只贴图、不重画」+ **裁标题块**（同 O/P 纪律，裁切线成品图上实测）：
+#     title 26–66 / subtitle 91–118 / 内容 222 起（左上耗时条标题）→ 裁 **212**；
+#     画布 2796×1800（`W_IN 9.32 × H_IN 6.0`），与 BPanel 同 → 高度自检同一常量。
+UF_CROP_TOP_PX = 212           # Family：内容 222 px 之上（留 10 px 净空）
+
+
+def panel_Q_upsetfamily(ax, D: Data):
+    """Q 科级分类一致性 UpSet（贴 Family 变体，裁顶部标题块）。"""
+    p = _find_asset("Fig_GojiVirome_UpsetClassification_Family.png", D)
+    if p is None:
+        return _empty(ax, "panel Q: family-upset asset missing")
+    try:
+        from PIL import Image
+        img = Image.open(p)
+        if img.height == HP_SRC_H_PX:
+            img = img.crop((0, UF_CROP_TOP_PX, img.width, img.height))
+        else:
+            print(f"[warn] panel Q: \u6e90\u56fe\u9ad8 {img.height} != "
+                  f"{HP_SRC_H_PX} px \u2192 \u8df3\u8fc7\u6807\u9898\u88c1\u5207"
+                  f"\uff08\u8bf7\u540c\u6b65 UF_CROP_TOP_PX / HP_SRC_H_PX\uff09")
+        ax.imshow(np.asarray(img.convert("RGB")), aspect="auto")
+        ax.axis("off")
+        ax.set_title("Family-level classification agreement across tools",
+                     fontsize=7.2, fontweight="bold", loc="left")
+        ax.text(0.0, -0.030,
+                "Lycium barbarum vOTUs with a Family-level consensus "
+                "(n = 17,512) - showing top 18 of 77 tool-agreement patterns; "
+                "colour = number of agreeing tools",
+                transform=ax.transAxes, fontsize=5.0, color="#555555",
+                ha="left", va="top")
+        D.manifest["Q"] = {
+            "source": "upset_data/classification_family.tsv "
+                      "(via fig_upset_classification.R --rank family)",
+            "render": f"pre-rendered PNG: {p.name} (R/ComplexUpset, single "
+                      f"implementation); top title block cropped at "
+                      f"y={UF_CROP_TOP_PX} px",
+            "scope": "17,512 vOTUs with a Family-level consensus; 7 tools; "
+                     "top 18 of 77 tool-agreement patterns",
+            "note": "\u26a0 Family-rank variant of the delivered Species upset "
+                    "(same script, --rank family only). Separate unit pool "
+                    "(consensus vOTUs) from A / D / N / O-P.",
+        }
+    except Exception as e:
+        traceback.print_exc()
+        _empty(ax, f"panel Q failed: {type(e).__name__}")
+
+
+# ══════════════════════════════════════════════════════════════════════
+# 面板 R：Alphaflexiviridae 物种比对（2026-10-15 v24 从 14_ 归档整合进主图）
+# ══════════════════════════════════════════════════════════════════════
+#   用户指令：「Alphaflexiviridae科的物种比对 单独一张，合并到主图，其他作为附图」
+#
+#   来源 = **discovery 管线 ③ 的 09b 阶段产物**
+#     `<...>/_phylo/acvirus_trees/Alphaflexiviridae/Tree_Synteny_Composite.png`
+#     （由 `virome_discovery_pipeline/utils/acvirus_tree_pro.py` 直出；
+#      归档副本在 `MMPV主图档案库_20261014/14_MLtree_科级树与共线性/单科面板/管线原图/`）
+#
+#   ⚠⚠ **口径（项目硬规则，2026-10-12 用户已定）= 嵌入管线原图，不重绘**：
+#     「整页独立图只能自绘」**已被否决** → 原图直接嵌入，**不许重绘 / 降采样**。
+#     故本面板只做 `imread → imshow`，与 O/P/Q 的贴图纪律同源。
+#
+#   ⚠ **不裁标题块**（与 O/P/Q 的差异，逐条实测后定）：
+#     O/P/Q 的源图是 R/ggplot 出的**整图**，顶部 title+subtitle 与主图
+#     `ax.set_title()` 重复 → 必须裁；本图顶部只有两个**子面板**标题
+#     （「Maximum-Likelihood Phylogeny」/「Comparative Synteny & Homology」），
+#     是图内元素、裁掉就没法读 → **保留**。
+#     ⚠ 实测源图顶部空白仅 ~55 px（内容自 y≈73 起），无可裁余量。
+#
+#   ⚠ 资产比 = 4477 / 3534 = 1.266844（与 `_V23_RATIO["R"]` **必须同源**，
+#     否则 `imshow(aspect="auto")` 静默形变 —— 同 v21.4 的 D 面板 13.2 % 压扁事故）。
+ALPHA_SYN_SRC_PX = (4477, 3534)      # 管线原图实测（宽 × 高）
+ALPHA_SYN_RATIO = ALPHA_SYN_SRC_PX[0] / ALPHA_SYN_SRC_PX[1]
+
+
+def panel_R_alphasynteny(ax, D: Data):
+    """R Alphaflexiviridae 物种比对（ML 树 + 共线性两联，贴管线原图，不重绘不裁切）。"""
+    p = _find_asset("Fig_GojiVirome_Alphaflexiviridae_Synteny.png", D)
+    if p is None:
+        return _empty(ax, "panel R: Alphaflexiviridae synteny asset missing")
+    try:
+        from PIL import Image
+        img = Image.open(p)
+        if (img.width, img.height) != ALPHA_SYN_SRC_PX:
+            print(f"[warn] panel R: \u6e90\u56fe\u5c3a\u5bf8 "
+                  f"{img.width}\u00d7{img.height} != "
+                  f"{ALPHA_SYN_SRC_PX[0]}\u00d7{ALPHA_SYN_SRC_PX[1]} px "
+                  f"\u2192 \u8d44\u4ea7\u6bd4\u53ef\u80fd\u4e0e "
+                  f"_V23_RATIO['R'] \u4e0d\u4e00\u81f4"
+                  f"\uff08\u4f1a\u9759\u9ed8\u5f62\u53d8\uff09")
+        ax.imshow(np.asarray(img.convert("RGB")), aspect="auto")
+        ax.axis("off")
+        ax.set_title("Alphaflexiviridae: ML phylogeny and species-level "
+                     "synteny comparison",
+                     fontsize=7.2, fontweight="bold", loc="left")
+        ax.text(0.0, -0.030,
+                "Lycium barbarum alphaflexiviruses (n = 30 leaves, 6 own "
+                "contigs) - left: maximum-likelihood phylogeny (IQ-TREE), "
+                "genus-coloured; right: pairwise protein-identity "
+                "co-linearity across genome coordinates; own contigs in orange",
+                transform=ax.transAxes, fontsize=5.0, color="#555555",
+                ha="left", va="top")
+        D.manifest["R"] = {
+            "source": "09b_Analysis_Verify/acvirus_trees/Alphaflexiviridae/"
+                      "Tree_Synteny_Composite.png (produced by "
+                      "virome_discovery_pipeline/utils/acvirus_tree_pro.py; "
+                      "archived at 14_MLtree_科级树与共线性/单科面板/管线原图/)",
+            "render": f"pre-rendered PNG: {p.name} (pipeline original, "
+                      f"embedded as-is - NOT re-drawn, NOT cropped, NOT "
+                      f"down-sampled); src {ALPHA_SYN_SRC_PX[0]}x"
+                      f"{ALPHA_SYN_SRC_PX[1]} px, ratio "
+                      f"{ALPHA_SYN_RATIO:.6f}",
+            "scope": "Alphaflexiviridae: 30 leaves (IQ-TREE ML), 6 own "
+                     "contigs (CRR*/SRR*_clean_NODE_*), phylum "
+                     "Kitrinoviricota; genera Sample_Contig / Potexvirus / "
+                     "Lolavirus / Sclerodarnavirus / Platypuvirus / "
+                     "Botrexvirus / Allexivirus",
+            "note": "\u26a0 This is the ONLY per-family phylosynteny panel "
+                    "promoted into the main figure; the remaining 20 families "
+                    "are delivered as supplementary figure "
+                    "`Fig_GojiVirome_PhyloSynteny_Supp`. Separate unit pool "
+                    "(per-family reference-anchored trees) from A / D / N / "
+                    "O-P / Q.",
+        }
+    except Exception as e:
+        traceback.print_exc()
+        _empty(ax, f"panel R failed: {type(e).__name__}")
+
+
+# ══════════════════════════════════════════════════════════════════
+# S / T  Potexvirus：SDT 成对同一性矩阵 + 代表序列覆盖度（v25，2026-10-15）
+# ══════════════════════════════════════════════════════════════════
+#   用户指令：「Potexvirus SDT 和 序列的覆盖度图 呢 两个图继续补充到主图」
+#   口径（用户二次确认，二选一里选了「**只放 1 条代表**」）：
+#     覆盖度**只放 1 条** = `SRR8191317_NODE_2`
+#     （6 张 Potexvirus 覆盖度图里 mean depth 最高：9471 bp / mean 117,291x；
+#       其余 5 条：CRR1440123_NODE_3 4576x、SRR15037479_NODE_2 53x、
+#       SRR24100148_NODE_1 83x、SRR24100148_NODE_2 141x、SRR8191317_NODE_3 108646x）。
+#   ⚠ 贴图纪律同 O/P/Q/R：管线原图**直接嵌入**，不重绘、不降采样、不改配色。
+#
+#   ⚠⚠ **裁标题块**（与 O/P/Q **同档**、与 R **相反**）——逐图量像素后定：
+#     · SDT 源图 2327×2425 px，顶部**两行**粗体标题（墨迹带 y 31–97 / 107–173）：
+#         「Genus Potexvirus: 8 user contigs + 19 db refs (09b ACVirus)」
+#         「NT Identity (%)」
+#       两行都与主图 `ax.set_title()` 语义重复（第二行还与右侧色标的
+#       「Pairwise Identity (%)」重复）→ **一并裁掉**。下一处墨迹在 y = 242
+#       （「NODE_3」y 轴标签）→ 取 **232**（留 10 px 净空，同 O/P/Q 惯例）。
+#     · 覆盖度源图 2379×617 px，顶部**单行**标题（墨迹带 y 20–44）= 样本元数据
+#       「barbarum | SRR8191317_NODE_2 | Alphaflexiviridae/Potexvirus |
+#        9471bp | mean 117291x | Novel(dual)」
+#       → **裁掉**（样本号 / 长度 / 均值改写进主图标题与题注，避免两处副本漂移）。
+#       下一处墨迹在 y = 55（y 轴脊线顶）→ 取 **45**（留 10 px 净空）。
+#
+#   ⚠⚠⚠ 裁后资产比 = `_V23_RATIO["S"/"T"]` **必须同源**（否则
+#     `imshow(aspect="auto")` **静默形变** —— 同 v21.4 的 D 面板 13.2 % 压扁事故）：
+#       S = 2327 / (2425 − 232) = 2327 / 2193 = 1.061104
+#       T = 2379 / (617  −  45) = 2379 /  572 = 4.159091
+POTEX_SDT_SRC_PX = (2327, 2425)
+POTEX_SDT_CROP_TOP_PX = 232
+POTEX_SDT_RATIO = POTEX_SDT_SRC_PX[0] / (POTEX_SDT_SRC_PX[1] - POTEX_SDT_CROP_TOP_PX)
+
+POTEX_COV_SRC_PX = (2379, 617)
+POTEX_COV_CROP_TOP_PX = 45
+POTEX_COV_RATIO = POTEX_COV_SRC_PX[0] / (POTEX_COV_SRC_PX[1] - POTEX_COV_CROP_TOP_PX)
+
+
+def panel_S_potex_sdt(ax, D: Data):
+    """S Potexvirus SDT 成对同一性矩阵（NT），贴 09b 管线原图，**裁掉源图标题块**。"""
+    p = _find_asset("Fig_GojiVirome_Potexvirus_SDT.png", D)
+    if p is None:
+        return _empty(ax, "panel S: Potexvirus SDT asset missing")
+    try:
+        from PIL import Image
+        img = Image.open(p)
+        if (img.width, img.height) != POTEX_SDT_SRC_PX:
+            print(f"[warn] panel S: 源图尺寸 {img.width}×{img.height} != "
+                  f"{POTEX_SDT_SRC_PX[0]}×{POTEX_SDT_SRC_PX[1]} px "
+                  f"→ 资产比可能与 _V23_RATIO['S'] 不一致（会静默形变）")
+        img = img.crop((0, POTEX_SDT_CROP_TOP_PX, img.width, img.height))
+        ax.imshow(np.asarray(img.convert("RGB")), aspect="auto")
+        ax.axis("off")
+        ax.set_title("Potexvirus: pairwise identity (SDT, NT)",
+                     fontsize=7.2, fontweight="bold", loc="left")
+        ax.text(0.0, -0.030,
+                "27 taxa (8 own contigs + 19 refs); identity 30-100%.",
+                transform=ax.transAxes, fontsize=5.0, color="#555555",
+                ha="left", va="top")
+        D.manifest["S"] = {
+            "source": "09b_Analysis_Verify/SDT_matrix/Potexvirus/"
+                      "SDT_Potexvirus_heatmap.png (produced by "
+                      "virome_discovery_pipeline; archived at "
+                      "14_MLtree_科级树与共线性/单科面板/)",
+            "render": f"pre-rendered PNG: {p.name} (pipeline original, "
+                      f"embedded as-is - NOT re-drawn, NOT down-sampled); "
+                      f"top title block cropped at y={POTEX_SDT_CROP_TOP_PX} px "
+                      f"(src {POTEX_SDT_SRC_PX[0]}x{POTEX_SDT_SRC_PX[1]} → "
+                      f"{POTEX_SDT_SRC_PX[0]}x"
+                      f"{POTEX_SDT_SRC_PX[1] - POTEX_SDT_CROP_TOP_PX} px, "
+                      f"ratio {POTEX_SDT_RATIO:.6f})",
+            "scope": "Potexvirus: lower-triangular pairwise NT identity among "
+                     "27 taxa = 8 own contigs + 19 reference sequences; "
+                     "colour scale 30-100% (grey = <44%, yellow = 100%)",
+            "note": "⚠ Separate unit pool (Potexvirus SDT, 09b) from R "
+                    "(Alphaflexiviridae phylosynteny) - same family, different "
+                    "analysis and different taxon set; do not read as one.",
+        }
+    except Exception as e:
+        traceback.print_exc()
+        _empty(ax, f"panel S failed: {type(e).__name__}")
+
+
+def panel_T_potex_coverage(ax, D: Data):
+    """T Potexvirus 代表序列覆盖度（reads depth vs genome position），裁掉源图标题块。
+
+    ⚠ 只放 **1 条代表**（用户口径）：`SRR8191317_NODE_2`（9471 bp，mean 117,291x），
+      即 6 条 Potexvirus 自有 contig 中平均深度最高者。
+    """
+    p = _find_asset("Fig_GojiVirome_Potexvirus_Coverage.png", D)
+    if p is None:
+        return _empty(ax, "panel T: Potexvirus coverage asset missing")
+    try:
+        from PIL import Image
+        img = Image.open(p)
+        if (img.width, img.height) != POTEX_COV_SRC_PX:
+            print(f"[warn] panel T: 源图尺寸 {img.width}×{img.height} != "
+                  f"{POTEX_COV_SRC_PX[0]}×{POTEX_COV_SRC_PX[1]} px "
+                  f"→ 资产比可能与 _V23_RATIO['T'] 不一致（会静默形变）")
+        img = img.crop((0, POTEX_COV_CROP_TOP_PX, img.width, img.height))
+        ax.imshow(np.asarray(img.convert("RGB")), aspect="auto")
+        ax.axis("off")
+        ax.set_title("Potexvirus contig coverage: SRR8191317_NODE_2 (9,471 bp)",
+                     fontsize=7.2, fontweight="bold", loc="left")
+        ax.text(0.0, -0.030,
+                "Representative of the 6 own Potexvirus contigs (highest mean "
+                "depth, 117,291x). Reads depth per genome position.",
+                transform=ax.transAxes, fontsize=5.0, color="#555555",
+                ha="left", va="top")
+        D.manifest["T"] = {
+            "source": "09b_Analysis_Verify/coverage_curves/"
+                      "barbarum__SRR8191317_NODE_2.png (produced by "
+                      "virome_discovery_pipeline; archived at "
+                      "14_MLtree_科级树与共线性/单科面板/)",
+            "render": f"pre-rendered PNG: {p.name} (pipeline original, "
+                      f"embedded as-is - NOT re-drawn, NOT down-sampled); "
+                      f"top title block cropped at y={POTEX_COV_CROP_TOP_PX} px "
+                      f"(src {POTEX_COV_SRC_PX[0]}x{POTEX_COV_SRC_PX[1]} → "
+                      f"{POTEX_COV_SRC_PX[0]}x"
+                      f"{POTEX_COV_SRC_PX[1] - POTEX_COV_CROP_TOP_PX} px, "
+                      f"ratio {POTEX_COV_RATIO:.6f})",
+            "scope": "SRR8191317_NODE_2 = 9471 bp, Alphaflexiviridae/"
+                     "Potexvirus, Novel(dual), mean depth 117,291x; the other "
+                     "5 own contigs (CRR1440123_NODE_3 4,576x; "
+                     "SRR15037479_NODE_2 53x; SRR24100148_NODE_1 83x; "
+                     "SRR24100148_NODE_2 141x; SRR8191317_NODE_3 108,646x) "
+                     "are NOT shown (user scope: 1 representative only)",
+            "note": "⚠ Representative only, NOT an average across contigs - "
+                    "mean depth differs by >2,000x between the 6 own contigs, "
+                    "so this panel is not representative of a typical "
+                    "Potexvirus contig in the dataset.",
+        }
+    except Exception as e:
+        traceback.print_exc()
+        _empty(ax, f"panel T failed: {type(e).__name__}")
+
+
+# ══════════════════════════════════════════════════════════════════
+# U  Potexvirus：SDT 成对同一性**分布折线图**（v26，2026-10-15）
+# ══════════════════════════════════════════════════════════════════
+#   用户指令：「SDT的折线图图呢？ 这样E和F才能平分一行，不显得F过大」
+#     → 底行由 2 图（S | T）改为 **3 图（S | U | T）**，把 SDT 折线图插进来做重新平衡。
+#   ⚠ 用户二次确认（三选一）：选「三图一行」——
+#     行高由 Σ资产比反解 → 覆盖度 T 由 14.18 in 降到 **10.09 in**（不再一家独大），
+#     代价 = S 由 3.62 in 降到 **2.58 in**（用户已知悉并选定）。
+#
+#   ⚠⚠ **裁标题块**（与 O/P/Q/S/T **同档**）——逐图量像素后定：
+#     源图 3025×1711 px，顶部**单行**粗体标题
+#       「Distribution - Genus Potexvirus: 8 user contigs + 19 db refs (09b ACVirus) - NT」
+#     墨迹带 y 30–96；**下一处墨迹 = 坐标框顶脊线 y = 143**（其下 143–145 为
+#     1865 px 宽横线 = axes 顶脊）→ 取 **133**（留 10 px 净空，同 O/P/Q/S/T 惯例）。
+#     该标题与主图 `ax.set_title()` 语义重复（物种集 / 分析名 / NT 全在主图标题与题注里）
+#     → **裁掉**，避免两处副本漂移。
+#
+#   ⚠⚠⚠ 裁后资产比 = `_V23_RATIO["U"]` **必须同源**（否则 `imshow(aspect="auto")`
+#     **静默形变** —— 同 v21.4 的 D 面板 13.2 % 压扁事故）：
+#       U = 3025 / (1711 − 133) = 3025 / 1578 = 1.916983
+POTEX_DIST_SRC_PX = (3025, 1711)
+POTEX_DIST_CROP_TOP_PX = 133
+POTEX_DIST_RATIO = POTEX_DIST_SRC_PX[0] / (POTEX_DIST_SRC_PX[1] - POTEX_DIST_CROP_TOP_PX)
+
+
+def panel_U_potex_dist(ax, D: Data):
+    """U Potexvirus SDT 成对同一性**分布**（NT，折线），贴 09b 管线原图，**裁掉源图标题块**。
+
+    ⚠ 与 S（SDT 热图）**同一次分析、同一 27 taxa 单位池**：S 是矩阵、U 是同一矩阵的
+      成对同一性**边际分布**（横轴 identity %、纵轴 proportion）。两者必须**并读**，
+      不得当作两次独立分析。
+    """
+    p = _find_asset("Fig_GojiVirome_Potexvirus_SDTdist.png", D)
+    if p is None:
+        return _empty(ax, "panel U: Potexvirus SDT distribution asset missing")
+    try:
+        from PIL import Image
+        img = Image.open(p)
+        if (img.width, img.height) != POTEX_DIST_SRC_PX:
+            print(f"[warn] panel U: 源图尺寸 {img.width}×{img.height} != "
+                  f"{POTEX_DIST_SRC_PX[0]}×{POTEX_DIST_SRC_PX[1]} px "
+                  f"→ 资产比可能与 _V23_RATIO['U'] 不一致（会静默形变）")
+        img = img.crop((0, POTEX_DIST_CROP_TOP_PX, img.width, img.height))
+        ax.imshow(np.asarray(img.convert("RGB")), aspect="auto")
+        ax.axis("off")
+        ax.set_title("Potexvirus: pairwise identity distribution (SDT, NT)",
+                     fontsize=7.2, fontweight="bold", loc="left")
+        ax.text(0.0, -0.030,
+                "Same 27-taxon pool as panel S; bimodal at ~41% and ~53% "
+                "identity, tail to 100%.",
+                transform=ax.transAxes, fontsize=5.0, color="#555555",
+                ha="left", va="top")
+        D.manifest["U"] = {
+            "source": "09b_Analysis_Verify/SDT_matrix/Potexvirus/"
+                      "SDT_Potexvirus_distribution.png (produced by "
+                      "virome_discovery_pipeline; archived at "
+                      "11_文章写作_主图库/服务器同步/服务器同步_20260928/"
+                      "goji-virome/01_data/SDT_matrix/barbarum__Potexvirus/)",
+            "render": f"pre-rendered PNG: {p.name} (pipeline original, "
+                      f"embedded as-is - NOT re-drawn, NOT down-sampled); "
+                      f"top title block cropped at y={POTEX_DIST_CROP_TOP_PX} px "
+                      f"(src {POTEX_DIST_SRC_PX[0]}x{POTEX_DIST_SRC_PX[1]} → "
+                      f"{POTEX_DIST_SRC_PX[0]}x"
+                      f"{POTEX_DIST_SRC_PX[1] - POTEX_DIST_CROP_TOP_PX} px, "
+                      f"ratio {POTEX_DIST_RATIO:.6f})",
+            "scope": "Potexvirus: marginal distribution of pairwise NT identity "
+                     "across the same 27 taxa as panel S (8 own contigs + 19 "
+                     "reference sequences); x = identity 38-100%, y = proportion "
+                     "of pairs; bimodal (~41% and ~53%) with a long tail",
+            "note": "⚠ S and U are the SAME analysis (one SDT matrix, one taxon "
+                    "pool) shown two ways - matrix vs marginal distribution; do "
+                    "NOT read as two independent analyses. Separate unit pool "
+                    "from R (Alphaflexiviridae phylosynteny).",
+        }
+    except Exception as e:
+        traceback.print_exc()
+        _empty(ax, f"panel U failed: {type(e).__name__}")
 
 
 def _panel_D_bars(ax, D: Data):
@@ -1904,6 +2458,37 @@ PANELS = [
     ("I", panel_I_pair),
     ("J", panel_J_scatter), ("K", panel_K_family), ("L", panel_L_domains),
     ("M", panel_M_targets),
+    # ⭐ 2026-10-14：⑧「鉴定 × 过滤」一体式堆叠 UpSet 从独立图整合进主图 → 新字母 **N**。
+    #   ⚠ 为什么是 N 而不是回收 B/C/E/F/G/H：那 6 个字母是**历史下线面板**的 ID，
+    #     文档里仍有「面板 F 曾整块空图」这类记录（硬规则 23：历史记录不因下线改写）
+    #     → 复用会让新旧语义在文档里撞车。N 是全新字母，零冲突。
+    ("N", panel_N_identfilter),
+    # ⭐ 2026-10-14 v22：宿主预测两图 + 科级 UpSet 从独立图整合进主图 → 新字母 **O / P / Q**。
+    #   O = 宿主分类分布（APanel，来自 fig_host_prediction 面板 a）
+    #   P = 宿主预测器证据（BPanel：耗时/Venn/UpSet）
+    #   Q = 科级分类一致性 UpSet（⑨ 的 Family 变体）
+    #   ⚠ 字母延续跳号传统（B/C/E/F/G/H 是历史下线 ID，不回收）→ O/P/Q 全新零冲突。
+    ("O", panel_O_hostclass),
+    ("P", panel_P_hostpred),
+    ("Q", panel_Q_upsetfamily),
+    # ⭐ 2026-10-15 v24：Alphaflexiviridae 物种比对（ML 树 + 共线性两联）从
+    #   主图档案库 14_MLtree_科级树与共线性/ 整合进主图 → 新字母 **R**。
+    #   ⚠ 用户指令：「Alphaflexiviridae科的物种比对 单独一张，合并到主图，其他作为附图」
+    #     → 填 v23 第 4 行**右下空位**（与 Q 并排）；其余 20 科走补充附图
+    #       `Fig_GojiVirome_PhyloSynteny_Supp`。
+    #   ⚠ 字母延续跳号传统（B/C/E/F/G/H 是历史下线 ID，不回收）→ R 全新零冲突。
+    ("R", panel_R_alphasynteny),
+    # ⭐ 2026-10-15 v25：Potexvirus 两图继续补充到主图 → 新字母 **S / T**。
+    #   ⚠ 用户指令：「Potexvirus SDT 和 序列的覆盖度图 呢 两个图继续补充到主图」
+    #     → 垫底新增第 5 行；覆盖度**只放 1 条代表**（SRR8191317_NODE_2）。
+    #   ⚠ 字母延续跳号传统（B/C/E/F/G/H 是历史下线 ID，不回收）→ S/T 全新零冲突。
+    ("S", panel_S_potex_sdt),
+    # ⭐ 2026-10-15 v26：SDT **分布折线图**补进底行 → 新字母 **U**。
+    #   ⚠ 用户指令：「SDT的折线图图呢？ 这样E和F才能平分一行，不显得F过大」
+    #     → 底行 S | T 中间插 U → **三图一行**（S | U | T），T 由 14.18 → 10.09 in。
+    #   ⚠ 字母延续跳号传统（B/C/E/F/G/H 是历史下线 ID，不回收）→ U 全新零冲突。
+    ("U", panel_U_potex_dist),
+    ("T", panel_T_potex_coverage),
 ]
 
 # 组合图布局（**v21, 3 面板 / 2 行 —— A 与 J 并排一行、D 独占一行**）。
@@ -1917,12 +2502,120 @@ PANELS = [
 #   ⚠ D 行权单独反解（历史判据 = L5 标签 ≥ 4.2 pt）；本轮 61 单位版本 L5 37 个节点。
 #   ⚠ **字母标识保持稳定（跳号 A/D/I/J/K/L/M）**：文档 §6.2c 对照表、manifest key、
 #     `WIDE` 集合、`panel_letter` 分支全部锚定这些字母 → 删减/重排**不重编字母**。
-_GRID_COLS = 20                     # 上排 11(A) + 9(J)；下排 D 跨满 20
-LAYOUT = [
-    ("A", 0, 0, 1, 11),
-    ("J", 0, 11, 1, 9),
-    ("D", 1, 0, 1, _GRID_COLS),
+_GRID_COLS = 20                     # 保留（build_panels / 历史引用），组合图已改显式定位
+# ⭐⭐⭐ v23（2026-10-15，用户「Fig_GojiVirome_Discovery.png 2*3 还是3*3」→ 选定 **2 列 × 4 行**）：
+#   ⚠ v24 加 R（行3 变双面板）、v25 加 S/T（新增行4）、v26 加 U（行4 变三面板）
+#     → 现为 **2 列 × 5 行 / 11 面板**。
+#   **行数 6 → 4**、**列数 1 → 2**。逐行（⭐ = v26 现行）：
+#     行0 = **A | J**（漏斗 | 散点）
+#     行1 = **O | D**（宿主分类 | 桑基）  ← ⭐ v26 由 `D | O` 换序，见 `_V23_ROWS` 注释
+#     行2 = **P | N**（宿主预测证据 | 鉴定×过滤）
+#     行3 = **Q | R**（科级 UpSet | Alphaflexiviridae 树+共线性）
+#     行4 = **S | U | T**（SDT 热图 | SDT 分布折线 | 覆盖度）  ← ⭐ v26 三面板行
+#   ⚠⚠⚠ **为什么必须锁「面板宽 ≈ 8.9 in」**：面板全是**横宽型**（比 1.06–4.16），
+#     加列 = 面板变窄 = **字号等比缩小**。实测口径（见 README v23 节）：
+#       · 画布宽固定 8.9 in（期刊双栏）→ 2 列时面板仅 3.85 in → **字号 43 %**，
+#         D 桑基标签 4.56 → **1.97 pt（不可读）** ✗
+#       · **面板宽锁 ~8.9 in** → 字号 **100 %**，代价是画布变宽到 ~20 in ✓（本轮采纳）
+#   ⚠⚠⚠ **不能用 GridSpec 等宽列**（首版踩坑，实测形变）：等宽 8.954 in 下
+#     J **+35.2 %**、D **+33.5 %**、P +15.5 % —— 因两面板资产比不同（如 J 1.55 vs A 2.24），
+#     等宽必然让其中一个被拉伸。→ 改为**按资产比分配列宽**（`_V23_ROWS` 的 ratio 字段），
+#     行高 = 该行可用宽 / Σratio，同行为等高 → **各行内零形变 + 零留白**。
+#   ⚠ 画布 ~20.0 × ~26.8 in（比 0.75，接近 A4 竖版）；v22 为 10.0 × 44.0（比 0.23，1:4.4 长条）。
+#   ⭐ v24 → 20.0 × 27.23 in；⭐ v25 → 20.0 × 32.04 in；
+#     ⭐ **v26 → 20.0 × 31.05 in**（底行由 2 图变 3 图 → 行高 3.4098 → 2.4267 in）。
+#   ⚠ **D 面板变窄到 7.59 in** → 桑基标签 4.56 → **3.89 pt**（实测仍可读，未破 2 pt 下限）。
+_V23_USABLE_W = 18.28        # 可用宽（in）= 2×8.90 + 0.48 列隙
+_V23_COL_GAP = 0.48          # 列隙（in）
+_V23_ROW_GAP = 1.40          # 行隙（in）—— 容 x 轴标签 + 下排面板标题
+_V23_MARGIN_X = 0.86         # 左右边距（in）
+_V23_TOP = 1.15              # 顶部净空（in）—— 2 行 suptitle + 上排面板标题
+_V23_BOTTOM = 0.72           # 底部净空（in）
+# 每行 = [(字母, 资产比), ...]；资产比取自实测（裁标题块后的源图 / 原生面板）
+_V23_RATIO = {"A": 2.2350, "J": 1.5525, "D": 1.30979, "O": 1.84324,
+              "P": 1.73127, "N": 1.87706, "Q": 1.76071,
+              # ⭐ v24：Alphaflexiviridae 管线原图 Tree_Synteny_Composite.png
+              #   实测 4477 × 3534 → 比 = 1.266844（**不裁标题块**：该图顶部
+              #   只有两个子面板标题「Maximum-Likelihood Phylogeny」/
+              #   「Comparative Synteny & Homology」，属图内元素、与主图不重复，
+              #   故不适用 O/P/Q 的「裁掉源图标题块」纪律）。
+              "R": 4477 / 3534,
+              # ⭐⭐ v25：Potexvirus SDT（S）/ 覆盖度（T）。
+              #   ⚠⚠ 直接引用**裁后**资产比常量（不写第二份数字）——
+              #     `_V23_RATIO` 与 `panel_S/T` 的 crop 参数**同源**，
+              #     从根上杜绝「改了裁切量忘了改 ratio」的静默形变。
+              "S": POTEX_SDT_RATIO,
+              "T": POTEX_COV_RATIO,
+              # ⭐⭐ v26：Potexvirus SDT **分布折线图**（U）。
+              #   ⚠ 同样直接引用**裁后**资产比常量（不写第二份数字）。
+              "U": POTEX_DIST_RATIO}
+_V23_ROWS = [
+    [("A", _V23_RATIO["A"]), ("J", _V23_RATIO["J"])],
+    # ⭐⭐ v26（2026-10-15）：**行 1 左右换序 → `O | D`**。
+    #   用户指令：「另外D 和A 长度对齐，J和O对齐」。
+    #   ⚠⚠ 为什么是「换序」而不是「改尺寸」：行 0 的自然列边界在 59.0 %
+    #     （A 2.2350 : J 1.5525），行 1 若保持 `D | O` 则在 **41.5 %**
+    #     （D 1.30979 : O 1.84324）—— 两行差 17.5 个百分点，图面成「阶梯」。
+    #     要让两行共用列边界，只有三条路（已逐条量化给用户，用户选定第 1 条）：
+    #       ① **换序 `O | D`**：行 1 边界 = 1.84324/(1.84324+1.30979) = **58.46 %**
+    #          → 与行 0 的 59.01 % 只差 **0.55 %（0.10 in）**；
+    #          **零留白、零形变、四个面板尺寸全不变**（用户选定）。
+    #       ② 行 0 不动、D 加宽到 10.50 / O 收窄到 7.30 → 行 1 出现 **4.06 in 整块留白**。
+    #       ③ 50/50 等宽两列（各 8.90 in）→ 四个面板全部改尺寸 + 每行 ~1.9 in 留白。
+    #   ⚠ 副作用（用户已知悉并选定）：**D 移到右列、O 移到左列** ——
+    #     即由「D 对 A、O 对 J」变为「**D 对 J、O 对 A**」，但两列宽度对齐。
+    #   ⚠ 行高与各面板宽 **完全不变**（`_v23_geometry()` 只依赖 Σ资产比，与顺序无关）
+    #     → 行 1 仍为 h=5.6454 in、O=10.4062 in、D=7.3938 in。
+    [("O", _V23_RATIO["O"]), ("D", _V23_RATIO["D"])],
+    [("P", _V23_RATIO["P"]), ("N", _V23_RATIO["N"])],
+    # ⭐⭐ v24（2026-10-15）：v23 的第 4 行是**单面板**（Q 占左半栏、右下留空）。
+    #   本轮把 Alphaflexiviridae 物种比对（R）填进右下 → 该行变**双面板**。
+    #   ⚠⚠ 副作用（用户已知悉并选定）：行高由 `len(row)==1 → 沿用上一行高`
+    #     改为 `按 Σ资产比反解` → 行3 高 4.9331 → **5.8793 in**，Q 面板随之
+    #     由 8.685 in 宽放大到 **10.352 in**（等比放大 19 %，零形变）。
+    #   ⚠ 行 0/1/2 **完全不变**（零回归），画布高 26.28 → **27.23 in**。
+    [("Q", _V23_RATIO["Q"]), ("R", _V23_RATIO["R"])],
+    # ⭐⭐ v25（2026-10-15）：新增**第 5 行** = Potexvirus 两图（用户「继续补充到主图」）。
+    #   S = SDT 成对同一性矩阵（裁后 2327×2193，比 1.061104）
+    #   T = 代表序列覆盖度（裁后 2379×572，比 4.159091）
+    #   ⚠ 行高继续按「Σ资产比反解」：Σ = 5.220194 → h = 17.80/5.220194 = **3.4098 in**
+    #     → S 面板 **3.6182 in 宽**、T 面板 **14.1818 in 宽**（零形变 + 零留白）。
+    #   ⚠⚠ **T 极扁（4.159:1）而 S 近正方（1.061:1）** → 并排铺满时 S 只能拿到
+    #     ≈ 1/5 栏宽（3.62 in）。这是「T 铺满 + 等高 + 零留白」三条件下的**几何唯一解**，
+    #     不是取舍失误。⚠ 若日后要放大 S，只能改「S 独占一行」或「T 不铺满（留白）」。
+    #     ⚠ 用户已在二选一里看到该代价（选项描述明写「SDT 被压到 3.55 in 宽」）后选定
+    #       「只放 1 条代表」→ 本行几何即为该口径的必然结果。
+    #   ⚠ 行 0–3 **完全不变**（零回归），画布高 27.23 → **32.04 in**。
+    # ⭐⭐ v26（2026-10-15）：该行由 **2 图 → 3 图**：`S | U | T`
+    #   （用户「SDT的折线图图呢？这样E和F才能平分一行，不显得F过大」→ 三选一选定「三图一行」）。
+    #   ⚠⚠ 3 图 = **2 条列隙**（0.96 in）→ 行高 = (18.28 − 0.96) / Σ比
+    #     Σ = 1.061104 + 1.916983 + 4.159091 = 7.137178
+    #     → h = 17.32 / 7.137178 = **2.42675 in**
+    #     → S = **2.5750 in**（v25 为 3.6182）/ U = **4.6523 in** / T = **10.0931 in**
+    #       （v25 为 14.1818，**降 28.8 %** → 覆盖度不再一家独大 ✓）
+    #   ⚠⚠ **S 随之变窄 28.8 %**（3.6182 → 2.5750 in）—— 这是「三图一行 + 零形变 +
+    #     零留白」的几何必然结果，用户在选项描述里已看到该代价后选定。
+    #   ⚠ 行 0–3 **仍然完全不变**（零回归）；画布高 32.04 → **31.05 in**。
+    [("S", _V23_RATIO["S"]), ("U", _V23_RATIO["U"]), ("T", _V23_RATIO["T"])],
 ]
+
+
+def _v23_geometry():
+    """按资产比反解每行的行高与各面板列宽（in）。返回 (rows, canvas_w, canvas_h)。"""
+    rows = []
+    for row in _V23_ROWS:
+        if len(row) == 1:
+            L, r = row[0]
+            h = rows[-1][2]                          # 与上一行同高 → 视觉等行
+            rows.append(([(L, r * h)], h, h))
+        else:
+            s = sum(r for _, r in row)
+            h = (_V23_USABLE_W - _V23_COL_GAP * (len(row) - 1)) / s
+            rows.append(([(L, r * h) for L, r in row], h, h))
+    content_h = sum(h for _, h, _ in rows) + _V23_ROW_GAP * (len(rows) - 1)
+    canvas_w = _V23_USABLE_W + 2 * _V23_MARGIN_X
+    canvas_h = content_h + _V23_TOP + _V23_BOTTOM
+    return rows, canvas_w, canvas_h
 # ⚠⚠ **`LAYOUT` 的行号必须与 `height_ratios` 的下标严格对应**（2026-10-13 实测踩坑）：
 #   首版把 5 行权写成 `[1.05, 1.30, 1.15, 0.90, 2.10]`（以为末位 2.10 给通栏的 D），
 #   但 `LAYOUT` 里 D 在 **row=1**（权 1.30）、row=4 **根本没人用** →
@@ -1949,13 +2642,49 @@ LAYOUT = [
 #       ⇒ **要 6 pt 需桑基带 ≥ 4.01 in**，而 D 行即便 6.18 in（figH=14）也只 3.37 in ⇒ **不可达**。
 #     ⇒ 用户选「**只抬 D 行（有限改善）**」：行权压到 0.75、画布 13.0 in
 #       → D 行 4.55 → **5.25 in（+15 %）**、桑基带 2.48 → **~2.86 in**；上排 4.32 → 3.94 in。
-LAYOUT_ROW_RATIOS = [0.6, 1.0]
-# ⚠ 画布高 13.0 in 是**反解**出来的（v21.2）：可用高度 `top-bottom = 0.893-0.038 = 0.855` →
-#   上排权 0.75 + 下排 1.00 + hspace 0.42 → A/J 高 ≈ 3.94 in、D 高 ≈ 5.25 in。
-#   （v21.1 为 11.5 in → 上排 4.32 / D 4.55；v21 为 10.0 in → 4.40 / 3.43。）
-#   A 从 v19 的 ~1.6 in 提上来（用户要「A 展开高些」），J 从 1.80 in 宽提到 3.44 in 宽，
-#   两者在 v21 里**同处上排、顶部对齐**，视觉上是一组。
-COMPOSITE_FIGSIZE = (8.55, 14.0)
+#   ⭐⭐ v21.4（2026-10-14，用户「Fig_GojiVirome_IdentFilterStackedAll_norm.png 整合到主图」
+#     → 选「**底部通栏 · 主图加宽**」+ ⑧ 标题块「**裁掉**」）：
+#     · **画布宽 8.55 → 10.0 in**、**行数 2 → 3**（新增第三行通栏放面板 **N** = ⑧）。
+#     · ⚠⚠ **为什么加宽画布**：⑧ 源图 11.4 × 7.4 in，而旧可用宽仅 7.61 in
+#       → 贴进去必被缩 **0.667×**（最小字 6.4 pt → 4.3 pt，糊）。⑧ 的 overlay 坐标是
+#       按 `W_FIG = 11.4` **写死的分数**（`fig_ident_filter_stacked_all.R` 里
+#       `leg_w_in <- (LEG_R-LEG_L)*W_FIG` 一类）→ **无法重渲成窄版**（改 W_FIG 会让
+#       预渲 inset 的物理尺寸跟着变、overlay 全部错位）。→ 只能**把主图加宽**。
+#       加宽到 10.0 in 后可用宽 **8.90 in** → ⑧ 缩放 **0.781×**（最小字 6.4 → **5.0 pt**）。
+#     · ⚠⚠ **行权是「反解」的，不是拍的** —— 让 D 与 N 两块贴图**各向异性 = 0**：
+#         · D 面板比须 = 桑基资产比 **1.30979**（现行 `sankey_novelty_embed.png`
+#           1966 × 1501）→ D 行高 = `8.90 / 1.30979` = **6.795 in**；
+#         · N 面板比须 = 裁后 ⑧ 资产比 **1.87706**（3420 × 1822）→ N 行高 =
+#           `8.90 / 1.87706` = **4.741 in**；
+#         · 上排维持 **3.94 in**（A/J 不动）。
+#       合计 15.476 in → ×(1 + 2×hspace/3) = 18.366 in → **画布高 21.48 in**。
+#     · ⚠⚠⚠ **本轮顺手修掉一个存量缺陷**：v21.3 及以前 D 面板比是 **1.1595**、而资产比
+#       是 1.30979 → `imshow(aspect="auto")` 把桑基**横向压扁 13.2 %**
+#       （实测 scale_x 1.1612 vs scale_y 1.3141，用 Known 块高 277 px → 364 px 反推）。
+#       本轮按「面板比 = 资产比」反解行高 → **各向异性归零**（改动前 D 的观感会略变宽，
+#       因为不再被压扁）。
+#     · ⚠ 画布 10.0 × 21.48 in → 出图约 **10.85 × 20.9 in**（很高，用户已知悉）。
+#   ⭐⭐ v22（2026-10-14，用户「HostPrediction_BPanel 放进主图 + 宿主分类条形图 + UpsetClassification_Family」）：
+#     · **行数 3 → 6**：新增 **O**（宿主分类分布，APanel）、**P**（BPanel）、
+#       **Q**（Family UpSet）三个通栏贴图行；O/P 插在 D 与 N 之间，Q 垫底。
+#     · ⚠⚠ **行权继续按「资产比反解」**（通栏贴图行高 = 可用宽 / 裁后资产比，
+#       各向异性 = 0；可用宽 = 10.0×(0.975−0.085) = **8.90 in**）：
+#         · O：APanel 裁后 2796×1517（比 1.84324，标题块裁 283 px）
+#           → 行高 `8.90/1.84324` = **4.8284 in** → 权 0.7105
+#         · P：BPanel 裁后 2796×1615（比 1.73127，标题块裁 185 px）
+#           → 行高 `8.90/1.73127` = **5.1410 in** → 权 0.7566
+#         · Q：Family 裁后 2796×1588（比 1.76071，标题块裁 212 px）
+#           → 行高 `8.90/1.76071` = **5.0550 in** → 权 0.7440
+#         · 上排 3.940（权 0.5798）/ D 6.795（权 1.0000）/ N 4.741（权 0.6978）不变。
+#     · 合计 **30.5004 in** → ×(1 + 5×hspace/6) = 37.617 → /0.855 →
+#       **画布高 44.0 in**（10.0 × 44.0，v21.4 为 21.48；每加一个通栏行约 +5 in，
+#       用户已知悉「很高」这一形态）。
+LAYOUT_ROW_RATIOS = [0.8327, 1.0000, 0.8747, 0.8747]
+# ⚠ v23：组合图已改用**显式坐标定位**（`_v23_geometry()`），不再用 GridSpec
+#   → 本常量仅作历史记录（GridSpec 等宽列会形变，见 `_V23_ROWS` 处注释）。
+#   实际行高（in）：行0 4.8275 / 行1 5.7970 / 行2 5.0708 / 行3 5.0708。
+#   ⚠ 画布由 `_v23_geometry()` 反解（≈20.0 × 26.8 in，含边距与行隙）。
+COMPOSITE_FIGSIZE = None      # v23：运行时由 `_v23_geometry()` 反解；此处置 None 防误用
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -1972,45 +2701,38 @@ def save(fig, outdir: Path, stem: str, dpi: int):
 
 
 def build_composite(D: Data, outdir: Path, dpi: int):
-    # v21：上排 **A|J 并排**（11:9，用户「AJ一行」）、下排 **D 通栏**（用户「D 一行」）。
-    #   ⚠ 网格用 20 列（11+9）→ 比例可精确表达，D 跨满 20 列。
-    #   ⚠ 桑基面板 D 高须满足 L5 标签可读下限（历史判据 ≥ 4.2 pt；本轮 37 个节点）。
-    #   ⚠ **不要用「面板比 ≈ 源图比」来定行高比**：现行 D 的源资产是**扁平化**桑基
-    #     （--embed-size 给足宽度），本体比与面板比**故意不等**，贴图端 `imshow(aspect="auto")`。
-    fig = plt.figure(figsize=COMPOSITE_FIGSIZE)
-    # ⚠⚠ **`top` 必须同时给「2 行 suptitle」和「行内面板标题」留净空**（2026-10-13 v21 实测）：
-    #   v21 上排是 A|J 并排，J 的标题 `loc="left"` 从 **J 轴左缘**（画布中部）起排 →
-    #   它正好落在 suptitle **第二行**的尾部 → 两者重叠（实测 "Identity vs coverage (n = 82)"
-    #   压住 "host prediction and plant-virus recovery"）。
-    #   修法：`top` 从 0.945 降到 **0.915**，把面板标题整体下移让出 suptitle 两行的净空；
-    #   suptitle `y` 提到 0.986（两行从 0.986 往下排，末行底约在 0.945）。
-    #   ⚠⚠ **0.915 仍不够**（`get_window_extent` 实测）：J 标题落在 **y frac 0.953**，
-    #     与 suptitle 末行（0.945–0.985）只差 0.007 图高（≈20 px）→ 仍重叠。
-    #   → 最终 `top = 0.893`（J 标题 → ≈0.931），留 0.027 图高净空。
-    # ⚠⚠ v21.3：`hspace` 0.42 → **0.28**。原 0.42 是为「上排 x 轴标签 + D 标题」留空，
-    #   实测 0.42 × 平均行高 = **2.08 in** 的空带（图上肉眼可见大片留白）→ 浪费。
-    #   压到 0.28 后同页高下 D 行 6.18 → **6.56 in**、上排 3.71 → **3.94 in**（两者都变好）。
-    #   ⚠ 判据：A/J 的 x 轴标签与 D 的面板标题不得相撞（已跑 `_check_discovery_overlap` 0 对）。
-    gs = GridSpec(2, _GRID_COLS, figure=fig, hspace=0.28, wspace=0.60,
-                  height_ratios=LAYOUT_ROW_RATIOS,
-                  left=0.085, right=0.975, top=0.893, bottom=0.038)
+    # ⭐⭐⭐ v23（2026-10-15）：**2 列 × 4 行**，**显式坐标定位**（不用 GridSpec）。
+    #   ⚠ v25：行 3 → **5 行 / 10 面板**（新增 S/T），定位逻辑不变。
+    #   ⚠⚠ 为什么弃用 GridSpec：等宽列会把两面板之一**拉伸**（实测 J +35.2 %、D +33.5 %），
+    #     因两面板资产比不同（J 1.55 vs A 2.24）。显式定位可按**各自资产比**给列宽
+    #     → 各行内**零形变 + 零留白**（判据见 `_v23_geometry()` 与 README v23 节）。
+    #   行高 = 该行可用宽 / Σ(资产比)；同行两面板**高相同**（视觉对齐）。
+    rows, cw, ch = _v23_geometry()
+    fig = plt.figure(figsize=(cw, ch))
+    W, H = cw, ch
     made = []
-    for letter, r, c, rs, cs in LAYOUT:
-        ax = fig.add_subplot(gs[r:r + rs, c:c + cs])
-        fn = dict(PANELS)[letter]
-        try:
-            fn(ax, D)
-        except Exception as e:                       # 单面板失败不拖垮整图
-            traceback.print_exc()
-            _empty(ax, f"panel {letter} failed: {type(e).__name__}")
-        if ax.has_data() or ax.texts or letter == "I":
-            # 面板 I 走 axis("off")+inset → has_data() 恒 False，须显式补字母
-            panel_letter(ax, letter)
-        made.append(letter)
+    y_in = H - _V23_TOP                        # 顶部净空后，第一行顶边的 y（in，自下而上）
+    for row in rows:
+        panels, rh, _ = row
+        x_in = _V23_MARGIN_X
+        for L, w_in in panels:
+            # matplotlib 的 add_axes 用 [left, bottom, width, height]（图分数，原点左下）
+            ax = fig.add_axes([x_in / W, (y_in - rh) / H, w_in / W, rh / H])
+            fn = dict(PANELS)[L]
+            try:
+                fn(ax, D)
+            except Exception as e:                   # 单面板失败不拖垮整图
+                traceback.print_exc()
+                _empty(ax, f"panel {L} failed: {type(e).__name__}")
+            if ax.has_data() or ax.texts or L == "I":
+                panel_letter(ax, L)
+            made.append(L)
+            x_in += w_in + _V23_COL_GAP
+        y_in -= rh + _V23_ROW_GAP
     fig.suptitle(
         f"Virus discovery in the {D.virus_name} RNA virome: assembly, multi-tool "
         f"identification, taxonomy,\nhost prediction and plant-virus recovery",
-        fontsize=8.5, fontweight="bold", y=0.986)
+        fontsize=8.5, fontweight="bold", y=1 - 0.30 / H)
     png, pdf = save(fig, outdir, "Fig_GojiVirome_Discovery", dpi)
     plt.close(fig)
     return png, pdf, made
@@ -2026,16 +2748,53 @@ def build_panels(D: Data, outdir: Path, dpi: int):
     # v19：D 升通栏（3 列 7.61 in 宽）、M/I 同置底行（M 跨 2 列 4.66 in、I 跨 1 列 1.70 in）
     #      → 单面板画布尺寸必须**与组合图里的面板比例同源**，否则组合图与单面板观感不一致
     #        （且 D 的单面板若仍用旧 9.32x8.40 会与贴图的扁平资产不匹配）。
-    WIDE = {"A", "D", "I", "J", "K", "M"}
+    WIDE = {"A", "D", "I", "J", "K", "M", "N", "O", "P", "Q", "R", "S", "T", "U"}
     for letter, fn in PANELS:
         wide = letter in WIDE
         if letter == "D":
-            # 通栏桑基：与组合图 D 面板同比例。
-            # ⚠⚠ 2026-10-13 v21.3：组合图 D 行 5.25 → 6.18 in，**本尺寸必须同步**
-            #   （组合图 D 的 **axes 高 = GridSpec 行高**，故单面板 axes 也要 6.18 in
-            #    → canvas = 6.18/0.90 = 6.87 in）。
-            #   ⚠ 上一版（3.35 in）是按错误的「桑基带」口径设的，比组合图矮一半。
-            fig = plt.figure(figsize=(7.61, 6.87))
+            # 桑基：与组合图 D 面板**同比例**（贴图端 `imshow(aspect="auto")`
+            #   → 面板比 ≠ 资产比就会**静默拉伸**）。
+            # ⚠⚠ 2026-10-15 v23：组合图 D 由「通栏 8.900 × 6.795 in」改为
+            #   **半栏 7.592 × 5.797 in**（比仍 = 1.30979 = 桑基资产比，零形变）。
+            #   → 单面板 axes 必须同步成 7.592 × 5.797 in。
+            #   ⚠ 判据：`0.990×7.669 = 7.592`、`0.900×6.441 = 5.797` → 比 1.30979 ✓
+            fig = plt.figure(figsize=(7.669, 6.441))
+            ax = fig.add_axes([0.005, 0.035, 0.990, 0.900])
+        elif letter == "N":
+            # ⑧ 整合面板（贴 `_norm` 资产，裁掉顶部标题块）：与组合图 N 面板同比例。
+            #   ⚠ v23：组合图 N 由「通栏 8.900 × 4.741 in」改为 **半栏 9.519 × 5.071 in**
+            #     （比仍 = 1.87706 = 裁后 ⑧ 资产比）。
+            #   ⚠ 判据：`0.990×9.615 = 9.519`、`0.900×5.634 = 5.071` → 比 1.8771 ✓
+            fig = plt.figure(figsize=(9.615, 5.634))
+            ax = fig.add_axes([0.005, 0.035, 0.990, 0.900])
+        elif letter in ("O", "P", "Q", "R", "S", "T", "U"):
+            # v22/v23/v24/v25/v26 贴图面板：单面板画布与组合图对应面板**同比例**
+            #   （v23 行高/列宽按资产比反解；此处 `0.900×H` 复现面板高）：
+            #     O = APanel 裁后 2796×1517（比 1.84324）→ 面板 10.688 × 5.797 → H = 6.441
+            #     P = BPanel 裁后 2796×1615（比 1.73127）→ 面板  8.779 × 5.071 → H = 5.634
+            #     Q = Family 裁后 2796×1588（比 1.76071）→ 面板  8.921 × 5.071 → H = 5.634
+            #     R = AlphaSynteny 原图 4477×3534（比 1.26684，**不裁**）→ 面板 6.424 × 5.071
+            #   ⚠ 判据同 N：`0.990×W = 面板宽`、比 = 面板宽/(0.900×H) = 资产比 ✓
+            #   ⚠ v24：Q 面板比不变（1.76071）→ **单面板画布沿用 v23 值**，
+            #     组合图里 Q 只是被等比放大（10.352 × 5.879 in），不改变比。
+            #   ⭐ v25：S/T 来自**裁后**资产比，面板尺寸 = 3.6182×3.4098（S）/
+            #     14.1818×3.4098（T）→ 单面板画布 = 面板尺寸 /(0.990, 0.900)：
+            #     S = 3.6548 × 3.7887、T = 14.3250 × 3.7887。
+            #   ⚠ 判据：`0.990×3.6548/ (0.900×3.7887) = 1.06110` ✓（S）
+            #          `0.990×14.3250/(0.900×3.7887) = 4.15909` ✓（T）
+            #   ⭐ v26：U 来自**裁后**资产比 1.916983；⚠ S/U/T 三者只要求
+            #     **同比例**（判据 = `0.990×W/(0.900×H) == 资产比`），尺寸可自由取
+            #     → 单面板画布**统一锁 H = 3.7887 in**（= v25 的 S/T 档），
+            #       这样组合图底行虽变矮（3.4098 → 2.4267 in），
+            #       **交付的单面板图不会跟着缩水**。
+            #     U = 0.990×6.6026 / (0.900×3.7887) = 6.5366/3.4098 = 1.91698 ✓
+            fig = plt.figure(figsize={"O": (11.626, 6.441),
+                                       "P": (8.868, 5.634),
+                                       "Q": (9.011, 5.634),
+                                       "R": (6.489, 5.634),
+                                       "S": (3.6548, 3.7887),
+                                       "U": (6.6026, 3.7887),
+                                       "T": (14.3250, 3.7887)}[letter])
             ax = fig.add_axes([0.005, 0.035, 0.990, 0.900])
         elif letter == "M":
             # 比对靶标：组合图里跨 2 列（4.66 in 宽）；7 条横条不需通栏
@@ -2088,12 +2847,27 @@ def build_panels(D: Data, outdir: Path, dpi: int):
                 #     → 字母若与标题同 y 必然相撞（2026-10-13 实测 4.1 x 2.3 px OVERLAP）。
                 #   修法：dy 提到标题**上方**（标题在 dy≈1.06 一带），字母给 1.17。
                 panel_letter(ax, letter, dx=-0.005, dy=1.17)
-            elif letter == "D":
+            elif letter in ("D", "N"):
                 # ⚠⚠ v19：D 轴占满通栏画布（左缘 0.005 画布宽 ≈ 0.038 in，宽 7.53 in）
                 #   → 偏移超过 `-0.005` 就会让 bbox x0 为负（判 TEXT-OFF-CANVAS）；
                 #   ⚠ 但 dx=0 时字母又落回标题行（标题 `loc="left"` 从轴左缘起排）
                 #     → 实测 11.0 x 2.9 px OVERLAP。
                 #   修法：dx 贴轴左缘 + dy 抬到标题**上方**。
+                # ⚠ v21.4：N（⑧ 整合面板）与 D 同为「轴占满通栏 + `loc="left"` 标题」
+                #   → 同一套偏移，不得另起一套（否则字母会掉回标题行）。
+                panel_letter(ax, letter, dx=0.0, dy=1.12)
+            elif letter in ("O", "P", "Q", "R", "S", "T", "U"):
+                # ⚠⚠⚠ v23：O/P/Q 是「轴占满画布 + `loc="left"` 标题」的贴图面板，
+                #   与 D/N 同类。**首版误走 `else` 分支（dx=-0.34）** → 单面板画布
+                #   由 v22 的 8.99 in 加宽到 8.87–11.63 in 后，`-0.34` 轴分数
+                #   = **-386 px（O）/ -294 px（P）/ -299 px（Q）** → 全部判 TEXT-OFF-CANVAS。
+                #   修法：并入 D/N 同一档（dx=0.0 贴轴左缘、dy 抬到标题上方）。
+                #   ⚠ 判据 = 体检脚本 `TEXT-OFF-CANVAS` 归零（不看「出图成功」）。
+                #   ⚠ v24：R 同为贴图面板（画布 6.489 in 宽，`-0.34` 轴分数 = -206 px
+                #     同样出界）→ **并入本档**，不得另起一套。
+                #   ⚠ v25：S 更窄（单面板画布仅 3.6548 in 宽，`-0.34` 轴分数 = -116 px
+                #     同样出界）→ **并入本档**；S 标题只有 2.36 in 宽（面板 3.6182 in），
+                #     与字母（dx=0.0、dy=1.12）不撞行。
                 panel_letter(ax, letter, dx=0.0, dy=1.12)
             elif letter == "M":
                 panel_letter(ax, letter, dx=-0.34, dy=1.05)

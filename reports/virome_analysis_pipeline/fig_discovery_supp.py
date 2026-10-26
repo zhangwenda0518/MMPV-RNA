@@ -41,6 +41,26 @@
   · 退化守卫：任一面板数据算不出 → 该面板画 `_empty` 占位，不产半张空图；
   · 面板字母用 `ax.transAxes`，避免 `bbox_inches="tight"` 下的像素偏移。
 """
+
+# ── 图件四格式导出 (SVG / PNG / PDF / PNG@1200dpi) — 默认开启 ──────────
+# 2026-10-20: 所有出图脚本统一口径; 用 MMPV_FIG_EXPORT=0 可整体关闭,
+# MMPV_FIG_FORMATS=svg,png,pdf,hires 可裁剪, MMPV_FIG_HIRES_DPI 可改高清 dpi。
+try:
+    from mmpv_common.figure_export import install_savefig_hook as _install_fig_hook
+except ImportError:  # 仓库根不在 sys.path (脚本被单独执行) → 向上找 mmpv_common/
+    import os as _os
+    import sys as _sys
+    _d = _os.path.dirname(_os.path.abspath(__file__))
+    while _d and not _os.path.isdir(_os.path.join(_d, "mmpv_common")):
+        _parent = _os.path.dirname(_d)
+        if _parent == _d:
+            break
+        _d = _parent
+    if _d and _d not in _sys.path:
+        _sys.path.insert(0, _d)
+    from mmpv_common.figure_export import install_savefig_hook as _install_fig_hook
+_install_fig_hook()
+# ──────────────────────────────────────────────────────────────────────
 import argparse
 import importlib.util
 import json
@@ -54,7 +74,7 @@ import matplotlib.pyplot as plt
 from matplotlib.gridspec import GridSpec
 
 _HERE = Path(__file__).resolve().parent
-_ROOT = _HERE.parents[1]                      # scripts/barbarum -> <repo>
+_ROOT = _HERE.parents[1]                      # reports/virome_analysis_pipeline -> <repo>
 
 
 def _load_main():

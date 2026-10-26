@@ -30,7 +30,7 @@
   （属级是并集，逐 contig 是子集，不可能更大）—— 违反即报错，不静默写出。
 
 用法：
-    "C:/Python312/python.exe" scripts/barbarum/fix_frequency_table_percontig.py \
+    "C:/Python312/python.exe" reports/virome_analysis_pipeline/fix_frequency_table_percontig.py \
         --summary <root>/10_Reports/rescue_detection_summary.tsv \
         --table   <root>/10_Reports/frequency_table.tsv \
         [--denom 312] [--dry-run]

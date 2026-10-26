@@ -1,4 +1,32 @@
 #!/usr/bin/env Rscript
+# ── 图件四格式导出 (SVG / PNG / PDF / PNG@1200dpi) — 默认开启 ──────────
+# 2026-10-20: 所有出图脚本统一口径; MMPV_FIG_EXPORT=0 可整体关闭。
+# 钩子只拦截 ggsave(); pdf()/png() 直写的老代码请改用 save_figure()。
+local({
+  .find_repo <- function(start) {
+    d <- normalizePath(start, mustWork = FALSE)
+    repeat {
+      if (dir.exists(file.path(d, "mmpv_common"))) return(d)
+      p <- dirname(d)
+      if (identical(p, d)) return(NA_character_)
+      d <- p
+    }
+  }
+  .here <- tryCatch({
+    a <- commandArgs(FALSE)
+    f <- sub("^--file=", "", a[grep("^--file=", a)])
+    if (length(f)) dirname(normalizePath(f[1], mustWork = FALSE)) else getwd()
+  }, error = function(e) getwd())
+  .root <- .find_repo(.here)
+  if (is.na(.root)) .root <- .find_repo(getwd())
+  if (!is.na(.root)) {
+    source(file.path(.root, "mmpv_common", "figure_export.R"), local = FALSE)
+    install_ggsave_hook()
+  } else {
+    message("[figure_export] 未找到 mmpv_common/, 跳过四格式导出")
+  }
+})
+# ──────────────────────────────────────────────────────────────────────
 # fig_ident_filter_stacked_all.R — 图⑧「一体式堆叠 UpSet」：原生 ComplexUpset 版式，
 #   **左侧 set-size 面板 与 右上交集柱 两侧都按过滤结局堆叠**（用户 2026-10-13 选定）。
 #
@@ -313,22 +341,65 @@ p_body <- upset(
   matrix = intersection_matrix(geom = geom_point(shape = 21, size = 2.8, stroke = 0.8)) +
     scale_color_manual(values = c("TRUE" = "#D55E00", "FALSE" = "grey88"), guide = "none"),
   themes = upset_modify_themes(list(
-    "intersections" = theme_upset(8) +
-      theme(
-        axis.text.y = element_text(size = 7.5, color = "black"),
-        # ⚠⚠⚠ **第 10 次修订**：这里用 `element_blank()` **隐藏**上一步 `labs(y = " ")` 设的哨兵题注。
-        #   ⚠ 但**单靠它关不掉原生题注** —— `element_blank()` 只控制"怎么画"，
-        #   控制不了 ComplexUpset 是否**写入** `ylab(name)`（那是 `labels$y` 的空否决定的）。
-        #   → 两道缺一不可：① `labs(y = " ")` 让源码跳过补写；② 这里把哨兵隐藏。
-        axis.title.y = element_blank(),
-        plot.margin = margin(4, 4, 2, 4)
-      ),
+    # ⭐⭐⭐ **第 15 次修订（用户 2026-10-14「这个行名放最左边可以吗」）→ 行标签只保留「最左一处」。**
+    #   本图与 ⑨（`fig_upset_classification.R`）是**用户同日同诉求**（⑨ 原话：
+    #   「（点阵矩阵的行标签）放到左侧可以吗」）。
+    #
+    #   ⚠⚠⚠ **但 ⑧ 的正解与 ⑨ 恰好相反，勿照抄 ⑨ 的 `transparent`！**（实测 A/B，画布 3420 px）
+    #     · ⑨ 的情形：**最左 set-size 面板本来就画着集合名** → 只需把矩阵那份「藏起来」。
+    #       若用 `element_blank()` → 文字槽宽**凭空消失**（无补偿）→ 矩阵/柱整体左移拉宽（⑨ 实测
+    #       柱1 中心 1103→999、点距 89.0→95.7 px）→ 用户否决 → 故 ⑨ 用 `colour="transparent"`。
+    #     · ⑧ 的情形：**最左面板原本没画名字**（旧版这里 `axis.text.y = element_blank()`）
+    #       → 必须**新开**一条名字槽 ⇒ 该槽宽（实测 **284 px**）无论放哪都占宽。
+    #       ⭐ 于是 `element_blank()` 是**搬移**（col2 让出 284 → col1 用掉 299），总宽**近似守恒**；
+    #         而 `transparent` 是**复制**（col2 保留 284 且 col1 再占 299）→ 总宽凭空 +284。
+    #       ⭐⭐ 实测对拍（矩阵点阵首列 / 列距）：
+    #         基线       1407 px / 124.2 px
+    #         element_blank **1434 px / 122.5 px**（Δ+27、−1.37%）
+    #         transparent   1610 px / 111.2 px（Δ+203、−10.5%）← 会把 Venn/图例相对点阵拉偏
+    #       ⇒ **⑧ 必须用 `element_blank()`**（差异比 ⑨ 的 `transparent` 小一个量级）。
+    #   ⚠ 残余 +27 px / −1.37% 无法在**不改画布宽**的前提下消掉（col1 实占 299 > col2 让出 284）。
+    #     已评估「加宽画布 ~300 px 换取零位移」：⑧ 会变成 12.4 in 宽 → 主图面板 N 降采样 0.781→0.721、
+    #     6.4 pt 副标题降到 4.6 pt（低于 5 pt 下限）⇒ **不划算，放弃**。残余量在主图上 ≈19 px，不可辨。
+    #
+    #   ⚠⚠⚠ **必须 `Reduce(`+`, ComplexUpset::upset_themes$intersections_matrix)` 拼回内置值**：
+    #     内置 `upset_themes$intersections_matrix` 是**两段** list：
+    #       [[1]] = 144 元素的**完整主题**（显式含 `axis.text.y = element_text(...)`）
+    #       [[2]] = 3 元素微调（`axis.title.y` / `axis.text.x` / `axis.ticks.x` = blank）
+    #     `themes[[key]]` 是**整体替换**语义 ⇒ 若写成 `theme_upset(8) + theme(...)`：
+    #       ① 丢掉 [[2]] 的内置 blank → 矩阵底部冒出**挤成一团的 x 轴集合名**
+    #          （实测：16 列 × 7 集合名相互重叠，把 "Identification track" 题注挤花，**零报错**）；
+    #       ② `theme_upset(8)` 设的 `axis.text = element_text(...)` 会**同时**把 `.x/.y` 打开。
+    #     ⇒ 只有「拼回内置两段 + 只覆盖 `axis.text.y`」才既去掉行名、又不动 x 轴。
+    #   ⚠ `axis.title.y` 的哨兵隐藏由内置 [[2]] 负责，本行**不要**再动 plot.margin（会改几何）。
+    "intersections_matrix" = Reduce(`+`, ComplexUpset::upset_themes$intersections_matrix) +
+      theme(axis.text.y = element_blank()),
+    # ⚠⚠⚠ **顺带修掉一个「死键」静默缺陷（本次排查时发现）**：
+    #   本块旧版键名写的是 **`"intersections"`** —— 而 `upset_themes` 的合法键只有 4 个
+    #   （实测 `names(ComplexUpset:::upset_themes)`）：
+    #     `intersections_matrix` / `Intersection size` / `overall_sizes` / `default`
+    #   `upset_modify_themes(to_update)` 是**按名合并**，对不认识的 key **只附加、不报错**
+    #   → `"intersections"` 成了**永不生效的死键**，`upset()` 读的是 `themes$intersections_matrix`。
+    #   ⭐ 证据链（实测）：① `upset_themes[["intersections"]]` 为 NULL（`[[` 精确匹配）；
+    #     ② 合并后 `names()` 同时含 "intersections" 与 "intersections_matrix" 两个键；
+    #     ③ A/B：只改那个键时**图中间的集合名纹丝不动** ⇒ 确认从未生效。
+    #   ℹ ⑨ 的注释里也记着同一个坑（「key 名不匹配任何面板 → 静默失效」）—— 两图同源同病。
     "overall_sizes" = theme_upset(8) +
       theme(
-        # ⚠⚠ 翻转后主题元素名指的是**渲染后**的轴，不是逻辑轴：
-        #   axis.text.y / axis.title.y = 垂直轴（集合名，由矩阵面板统一显示 → 这里置空）
-        #   axis.text.x / axis.title.x = 水平轴（数值，即 set-size 的条长）
-        axis.text.y  = element_blank(),
+        # ⚠⚠ 翻转后主题元素名指的是**渲染后**的轴，不是逻辑轴（实测标定，见下）：
+        #   axis.text.y / axis.title.y = **垂直轴**（渲染在左侧）→ 本面板里就是**集合名**
+        #   axis.text.x / axis.title.x = **水平轴**（渲染在底部）→ 数值（set-size 条长 0..100%）
+        #   ⭐ 标定法（本机实测，2 s）：`ggplot(aes(x=g,y=v)) + coord_flip()` 里把
+        #     `axis.text.x` 设红、`axis.text.y` 设蓝 → 渲染后**蓝在左（g）、红在底（v）**
+        #     ⇒ 主题元素名跟**渲染后朝向**走，不跟原 aesthetic 走。
+        #
+        # ⭐⭐ **第 15 次修订**：原来这里 `axis.text.y = element_blank()`（集合名由**矩阵面板**
+        #   统一显示一次），于是 7 个行名渲染在「集合条右端」与「矩阵点阵」之间的**图中间**（用户红框处）。
+        #   → 改为**在本面板（最左边）画集合名**；矩阵那份由上面 `intersections_matrix` 置空。
+        #   ⚠ 本面板因此变宽（名字槽实测 284 px）→ 集合条整体右移 299 px；
+        #     耗时图是**固定画布分数**的 overlay → 必须同步右移（见下文 `TIM_SHIFT_PX`），
+        #     否则上下两块左面板会脱节。
+        axis.text.y  = element_text(size = 7.5, colour = "black"),
         axis.title.y = element_blank(),
         axis.text.x  = element_text(size = 6.6, colour = "black"),
         plot.margin  = margin(4, 2, 4, 6)
@@ -555,7 +626,9 @@ p_body$patches$plots[[spacer_idx]] <- spacer_placeholder
 #        → 全部数字**完全透明、一个都看不见**，但 `ggplot_build()` 里 x/y/label **三列齐全、
 #        位置也对** → 又是「零报错的静默丢失」。**必须 `label_alpha = 1`**。
 #     ② 不给 `scale_fill_gradient()` 时默认连续色阶把整片染成近黑 → 数字（默认黑）与底色糊在一起。
-#       必须显式给白色→绿色的 fill 渐变。
+#       原结论是"必须显式给白色→绿色的 fill 渐变"；⚠ **第 14 次修订已改口径 → 改平填充**
+#       （原因 = 白→绿渐变的高端与图例「Retained」同 hex，造成语义撞色；见下方
+#        `scale_fill_gradient` 处注释）。
 #   `shape_id`：6 集合只有两个形状（`get_shapes()`）—— `601`（多边形/椭圆，经典 Venn 观感）
 #   与 `601t`（三角放射）。用户要"椭圆 Venn" → **用 `601`**。
 #   ⚠ `ggVennDiagram` **本机原本没有**（服务器 4.4.3 有）→ 已在本机 CRAN 安装（含依赖 venn/admisc/forcats），
@@ -601,8 +674,21 @@ make_tool_venn <- function() {
       set_color    = "#333333",
       set_size     = 1.9,
       edge_size    = 0.45) +
-    # ⚠ 必须显式给渐变：默认色阶会把整片染黑（见上文）。
-    scale_fill_gradient(low = "white", high = "#009E73", guide = "none") +
+    # ⚠⚠⚠ **第 14 次修订（用户 2026-10-13 22:53：「venn图的颜色是怎么回事」）**：
+    #   原写法 `low="white", high="#009E73"` 把 `fill` 映射到**区域 count** →
+    #   最大区（44,637 = viralverify 独有）被染成**纯 `#009E73`**，而它**与图例「Retained」
+    #   色块是同一个 hex**（实测均 `#009E73`；交集柱绿亦同）→ 读者把"计数深浅"误读成
+    #   "分类 = Retained"。但 **Venn 内每个区域本来就都是 Retained**
+    #   （`n_retained > 0` 且排除 viroid_blastn）→ **色义被读反**。
+    #   ⚠ 另实测：最深区数字 `#1A5C3A` on `#009E73` 对比度仅 **2.35:1**（WCAG 正文需 ≥4.5:1），
+    #     "44,637"/"1,606" 恰落在最难读处；且渐变本身暗示"44,637 那块更重要"（其实只是最大值）。
+    #   → 正解 = **去掉渐变，统一极浅中性填充**（`#F2F2F2`，明显浅于图例的 `#BFBFBF`/`#7A7A7A`
+    #     两个灰，不会被误读为分类色）；区域只靠 `#333333` 椭圆描边 + 计数标签区分。
+    #   ✅ 改后数字 `#1A5C3A` on `#F2F2F2` 对比度 = **7.38:1**（达标），故标签色**不动**
+    #      （保留它与柱顶 % / 左侧保留率的同色语义）。
+    #   ⚠ `fill` 是**连续**标度（`count`）→ **不能**换 `scale_fill_manual`（会报
+    #     continuous→discrete 错）；用**两端同色**的 `scale_fill_gradient` 得到"平填充"。
+    scale_fill_gradient(low = "#F2F2F2", high = "#F2F2F2", guide = "none") +
     # ① 白描边（halo）：先画一遍白色粗体 —— 数字压在椭圆弧上也能读。
     geom_text(data = rlab, aes(x = X, y = Y, label = vfmt(count)),
               size = 1.75, colour = "white", fontface = "bold") +
@@ -744,18 +830,75 @@ save_stacked_all <- function(p, outdir, name, width, height, overlays = list()) 
 #
 #   ⚠⚠⚠ **框比 1.162 → 1.164（宽 −7 px、高 −8 px）→ 预渲 PNG 必须重渲**
 #     （`--w 3.6833 --h 3.1633`），否则 `rasterGrob` 按框硬拉伸，**零报错**（README 硬规则 22）。
-TIM_L <- 51 / 3420;   TIM_R <- 1156 / 3420
+#
+# ⭐⭐⭐ **第 15 次修订（2026-10-14，与「行名移到最左边」同一批）**：
+#   行名从「矩阵左缘」搬到「集合条面板左缘」后，**集合条面板整体右移**（实测 166..905 → 465..1194），
+#   而耗时图是**固定画布分数**的 overlay → 不跟着走就会与下方集合条**脱节**（用户一眼可见）。
+#
+#   ⭐⭐ 对齐口径 = **对齐「标签列」**（本图的标签列由耗时图的名字 + 集合条的名字共同构成）：
+#     两张面板在**同一列上下叠放、且共用同一套 7 个工具名（同序）** ⇒ 标签必须落在**同一条竖线上**，
+#     否则读起来像「两列错位的标签」。实测取 **右移 113 px** 时：
+#       耗时图名字右缘 **321** ↔ 集合条名字右缘 **330** → 差 **9 px** ✓（几乎重合）
+#       耗时图 x=3 轴原点 **338** ↔ 集合条绘图区左缘 **348** → 差 **10 px** ✓
+#     ⇒ 标签列 + 绘图区左缘**同时对齐**（两项都对上）。
+#
+#   ⚠⚠⚠ **曾试过「右移 246 px」（把耗时条左缘对齐集合条最长条 465 px）—— 已否决**：
+#     那会让耗时图名字右缘落在 **454**，而集合条名字右缘在 **330** ⇒ 标签列出现 **124 px 台阶**，
+#     正是用户这次要修掉的东西。实测对拍（两版并存）：
+#       shift 113 → 名字右缘差  9 px ｜ 绘图区左缘差 10 px ｜ 右缘差 136 px
+#       shift 246 → 名字右缘差 124 px ｜ 绘图区左缘差 123 px ｜ 右缘差   3 px
+#     ⇒ 246 只对上「右缘」一项，却把**标签列**错开；113 对上「标签列 + 左缘」两项 ⇒ 取 113。
+#
+#   ⚠ 代价（已知并接受）：耗时图绘图区右缘（x=300 刻度，实测 **1061 px**）比集合条绘图区右缘
+#     （**1197 px**）短约 136 px。理由：① 两者 x 轴标度本就无关（log 秒 vs 命中数），无「同宽」义务；
+#     ② 耗时图是**独立预渲的 inset**，比主面板窄属正常；③ 若强行同宽须重渲 `tool_timing_fig.R`
+#     的 `W_IN`（把绘图区加宽 ~126 px）—— 但用户在第 13 次修订里**亲自用红框钉死了这块面板的尺寸**
+#     （「再次调整大小，符合红色区域的大小」）⇒ **不擅自改其绘图区宽度**。
+#   ⚠ 副产物（正面）：框内容右缘从 1221 px 退到 **1088 px** → 与「Sequences」题注左缘 1229 px
+#     拉开 **141 px**，彻底消除旧版「只剩 8 px 间隙」的擦边风险。
+#
+#   ⚠⚠ **历史坑（仍须保留此守卫）**：第 13 次修订时曾取「右移 280 px」，框内**数值标签右缘到 1255 px**，
+#     而「Sequences」题注（**白底不透明** raster）必须夹在它与交集柱 y 轴刻度左缘 **1281** 之间
+#     ⇒ 只剩 26 px < 8 pt 旋转字高（≈33 px）→ **题注白底把 "235.2" 横切成 "23"**（实测）。
+#     教训 = **不透明 raster overlay 必须做「邻居净空」自检**（见下文 `TIM_CONTENT_R_PX` 与题注自检）。
+#   ⚠⚠ 预渲 PNG 是**不透明**的 → 框越界会直接**抹掉**交集柱面板的 y 轴刻度文字与柱体。
+#     ⭐ 正解 = 先把预渲 PNG **右侧全白列裁掉**（实测空白 **360 px @600 dpi**），
+#       裁后框宽 ≈924 px、右缘 ≈1221 px < **1281** ✓（留 60 px）。
+#   ⚠ 裁切**动态做**（找最右非白列）而非写死像素：换预渲图（改字号/改数据）不会**静默失配**。
+#   ⚠ 框尺寸**由裁后 PNG 反推**（1 画布 px = 2 PNG px @600 dpi）→ 保持 1:1，**禁拉伸**。
+TIM_SHIFT_PX <- 113
+TIM_L <- (51 + TIM_SHIFT_PX) / 3420
 TIM_T <- 1 - 545 / 2220; TIM_B <- 1 - 1494 / 2220
-tim_w_in <- (TIM_R - TIM_L) * W_FIG
 tim_h_in <- (TIM_T - TIM_B) * H_FIG
+tim_w_in <- 0
+TIM_R <- TIM_L
+TIM_CONTENT_R_PX <- NA_real_     # 框内**内容**右缘（画布 px），供「Sequences」题注自检
 timing_raster <- NULL
 if (want_timing) {
   tim_png <- file.path(datadir, "tool_timing_fig.png")
   if (!file.exists(tim_png)) stop("缺耗时图预渲文件，请先跑 make_tool_timing_fig.R")
-  timing_raster <- grid::rasterGrob(png::readPNG(tim_png), interpolate = TRUE,
+  tim_img <- png::readPNG(tim_png)
+  tim_w_px0 <- ncol(tim_img)
+  # 裁右侧全白列（0.999 容差：抗锯齿白也算白）
+  nz <- which(apply(tim_img, 2, function(cc) any(cc < 0.999)))
+  if (length(nz) && max(nz) < tim_w_px0) {
+    cat(sprintf("耗时图预渲：裁右侧全白列 %d px（%d → %d px @600dpi）\n",
+                tim_w_px0 - max(nz), tim_w_px0, max(nz)))
+    tim_img <- tim_img[, seq_len(max(nz)), , drop = FALSE]
+  } else if (!length(nz)) {
+    warning("耗时图预渲 PNG 全白？未裁切")
+  }
+  # 1 画布 px = 2 PNG px（框 1105 px ↔ PNG 2209 px @600 dpi）
+  tim_w_canvas_px <- ncol(tim_img) / 2
+  TIM_R <- TIM_L + tim_w_canvas_px / 3420
+  tim_w_in <- tim_w_canvas_px / 300
+  TIM_CONTENT_R_PX <- TIM_L * 3420 + tim_w_canvas_px
+  timing_raster <- grid::rasterGrob(tim_img, interpolate = TRUE,
     width = unit(tim_w_in, "in"), height = unit(tim_h_in, "in"))
-  cat(sprintf("耗时图框：x %.3f..%.3f y %.3f..%.3f npc｜%.2f × %.2f in（预渲 PNG）\n",
-              TIM_L, TIM_R, TIM_B, TIM_T, tim_w_in, tim_h_in))
+  cat(sprintf("耗时图框：x %.3f..%.3f y %.3f..%.3f npc｜%.2f × %.2f in（预渲 PNG，右移 %d px）\n",
+              TIM_L, TIM_R, TIM_B, TIM_T, tim_w_in, tim_h_in, TIM_SHIFT_PX))
+  cat(sprintf("  ⚠ 框内容右缘 %.0f px < 交集柱 y 轴刻度左缘 1281 px ？%s\n",
+              TIM_CONTENT_R_PX, ifelse(TIM_CONTENT_R_PX < 1281, "是 ✓", "否 ✗ 会压字！")))
 }
 
 # ── 图例（Venn 右侧一列）：预渲 PNG → rasterGrob（与耗时图 / Venn 同一套零 reflow 机制）──
@@ -783,8 +926,12 @@ if (want_legend_ov) {
 #      紧贴其左侧的 **x1190..1250 竖带在 y249..1582 全空** → 题注位取 **x≈1220**；
 #      纵向中心 = 交集柱面板主区中心（柱顶 ≈y480、基线 ≈y1470）→ **y≈975**。
 #   ⚠ 旋转 90°（自下而上）；字号沿用轴题规格 8 pt（与刻度 7.5 pt 协调）。
+#   ⭐⭐ **第 15 次修订（2026-10-14）**：行名搬左后交集柱面板**整体右移 30 px**
+#      （y 轴刻度文字实测 1253..1335 → **1283..1363**）⇒ 题注随之右移 30 px（1220 → **1250**），
+#      保持与轴题「贴轴 ~11 px」的原有关系。⚠ 题注框 1228..1272 落在耗时图框（331..1255）内，
+#      但耗时图该处为**空白**（其 x 轴刻度文字在 y1465..1490，与题注 y825..1125 不同带）✓。
 SEQ_TXT    <- "Sequences"
-SEQ_CX_PX  <- 1220                     # 题注中心 x（画布 px）
+SEQ_CX_PX  <- 1251                     # 题注中心 x（画布 px）
 SEQ_CY_PX  <- 975                      # 题注中心 y（画布 px）
 SEQ_W_PX   <- 44                       # 框宽（px）：比 8 pt 字高（≈33 px @300dpi）留 1.33× 余量
 SEQ_H_PX   <- 300                      # 框高（px）：纵向足够容纳旋转后整串字
@@ -792,8 +939,9 @@ SEQ_L <- (SEQ_CX_PX - SEQ_W_PX / 2) / 3420; SEQ_R <- (SEQ_CX_PX + SEQ_W_PX / 2) 
 SEQ_T <- 1 - (SEQ_CY_PX - SEQ_H_PX / 2) / 2220; SEQ_B <- 1 - (SEQ_CY_PX + SEQ_H_PX / 2) / 2220
 seq_w_in <- (SEQ_R - SEQ_L) * W_FIG
 seq_h_in <- (SEQ_T - SEQ_B) * H_FIG
-# ⚠ 预渲：白底 → 与 Venn/图例同为不透明 raster。**顺序无重叠风险**（题注位在 x1190..1250，
-#   耗时图右缘 x1245、Venn 左缘 x1947、图例左缘 x2890，三者均不与之横向重叠）+ 纵向 y249..1582 全空。
+# ⚠ 预渲：白底 → 与 Venn/图例同为不透明 raster。**第 15 次修订后净空实测**（画布 3420×2220）：
+#   左界 = 耗时图**内容**右缘（数值标签 "235.2"）≈1221 px；右界 = 交集柱 y 轴刻度文字左缘 1281 px。
+#   题注框 1229..1273 → 两侧各留 ~8 px ✓。Venn 左缘 x1947、图例左缘 x2890 均远在其右 ✓。
 seq_title_raster <- NULL
 {
   seq_pre <- file.path(datadir, "seq_title_ov.png")
@@ -809,6 +957,15 @@ seq_title_raster <- NULL
     width = unit(seq_w_in, "in"), height = unit(seq_h_in, "in"))
   cat(sprintf("Y 轴题框：x %.3f..%.3f y %.3f..%.3f npc｜%.2f × %.2f in（px %d,%d）\n",
               SEQ_L, SEQ_R, SEQ_B, SEQ_T, seq_w_in, seq_h_in, SEQ_CX_PX, SEQ_CY_PX))
+  # ⚠⚠⚠ **第 15 次修订自检（必须！）**：题注是**白底不透明** raster → 左侧若压到耗时图框内
+  #   的**数值标签**（如 "235.2"，实测右缘到 1221 px），会把它**裁掉**（零报错）。
+  #   ⚠ 实测教训：右移 280 px 版把 "235.2" 裁成 **"23"**，靠这一句才拦住。
+  if (!is.na(TIM_CONTENT_R_PX)) {
+    cat(sprintf("  ⚠ 题注左缘 %.0f px > 耗时图内容右缘 %.0f px ？%s（间隙 %.0f px）\n",
+                SEQ_L * 3420, TIM_CONTENT_R_PX,
+                ifelse(SEQ_L * 3420 > TIM_CONTENT_R_PX, "是 ✓", "否 ✗ 会裁掉数值标签！"),
+                SEQ_L * 3420 - TIM_CONTENT_R_PX))
+  }
 }
 
 overlays <- list()

@@ -1,4 +1,32 @@
 #!/usr/bin/env Rscript
+# ── 图件四格式导出 (SVG / PNG / PDF / PNG@1200dpi) — 默认开启 ──────────
+# 2026-10-20: 所有出图脚本统一口径; MMPV_FIG_EXPORT=0 可整体关闭。
+# 钩子只拦截 ggsave(); pdf()/png() 直写的老代码请改用 save_figure()。
+local({
+  .find_repo <- function(start) {
+    d <- normalizePath(start, mustWork = FALSE)
+    repeat {
+      if (dir.exists(file.path(d, "mmpv_common"))) return(d)
+      p <- dirname(d)
+      if (identical(p, d)) return(NA_character_)
+      d <- p
+    }
+  }
+  .here <- tryCatch({
+    a <- commandArgs(FALSE)
+    f <- sub("^--file=", "", a[grep("^--file=", a)])
+    if (length(f)) dirname(normalizePath(f[1], mustWork = FALSE)) else getwd()
+  }, error = function(e) getwd())
+  .root <- .find_repo(.here)
+  if (is.na(.root)) .root <- .find_repo(getwd())
+  if (!is.na(.root)) {
+    source(file.path(.root, "mmpv_common", "figure_export.R"), local = FALSE)
+    install_ggsave_hook()
+  } else {
+    message("[figure_export] 未找到 mmpv_common/, 跳过四格式导出")
+  }
+})
+# ──────────────────────────────────────────────────────────────────────
 # make_cls_tool_timing_fig.R —— 分类工具「全库耗时」条形图 **预渲染**（图② 左上角）
 #
 # 数据：upset_data/cls_tool_timing.tsv
@@ -40,8 +68,8 @@ out <- get_arg("--out", "")
 # ⚠⚠ 默认尺寸必须与 fig_upset_classification.R 的 TIM_L/TIM_R/TIM_T/TIM_B 框**实测一致**
 #   （2026-10-13 用户「时间的图位置往下些，往右边些」→ 框改为 2.3667 × 1.2100 in）。
 #   ⚠ 改了宿主框却没重跑本脚本 → **预渲 PNG 不随参数更新**，会静默嵌旧尺寸图。
-W_IN <- as.numeric(get_arg("--w", "2.3667"))
-H_IN <- as.numeric(get_arg("--h", "1.2100"))
+W_IN <- as.numeric(get_arg("--w", "2.8400"))
+H_IN <- as.numeric(get_arg("--h", "2.7033"))
 DPI  <- as.numeric(get_arg("--dpi", "600"))
 RANK <- get_arg("--rank", "Species")
 TOP  <- as.integer(get_arg("--top", "18"))

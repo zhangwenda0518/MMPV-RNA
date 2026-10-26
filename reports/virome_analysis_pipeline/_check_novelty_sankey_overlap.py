@@ -10,7 +10,7 @@
 注意：文字压在彩带上不算碰撞（本图有意为之，靠白色描边保证可读），只判 text-text。
 
 用法：
-  "C:/Python312/python.exe" scripts/barbarum/_check_novelty_sankey_overlap.py
+  "C:/Python312/python.exe" reports/virome_analysis_pipeline/_check_novelty_sankey_overlap.py
 """
 import os
 import sys

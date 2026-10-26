@@ -6,7 +6,7 @@ check_ef_library.py
 体检 `make_sci_composite_figs.py::EF_LIBRARY` 里每一张候选图：
 裁白边 + 切掉源图标题后，**在组合图里占多高、印刷后字号还剩多少**。
 
-为什么需要它（两条实测约束，详见 reports/sci_composite/README_SCI_composite.md §七）：
+为什么需要它（两条实测约束，详见 reports/virome_analysis_pipeline/figures/README_SCI_composite.md §七）：
 
 * 源图是整页画布（3000 px = 300 dpi 下 10 in；4800 px = 16 in），缩到组合图的
   通栏（9.775 in）会按比例缩字号。印刷后的字号是
@@ -20,7 +20,7 @@ check_ef_library.py
 
 用法（在服务器上）：
     export LD_LIBRARY_PATH=/home/zhangwenda/mambaforge/lib:$LD_LIBRARY_PATH
-    /home/zhangwenda/mambaforge/bin/python scripts/barbarum/check_ef_library.py
+    /home/zhangwenda/mambaforge/bin/python reports/virome_analysis_pipeline/check_ef_library.py
 """
 from __future__ import annotations
 

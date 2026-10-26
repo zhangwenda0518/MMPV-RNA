@@ -1,4 +1,40 @@
-# scripts/barbarum — 宁夏枸杞 (Lycium barbarum) 专项脚本
+# reports/virome_analysis_pipeline — 宁夏枸杞 (Lycium barbarum) 专项绘图
+
+> **⚠ 2026-10-14 迁移**：本目录原为 `MMPV-RNA/scripts/barbarum/`，已整体迁入
+> `reports/virome_analysis_pipeline/`（用户指令：「直接在 reports 创建 virome_analysis_pipeline，
+> 整理到这里，不是别的目录」）。同批并入的还有：
+> `reports/sci_composite/` 的成品图（→ `figures/`）、其历史版本与临时产物（→ `_archive/fig_revisions/`）、
+> 脚本 `.bak`/探针（→ `_archive/script_backups/`）、仓库根的 `_g2/`、`_t1/`、`Rplots.pdf`（→ `_archive/root_junk/`）。
+>
+> **目录约定**
+>
+> | 子目录 | 内容 |
+> |---|---|
+> | 本层 `*.py` / `*.R` | 绘图脚本 + 数据准备 + 版式体检（**扁平**，与原 `scripts/barbarum` 同级） |
+> | `_assets/` `_append_src/` `identfilter_data/` `novelty_sankey_data/` `upset_data/` | 输入数据与预渲资产（脚本的**兄弟目录**） |
+> | `figures/` | **成品图**（当前版本） |
+> | `_archive/` | 历史版本 / 临时 / 备份（**只增不删**） |
+>
+> **路径不变性（为什么迁移几乎零改动）**：`reports/virome_analysis_pipeline/x.py` 与
+> `scripts/barbarum/x.py` **距仓库根同为 3 层** → 所有 `Path(__file__).parents[2]`、
+> `_HERE.parents[1]`、`REPO_DIR = dirname×3` 的仓库根定位**逐字未改**；数据目录仍是脚本的兄弟目录，
+> `HERE/upset_data` 一类引用也未改。**仅 4 处硬编码**动过：
+> `fig_novelty_sankey.py` / `fig_novelty_sankey_supp.py` 的 `DATA`（`ROOT/"reports"/"virome_analysis_pipeline"/…`）、
+> `fig_host_prediction.R` / `fig_host_prediction_b_panel.R` / `fig_upset_classification.R` 的默认数据目录
+> （改用 `script_dir()`，与 CWD 无关）。
+>
+> **零回归验证（2026-10-14）**：主图 PNG 与迁移前 rev.u **逐字节相同**
+> （`985206d6e67e881106ef47c3b316fcbc`，3289 × 4280 px）；版式体检 **0 对重叠**；
+> 24 个 `.py` 全部 `py_compile` 通过。
+> ⚠⚠ **PDF 的 md5 不可作回归判据** —— matplotlib 内嵌 `/CreationDate`，同一脚本两次运行 md5 必不同
+> （实测 `9eebc403…` vs `77ce559c…`，仅时间戳差 35 秒）；**判据只认 PNG**。
+>
+> **服务器镜像**：`~/MMPV-RNA/reports/virome_analysis_pipeline/`（2026-10-14 同步，`_archive/` 不上传）；
+> 旧的 `~/MMPV-RNA/scripts/barbarum/` 已改名为 `scripts/_barbarum_old_20261014/` 留底。
+
+---
+
+# 原 `scripts/barbarum` README（正文，路径已批量改为新位置）
 
 单物种已知病毒分析的复刻/重绘工具。**不属于 MMPV 主流水线**，是针对
 `03_known_virus/known_virus_barbarum` 的项目级脚本。
@@ -39,7 +75,7 @@ Poisson Ratio / 群体检出率），但分母改为 barbarum 权威run 数，�
 队列构成、共感染结构、覆盖度质量分级。
 
 ```bash
-python scripts/barbarum/regen_barbarum_detection_report.py \
+python reports/virome_analysis_pipeline/regen_barbarum_detection_report.py \
   -v.../known_virus_barbarum/01_detection/summary/all_viruses.best.summary.tsv \
   -d .../known_virus_barbarum/01_detection/summary \
   --denominator-sources .../02_novel_virus/RNA-Lycium_barbarum_out/01_Assembly \
@@ -65,7 +101,7 @@ git 全历史 + bash history + `/tmp` 穷尽搜索 `Fig1_study_design` 零命中
 
 ```bash
 export LD_LIBRARY_PATH=/home/zhangwenda/mambaforge/lib:$LD_LIBRARY_PATH
-python scripts/barbarum/redraw_barbarum_detection_figs.py \
+python reports/virome_analysis_pipeline/redraw_barbarum_detection_figs.py \
   -v .../01_detection/summary/all_viruses.best.summary.tsv \
   -m .../01_data/sra_rna.data4/global_metadata/Global_Metadata_Final_with_Coordinates.tsv \
   -d .../01_detection/summary \
@@ -319,7 +355,7 @@ matplotlib 3.9.4（与原图同版本），300 dpi。**配色不写在本文件�
 ```bash
 export LD_LIBRARY_PATH=/home/zhangwenda/mambaforge/lib:$LD_LIBRARY_PATH
 export MMPV_IO_LAYOUT=legacy          # 跑 legacy 结果树必须
-python scripts/barbarum/make_discovery_sci_figs.py \
+python reports/virome_analysis_pipeline/make_discovery_sci_figs.py \
   --root   ~/MMPV-paper/goji-virome/02_novel_virus/RNA-Lycium_barbarum_out \
   --outdir ~/MMPV-paper/goji-virome/02_novel_virus/RNA-Lycium_barbarum_out/10_Reports/S10_SCI_Discovery
 ```
@@ -532,8 +568,8 @@ matplotlib 无原生桑基 → 用 **plotly + kaleido** 渲染 PNG 再 `ax.imsho
 **验收（双端一致，各跑一遍）**：`_check_discovery_overlap.py` → 主图（**v18，7 面板**）
 **16 figures / 0 overlapping pairs**、系统发育图 **44 figures / 0 overlapping pairs**
 （本地与服务器**各 72 figures / 0 对**）；组合图文本层可检索全部 7 个面板标题、CJK = 0。
-脚本 md5：`make_discovery_sci_figs.py` 本地 **`4762851bc8656468a838bf7bf588fd40`**
-（**v21.3：行权 `[0.6,1.0]` + 画布 `(8.55,14.0)` + `hspace 0.28` + 单面板 D `7.61×6.87`**）
+脚本 md5：`make_discovery_sci_figs.py` 本地 **`0687a0a8d34738636c527839f5e553e9`**
+（**v21.4：画布 `(10.0,21.48)` + 行权 `[0.5798,1.0,0.6978]` + 新面板 N（⑧ 整合）**）
 / 服务器 **`15da7e3d7547021032cbcd4e2db3b4e1`**（v17，**尚未同步**）；
 `fig_novelty_sankey.py` 本地 **`12b18e3f8463ee1eeccc0db240b25f8b`**
 （**逐层 `level_fs`/`node_fs_scale` + `_nw()` + `--all-fs`（含独立图）**；**未上服务器**）；
@@ -545,11 +581,366 @@ matplotlib 无原生桑基 → 用 **plotly + kaleido** 渲染 PNG 再 `ax.imsho
 `fig_novelty_sankey.py` + `fig_discovery_supp.py` + `sci_palette.py`
 + 新数据源 `10_Reports/filter_per_sample.tsv` 后**双端各跑一遍**才算闭环
 （⚠ 桑基三脚本禁整篇覆盖，见 R8+R13）。
+⚠ **追加（2026-10-14 ⑧ 第 15 次修订）**：`fig_ident_filter_stacked_all.R` 本地已到
+**`36ac4529295143193ad44b3ea81f9cea`**（行名搬到最左 + 死键修复 + `TIM_SHIFT_PX 246→113`）
+→ **服务器仍是旧版**，须与 `make_discovery_sci_figs.py`(v21.4) 一并同步（先 `diff` 再 `scp`），
+并**重跑 ⑧ 两版 + 主图 + 双端体检**才算闭环。
 ⚠ **同步 `fig_novelty_sankey.py` 时注意**：仓库里存在**并发会话**改过该文件的记录
 （见 §「并发会话」）→ **先 `diff` 再 `scp`**，禁止整篇覆盖。
 ⚠ `Fig_GojiVirome_PhyloSynteny` 是**图片嵌入型**图（`AxesImage`，Text 极少）→
 `_check_discovery_overlap.py` 对它**不适用**（它只测 Text bbox）；该图靠
 `phylosynteny_manifest.json` 的 `height_capped` / `print_scale` 复核版式。
+
+### ⭐⭐ v22（2026-10-14）：三张独立图整合进主图（3 行 → 6 行）
+
+用户指令：「`Fig_GojiVirome_HostPrediction_BPanel.png` 放进主图 **以及宿主分类的那个条形图**」
++ 追加「`Fig_GojiVirome_UpsetClassification_Family.png` 也放进主图」。
+
+| 新面板 | 内容 | 源图（独立图，R） | 裁标题块 | 行高 (in) |
+|---|---|---|---|---|
+| **O** | 宿主分类分布（9 类，n = 20,892） | `fig_host_prediction_a_panel.R`（**本轮新建**；与 `fig_host_prediction.R` 面板 a 同 ggplot 代码） | 283 px | 4.828 |
+| **P** | 宿主预测器证据（耗时 / Venn / UpSet） | `fig_host_prediction_b_panel.R` | 185 px | 5.141 |
+| **Q** | 科级分类一致性 UpSet（7 工具，n = 17,512） | `fig_upset_classification.R --rank family` | 212 px | 5.055 |
+
+- `LAYOUT` 顺序 = `A+J / D / O / P / N / Q`（宿主预测两面板插在 D 与 N 之间，Q 垫底）；
+  字母延续跳号传统（B/C/E/F/G/H 是历史下线 ID，不回收）→ O/P/Q 全新零冲突。
+- 画布 `(10.0, 44.0)`、行权 `[0.5798, 1.0000, 0.7105, 0.7566, 0.6978, 0.7440]`；
+  行高仍按「**资产比反解**」→ `ax.get_position()` 实测各贴图行**各向异性 ≤ 0.02 %**
+  （D −0.007 % / O +0.006 % / P −0.013 % / N −0.008 % / Q −0.020 %）。
+- 新主图（PNG）**3174 × 12610 px**（10.58 × 42.03 in，tight 裁剪后），
+  md5（前 16）= **`577cdba2e8d78d5b`**（v22.2 配色协调后）；v22.1 含 Venn 版 = `a04df3e0aed4b344`；
+  v22 无 Venn 版 = `1a1d9120c2b2daa6`（存 `.bak_20261014_pre_venn`）；
+  v22.2 前 = `a04df3e0aed4b344`（存 `.bak_20261014_pre_color`）；
+  旧版（3174 × 6202）存 `.bak_20261014_pre_v22`。
+- 体检：`_check_discovery_overlap.py --composite-only` → **2 figures / 0 overlapping pairs**；
+  A+J / D / N 三行与旧版**行高逐像素吻合**（1405/1406、1988/1987、1484/1484 px），
+  仅因画布高度变化产生**亚像素重采样**差异（±2 px 平移扫描无法对齐 → 非内容改动）。
+- ⚠⚠⚠ **新硬规则（本轮踩到，已并入 05 档案 README 第 6 条）**：
+  `np.asarray(PIL图)` 前**必须 `convert("RGB")`** —— R 的 `ggsave` / `grDevices::png`
+  （Windows GDI+）会写出**调色板 PNG（PIL mode='P'）**，此时 `np.asarray` 返回 **(H,W) 索引**
+  而非 (H,W,3) → `imshow` 把它当**标量场**套上当前 `image.cmap`（本项目 = viridis）→
+  **白底变亮黄、柱色全错、零报错**。实测：APanel = mode 'P'（中招）；
+  BPanel / Family = mode 'RGB'（正常）。**判据** = 行内颜色直方图
+  `viridis 黄 (253,231,37) == 0 px` 且 `OKABE_ITO 橙 (230,159,0) > 0`。
+- ⚠⚠ **R 脚本的中文 `--outdir` 必须走 ASCII 中转**：Git Bash 把参数里的中文转码损坏
+  （实测 `cannot create dir 'D:\f!i"'`）→ 先 `--outdir C:/tmp/<ascii>` 再 `cp` 回中文目录。
+  （内部路径经 `script_dir()` 解析的**不受影响** —— 只有命令行参数中招。）
+- ⏳ **服务器未同步**：`make_discovery_sci_figs.py`(v22, `78d98648ddef2e7a534891ca1e91df7d`)
+  + 新建 `fig_host_prediction_a_panel.R`(`62c32dfe31cc95f80a22a9ad0dca4348`)
+  + `fig_host_prediction_b_panel.R`(`139174b23a3e4ea351a0a0af7de1c5da`)
+  + `fig_upset_classification.R`(`8100d0c277850d0587f49c4f050cb500`)
+  → 须一并 `diff` → `scp`（**禁整篇覆盖**）后再双端各跑一遍体检。
+
+### ⭐⭐ v22.1（2026-10-14）：Q 面板右上角补 7 集 Venn
+
+用户指令：「Q 也绘制 venn 补充到右上角的空白处」，参考
+<https://zhuanlan.zhihu.com/p/434441906>（R 语言 7 组韦恩图）。
+
+**改动范围 = 只有 `fig_upset_classification.R`**（主图脚本零改动 → Q 行几何不变）。
+脚本 md5 `657b727c7fcee5f1925f7aebd7debcc5`（原 `8100d0c277850d0587f49c4f050cb500`）。
+
+- **框位置**（px @300dpi，画布 2796×1800）：`x 1390..2500, y 220..920` = **1110×700 px = 3.700×2.333 in**。
+  - 判据：框内 `g<215` 的墨迹 **= 0**（`g<245` 的 13k 像素全是 4 条极浅网格线，`g<220` 即为 0）。
+  - ⚠⚠ **必须落在 Q 的标题裁切线（`UF_CROP_TOP_PX = 212`）之下** —— 否则被主图**静默裁掉**。
+  - 该框 **Species 与 Family 两版同时为空**（含 14 px 净空）→ 一套坐标两版共用。
+- **实现**：`ggVennDiagram`（`shape_id="701"`，与 ③ BPanel 的 Venn **同族同风格**）→ `ggsave` PNG
+  → `rasterGrob` → 叠在 `patchworkGrob` 上（**禁 `inset_element`**：对 patchwork 静默误算 npc）。
+- ⚠⚠⚠ **7 集 Venn 标签三坑**（逐个实测）：
+  1. 全标 127/77 个区域 → **完全糊死**（`venn` 包与 `ggVennDiagram` 两版皆不可读）；
+  2. 只留质心 + 阈值过滤 → 数字仍**压花瓣线**；
+  3. ggrepel 强 repel（`box.padding` 0.4）→ 标签被推离质心、**撞上集合名**。
+  ✅ **正解 = `geom_label_repel`（`fill="white"` + `linewidth=0`）**：白底遮住穿过的轮廓线，
+     `force=1.2` 轻度位移 + 细引线回指质心。
+  ⚠ `stroke` / `stroke.colour` **不是 `geom_text` 参数**（静默忽略，只 warning）；
+     `label.size` 在 ggplot2 ≥3.5 **已弃用** → 必须用 `linewidth`。
+- ⭐ **标注阈值取「前 N 大」（`--venn-top`，默认 15）**，不用固定数值 ——
+  Species（49 非空，top12=165）与 Family（77 非空，top12=302）分布差异大，
+  固定阈值会让两版标注数差一倍；N=15 → Species 阈值 94 / Family 阈值 211，两版均 15 标签。
+- ⚠ 中心区域（`1/2/3/4/5/6/7` 全票）实测 count = **0** → 不标注，无误导。
+- **开关**：`--no-venn` / `--venn-top N` / `--venn-color #RRGGBB`（与既有 `--no-timing` 同族）。
+- ✅ **零回归三重验证**（本轮实测）：
+  1. **框外差异像素 = 0**（Family / Species 两版，改前 vs 改后对拍）；
+  2. `--no-venn` 重生成的 Family 资产 md5 = `e013592e2e2d12c9ecdb6040a9fbedb6`
+     **与 pre_venn 备份逐字节一致**；
+  3. 用 v22 资产（无 Venn）重出主图 → md5 **精确回到 `1a1d9120c2b2daa688c26bccc2500d8f`**。
+- **新主图**：PNG md5 = `a04df3e0aed4b34404bad2766c98d33f`（3,295,959 B）；Q 行各向异性仍 **0.0201 %**。
+- ⚠⚠ **面板内 inset 的框必须落在该面板「标题裁切线」之下**（已并入 05 档案 README 硬规则 7）。
+- ⏳ **服务器未同步**：`fig_upset_classification.R`(`657b727c7fcee5f1925f7aebd7debcc5`)
+  + 两张 Q 产物（Species / Family 各 png+pdf）。
+
+### ⭐⭐⭐ v23（2026-10-15）：主图改 **2 列 × 4 行** —— 从 1:4.4 长条到接近 A4
+
+用户：「Fig_GojiVirome_Discovery.png 2*3 还是3*3」→ 经 AskUserQuestion 两轮选定
+**2 列 × 4 行** + **面板宽锁 ~8.9 in**（字号零损失）。
+
+**逐行**：行0 `A|J`、行1 `D|O`、行2 `P|N`、行3 `Q`（占左半栏，右下留空）。
+
+| 口径 | 2 列时面板宽 | 字号 | D 桑基标签 |
+|---|---|---|---|
+| 画布宽固定 8.9 in（期刊双栏） | 3.85 in | **43 %** | 4.56 → **1.97 pt 不可读** ✗ |
+| **面板宽锁 ~8.9 in**（采纳） | 8.9 in | **100 %** | **4.80 pt** ✓ |
+
+⚠⚠⚠ **为什么不能「画布宽固定」**：7 个面板全是**横宽型**（资产比 1.3098–2.2350），
+加列 = 面板变窄 = **字号等比缩小**。
+
+⚠⚠⚠ **坑 1：`GridSpec` 等宽列必然形变**（首版踩，零报错）——实测 **J +35.2 % / D +33.5 % /
+P +15.5 % / Q +13.5 %**。根因：两面板资产比不同（J 1.5525 vs A 2.2350），等宽必然拉伸一个。
+→ 正解 = **显式坐标定位**（弃用 GridSpec）：行高 = 该行可用宽 / Σ(资产比)，
+同行两面板**列宽不等、高相同**。判据 = 逐面板 `get_position()` 反推 → 形变 **全部 +0.00 %**。
+
+⚠⚠ **坑 2：单面板面板字母 `TEXT-OFF-CANVAS`** —— O/P/Q 原走 `else` 分支（`dx=-0.34` 轴分数），
+单面板画布 8.99 → 8.87–11.63 in 变宽后算出 **-386 / -294 / -299 px** 出界。
+→ 并入 D/N 同档（`dx=0.0` 贴轴左缘 + `dy=1.12`）。
+
+**几何实测**：画布 **20.00 × 26.28 in**（比 0.761）；PNG **6003 × 7673**（比 0.7824）。
+
+| 面板 | 宽 in | 高 in | 比 | 形变 |
+|---|---|---|---|---|
+| A | 10.504 | 4.700 | 2.2350 | +0.00 % |
+| J | 7.296 | 4.700 | 1.5525 | +0.00 % |
+| D | 7.394 | 5.645 | 1.3098 | +0.00 % |
+| O | 10.406 | 5.645 | 1.8432 | +0.00 % |
+| P | 8.540 | 4.933 | 1.7313 | +0.00 % |
+| N | 9.260 | 4.933 | 1.8771 | +0.00 % |
+| Q | 8.686 | 4.933 | 1.7607 | +0.00 % |
+
+**验证**：版式体检 **28 figures / 0 overlapping pairs**、`TEXT-OFF-CANVAS` **0**；
+D 面板字高实测 **4.80 pt**（PASS）；内容主色与旧版一致。
+
+**产物 md5**：`Fig_GojiVirome_Discovery.png` **`8591443bcd19cde3`**；
+`.pdf` **`24207115ab1d2c00`**。旧版（v22.2）PNG `577cdba2e8d78d5b` 存 `.bak_20261015_pre_v23`。
+**四处副本已同步**（review root / 桌面无前缀 / 桌面 `2_` / 档案库 `05_`）→ 逐字节一致。
+⏳ **服务器未同步**：`make_discovery_sci_figs.py`（**先 `diff` 再 `scp`**）。
+
+### ⭐⭐⭐ v24（2026-10-15）：主图新增面板 **R** = Alphaflexiviridae 物种比对
+
+用户：「Alphaflexiviridae科的物种比对 单独一张，合并到主图，其他作为附图」。
+
+**改动**：v23 的第 4 行原为**单面板**（Q 占左半栏、右下留空）→ 把 R 填进右下，该行变**双面板**。
+
+**来源** = discovery ③ 的 09b 阶段产物
+`<...>/_phylo/acvirus_trees/Alphaflexiviridae/Tree_Synteny_Composite.png`
+（`virome_discovery_pipeline/utils/acvirus_tree_pro.py` 直出；归档副本在
+`MMPV主图档案库_20261014/14_MLtree_科级树与共线性/单科面板/管线原图/Alphaflexiviridae/`）。
+
+⚠⚠ **贴管线原图，不重绘、不裁标题块**（项目硬规则「整页独立图只能自绘」已被否决）：
+- 与 O/P/Q 同源纪律 = `imread → imshow`，**不许重绘 / 降采样**。
+- **与 O/P/Q 的差异**：O/P/Q 源图顶部 title+subtitle 与主图 `ax.set_title()` 重复 → 必须裁；
+  R 顶部只有两个**子面板**标题（「Maximum-Likelihood Phylogeny」/「Comparative Synteny &
+  Homology」），是图内元素，裁掉没法读 → **保留**。实测顶部空白仅 ~55 px（内容自 y≈73 起），
+  无可裁余量。
+
+⚠⚠ **副作用（用户已知悉并选定）**：行高由 v23 的「单面板沿用上一行高」改为「按 Σ资产比反解」
+→ 行 3 高 `4.9331 → 5.8793 in`，**Q 面板由 8.685 → 10.352 in 宽**（等比放大 19 %，零形变）。
+⚠ **行 0/1/2 完全不变（零回归）**；画布 `20.0 × 26.28 → 27.23 in`。
+
+⚠ **资产比 = `4477 / 3534 = 1.266844`**（与 `_V23_RATIO["R"]` **必须同源**，
+否则 `imshow(aspect="auto")` 静默形变 —— 同 v21.4 的 D 面板 13.2 % 压扁事故）。
+
+**几何（实测，8 面板形变全部 +0.000 %）**：
+
+| 面板 | 宽 (in) | 高 (in) | 面板比 | 形变 |
+|---|---|---|---|---|
+| A | 10.504 | 4.700 | 2.2350 | +0.00 % |
+| J | 7.296 | 4.700 | 1.5525 | +0.00 % |
+| D | 7.394 | 5.645 | 1.3098 | +0.00 % |
+| O | 10.406 | 5.645 | 1.8432 | +0.00 % |
+| P | 8.540 | 4.933 | 1.7313 | +0.00 % |
+| N | 9.260 | 4.933 | 1.8771 | +0.00 % |
+| Q | 10.352 | 5.879 | 1.7607 | +0.00 % |
+| R | 7.448 | 5.879 | 1.2668 | +0.00 % |
+
+**验证**：
+- 版式体检 **30 figures / 0 overlapping pairs**；
+- 面板字母定位 **10 个字母 / 0 off-canvas**（Q `x0=8.4`、R `x0=1113.3`，画布 2000 px 宽）；
+- 8 面板各向异性 **全部 +0.000 %**。
+
+**产物 md5**：`Fig_GojiVirome_Discovery.png` **`3b395c68d8daa09b`**（6027 × 7966 px）；
+`.pdf` **`1ec0e8c59960bb3c`**。旧版（v23）PNG `8591443bcd19cde3` 存 `.bak_20261015_pre_v24`。
+**四处副本已同步**（review root / 桌面无前缀 / 桌面 `2_` / 档案库 `05_`）→ 逐字节一致。
+⏳ **服务器未同步**：`make_discovery_sci_figs.py`（**先 `diff` 再 `scp`**）。
+
+### ⭐⭐⭐ v25（2026-10-15）：新增第 5 行 —— Potexvirus SDT + 覆盖度
+
+用户：「Potexvirus SDT 和 序列的覆盖度图 呢 两个图继续补充到主图」。
+
+**改动**：垫底新增**第 5 行** = **S | T**；行 0–3 **完全不变（零回归）**；
+画布 `20.0 × 27.23 → 32.04 in`。
+
+| 面板 | 内容 | 资产（裁后 px） | 资产比 |
+|---|---|---|---|
+| **S** | Potexvirus 成对同一性矩阵（SDT, NT） | `2327 × 2193` | **1.061104** |
+| **T** | 代表序列覆盖度（reads depth vs genome position） | `2379 × 572` | **4.159091** |
+
+⚠⚠ **S / T 均为贴管线原图**（`imread → imshow`），**裁掉源图标题块**：
+- S：`POTEX_SDT_CROP_TOP_PX = 232`（源图 `2327 × 2425`，顶部**两行**粗体标题
+  墨迹带 y 31–97 / 107–173）。
+- T：同样裁顶部标题块（源图 `2379 × 617`）。
+- 来源 = `09b_Analysis_Verify/SDT_matrix/Potexvirus/`（SDT 热图）
+  与 Potexvirus 覆盖度产物；T **只放 1 条代表** = `SRR8191317_NODE_2`
+  （9,471 bp / mean depth **117,291×**，即 6 条自有 Potexvirus contig 中平均深度最高者）。
+
+⚠⚠ **本行的几何张力（重要）**：S 近正方（1.061:1）而 T 极扁（4.159:1）。
+在「T 铺满 + 两面板等高 + 零留白」三条件下，`h = 17.80 / Σ比 = 17.80 / 5.220194 = 3.4098 in`
+→ **S 只拿到 3.6182 in 宽**（≈ 1/5 栏）、T 拿 14.1818 in。
+这是**几何唯一解**，不是取舍失误。⚠ 用户已在二选一（选项描述明写「SDT 被压到 3.55 in 宽」）
+后选定「只放 1 条代表」。⚠ 若日后要放大 S，只能改「S 独占一行」或「T 不铺满（留白）」。
+
+**几何（实测，10 面板形变全部 +0.000 %）**：
+
+| 面板 | 宽 (in) | 高 (in) | 面板比 | 形变 |
+|---|---|---|---|---|
+| A | 10.504 | 4.700 | 2.2350 | +0.00 % |
+| J | 7.296 | 4.700 | 1.5525 | +0.00 % |
+| D | 7.394 | 5.645 | 1.3098 | +0.00 % |
+| O | 10.406 | 5.645 | 1.8432 | +0.00 % |
+| P | 8.540 | 4.933 | 1.7313 | +0.00 % |
+| N | 9.260 | 4.933 | 1.8771 | +0.00 % |
+| Q | 10.352 | 5.879 | 1.7607 | +0.00 % |
+| R | 7.448 | 5.879 | 1.2668 | +0.00 % |
+| **S** | **3.618** | **3.410** | **1.0611** | **+0.00 %** |
+| **T** | **14.182** | **3.410** | **4.1591** | **+0.00 %** |
+
+**验证**：
+- 版式体检 **34 figures / 0 overlapping pairs**；
+- 面板字母定位 **12 个字母 / 0 off-canvas**（S `x0=58.9`、T `x0=389.5`，画布 2000 px 宽）；
+- 10 面板各向异性 **全部 +0.000 %**。
+
+**产物 md5**：`Fig_GojiVirome_Discovery.png` **`f6a8e3725c3f5a00`**（6027 × 9386 px）；
+`.pdf` **`6195a0baba62f359`**。旧版（v24）PNG `3b395c68d8daa09b` 存 `.bak_20261015_pre_v25`。
+**四处副本已同步**（review root / 桌面无前缀 / 桌面 `2_` / 档案库 `05_`）→ 逐字节一致。
+⏳ **服务器未同步**：`make_discovery_sci_figs.py`（**先 `diff` 再 `scp`**）。
+
+### ⭐⭐⭐ v26（2026-10-15）：底行补 **SDT 折线图**（新面板 U）+ 两处列宽对齐
+
+用户：「SDT的折线图图呢？ 这样E和F才能平分一行，不显得F过大 另外D 和 A 长度对齐，J和O对齐」。
+
+> ⚠ **「E / F」是历史面板编号**（v20 之前的主图字母），本图现无 E/F 面板。
+> 经三轮二选一确认，用户实际指的是**底行 S / T**（「底行 S 和 T」）、
+> 并要求「**零形变 + 行内留白**」「**三图一行**」「**行 2 换序 O\|D**」。
+
+**改动 A — 新增面板 U（SDT 成对同一性「分布」折线图）**
+
+| 面板 | 内容 | 源资产 | 裁后 px | 资产比 |
+|---|---|---|---|---|
+| **U** | Potexvirus 成对同一性**分布**（SDT, NT，折线） | `SDT_Potexvirus_distribution.png` `3025 × 1711` | `3025 × 1578` | **1.916983** |
+
+- 来源 = 09b `01_data/SDT_matrix/barbarum__Potexvirus/SDT_Potexvirus_distribution.png`
+  （与面板 S 同一 27-taxon pool）；落到 `S10_SCI_Discovery/Fig_GojiVirome_Potexvirus_SDTdist.png`。
+- **裁标题块**：源图粗体标题墨迹带实测 **y 30–96**（单行
+  `Distribution - Genus Potexvirus: 8 user contigs + 19 db refs (09b ACVirus) - NT`），
+  下一处墨迹 = 坐标轴**顶脊 y 143–145**（1865 px 宽实线）→ `POTEX_DIST_CROP_TOP_PX = 133`。
+  ⚠ 与 S 的 232 px 不同源：S 是**两行**标题、U 是**单行**。
+- 结果：**底行由 `S\|T` 改三图 `S\|U\|T`** → T **14.18 → 10.09 in**（−28.8 %，「不显得 F 过大」达成）、
+  S 3.62 → **2.58 in**、U = **4.65 in**。⚠ S 变窄是用户明示接受的代价。
+
+**改动 B — 行 1 换序 `D|O` → `O|D`（列宽对齐）**
+
+| 行 | 面板 | 分栏线占比 | 分栏线绝对 x |
+|---|---|---|---|
+| 0 | `A \| J` | 10.5038/(10.5038+7.2962) = **59.01 %** | 0.86 + 10.5038 = **11.3638 in = 3409.1 px** |
+| 1（换序后） | `O \| D` | 1.84324/(1.84324+1.30979) = **58.46 %** | 0.86 + 10.4058 = **11.2658 in = 3379.7 px** |
+
+⇒ 绝对差仅 **29.4 px（0.098 in）** / 6027 px 画布 → **零留白、零形变、无任何面板改尺寸**
+（O 仍 10.4058 in、D 仍 7.3942 in）。代价 = D 移到右栏（与 J 对齐）、O 到左栏（与 A 对齐）。
+⚠ 换序**只改 `_V23_ROWS` 的第 2 行元素顺序**，`_V23_RATIO` / 行高反解公式零改动。
+
+**几何（v26 实测，画布 20.0000 × 31.0541 in，11 axes，形变全部 +0.000 %）**：
+
+| 行 | 行高 (in) | 面板宽 (in) |
+|---|---|---|
+| 0 | 4.6997 | A 10.5038 / J 7.2962 |
+| 1 | 5.6454 | **O 10.4058 / D 7.3942** |
+| 2 | 4.9330 | P 8.5404 / N 9.2596 |
+| 3 | 5.8793 | Q 10.3518 / R 7.4482 |
+| 4 | **2.4267** | **S 2.5750 / U 4.6520 / T 10.0930** |
+
+⚠⚠ **`_v23_geometry()` 未改**：`h = (usable_w − col_gap×(n−1)) / Σ比` 天然支持三面板行（自动扣 2 个 gap）。
+
+⚠⚠ **三面板行的独立图不缩水**：`S` / `U` / `T` 的**单面板成品图**画布高仍锁 `H = 3.7887 in`
+（`S = 3.6548` / `U = 6.6026` / `T = 14.3250`）—— 主图第 4 行虽变矮，**独立交付图尺寸不变**，
+**只要求比例与主图面板一致**（尺寸自由）。
+
+**验证**：
+- 版式体检 **36 figures / 0 overlapping pairs**（v25 为 34）；
+- 面板字母 **11 个字母 + 2 个刻度误报（"63" / "45"）/ 0 off-canvas**；
+- 11 面板各向异性 **全部 +0.000 %**（O 有 +0.007 % 舍入）；
+- 面板字母档：`O/P/Q/R/S/T/U` 全部 `panel_letter(ax, L, dx=0.0, dy=1.12)`
+  （`dx=-0.34` 会算出 O −386 / P −294 / Q −299 / R −206 / S −116 / U −209 px **出界**）。
+
+**产物 md5**：`Fig_GojiVirome_Discovery.png` **`0e33ce6180fc93799b7c8550528a414d`**
+（**6027 × 9083 px**，4,193,102 B）；`.pdf` 3,506,107 B（md5 每次不同）。
+旧版（v25）PNG `f6a8e3725c3f5a00` / 6027 × 9386 存 `.bak_20261015_pre_v26`。
+**四处副本已同步**（review root / 桌面无前缀 / 桌面 `2_` / 档案库 `05_`）→ 逐字节一致。
+A/B 对比图存 `05_.../过程留档/主图布局v26_改前改后对比.png`（md5 `8cc3552eb84c8ad6`）。
+⏳ **服务器未同步**：`make_discovery_sci_figs.py`（**先 `diff` 再 `scp`**）。
+
+### ⭐⭐ v22.2（2026-10-14）：三张 UpSet 配色协调 —— 类别色 vs 数量色分离
+
+用户：「三个 upset 的颜色可以调整下嘛？尤其是左侧的条形图」+「也一并协调顶部交集柱」。
+
+**采纳方案**（经 AskUserQuestion 两轮确认）：左侧 set-size 条 = **身份色**；
+顶部交集柱 = **三图统一的数量色阶**；N 保持不动。
+
+| 图 | 左侧条（改后） | 顶部柱（改后） |
+|---|---|---|
+| **P** `fig_host_prediction_b_panel.R` | `HOSTPRED_COLORS` 四预测器（与左上耗时 inset 同色） | `QUANT_COLORS` 1–4 档 |
+| **N** `fig_ident_filter_stacked_all.R` | **不动**（彩色堆叠 = 过滤结局） | **不动**（类别维度，改单色会丢结论） |
+| **Q** `fig_upset_classification.R` | `TOOL_COLORS` 七工具 | `QUANT_COLORS` 1–7 档 |
+
+⚠⚠⚠ **为什么必须分离**（改前实际撞色）：Q 左侧若用 `TOOL_COLORS`、顶部仍用
+`DEGREE_COLORS` → **4 个完全同色**（`#56B4E9`/`#F0E442`/`#0072B2`/`#D55E00`）；
+P 撞 2 个（`#0072B2`/`#D55E00`）→ 图例串味。⇒ 正解 = **类别用彩色、数量用单色系渐变**。
+
+⚠⚠ **数量色阶跨图同值同色**：三图分别 1–7 / 1–4 档，各自 `viridis(n)` 插值会让同一个
+「2」在不同图里颜色不同 → 用固定档位表 `QUANT_COLORS[k]`（`upset_common.R`）**按档位索引**。
+
+**新增共用件**（`upset_common.R`）：`QUANT_COLORS` / `QUANT_BLUES` / `quant_colors()` /
+`set_size_colors()` / `set_size_colors_filtered()`。
+
+⚠⚠⚠ **三条硬坑（全部实测，已并入 05 档案 README 硬规则 9–11）**：
+1. **左侧条只能用颜色向量**：`aes(fill = ...)` 三种写法在 ComplexUpset 1.3.3 全报错
+   （`object 'x'/'set' not found`、`Cannot add <ggproto> objects together`）；
+   ✅ `geom_bar(fill = <向量>)`，且**向量按传入 `sets` 顺序**（与 `sort_sets` 渲染顺序无关）。
+   ⚠ 条宽保持 **0.6**（写 0.62 → 左侧 3,855 px 差异）。
+2. **`min_size` 静默裁集合 → 向量长度必须过滤**：Species 的 `genomad` 仅 13 条
+   vs `min_size=68` → 被裁 → 7 色 vs 6 行 → `Aesthetics must be either length 1 or the
+   same as the data (6)`。✅ 用 `set_size_colors_filtered(sets, pal, sig_top$sig)`。
+   ⚠⚠ **只在 Species 触发（Family 的 7 工具全在）→ 必须两个 rank 都跑**。
+3. **色阶方向**：viridis 1→7 = 深紫→黄（**大 = 亮**），与旧 `DEGREE_COLORS`
+   （1=浅黄…7=橙红，**大 = 深**）**方向相反** → 属用户可见变更，题注已写明。
+
+**零回归三重验证**（旧口径 `--plain-setsize --quant-scheme degree` 重跑，全部逐字节）：
+
+| 图 | 重跑 md5 | 与改前 |
+|---|---|---|
+| Q Species | `a583f631ffe13d9a` | ✓ 完全一致 |
+| Q Family | `f0ff728a1b29beff` | ✓ 完全一致 |
+| P BPanel | `3f2dd9e5dad6d664` | ✓ 完全一致 |
+| N IdentFilter_norm | `e1f7174c1e1c176c` | ✓ 未受影响 |
+
+**新版差异分区实测**：P / Q 差异**只**在「左侧条 + 顶部柱」，**Venn / 点阵 / inset = 0 px**。
+
+**产物 md5（v22.2）**：
+- 主图 PNG `577cdba2e8d78d5b904eec4155a8da5f`（3,174×12,610，尺寸与 v22.1 一致 → 几何零位移）
+- Q Family `17856b5d0d650cf0cb9b9f8431980bbf`｜Q Species `86ee82428a0ea5d89a2487e9b17d7b3c`
+- P BPanel `84c8c1c63fb72c890aeae1fa83773073`
+- 版式体检 → **2 figures / 0 overlapping pairs**
+- 脚本 md5：`upset_common.R` `36f485f3…`→（改后见下）；`fig_upset_classification.R` `657b727c…`→改后
+- **四处副本已同步**（review 根 / 桌面 / 档案库 05+09；写作目录无副本），旧版备份 `.bak_20261014_pre_color`
+- ⏳ **服务器未同步**：`upset_common.R` + `fig_upset_classification.R` + `fig_host_prediction_b_panel.R` + P/Q 产物
+
+**验收对比图**（`3×2` 布局，2026-10-14）：
+- 主网格 **3 列 × 2 行**（列 = Q / P / N，行 = 上改前 v22.1 / 下改后 v22.2）
+  + 左侧 set-size 条形图**放大 ×2.5** 细节带（同样 3×2）+ 底部配色图例
+- 三张源图宽高比均 **1.54–1.55** → 3 列并排整幅接近 4:3；且改动核心是**三图之间的协调**，
+  必须**横向并排**才看得出「左侧条彼此区分 + 顶部柱三图同色阶」
+- 归档 `MMPV主图档案库_20261014/09_UpSet_工具分类宿主/过程留档/三张UpSet配色v22.2_验收对比_3x2.png`
+  （2,970×2,480）+ 排版脚本 `_三张UpSet配色v22.2_排版脚本.py`
+- ⚠ 细节带裁框**必须含左侧行标签**：Q/P = `(30,1130,1360,1670)`、N = `(20,1508,1500,2090)`。
+  首版左边界取 `100` → P 列行名被切成 `TV / VH / B2 / ule`（零报错）
+- ⚠ **判据坑**：`TOOL_COLORS` 与 `DEGREE_COLORS` 同源 OKABE_ITO → 直接数「旧色残留像素」
+  会**假阳性**（`#0072B2`/`#D55E00`/`#F0E442` 两套都有）→ 正解 = **A/B 逐像素差异分区**
 
 ## make_goji_virome_phylo_figs.py
 
@@ -569,7 +960,7 @@ Caulimoviridae RT 的 ML 树）。
 
 ```bash
 export LD_LIBRARY_PATH=/home/zhangwenda/mambaforge/lib:$LD_LIBRARY_PATH
-python scripts/barbarum/make_goji_virome_phylo_figs.py \
+python reports/virome_analysis_pipeline/make_goji_virome_phylo_figs.py \
   --trees  <.../09b_Analysis_Verify/acvirus_trees> \
   --outdir <.../S10_SCI_Discovery> \
   --virus-name "Lycium barbarum"
@@ -611,7 +1002,7 @@ python scripts/barbarum/make_goji_virome_phylo_figs.py \
 + `_build/phylosynteny_manifest.json`（每科像素尺寸 / 行高 / 缩放 / 是否被限高）。
 
 ```bash
-python scripts/barbarum/make_goji_virome_phylosynteny_fig.py \
+python reports/virome_analysis_pipeline/make_goji_virome_phylosynteny_fig.py \
   --trees  <.../09b_Analysis_Verify/acvirus_trees> \
   --outdir <.../S10_SCI_Discovery> \
   --virus-name "Lycium barbarum"
@@ -670,7 +1061,7 @@ left=0.135, right=0.985, top=0.905, bottom=0.045)`，`figsize=(7.6, 7.5)`。
 失败只 `warn` 不拖垮主流程；也可手工：
 ```bash
 export MMPV_IO_LAYOUT=legacy
-python scripts/barbarum/fig_discovery_supp.py --root <RNA-Lycium_barbarum_out>
+python reports/virome_analysis_pipeline/fig_discovery_supp.py --root <RNA-Lycium_barbarum_out>
 ```
 
 **体检**：`_check_discovery_overlap.py --module fig_discovery_supp -- --root <root>`
@@ -687,7 +1078,7 @@ python scripts/barbarum/fig_discovery_supp.py --root <RNA-Lycium_barbarum_out>
 + `_build/novelty_manifest.json`（每个面板的族/种计数、**截断比**、命名清单）。
 
 ```bash
-python scripts/barbarum/make_discovery_novelty_figs.py \
+python reports/virome_analysis_pipeline/make_discovery_novelty_figs.py \
   --root  <RNA-Lycium_barbarum_out> \
   --outdir <...>/S10_SCI_Discovery \
   --virus-name "Lycium barbarum"
@@ -744,10 +1135,10 @@ panel c 用**空心环**标出（82 个点中 24 个命中）。
 + `Fig_GojiVirome_NoveltySankey_Supp.{png,pdf}`（**附图**，`7.6 × 9.2 in`，4 面板明细）。
 
 ```bash
-"C:/Python312/python.exe" scripts/barbarum/make_novelty_sankey_data.py
-"C:/Python312/python.exe" scripts/barbarum/fig_novelty_sankey.py --outdir <...>/S10_SCI_Discovery
-"C:/Python312/python.exe" scripts/barbarum/fig_novelty_sankey_supp.py --outdir <...>/S10_SCI_Discovery  # 附图
-"C:/Python312/python.exe" scripts/barbarum/_check_discovery_overlap.py --root <...> --outdir <...>      # 版式体检
+"C:/Python312/python.exe" reports/virome_analysis_pipeline/make_novelty_sankey_data.py
+"C:/Python312/python.exe" reports/virome_analysis_pipeline/fig_novelty_sankey.py --outdir <...>/S10_SCI_Discovery
+"C:/Python312/python.exe" reports/virome_analysis_pipeline/fig_novelty_sankey_supp.py --outdir <...>/S10_SCI_Discovery  # 附图
+"C:/Python312/python.exe" reports/virome_analysis_pipeline/_check_discovery_overlap.py --root <...> --outdir <...>      # 版式体检
 ```
 
 **口径沿革**：895（原始）→ 296 → 277 → 190（去 Other + 去 Unassigned）→ 121（+ 只物种层去长尾）
@@ -1092,6 +1483,170 @@ Y_units     = tot / (1 − 36c),  c = fs × 0.01890 / canvas_H
 ⚠ 字号 **2.0 → 8.23 pt（4.1×）**，代价 = Known 块 442 → 364 px（**−18 %**）。
 交付 md5：主图 **`8245fea2d1d782ee34cbfccabf7c587b`**、独立图 **`a9002e8f424033db0e60e61e2e5c2f32`**。
 
+### ⭐⭐⭐ 2026-10-14 00:0x「`Fig_GojiVirome_IdentFilterStackedAll_norm.png` 整合到主图」→ v21.4
+
+**用户指令**：把 ⑧（`Fig_GojiVirome_IdentFilterStackedAll` 的 **`_norm`** 变体）整合进主图。
+**澄清两问**：① 版式 → **「底部通栏 · 主图加宽」**；② ⑧ 自带标题块 → **「裁掉」**。
+
+#### ⚠⚠⚠ 为什么必须「加宽主图」而不是「把 ⑧ 缩窄」
+
+| 事实 | 值 |
+|---|---|
+| ⑧ 源图 | **11.4 × 7.4 in**（`W_FIG`/`H_FIG`），比 1.5405 |
+| 主图旧可用宽 | **7.61 in** → ⑧ 必被缩 **0.667×**（最小字 6.4 pt → **4.3 pt**，糊） |
+| ⑧ 能否重渲成窄版 | **不能** —— overlay 坐标是按 `W_FIG = 11.4` 写死的**分数**（如 `leg_w_in <- (LEG_R-LEG_L)*W_FIG`），改 `W_FIG` 会让预渲 inset 的**物理尺寸跟着变** → Venn / 图例 / 耗时条 / 序列标题四处 overlay 全部错位 |
+
+⇒ 唯一出路 = **把主图加宽**。画布宽 **8.55 → 10.0 in**（可用宽 **7.61 → 8.90 in**）→ ⑧ 缩放 **0.781×**（最小字 6.4 → **5.0 pt**）。
+
+#### ⚠⚠ 裁掉标题块：裁切线是「量」出来的，不是拍的
+
+| 量 | 值 |
+|---|---|
+| 标题块（1 行主标题 + 4 行说明） | y **58..253 px**（第 4 行底 = 253） |
+| **最高内容元素 = 右上 Venn** | 顶边 y = **407 px**（1.357 in） |
+| 各 x 带「首个内容块」 | 左(耗时条) **573**、中(交集柱) **522**、右(Venn) **407**、最右(图例) **787** |
+| ⇒ 裁切线 | **y = 398 px**（Venn 之上留 9 px 净空）→ 裁后 **3420 × 1822 px = 11.4 × 6.073 in（比 1.87706）** |
+
+⚠⚠ **裁切在内存里做**（`panel_N_identfilter` 里 `Image.crop`），**不落中间资产**
+→ 源图重出后自动跟随，不会留陈旧副本（本项目吃过「预渲资产不随参数更新」的亏）。
+⚠⚠ **裁切线与 `H_FIG = 7.4` 强耦合** → 代码里加了**高度自检**：源图高 ≠ 2220 px 时
+**回退为「不裁」并打印告警**，绝不静默裁错位置（会把 Venn 顶切掉或留半行标题）。
+
+#### ⭐⭐ 行权是「反解」的 —— 让两块贴图**各向异性 = 0**
+
+`imshow(aspect="auto")` 会把资产**强行拉伸**到轴框 → **面板比 ≠ 资产比 = 静默形变**。
+故两个通栏行的高度必须由**资产比反推**，不能拍：
+
+```
+D 行高 = 可用宽 / 桑基资产比 = 8.900 / 1.30979 = 6.795 in
+N 行高 = 可用宽 / ⑧ 裁后资产比 = 8.900 / 1.87706 = 4.741 in
+上排   = 3.940 in（A/J 不动）
+合计 15.476 in ×(1 + 2×hspace/3) = 18.366 in → 画布高 = 18.366/0.855 = 21.48 in
+```
+
+| 项 | v21.3 | **v21.4（现行）** |
+|---|---|---|
+| `COMPOSITE_FIGSIZE` | `(8.55, 14.0)` | **`(10.0, 21.48)`** |
+| `LAYOUT_ROW_RATIOS` | `[0.6, 1.0]` | **`[0.5798, 1.0000, 0.6978]`** |
+| `LAYOUT` | A(11)+J(9) / D(20) | **A(11)+J(9) / D(20) / N(20)** |
+| 面板字母 | A, D, J | **A, D, J, N**（新字母 **N**，不复用下线的 B/C/E/F/G/H） |
+| A / J 面板 | 4.120×3.938 / 3.344×3.938 in | **4.819×3.940 / 3.912×3.940 in**（宽了） |
+| **D 面板** | 7.610×6.562 in（比 **1.1595**） | **8.900×6.795 in（比 1.30979）** |
+| **N 面板** | — | **8.900×4.741 in（比 1.87706）** |
+| **D 各向异性** | **13.2 %（横向压扁）** | **0.05 %** ✅ |
+| **N 各向异性** | — | **~0 %**（实测 sy = 1373/1759 = 0.7805） |
+| 主图 | 9.28×13.80 in | **10.58×20.67 in** |
+
+#### ⚠⚠⚠ 顺手修掉一个存量缺陷：D 一直被横向压扁 13.2 %
+
+v21.3 及以前 **D 面板比 1.1595 ≠ 桑基资产比 1.30979** → `aspect="auto"` 把桑基
+**横向压扁 13.2 %**。**实测证据**（不靠推算）：资产内 Known 块 277 px、主图内 364 px
+→ `scale_y = 1.3141`；而 `scale_x = 7.610/6.553 = 1.1612` → 各向异性 13.2 %。
+本轮按「面板比 = 资产比」反解行高 → **归零**。
+⚠ **副作用（须告知用户）**：D 的观感会**略变宽**（不再被压扁），这是修正不是回归。
+
+#### 实现要点
+
+- 新面板函数 `panel_N_identfilter(ax, D)`：`_find_asset` 找 `..._norm.png` → 内存裁顶 → `imshow(aspect="auto")` + `axis("off")` + 标题/题注 + 写 `manifest["N"]`。
+- **字母偏移复用 D 的那套**（`elif letter in ("D", "N")` → `dx=0.0, dy=1.12`）：两者同为「轴占满通栏 + `loc="left"` 标题」，另起一套必掉回标题行。
+- `GridSpec` 行数改用 **`len(LAYOUT_ROW_RATIOS)`** 而**不写死 2** —— 历史踩坑：行号与 `height_ratios` 下标错位会**零报错**地让面板拿到错的权（末行空白被 `bbox_inches="tight"` 裁掉）。
+- 单面板 D 同步改为 **`(8.99, 7.55)`**（axes = 8.900 × 6.795）、新增单面板 N **`(8.99, 5.268)`**（axes = 8.900 × 4.741）—— 组合图与单面板必须**同源**（硬规则 87）。
+
+**验收**：主图体检 **22 figures / 0 重叠**、**0 处 `TEXT-OFF-CANVAS`**；桑基体检 **0 重叠 / 无脱画布**。
+交付 md5：主图 **`a1df6acd3f3c5343a1ec2a624216df42`**。
+⚠ ⑧ 自身（`Fig_GojiVirome_IdentFilterStackedAll{,_norm}`）**未改动**，桌面副本不动。
+
+### ⭐⭐⭐ 2026-10-14 01:0x「这个行名放最左边可以吗」→ ⑧ 第 15 次修订（含"死键"缺陷修复）
+
+**用户指令**：红框圈住**图中间**那 7 个行名（`viralverify (452,885)` … `viroid_blastn ( 604)`）→ 放到**最左边**。
+
+#### 根因（两处；其中一处是**静默死键**）
+
+1. 行名本来由**矩阵面板**画：`upset()` 的 `intersections_matrix` 面板 `axis.text.y` 出集合名，
+   该面板在 patchwork 里位于**中间列** ⇒ 名字必然落在「集合条右端」与「点阵」之间。
+2. ⚠⚠⚠ **旧版主题键名写的是 `"intersections"` —— 一个永不生效的「死键」**。
+   `names(ComplexUpset:::upset_themes)` 实测**只有 4 个合法键**：
+   `intersections_matrix` / `Intersection size` / `overall_sizes` / `default`；
+   而 `upset_modify_themes()` 是**按名合并、对不认识的 key 只附加、不报错**
+   ⇒ 旧版那句 `axis.text.y = element_blank()` **从未生效**。
+   证据链：① `upset_themes[["intersections"]]` 为 NULL；② 合并后 `names()` 里
+   `"intersections"` 与 `"intersections_matrix"` **并存**；③ A/B 只改那个键 → 图中名字**纹丝不动**。
+   ℹ ⑨（`fig_upset_classification.R`）注释里记着**同一个坑** —— 两图同源同病。
+
+#### 修法
+
+```r
+themes = upset_modify_themes(list(
+  # 矩阵那份不画名字（必须拼回内置两段！见下）
+  "intersections_matrix" = Reduce(`+`, ComplexUpset::upset_themes$intersections_matrix) +
+    theme(axis.text.y = element_blank()),
+  # 名字只保留「最左一处」= set-size 面板
+  "overall_sizes" = theme_upset(8) + theme(axis.text.y = element_text(size = 7.5, colour = "black"), ...)
+))
+```
+
+- ⚠⚠⚠ **必须 `Reduce(`+`, ComplexUpset::upset_themes$intersections_matrix) + theme(...)`**：
+  内置值是**两段 list**（`[[1]]` = 144 元素完整主题、`[[2]]` = 3 元素微调），而 `themes[[key]]`
+  是**整体替换**语义。写成 `theme_upset(8) + theme(...)` 会踩两坑：
+  ① 丢 `[[2]]` 的 `axis.text.x` blank → 矩阵底部冒出 **16 列 × 7 集合名挤成一团的黑字**
+  （还把 "Identification track" 题注挤花，**零报错**）；
+  ② `theme_upset(8)` 的 `axis.text` 同时打开 `.x/.y`，把行名**又放回来**。
+- ⚠ 翻转后主题元素名指**渲染后**的轴：`axis.text.y` = 左侧垂直轴（本面板 = 集合名）、
+  `axis.text.x` = 底部水平轴（数值）。标定法：`coord_flip()` 里把 `.x` 设红 / `.y` 设蓝 → 渲染后蓝在左、红在底。
+
+#### ⭐⭐ 与 ⑨ 的正解**恰好相反**（勿照抄 ⑨ 的 `transparent`！实测 A/B，画布 3420 px）
+
+| | 最左面板原本画名字？ | `element_blank()` | `colour="transparent"` |
+|---|---|---|---|
+| **⑨** | **是** → 只需把矩阵那份「藏起来」 | 文字槽**凭空消失**、矩阵左移拉宽（柱1 中心 1103→999）→ 用户否决 | ✅ 正确 |
+| **⑧** | **否** → 必须**新开**一条名字槽（实测 284 px） | ✅ **搬移**：col2 让出 284 → col1 用掉 299，总宽**近似守恒** | ✗ **复制**：col2 保留 284 且 col1 再占 299，总宽凭空 **+284** |
+
+实测（矩阵点阵首列 / 列距）：基线 `1407 / 124.2`；`element_blank` **`1434 / 122.5`（Δ+27、−1.37 %）**；
+`transparent` `1610 / 111.2`（Δ+203、−10.5 %）⇒ **⑧ 取 `element_blank()`**。
+残余 +27 px 无法在「不改画布宽」下消掉；已评估加宽画布 ~300 px（⑧ → 12.4 in ⇒ 面板 N 降采样
+0.781→0.721、6.4 pt 副标题降 4.6 pt < 5 pt 下限）⇒ **放弃**，残余在主图上 ≈19 px 不可辨。
+
+#### ⭐⭐ 耗时图 overlay 重新对齐（口径**改过一次**，记录清楚）
+
+行名搬到最左后集合条面板整体右移（实测 `166..905` → `465..1194`），而耗时图是**固定画布分数** overlay ⇒ 必须同步右移。
+
+| 口径 | `TIM_SHIFT_PX` | 耗时名字右缘 | 集合条名字右缘 | 名字差 | 绘图区左缘差 | 绘图区右缘差 |
+|---|---|---|---|---|---|---|
+| 先做（对齐最长条 465 px） | `246` | 454 | 330 | **124 px ✗** | 123 px | **3 px** |
+| ✅ **正解（对齐标签列）** | **`113`** | **321** | **330** | **9 px ✓** | **10 px ✓** | 136 px |
+
+⇒ 取 **`TIM_SHIFT_PX <- 113`**：**标签列 + 绘图区左缘同时对齐**（对上两项）。
+- ⚠ 曾按 246 交付并全过自检/体检，**是目视才发现 124 px 标签台阶** —— 正是用户这次要修掉的东西。
+- 代价（已知并接受）：耗时图绘图区右缘（x=300）1061 vs 集合条 1197 → 短 136 px。
+  两者 x 轴标度本就无关（log 秒 vs 命中数）；耗时图是**独立预渲 inset**，比主面板窄属正常。
+  ⚠ **若强行同宽须改 `make_tool_timing_fig.R` 的 `W_IN`（绘图区加宽 ~126 px）—— 但用户在第 13 次修订里
+  亲自用红框钉死了这块面板的尺寸（「再次调整大小，符合红色区域的大小」）⇒ 不擅自改其绘图区宽度。**
+- 副产物（正面）：框内容右缘 1221 → **1088**，与「Sequences」题注左缘 1229 拉开 **141 px**，
+  消除旧版「只剩 8 px」的擦边风险。
+- ⚠⚠ **历史坑（守卫保留）**：第 13 次修订曾取右移 280 px → 框内数值标签右缘到 1255 px，
+  而「Sequences」题注是**白底不透明 raster**，必须夹在它与交集柱 y 轴刻度左缘 1281 之间
+  ⇒ 只剩 26 px < 8 pt 旋转字高（≈33 px）→ **题注白底把 "235.2" 横切成 "23"**（实测）。
+  ⇒ **不透明 raster overlay 必须做「邻居净空」自检**（已内置 `TIM_CONTENT_R_PX` + 题注自检两条 `cat`）。
+
+#### 交付 / 验收（全部实测）
+
+| 产物 | md5 |
+|---|---|
+| `fig_ident_filter_stacked_all.R` | **`36ac4529295143193ad44b3ea81f9cea`**（`R 语法 OK`） |
+| `Fig_GojiVirome_IdentFilterStackedAll.png` | **`44d989732d364d168316e62a6b65c077`** |
+| `Fig_GojiVirome_IdentFilterStackedAll_norm.png` | **`e1f7174c1e1c176c577aacbad0488e56`** |
+| `Fig_GojiVirome_Discovery.png`（主图，panels=AJDN） | **`0be7a55376ec7ee2ea2fdaf9936fa208`** |
+
+- ⭐ 规范产物与 `/tmp` 试渲**逐字节一致**（`e1f7174c…` 双端同 md5）。
+- 主图与改前备份逐像素对拍：差异 **仅 y 4797..6081（面板 N）**，**A/J/D 行 0 差异**；差异像素 2.33 %。
+- 版式体检：`exit=0`、**22 figures / 0 overlapping pairs**、**0 处 `TEXT-OFF-CANVAS`**、主图 `texts=65`。
+- **桌面同步**（`/d/桌面/MMPV管线主图_20261013/`）：`Fig_GojiVirome_IdentFilterStackedAll{,_norm}.{png,pdf}`
+  + `2_Fig_GojiVirome_Discovery.{png,pdf}` → 覆盖后 md5 与规范一致 ✓。
+  ⚠ 核对发现**桌面旧版 = 规范「改前」备份**（逐字节一致）⇒ 桌面此前**从未同步过 v21.4**。
+  `6_…_NoveltySankey_Supp` / `9_…_Discovery_Supp` md5 **未变**（无需同步）。
+- ⭐ 顺带清掉一个**陈旧同名副本**：`reports/_discovery_sci_20261012/Fig_GojiVirome_Discovery.{png,pdf}`
+  （3361×4208 = 旧版式，mtime 10-12 23:39，全仓库**无引用**）→ 备份 `.bak_20261012_oldlayout` 后刷新为新主图。
+
 ## UpSet 系列（R / ComplexUpset）— 工具重叠 · 分类证据 · 宿主预测
 
 2026-10-13 新建。用 **R + ComplexUpset** 出三张 UpSet 图（与 Python 主图并存，不改动主图链路）。
@@ -1172,17 +1727,17 @@ annotate("text", x = seq_len(nrow(sig_top)), y = sig_top$n,
 
 ```bash
 cd <project root>
-Rscript scripts/barbarum/fig_upset_tools.R                       # 图①
-python  scripts/barbarum/make_agree_matrix.py --rank Family       # 先出矩阵（Species 同理）
-Rscript scripts/barbarum/make_cls_tool_timing_fig.R               # 图② 左上角耗时图（预渲）
-Rscript scripts/barbarum/fig_upset_classification.R               # 图② Species（默认）
+Rscript reports/virome_analysis_pipeline/fig_upset_tools.R                       # 图①
+python  reports/virome_analysis_pipeline/make_agree_matrix.py --rank Family       # 先出矩阵（Species 同理）
+Rscript reports/virome_analysis_pipeline/make_cls_tool_timing_fig.R               # 图② 左上角耗时图（预渲）
+Rscript reports/virome_analysis_pipeline/fig_upset_classification.R               # 图② Species（默认）
 # 换阶元时：矩阵与耗时图都要按该阶元的行序重出
-python  scripts/barbarum/make_agree_matrix.py --rank Family
-Rscript scripts/barbarum/make_cls_tool_timing_fig.R --rank Family \
-        --out scripts/barbarum/upset_data/cls_tool_timing_fig_Family.png
-Rscript scripts/barbarum/fig_upset_classification.R --rank Family \
-        --timing-png scripts/barbarum/upset_data/cls_tool_timing_fig_Family.png
-Rscript scripts/barbarum/fig_host_prediction.R                   # 图③（4 面板）
+python  reports/virome_analysis_pipeline/make_agree_matrix.py --rank Family
+Rscript reports/virome_analysis_pipeline/make_cls_tool_timing_fig.R --rank Family \
+        --out reports/virome_analysis_pipeline/upset_data/cls_tool_timing_fig_Family.png
+Rscript reports/virome_analysis_pipeline/fig_upset_classification.R --rank Family \
+        --timing-png reports/virome_analysis_pipeline/upset_data/cls_tool_timing_fig_Family.png
+Rscript reports/virome_analysis_pipeline/fig_host_prediction.R                   # 图③（4 面板）
 # 依赖：Rscript 4.6 + ComplexUpset 1.3.3 + patchwork + data.table + ggplot2 + png + grid
 ```
 
@@ -1243,8 +1798,59 @@ Family = … > VITAP > genomad 末两位互换 → 脚本自动跟随。）
 | 左（x40..99） | **0** |
 | 右（x811..870） | **0** |
 
+**⚠⚠ 2026-10-14 三次微调（用户「左侧的时间图 稍微再往下些」）**：
+
+框**整块下移 60 px** → **`x 100..810 / y 222..585`**（`TIM_T=1-222/1800, TIM_B=1-585/1800`）。
+**尺寸不变**（仍 710 × 363 px = 2.3667 × 1.2100 in）→ ⚠⚠ **预渲 PNG 无需重渲**（只改位置、不改尺寸）。
+
+**基准 = 右侧柱面板最高柱顶 `y 222`**（实测 `x1073..1134`，即 6,311 那根）→ 耗时条顶与之齐平。
+副标题底 y118 与耗时条顶的间隙由 **44 px → 104 px**（原版几乎贴住副标题，视觉上"顶着"标题行）。
+
+⚠⚠⚠ **上一节「框底压到 525（`4000` 刻度在 527 起，留 2 px）」的约束已作废**：
+`4000` 刻度实测只占 **`x 971..1009`**，而本框**右缘 810** → **x 方向本就不重叠**，下移根本不受它约束。
+（上节把障碍写成 `x 815..1009` 是**过度宽泛**的包围盒 —— 那是「框右缘到最远刻度」的并集，不是刻度文字自身范围。
+⚠ **教训：障碍包围盒必须按「元素自身 bbox」量，不能用「从框边到元素」的跨度**，否则会凭空造出一条假约束。）
+
+**净空判据（必须用 `--no-timing` 底图，不能用成图）**：
+
+| 区域 | 墨迹 |
+|---|---|
+| 新框全区 `x100..810 / y222..585` | **0** |
+| 新占带 `x100..810 / y526..585` | **0** |
+| 让出带 `x100..810 / y162..221` | 16,811（移走后腾空） |
+| 下方到 set-size 面板上缘 `y1177` | **0**（余 **592 px**） |
+
+**验收（双版均同）**：四边各 4 px 全 **0**（无 `TEXT-OFF-CANVAS`）；框四邻域 上/下/左/右 = **0/0/0/0**；
+自检行双版一致：`耗时图框：x 0.036..0.290 y 0.675..0.877 npc｜2.37 × 1.21 in（预渲 PNG）`。
+
+**⚠⚠ 2026-10-14 四次微调（用户「把耗时条形图 再次调整红色区域的大小，使其与预期效果一致」）**：
+
+框**整块放大到用户红框**：`x100..810 / y222..585` → **`x94..946 / y265..1076`**
+（**852 × 811 px = 2.8400 × 2.7033 in**，比例 **1.96 → 1.05** —— 由"扁"变"近正方"）。
+
+**红框映射（截图 1136×695 → 画布 2796×1800）** —— 用**柱面板 4 个 y 轴刻度**标定：
+```
+x_canvas =  46.7 + 2.424 * x_shot
+y_canvas = 164.8 + 2.424 * y_shot
+```
+（`6000` 刻度 shot y53.5 ↔ 画布 294.5；`0` 刻度 shot y389 ↔ 画布 1106.5；
+四刻度间距 shot **111.8** / 画布 **271** → **s = 2.424**，逐刻度残差 ≤ 1 px）
+红框外缘 shot `x19.5..371.5 / y41.5..376.5` → 画布 **`x94..946 / y265..1076`**。
+
+⚠⚠⚠ **尺寸变了 → 预渲 PNG 必须重渲**（`--w 2.8400 --h 2.7033`），否则硬拉伸零报错（硬规则 22）。
+**净空（`--no-timing` 底图实测）**：红框全区 **0 墨迹**；
+右缘 946 距柱面板 y 轴刻度（`x971..1009`）**25 px**；底缘 1076 距 set-size 面板（`y1174`）**98 px**。
+
+**验收（双版）**：四边各 4 px 全 **0**；框四邻域 上/下/左/右 = **0/0/0/0**（Species 版；
+Family 版下邻的 1,374 墨迹在 `y1174+`，即 **set-size 面板自身**，在框外 98 px）；
+自检行双版一致：`耗时图框：x 0.034..0.338 y 0.402..0.853 npc｜2.84 × 2.70 in（预渲 PNG）`。
+
+⚠ **字号未变**（仍 6.0–6.4 pt）—— 框高放大 2.2× 后字**相对**变小，但实测在 2.84 in 宽的插图里
+仍清晰可读（印刷约 7.2 × 6.9 cm）。如需再放大，上限受**框宽**约束
+（x 轴题 `Total runtime, whole library (s, log)` 在 2.84 in 内最多约 9 pt）。
+
 ⚠⚠ **改框尺寸后必须重跑 `make_cls_tool_timing_fig.R`**（预渲 PNG 不随参数更新，会静默嵌旧尺寸图）；
-且该脚本的 **`--w`/`--h` 默认值已同步改为 `2.3667`/`1.2100`**，避免下次不带参数跑时尺寸错配。
+且该脚本的 **`--w`/`--h` 默认值已同步改为 `2.8400`/`2.7033`**，避免下次不带参数跑时尺寸错配。
 
 ⚠⚠⚠ **`--out` 默认名已改为「按 `--rank` 推导」**：Species → `cls_tool_timing_fig.png`（无后缀，向后兼容）；
 其他阶元 → `cls_tool_timing_fig_<Rank>.png`。
@@ -1292,6 +1898,96 @@ for (i in seq_along(p$patches$plots)) {
 ⚠⚠ **判「轴标题是否真去掉」必须量像素**：本例成品图上文字位于 **x 815..847 / y 527..743**
 （宽 33、高 217 的竖排块），改完判据 = **该区域墨迹 = 0**。只看"出图成功"会漏判。
 
+### ⭐⭐⭐ 2026-10-14 00:4x「（点阵矩阵的行标签）放到左侧可以吗」→ 行标签只留最左一处
+
+**需求**：用户截图红框圈的是**矩阵面板那一列重复的集合名**（画布 x826..1030），要求
+「行标签移到最左」。实测确认 set-size 面板（x68..237）与矩阵面板**各显示一遍完全相同的集合名**。
+
+**同一条需求踩了 3 次，前两次全部静默失效 / 静默劣化**：
+
+| # | 尝试 | 结果 | 原因 |
+|---|---|---|---|
+| ① | `matrix = intersection_matrix(...) + theme(axis.text.y = element_blank())` | ✗ **无效**（标签照旧） | 该 theme 先被 `upset()` **L98-102** 的 `+ themes$intersections_matrix` 追加；内置 `[[1]]` 是 **144 元素的完整主题**（显式含 `axis.text.y = element_text`）→ **原样覆盖回去** |
+| ② | `themes[["intersections_matrix"]] = theme_upset(8) + theme(axis.text.y = element_blank())` | ✗ **劣化** | `themes[[key]]` 是**整体替换**语义 → 丢掉 `[[2]]` 的内置 blank → 底部冒出**挤成一团的 x 轴集合名 + 竖排 `group`**（零报错） |
+| ③ | `themes[["intersections_matrix"]] = Reduce(`+`, upset_themes$intersections_matrix) + theme(axis.text.y = element_blank())` | △ **生效但被否决** | 拼回内置两段后确实关掉了文字，**但**该槽宽度归还给面板 → **点阵/柱整体左移并拉宽**（见下表）→ user 2026-10-14 第二轮：「**点阵整体[平移]保持不对，只把行标签[移到]最左处**」 |
+| ✅ | 同上，但写 **`axis.text.y = element_text(colour = "transparent")`** | ✓ 采纳 | **文字仍占位**（grob 宽度照常计算）→ 所有 x 几何与原来**逐像素一致**，只是看不见 |
+
+**内置主题的真实结构**（`ComplexUpset::upset_themes`，务必按此改，别再猜）：
+
+| key | `[[1]]` | `[[2]]` 的 `element_blank` |
+|---|---|---|
+| `intersections_matrix` | 144 元素完整主题 | `axis.title.y` / **`axis.text.x`** / `axis.ticks.x` ← ⚠ **不含 `axis.text.y`**（所以矩阵行标签默认是显示的） |
+| `overall_sizes` | 同上 | `axis.title.y` / **`axis.text.y`** / `axis.ticks.y` ← 本图左侧标签是**我们自己的 `theme_upset(8)` 覆盖回来的** |
+| `Intersection size` | 同上 | `axis.title.x` / `axis.text.x` |
+| `default` | 同上 | `axis.title.x` / `axis.text.x` |
+
+**⭐ 同源对拍（唯一可靠的判「几何有没有被改」手法）**：同一脚本、只差待验证的一处改动，
+各渲一张 `--no-timing` 干净底图，再跑 `_check_upset_geometry.py` 做**逐列差异剖面**：
+
+| 指标 | ②（删文字） | ✅（transparent） |
+|---|---|---|
+| 交集柱 1 中心 | 999 | **1103**（= 原值） |
+| 点阵首列 / 末列 x | 984 / 2434 | **1103 / 2438**（= 原值） |
+| 点阵列间距 | 95.7 px | **81..86 px**（= 原值） |
+| 与改前的差异列区间 | 全宽（x310..2455） | **只有 x825..1031**（= 标签槽本身），上半区 **0 差异** |
+
+⚠ 柱与点**在两种方案下都逐列对齐**（patchwork 保证）→ 所以**不能靠"柱点是否对齐"判优劣**，
+必须看**绝对 x 位置**。
+⚠ ③/② 两种坏方案的差别只有「点阵是否平移」，肉眼在成品图上极易误判 →
+**判据 = 量像素**。
+
+**新增体检脚本 `_check_upset_geometry.py`**（本图已迭代 5 次，固化成 4 条判据）：
+
+```bash
+# 必须喂 --no-timing 干净底图；给参考图则额外打印逐列差异剖面
+"C:/Python312/python.exe" reports/virome_analysis_pipeline/_check_upset_geometry.py <fig.png> [<参考图.png>]
+```
+
+- **P1** 柱↔点 逐列对齐残差 = 0 px
+- **P2** 点阵绝对 x 位置 + 列间距（判「是否被整体平移/拉伸」）
+- **P3** 矩阵行标签槽 `x820..1040` 内深色文字段 = **0 处**（判「行标签只剩最左」）
+- **P4** 画布四边各 4 px 零墨迹（无 TEXT-OFF-CANVAS）
+- ⚠⚠ 脚本会自检「左上是否残留耗时条」：残留时 **P1/P2 不可信**（实测耗时条蓝柱被当成 x541 的"交集柱"）。
+- ⚠ 文字的**次像素抗锯齿**会产生暖色边缘 → 用"棕色"掩膜找点阵时会被标签文字误命中，
+  故点阵检测限定 `x≥960` 且段宽 20..45 px。
+- ⭐ 2026-10-14 01:xx **第 7 次修订**（「红色区域翻转 + 中间空白太多」）把上面的
+  `transparent` 改回了 `element_blank()`，并配合 `width_ratio = 0.312` 把点阵**钉回逐像素原位**
+  → **本节的"✅ 采纳"结论已被取代，但机制表全部仍然成立**。详见 **规则 28**。
+
+#### ⚠⚠⚠ 顺带查出的真缺陷：`--timing-png` 默认名不随 `--rank` 变化 → 静默嵌错阶元的耗时图
+
+**怎么发现的**：上一条做完后拿 `.bak_20261014_before_rowlabel` 对拍，**上半区**竟出现
+`x137..245` / `x659..776` 两处差异（那是耗时条里的工具名与数值标签）→ 顺着查下去。
+
+- **根因**：`fig_upset_classification.R` 原先的默认是
+  `file.path("scripts","barbarum","upset_data","cls_tool_timing_fig.png")` —— **恒为 Species 那份**。
+  于是 `--rank Family` 只要**没显式传** `--timing-png`，就会把 **Species 行序**的耗时图嵌进 Family 版。
+  ⚠ **零报错、零告警**，耗时条照常画出来，肉眼完全看不出。
+- **为什么两个 rank 的行序不同**：两图的集合行序都是 **set size 降序**（`sort_sets` 默认 TRUE），
+  而两个阶元的 set size 排序在末两位互换：
+
+  | rank | 降序（上→下） | 末两位 set size |
+  |---|---|---|
+  | Species | … > **VITAP(604)** > **genomad(13)** | 604 > 13 |
+  | Family | … > **genomad(654)** > **VITAP(607)** | 654 > 607 |
+
+- **判据（必须量像素）**：耗时条 7 根蓝条（`#0072B2` 精确匹配）的**长度序**：
+  - ✅ Family 正确 = `447/1200/169/346/334/`**`874/1027`**
+  - ✅ Species 正确 = `447/1200/169/346/334/`**`1027/874`**（末两位互换）
+  - ❌ 错嵌 = 与另一个 rank 相同
+  ⚠ 只看「耗时条有没有画出来」永远查不出；⚠ 也不能靠"脚本打印的 `ORDER`"自证 ——
+  打印的是**计算值**，嵌进去的却是**磁盘上的旧 PNG**，两者必须分别核对。
+- ✅ **修法**：默认名按 `--rank` 推导（Species → 无后缀，其余 → `_<Rank>`），
+  与 `make_cls_tool_timing_fig.R` 的 `--out` 推导规则**完全一致**（同族硬规则 23）。
+  ```r
+  tim_png <- get_arg("--timing-png",
+    file.path("scripts","barbarum","upset_data",
+              if (identical(rank,"Species")) "cls_tool_timing_fig.png"
+              else sprintf("cls_tool_timing_fig_%s.png", rank)))
+  ```
+- **修后验收**：两版与各自 `.bak_20261014_before_rowlabel` 对拍，**上半区 0 差异**，
+  下半区只有标签槽 `x825..1031`；桌面 PNG md5 双端一致。
+
 **口径（判据优先，勿混）**：
 
 - **图①「7 集合」** = `diamond_lca / mmseqs / CAT / metabuli / genomad / VITAP / ACVirus`
@@ -1337,8 +2033,8 @@ for (i in seq_along(p$patches$plots)) {
 
 ```bash
 cd <project root>
-C:/Python312/python.exe scripts/barbarum/make_identfilter_data.py   # 汇总（含口径自检）
-Rscript scripts/barbarum/fig_ident_filter.R                          # 出图
+C:/Python312/python.exe reports/virome_analysis_pipeline/make_identfilter_data.py   # 汇总（含口径自检）
+Rscript reports/virome_analysis_pipeline/fig_ident_filter.R                          # 出图
 ```
 
 **作图数值**（y 轴 = **log10**，线性轴下 604/2,229/3,219 只有 0.1–0.6% 高度、肉眼不可见）：
@@ -1397,9 +2093,9 @@ Rscript scripts/barbarum/fig_ident_filter.R                          # 出图
 ```bash
 # 1) 服务器端汇总（读 395 个样本的逐序列产物，约 1 分钟）
 ssh <246> 'export LD_LIBRARY_PATH=$HOME/mambaforge/lib; ~/mambaforge/bin/python ~/make_ident_filter_upset_data.py'
-scp <246>:~/ident_filter_upset/ident_filter_upset_* scripts/barbarum/identfilter_data/
+scp <246>:~/ident_filter_upset/ident_filter_upset_* reports/virome_analysis_pipeline/identfilter_data/
 # 2) 本地出图（服务器同样可跑，已双端验证）
-Rscript scripts/barbarum/fig_ident_filter_upset.R
+Rscript reports/virome_analysis_pipeline/fig_ident_filter_upset.R
 ```
 
 **过滤链（实测，链式嵌套成立）**：`union 556,950 ⊇ CDD 保留 473,523 ⊇ Uniprot 保留 94,826`
@@ -1454,8 +2150,8 @@ Retained 94,818 / Removed by UniProt 378,669 / Removed by CDD 83,436 / Viroid tr
 | 轴 | x = 7 条鉴定轨道（6 病毒按命中量降序 + 间隔位 + viroid_blastn）；y = **该工具命中的过滤结局构成（归一化 100%）** |
 
 ```bash
-Rscript scripts/barbarum/fig_ident_filter_by_tool.R        # 本机
-ssh <246> 'export LD_LIBRARY_PATH=$HOME/mambaforge/lib; cd ~/MMPV-RNA/scripts/barbarum && Rscript fig_ident_filter_by_tool.R'
+Rscript reports/virome_analysis_pipeline/fig_ident_filter_by_tool.R        # 本机
+ssh <246> 'export LD_LIBRARY_PATH=$HOME/mambaforge/lib; cd ~/MMPV-RNA/reports/virome_analysis_pipeline && Rscript fig_ident_filter_by_tool.R'
 ```
 
 **逐工具数值**（`n_hits` 含结局未知者；柱内四段不含）：
@@ -1501,7 +2197,7 @@ ssh <246> 'export LD_LIBRARY_PATH=$HOME/mambaforge/lib; cd ~/MMPV-RNA/scripts/ba
 | 版式 | `wrap_elements(title_grob) / (pA \| pB) / guide_area()` + `plot_layout(heights = c(0.15, 1, 0.05), widths = c(2.3, 1), guides = "collect")` |
 
 ```bash
-Rscript scripts/barbarum/fig_ident_filter_combined.R     # 默认 --top 16（覆盖 99.39%）
+Rscript reports/virome_analysis_pipeline/fig_ident_filter_combined.R     # 默认 --top 16（覆盖 99.39%）
 ```
 
 **⚠ 本图 4 条硬规则**：
@@ -1556,11 +2252,11 @@ Rscript scripts/barbarum/fig_ident_filter_combined.R     # 默认 --top 16（覆
 | 耗时图位置 | ⭐ **左列中部大块**（`x51..1156 / y545..1494` = **3.6833 × 3.1633 in**，比例 1.164；7 轨道单样本平均耗时横条，对数刻度，**行序 = 右点阵同序**；**预渲 PNG + `rasterGrob`**，见硬规则 16–18、22、22b、24）。⚠ 沿革：第 7–10 次 `x400..1245 / y280..870` → 第 11 次下移 `x180..1250 / y1080..1560`（3.57×1.60 in）→ 第 12 次按红框放大到 `x50..1162 / y424..1381`（3.71×3.19 in）→ **第 13 次修正 Y 映射偏移（−110 px）整块下移 121 px** 到现框 |
 
 ```bash
-Rscript scripts/barbarum/fig_ident_filter_stacked_all.R --set-size stack   # 绝对条长（忠实原生语义）
-Rscript scripts/barbarum/fig_ident_filter_stacked_all.R --set-size fill    # 归一化 100%（推荐看图用）
+Rscript reports/virome_analysis_pipeline/fig_ident_filter_stacked_all.R --set-size stack   # 绝对条长（忠实原生语义）
+Rscript reports/virome_analysis_pipeline/fig_ident_filter_stacked_all.R --set-size fill    # 归一化 100%（推荐看图用）
 # ⚠ 耗时图是**预渲**的：改了 tool_timing.tsv 需先重出 PNG，再跑主脚本
-python scripts/barbarum/make_tool_timing_data.py        # → identfilter_data/tool_timing.tsv
-Rscript scripts/barbarum/make_tool_timing_fig.R         # → identfilter_data/tool_timing_fig.png
+python reports/virome_analysis_pipeline/make_tool_timing_data.py        # → identfilter_data/tool_timing.tsv
+Rscript reports/virome_analysis_pipeline/make_tool_timing_fig.R         # → identfilter_data/tool_timing_fig.png
 ```
 
 ### 两种尺度的取舍（本图的核心设计约束）
@@ -1581,7 +2277,7 @@ Rscript scripts/barbarum/make_tool_timing_fig.R         # → identfilter_data/t
 **`fill`** 每根等宽、构成完全可读，绝对数由**行标签**（`virbot ( 3,219)`）承载。
 **本数据推荐 `fill`**；两种都已产出并双端验收。
 
-### 本轮新增硬规则（24 条踩坑记录）
+### 本轮新增硬规则（25 条踩坑记录）
 
 1. ⚠⚠ **`upset_set_size()` 的 `mapping=` 形参不可用**。传 `mapping = aes(fill = x)` 会在 `compute_aesthetics`
    阶段报 `object 'x' not found`（该 mapping 被当作**图层之外**的表达式求值）。
@@ -1761,7 +2457,7 @@ Rscript scripts/barbarum/make_tool_timing_fig.R         # → identfilter_data/t
       后续 `grid.draw` 被改写。
     - ✓✓ **正解 = 该图「独立成脚本 + 独立进程」预渲 PNG，主脚本只 `readPNG` 贴**：
       ```bash
-      Rscript scripts/barbarum/make_tool_timing_fig.R     # → identfilter_data/tool_timing_fig.png
+      Rscript reports/virome_analysis_pipeline/make_tool_timing_fig.R     # → identfilter_data/tool_timing_fig.png
       ```
       主脚本内**绝不构建**该 ggplot（连 ggplot 对象都不建），只 `rasterGrob(readPNG(...))`。
       → 验证结果：**排除叠加框后差异像素 = 0，Δink = +0**（与纯基线逐字节一致）。
@@ -1940,7 +2636,9 @@ Rscript scripts/barbarum/make_tool_timing_fig.R         # → identfilter_data/t
   自检行：`耗时图框：x 0.015..0.340 y 0.378..0.809 npc｜3.71 × 3.19 in（预渲 PNG）`。
 - ⚠ **本轮同时踩到并已修的静默 bug**：`make_cls_tool_timing_fig.R`（分类图那个）
   的 `--out` 默认名**不随 `--rank` 变化** → 两个阶元互相覆盖。详见硬规则 23。
-- ⚠ **同步清单**（同硬规则 22，五项）：① `fig_ident_filter_stacked_all.R` 的 `TIM_*`；
+- ⚠ **同步清单**（同硬规则 22，五项）：① `fig_ident_filter_stacked_all.R` 的 `TIM_*`
+  （⚠ **含 `TIM_SHIFT_PX`** —— 它随「集合条面板左缘」走，改行名槽/名字字号/画布宽都要重核，
+  口径见「⑧ 第 15 次修订 → 耗时图 overlay 重新对齐」）；
   ② `make_tool_timing_fig.R` 的 `--w/--h` 默认值；③ **重跑预渲**；④ 本 README 汇总表 + 本节；
   ⑤ MEMORY.md `⑧` 条目。
 
@@ -2003,6 +2701,179 @@ Rscript scripts/barbarum/make_tool_timing_fig.R         # → identfilter_data/t
   ⭐ 另一条：用户「再画一次同样的框」= **上一版没对齐**，先怀疑自己的映射，别怀疑用户的意图。
 - ⚠ **同步清单**（同 22/22b，五项）：① `TIM_L/R/T/B`；② 预渲 `--w/--h`；③ **重跑预渲**；
   ④ 本 README 汇总表 + 本节；⑤ MEMORY.md `⑧` 条目。
+
+**25. ⚠⚠⚠ Venn 的填充色不能落在「语义色」上 —— `ggVennDiagram` 默认把 fill 映射到区域 count**
+
+**触发**：用户 2026-10-13 22:53「venn图的颜色是怎么回事」。
+
+- ⭐ **现象**：6 工具 Venn 里**只有最大那块**（44,637 = viralverify 独有区）是**纯深绿**，
+  其余迅速褪成白 → 看着像"某个集合被高亮/被选中"。
+- ⭐⭐ **根因**：`ggVennDiagram()` 把 `fill` 映射到**区域 count**（**连续**标度）。
+  原写法 `scale_fill_gradient(low = "white", high = "#009E73", guide = "none")`
+  → 渐变高端正好是 **`#009E73`**，而它**就是图例「Retained」色块的同一个 hex**
+  （像素实测：Venn 最深区 26,385 px / 图例色块 961 px / 交集柱 14,697 px，**三者均 `#009E73`**）。
+- ⚠⚠⚠ **为什么这是错的（语义撞色，最要命）**：Venn 只画 **Retained** 序列
+  （代码 `n_retained > 0` 且排除 `viroid_blastn`）→ **每个区域本来就都是 Retained**。
+  填充深浅表达的是"计数大小"，**不是**分类归属。而图例就贴在 Venn 右侧 →
+  读者必然把这块绿读成"Retained" → **色义被读反**。
+- ⚠ **另两个副作用**：
+  ① 渐变**暗示排序**（44,637 那块像被"高亮"，其实只是单工具最大值）；
+  ② **对比度不足**：数字用 `#1A5C3A` 画在填充上 → 落在 `#009E73` 时只有 **2.35:1**
+     （WCAG 正文需 ≥4.5:1），"44,637"/"1,606" 恰好在最难读处。
+- ✅ **正解 = 去掉渐变，统一极浅中性填充**：
+  ```r
+  scale_fill_gradient(low = "#F2F2F2", high = "#F2F2F2", guide = "none")
+  ```
+  `#F2F2F2` 明显浅于图例的 `#BFBFBF` / `#7A7A7A` 两个灰 → 不会被误读为分类色；
+  区域只靠 `#333333` 椭圆描边 + 计数标签区分。
+  改后数字 `#1A5C3A` on `#F2F2F2` 对比度 = **7.38:1**（达标）→ **标签色不动**
+  （保留它与柱顶 `%` / 左侧保留率的同色语义）。
+- ⚠⚠ **实现坑**：`fill` 是**连续**标度（`count`）→ **不能**换 `scale_fill_manual`
+  （报 `Continuous value supplied to discrete scale`）；
+  必须用**两端同色**的 `scale_fill_gradient` 才能得到"平填充"。
+- **验收（双端）**：Venn 区 `#009E73` 像素 **26,385 → 0**（本机）/ **0**（服务器）；
+  `#F2F2F2` = 470,471 px（本机）/ 458,240 px（服务器）；
+  与上一版对拍差异 bbox `x2006..2774 / y447..901` —— **完全落在 Venn 框内**
+  （`x1996..2856 / y406..1294`）→ **除 Venn 外零回归**。
+- ⭐⭐ **通用判据（本条最值钱）**：**给任何图层加"数值渐变"前，先确认渐变两端不落在
+  本图已用的「语义色」上。** 本图语义色表 = `STATUS_COLORS`
+  （Retained `#009E73` / Removed by UniProt `#BFBFBF` / Removed by CDD `#7A7A7A` /
+  Viroid track `#E69F00`）→ **Venn 填充不许碰这四色，连灰都不行**。
+  ⭐ 推论：**"同一张图里，颜色要么全是语义的，要么全是数值的，不能混。"**
+  混用必然产生"读者按语义读、作者按数值画"的错位。
+
+**26. ⚠⚠⚠ 想关掉 ComplexUpset 某面板的轴元素，只能改 `themes[[key]]` —— 但 `themes[[key]]` 是「整体替换」，且「关掉文字」会静默改变整块几何**
+
+**触发**：用户 2026-10-14 00:4x「（点阵矩阵的行标签）放到左侧可以吗」→ 二轮纠正
+「**点阵整体[平移]保持不对，只把行标签[移到]最左处**」。
+
+- ⭐⭐ **先弄清内置主题到底 blank 了哪些**（`Rscript -e 'str(ComplexUpset::upset_themes)'` 逐项列 `element_blank`）：
+
+  | key | `[[2]]` blank 掉的 | 含义 |
+  |---|---|---|
+  | `intersections_matrix` | `axis.title.y` / `axis.text.x` / `axis.ticks.x` | ⚠ **不含 `axis.text.y`** → 矩阵行标签**默认就显示** |
+  | `overall_sizes` | `axis.title.y` / `axis.text.y` / `axis.ticks.y` | set-size 面板的集合名**默认被关**；本图是我们自己 `theme_upset(8)` 覆盖回来的 |
+  | `Intersection size` / `default` | `axis.title.x` / `axis.text.x` | |
+
+- ⚠⚠⚠ **两条静默失效路（都零报错）**：
+  ① 写在**图层链**（`matrix = intersection_matrix(...) + theme(axis.text.y = element_blank())`）→ **无效**：
+     该 theme 先被 `upset()` **L98-102** 的 `+ themes$intersections_matrix` 追加，
+     而内置 `[[1]]` 是 **144 元素的完整主题**（显式含 `axis.text.y = element_text`）→ **原样覆盖回去**。
+  ② `themes[["intersections_matrix"]] = theme_upset(8) + theme(...)` → **整体替换**语义 →
+     丢掉 `[[2]]` 的内置 blank → 底部冒出**挤成一团的 x 轴集合名 + 竖排 `group`**。
+- ✅ **正解**：`themes[["intersections_matrix"]] = Reduce(`+`, ComplexUpset::upset_themes$intersections_matrix) + theme(...)`
+  —— **先拼回内置两段**（`upset_modify_themes` 只做命名 list 合并，值是单个 theme 完全合法），再叠加自己的改动。
+- ⚠⚠⚠ **本条最值钱的部分：`element_blank()` 会把该槽宽度归还给面板 → 整块几何被改**。
+  实测同源对拍（画布 2796×1800，`--no-timing`）：
+
+  | 指标 | 删文字（`element_blank`） | ✅ `element_text(colour = "transparent")` |
+  |---|---|---|
+  | 交集柱 1 中心 | 999 | **1103**（= 原值） |
+  | 点阵首列 / 末列 x | 984 / 2434 | **1103 / 2438**（= 原值） |
+  | 点阵列间距 | 95.7 px | **81..86 px**（= 原值） |
+  | 与改前的差异列区间 | 全宽 `x310..2455` | **只有 `x825..1031`**（标签槽本身），上半区 **0 差异** |
+
+  ⚠ 柱与点**两种方案下都逐列对齐**（patchwork 保证）→ **不能靠"柱点是否对齐"判优劣**，
+  必须看**绝对 x 位置**；⚠ 用 `"transparent"` 而非 `"white"`（白字在非白底会现形）。
+- ⭐ **可复用判据**：任何「关掉某轴文字」的改动，都要跑**同源对拍**（同一脚本、只差这一处改动，
+  各渲一张 `--no-timing` 底图）看**逐列差异剖面** —— 差异只落在**被改的那一槽**才算零回归。
+  工具 = `reports/virome_analysis_pipeline/_check_upset_geometry.py`（P1 柱↔点对齐 / P2 点阵绝对位置 /
+  **P3 标签槽内文字段 = 0** / P4 四边 4 px 零墨迹；带参考图时自动出差异剖面）。
+  ⚠ 脚本会自检「左上是否残留耗时条」，残留时 P1/P2 不可信；⚠ 文字**次像素抗锯齿**的暖色边缘
+  会污染"棕点"掩膜 → 点阵检测须限定 `x≥960` 且段宽 20..45 px。
+  ⚠⚠⚠ **2026-10-14 01:xx 第 7 次修订推翻了本条的"✅ 结论"（机制部分仍然成立）**：
+  为满足「吃掉中间空白」的新需求，最终**改回 `element_blank()`**，并**同时把
+  `width_ratio` 从 0.26 提到 0.312** 来补偿"面板变宽 + 左移" → 矩阵面板**回到
+  `1054..2488` 逐像素原位**，点阵首/末列 `Species 1103/2438`、`Family 1100/2440`
+  **与 transparent 版完全一致**，而 set-size 面板净加宽 147 px。→ 详见**规则 28**。
+
+**27. ⚠⚠⚠ 预渲脚本的「消费者侧」默认路径也必须随区分参数变化 —— 否则静默嵌错阶元的资产（规则 23 的另一半）**
+
+**触发**：2026-10-14 做行标签修订时，用 `.bak` 对拍发现**上半区**（耗时条）出现差异 → 顺藤摸瓜。
+
+- 规则 23 管的是**生产者**（`make_cls_tool_timing_fig.R --out` 要随 `--rank` 变）；
+  本条管**消费者**：`fig_upset_classification.R` 的 `--timing-png` **默认值原先恒为**
+  `cls_tool_timing_fig.png`（Species 那份）→ `--rank Family` 只要不显式传参，
+  就把 **Species 行序**的耗时图嵌进 Family 版。**零报错、零告警、图照常出**。
+- ⚠ **两个 rank 的行序为什么不同**：行序 = **set size 降序**，而末两位在两个阶元互换 ——
+  Species `VITAP(604) > genomad(13)`；Family `genomad(654) > VITAP(607)`。
+- ⭐ **判据（只能量像素）**：耗时条 7 根 `#0072B2` 蓝条的**长度序** ——
+  Family 正确 `…/`**`874/1027`**、Species 正确 `…/`**`1027/874`**（末两位互换）。
+  ⚠ **不能靠脚本打印的 `ORDER` 自证**：打印的是**计算值**，嵌进去的是**磁盘上的 PNG**，
+  两者必须分别核对（这次就是"打印对、嵌错图"）。
+- ✅ **修法**：消费者侧默认路径按 `--rank` 推导，与生产者侧规则**逐字一致**：
+  ```r
+  if (identical(rank, "Species")) "cls_tool_timing_fig.png"
+  else sprintf("cls_tool_timing_fig_%s.png", rank)
+  ```
+- ⭐ **通用教训**：凡「预渲资产 + 参数化宿主」的组合，**生产者与消费者的命名规则必须成对**。
+  只改一边 = 静默串味。排查手法 = **同源对拍 + 逐列差异剖面**，差异落在**非目标区域**就是串味。
+
+**28. ⚠⚠⚠ 「两列之间的空白」压不掉，除非同时动「标签槽」和 `width_ratio` —— 单调任一个都无效**
+
+**触发**：用户 2026-10-14 01:xx 截图（红框圈 set-size 柱条区）「**红色区域翻转呢，另外中间空白太多了不**」。
+AskUserQuestion 答复 = 「**柱条左右镜像**」+「**加宽 set-size 面板填满它**」。
+
+**(a) 柱条镜像 = 绕开 ComplexUpset 默认的 `scale_y_reverse()`**
+
+- ⚠⚠ 机制（`upset()` **L217-230**）：对**左侧** set-size 面板，`default_scale = scale_y_reverse()`
+  → 再 `coord_flip()` → 横轴反向 → 柱从**右缘往左长**。想镜像，必须**绕开**它。
+- ⭐⭐ 关键在 **L228**：`scale_if_missing(set_sizes, axis = "y", scale = default_scale)`，
+  而 `scale_if_missing()` = 「`get_scale(annotation, "y")` 非空就返回 `list()`」
+  → **只要自己挂一个 y 标度，默认的 `scale_y_reverse()` 就完全不加**。正解：
+  ```r
+  set_sizes = upset_set_size() +
+    scale_y_continuous(limits = c(0, NA), expand = expansion(mult = c(0, 0.05))) +
+    xlab("Set size") + theme_upset(8) + theme(axis.title.y = element_blank()),
+  ```
+  ⚠ `expansion(mult = c(0, 0.05))`：**非 reverse 标度下按常规方向**（0 端不留白、高端留 5 %）。
+  写反 → 柱起点离开刻度 0（= 规则 10「`scale_y_reverse` 下 expansion 方向反向」的反面场景）。
+- **验收（量像素）**：改前柱条**右端**对齐（Family 7 根右缘全在 734）；
+  改后**左端**对齐 `x≈254`、右端各不相同（`769/720/718/643/516/297/294`）。
+
+**(b) 「中间空白」由两块拼成，`width_ratio` 单独调**一点也减不掉
+
+- ⚠⚠ 先量清楚 `width_ratio` 是什么：`upset()` **L261-264** `plot_layout(widths = c(w, 1-w))`
+  → 是**两列「面板」宽之比**（不含坐标轴区）。实测 `w=0.26` → 面板 542 : 1543 px = 0.26 : 0.74 ✓。
+- ⭐⭐ **空白的两个来源**（画布 2796×1800，逐行扫非白像素段实测）：
+
+  | 来源 | 宽度 | 能否压掉 |
+  |---|---:|---|
+  | ① **列 2 的左侧坐标轴区** —— 顶部交集柱面板的 y 轴刻度文字（`5,000`…`0`）住在那儿 | ~150 px | ❌ **结构性**：那是柱图的 y 轴，必须留 |
+  | ② 矩阵那串**行标签槽** —— 只有 `element_blank()` 才归零（`transparent` 仍占位） | ~205 px（transparent 时） | ✅ 可压 |
+
+- ⭐⭐⭐ **四组同源对拍**（Family，`--no-timing`；量 set-size / 矩阵两面板的灰条带左右缘）：
+
+  | 组合 | set-size 面板 | 矩阵面板 | 中间空白 |
+  |---|---|---|---:|
+  | `transparent` + wr 0.26（改前交付版） | 254..757 | 1054..2488 | **297 px** |
+  | `transparent` + wr 0.45 | 254..1192 | 1342..2488 | **297 px（不变！）** |
+  | `element_blank` + wr 0.26 | 254..796 | 945..2488 | **149 px**（但点阵左移 109 px） |
+  | ✅ **`element_blank` + wr 0.312** | **254..904** | **1054..2488（原位）** | **150 px** |
+
+  ⚠⚠ **`width_ratio` 变大只会把"柱条 + 矩阵"整体右推，空白宽度纹丝不动** —— 这是本条最反直觉的点。
+- ✅ **正解 = 两件事一起做**：`element_blank()` 消掉 205 px 的透明标签槽；
+  再把 `width_ratio` 从 0.26 提到 **0.312**，把矩阵面板**推回原位**（补偿 blank 造成的"变宽 + 左移"）
+  → 最终 **点阵逐像素不动、set-size 面板净加宽 147 px（+29 %）、空白 297 → 150 px（−50 %）**。
+- ⚠ **试过且无效**：把 set-size 面板右 margin / 矩阵左 margin 归零（`margin(5,0,5,5)`）
+  → 只省 **9 px**（150 → 141）。因为列 2 的左轴区由**顶部柱面板**的 y 轴决定，矩阵自己的 margin 不是瓶颈。
+- ⭐ **验收（同源对拍，唯一可靠）**：新版 `--no-timing` vs 改前交付版，逐像素差 `|Δ|>25`：
+
+  | 区域 | 差异像素 |
+  |---|---:|
+  | 矩阵带 `y1176..1600` | **59591，且差异列区间只有 `x254..873`**（= set-size 面板自身） |
+  | 矩阵面板本体 `x≥874` | **0** |
+
+  → **点阵完全没动**；`_check_upset_geometry.py` 的 P2 首/末列两 rank 均与改前一致。
+- ⚠⚠ **改布局后必须复核的两处**：① `_check_upset_geometry.py` 的 `X_SETSIZE_END` / `X_TAGSLOT`
+  常量（set-size 面板右缘 757 → 904，否则 P3 会把灰柱当文字误报）；
+  ② **左上耗时图框净空**（框 `x94..946 / y265..1076`）→ 已固化成 **P5 判据**（框内墨迹 = 0）。
+  实测框右缘 946 距柱图刻度文字左缘 **971（25 px）**，**与改前相同**（刻度文字锚在柱面板上，不受 wr 影响）。
+- ⚠⚠ **P1 的假阳性**：顶部柱图 y 轴刻度文字（`x≈998..1028`）经 **ClearType 子像素抗锯齿**会产出
+  `(204,139,95)` / `(95,139,204)` 这类**彩边** → `max-min>60` 的"饱和色"判据会把它当成
+  一根**假交集柱**（实测凭空多出 `x≈1010` 那根）。→ 柱检测下界必须 ≥1050，并把
+  「列内饱和像素数」阈值从 20 降到 3（否则最矮的几根柱 `cs<20` 被漏掉，P1 永远"数量不等"）。
+
 
 ### 逐工具保留率标签（用户 2026-10-13 追加）
 
@@ -2371,7 +3242,7 @@ theme(legend.direction = "vertical",
 **判据：0 overlapping pairs**（`TOL = 0.5 px`），另报越出画布的字母。
 
 ```bash
-cd scripts/barbarum
+cd reports/virome_analysis_pipeline
 # discovery 主图（默认 module）
 python _check_discovery_overlap.py --tol 0.5 --inrange-px 0 -- \
   --root <RNA-Lycium_barbarum_out> --outdir <.../S10_SCI_Discovery>

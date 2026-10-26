@@ -57,7 +57,7 @@ make_sci_composite_figs.py
   `vcf_viz/Table1_Unified_HighQuality_Variants.csv`（44,357 行）都是可解析的表。
 
 **自绘 E/F 的数据来源**（`--dnds-table` / `--var-table` 可覆盖默认路径）：
-  * E ← `<out>/_data/gcva_dnds.tsv`，由 `scripts/barbarum/extract_snpgenie_dnds.py`
+  * E ← `<out>/_data/gcva_dnds.tsv`，由 `reports/virome_analysis_pipeline/extract_snpgenie_dnds.py`
     汇总 **161** 个 GCVA 样本的 `virus-SNPGenie/**/product_results.txt`
     （**966 行 = 161 样本 × 6 基因**）。
     product→基因 的映射取自**权威注释** `virus-annotations/OR489165.1.gtf`
@@ -123,7 +123,7 @@ make_sci_composite_figs.py
   即：**内容最好的两张（Fig03/Fig04 的 dN-vs-dS 散点）尺寸不合格，
   尺寸最好的两张（Fig05/Fig07）内容有缺陷** —— 所以 `variation` 模式下正文只能落在
   Fig06 + Figure5。**要同时拿到"干净内容 + 合格尺寸 + 够大字号"且风格统一，只能自绘。**
-  全部 45 张的处置见 `reports/sci_composite/README_SCI_composite.md` §九。
+  全部 45 张的处置见 `reports/virome_analysis_pipeline/figures/README_SCI_composite.md` §九。
 
 **为什么正文最多只能放 2 张变异图 + `--var-figure` 的定位**（2026-10-10 定）：
   `variation` 模式的源画布 10 in，**只能通栏**（半栏降到 ≈3.5 pt）；通栏高 ≈5.5 in，
@@ -200,6 +200,26 @@ v4 气泡点阵（已实测弃用，勿再尝试）
         --out  <输出目录>
 """
 from __future__ import annotations
+
+# ── 图件四格式导出 (SVG / PNG / PDF / PNG@1200dpi) — 默认开启 ──────────
+# 2026-10-20: 所有出图脚本统一口径; 用 MMPV_FIG_EXPORT=0 可整体关闭,
+# MMPV_FIG_FORMATS=svg,png,pdf,hires 可裁剪, MMPV_FIG_HIRES_DPI 可改高清 dpi。
+try:
+    from mmpv_common.figure_export import install_savefig_hook as _install_fig_hook
+except ImportError:  # 仓库根不在 sys.path (脚本被单独执行) → 向上找 mmpv_common/
+    import os as _os
+    import sys as _sys
+    _d = _os.path.dirname(_os.path.abspath(__file__))
+    while _d and not _os.path.isdir(_os.path.join(_d, "mmpv_common")):
+        _parent = _os.path.dirname(_d)
+        if _parent == _d:
+            break
+        _d = _parent
+    if _d and _d not in _sys.path:
+        _sys.path.insert(0, _d)
+    from mmpv_common.figure_export import install_savefig_hook as _install_fig_hook
+_install_fig_hook()
+# ──────────────────────────────────────────────────────────────────────
 
 import argparse
 import os
@@ -369,7 +389,7 @@ def wrap_name(s, width=30, maxlines=2, merge_short=8):
 # 裁白边是必须的：源图自带整页白边 + 自带 "Figure N: ..." 标题栏，不裁会白占
 # 大片纵向空间、而且那个 "Figure N" 会和面板字母打架。
 
-# 仓库根目录（`<repo>/scripts/barbarum/本文件` 往上三级）。
+# 仓库根目录（`<repo>/reports/virome_analysis_pipeline/本文件` 往上三级）。
 # `EF_LIBRARY` 里以 `{repo}/` 开头的路径按它展开 —— 用于**随仓库一起走的固定素材**
 # （如用户亲手挑的 4 张 PPT 成品图），既不受 `04_post_analysis` 结构影响，
 # 也不依赖 `--root`，保证任何机器上克隆下来都能复现。
@@ -384,7 +404,7 @@ EF_LIBRARY = {
     #   _crop_white 裁白边 + 切源图自带标题，裁后值看出图日志 "通栏高 x.xx in"）。
     # 两条硬约束：**内容干净**（无伪影 / 无干扰柱 / 不是长度的代理变量）
     #   + **通栏高 ≲ 6 in**。正文只放 2 张（见 docstring），其余进补充或淘汰。
-    # 完整论据见 `reports/sci_composite/README_SCI_composite.md` §九。
+    # 完整论据见 `reports/virome_analysis_pipeline/figures/README_SCI_composite.md` §九。
     # =============================================================================
 
     # ---- ✓ 正文可用：内容干净、尺寸合格 -----------------------------------------
@@ -489,7 +509,7 @@ EF_LIBRARY = {
     # ---- ★ 用户 2026-10-12 亲自指定的 4 张（`--append-figs` 的默认值）------------
     # 这 4 张**不是** `04_post_analysis/` 的流水线产出，而是用户从论文章节目录
     # `gcva_ppt_figs/` 里**亲自挑的成品图**（用户原话：「我特别选的，就听我的」）。
-    # 故拷进仓库固定路径 `reports/sci_composite/_append_src/`（`{repo}/` 前缀，
+    # 故拷进仓库固定路径 `reports/virome_analysis_pipeline/_append_src/`（`{repo}/` 前缀，
     # 见 `resolve_ef`），不依赖 `04_post_analysis` 或 `--root`，保证可复现。
     #
     # ⚠ **不要**把它们挂到既有 key 上：`oncoplot` / `lollipop` / `trinity` 在流水线里
@@ -511,16 +531,16 @@ EF_LIBRARY = {
     #   若按"源为 300 dpi"折算，印刷字号偏小（日志里的 `N.N pt` 即此口径）。
     #   用户明确要求**按原图嵌入、不要重绘**，故此处**不做重绘、也不降采样**；
     #   字号口径如实记在 README §10.12，不在此处"优化"。
-    "app_oncoplot":  ("{repo}/reports/sci_composite/_append_src/"
+    "app_oncoplot":  ("{repo}/reports/virome_analysis_pipeline/_append_src/"
                       "oncoplot_maftools_180samples.png",
                       "Mutational co-occurrence matrix (oncoplot, 180 samples)"),
-    "app_circos":    ("{repo}/reports/sci_composite/_append_src/"
+    "app_circos":    ("{repo}/reports/virome_analysis_pipeline/_append_src/"
                       "circos_recombination_landscape.png",
                       "Recombination mutational landscape"),
-    "app_lollipop":  ("{repo}/reports/sci_composite/_append_src/"
+    "app_lollipop":  ("{repo}/reports/virome_analysis_pipeline/_append_src/"
                       "lollipop_wholegenome_mutation_hubs.png",
                       "Holo-genome architectural polypeptide mutation hubs"),
-    "app_trinity":   ("{repo}/reports/sci_composite/_append_src/"
+    "app_trinity":   ("{repo}/reports/virome_analysis_pipeline/_append_src/"
                       "trinity_genomic_evolutionary_panlandscape.png",
                       "Genomic and evolutionary pan-landscape"),
     # 2026-10-12 追加：maftools 变异汇总 dashboard（6 子图）。
@@ -531,7 +551,7 @@ EF_LIBRARY = {
     #   （多 5'Flank/3'Flank/In_Frame_Del/In_Frame_Ins）、x 轴 0–8000、
     #   L 80%/P 94%/N 95%/G 72%/M 81%/P4 90%。**变异数差约 3 倍**（180 vs 144 样本口径）。
     #   用户 2026-10-12 贴的截图 = PPT 版，故取 PPT 版（与另外 4 张同属 4-27 那套）。
-    "app_mafsummary": ("{repo}/reports/sci_composite/_append_src/"
+    "app_mafsummary": ("{repo}/reports/virome_analysis_pipeline/_append_src/"
                        "mafsummary_dashboard.png",
                        "Mutational summary dashboard (maftools)"),
 }
@@ -642,7 +662,7 @@ def resolve_ef(key, ref, post_dir, log=print, root=None):
       `{root}/...` → `--root`（= 结果根目录）；用于不在 `04_post_analysis/<virus>/`
                      下的流水线产物（如 `01_data/.../Figure9_Circos_Landscape.png`）。
       `{repo}/...` → 仓库根（`REPO_DIR`）；用于**随仓库一起走的固定素材**
-                     （`reports/sci_composite/_append_src/` 里用户亲挑的 4 张）。
+                     （`reports/virome_analysis_pipeline/_append_src/` 里用户亲挑的 4 张）。
     其余相对路径按 `post_dir`（`04_post_analysis/<virus>/`）拼接。
     """
     if ref in EF_LIBRARY:
@@ -1892,7 +1912,7 @@ def panel_G(fig, spec, bar_dir, meta_path, asm_dir, letter="G", log=print):
 # 一眼就是"拼凑"，过不了 SCI 的图件关。数据其实都在（不是只有截图），所以自绘。
 #
 # 数据来源（都是 03/04 的中间产物，不是截图）：
-#   dN/dS  : `_data/gcva_dnds.tsv`  ← scripts/barbarum/extract_snpgenie_dnds.py
+#   dN/dS  : `_data/gcva_dnds.tsv`  ← reports/virome_analysis_pipeline/extract_snpgenie_dnds.py
 #            161 样本 × 6 基因 = 966 行。
 #            **product 1..6 -> N/P/P4/M/G/L 的映射取自权威 GTF**
 #            `virus-annotations/OR489165.1.gtf`（CDS 436-1950 / 2499-4046 / 4305-5024 /
@@ -2802,13 +2822,13 @@ def main():
                          "且只能作行首）；**`L`** = 全基因组突变枢纽棒棒糖图（y = 单位点去重"
                          "携带样本数）。面板字母按**读序**顺延（自绘 token 也占字母）。"
                          f"不带值 = 用户 2026-10-12 定的拼图：`{CHOSEN_FIGS}`"
-                         "（素材固定在 `reports/sci_composite/_append_src/`，走 `{repo}/` 前缀）。"
+                         "（素材固定在 `reports/virome_analysis_pipeline/_append_src/`，走 `{repo}/` 前缀）。"
                          "传空串可显式关闭。"
                          "⚠ 追加图按**原图**嵌入（不重绘、不降采样），源图分辨率极高的那些"
                          "按 300 dpi 折算的印刷字号会偏小 —— 只如实记日志，不做优化。")
     ap.add_argument("--dnds-table", default=None,
                     help="自绘 E 用的 dN/dS 汇总表，默认 <out>/_data/gcva_dnds.tsv；"
-                         "由 scripts/barbarum/extract_snpgenie_dnds.py 生成")
+                         "由 reports/virome_analysis_pipeline/extract_snpgenie_dnds.py 生成")
     ap.add_argument("--var-table", default=None,
                     help="自绘 F 用的变异总表，默认 <04_post_analysis>/<GCVA>/vcf_viz/"
                          "Table1_Unified_HighQuality_Variants.csv")
@@ -2949,7 +2969,7 @@ def main():
         if not os.path.exists(dnds_path):
             raise SystemExit(
                 f"[err] 缺少 dN/dS 汇总表 {dnds_path}\n"
-                f"      先用 scripts/barbarum/extract_snpgenie_dnds.py 生成，"
+                f"      先用 reports/virome_analysis_pipeline/extract_snpgenie_dnds.py 生成，"
                 f"或改回 --ef deg / --ef variation")
         if not os.path.exists(var_csv):
             raise SystemExit(f"[err] 缺少变异总表 {var_csv}")
