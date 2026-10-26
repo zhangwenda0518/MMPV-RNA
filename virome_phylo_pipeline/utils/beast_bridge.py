@@ -21,6 +21,12 @@ from Bio import SeqIO
 
 # ── 将 virphy_bridge.py 的 LogCollector 拿来复用 ──
 from utils.virphy_bridge import LogCollector
+# 2026-10-16: 第三方工具直写 PDF 的 PNG 兜底 (BEAST/Tracer/treeannotator 等
+# 外部程序自写 PDF 我们改不了内部) —— 收尾只转「没有同名 PNG」的 PDF, 幂等。
+try:
+    from utils.pdf_to_png import stage_finalize as _pdf_png_finalize
+except ImportError:                                    # pragma: no cover
+    from pdf_to_png import stage_finalize as _pdf_png_finalize
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -699,8 +705,11 @@ def postprocess_beast(
     if log_file and os.path.exists(log_file):
         try:
             log.emit(f"Post-processing: BSP-Viz ({log_file})")
+            # 2026-10-14 (BSP 修复): trees_file 必传 —— Tracer 式重建需要后验树
+            # 的聚合区间定组时间边界 (log 里的 groupSize 只给每组的区间个数)。
             bsp = run_bsp_viz(log_file, output_dir, burnin_pct=burnin_pct,
-                             rscript_path=rscript_path, log=log)
+                             rscript_path=rscript_path, log=log,
+                             trees_file=trees_file)
             if bsp["success"]:
                 result["bsp_plot"] = bsp["plot"]
         except Exception as e:
@@ -716,6 +725,15 @@ def postprocess_beast(
                 result["rspp_states"] = rspp.get("root_states", {})
         except Exception as e:
             log.warning(f"RSPP-Viz skipped ({e})")
+
+    # 2026-10-16: 收尾兜底 —— 外部程序 (BEAST/Tracer/R 脚本) 直写、没有同名 PNG
+    # 的 PDF 一律补一张 PNG (200 dpi); 幂等、失败不抛错、不阻断 postprocess。
+    try:
+        _made = _pdf_png_finalize(output_dir, log=log)
+        if _made:
+            log.emit(f"Post-processing: PDF→PNG 兜底渲染 {len(_made)} 张")
+    except Exception as e:  # noqa: BLE001
+        log.warning(f"PDF→PNG 兜底跳过 ({e})")
 
     result["success"] = bool(result["bsp_plot"] or result["rspp_plot"])
     return result

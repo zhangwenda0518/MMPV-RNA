@@ -30,6 +30,26 @@ clock_analysis.py -- 分子钟联合分析脚本 (整体 + 基因级 RTT / LTT /
   phylogeny/gene_analysis/{alignments,trees,drt}/
   time/clock_summary.tsv
 """
+
+# ── 图件四格式导出 (SVG / PNG / PDF / PNG@1200dpi) — 默认开启 ──────────
+# 2026-10-20: 所有出图脚本统一口径; 用 MMPV_FIG_EXPORT=0 可整体关闭,
+# MMPV_FIG_FORMATS=svg,png,pdf,hires 可裁剪, MMPV_FIG_HIRES_DPI 可改高清 dpi。
+try:
+    from mmpv_common.figure_export import install_savefig_hook as _install_fig_hook
+except ImportError:  # 仓库根不在 sys.path (脚本被单独执行) → 向上找 mmpv_common/
+    import os as _os
+    import sys as _sys
+    _d = _os.path.dirname(_os.path.abspath(__file__))
+    while _d and not _os.path.isdir(_os.path.join(_d, "mmpv_common")):
+        _parent = _os.path.dirname(_d)
+        if _parent == _d:
+            break
+        _d = _parent
+    if _d and _d not in _sys.path:
+        _sys.path.insert(0, _d)
+    from mmpv_common.figure_export import install_savefig_hook as _install_fig_hook
+_install_fig_hook()
+# ──────────────────────────────────────────────────────────────────────
 import argparse
 import math
 import os
@@ -370,7 +390,18 @@ def _fmt(v, fmt='{:.6g}'):
 
 
 def _load_dates(dates_csv: str) -> Optional[Dict[str, float]]:
-    """读 dates CSV (name,date 两列, 兼容常见表头), 返回 {tip: decimal_date}"""
+    """读 dates CSV (name,date 两列, 兼容常见表头), 返回 {tip: decimal_date}
+
+    ⚠ 2026-10-14 修正三处 (全部为"静默失真/静默跳过"):
+      · 日期列别名补齐 `collection_date` / `collectiondate` —— 与
+        `temporal_signal.date_randomization_test` 的列名口径对齐。原先缺这两个
+        别名**且无位置兜底**, 遇到 `collection_date` 表头直接返回 None, 使
+        稳健 RTT / PIC 层**整层静默跳过** (调用方当时无任何告警)。
+      · 删掉重复赋值的死代码 (`dec` 先算一版又被下一行覆盖)。
+      · 日号不再 `min(d_, 28)` 静默截断 —— 29/30/31 号会被悄悄挪到 28 号
+        (跨 10 年采样下误差 ~0.008 年, 虽小但属静默失真); 改为按真实月长校验,
+        仅**非法**日期 (如 2 月 30 日) 才回退到该月最后一天。
+    """
     import csv as _csv
     if not dates_csv or not os.path.exists(dates_csv):
         return None
@@ -379,7 +410,9 @@ def _load_dates(dates_csv: str) -> Optional[Dict[str, float]]:
         rdr = _csv.DictReader(f)
         cols = rdr.fieldnames or []
         name_col = next((c for c in cols if c.lower() in ('name', 'id', 'taxon', 'accession', 'tip', 'seq', 'sequence')), cols[0] if cols else None)
-        date_col = next((c for c in cols if c.lower() in ('date', 'sampling_date', 'date_decimal', 'decimal_date', 'year')), None)
+        date_col = next((c for c in cols if c.lower() in (
+            'date', 'sampling_date', 'collection_date', 'collectiondate',
+            'date_decimal', 'decimal_date', 'year')), None)
         if not name_col or not date_col:
             return None
         for row in rdr:
@@ -392,15 +425,15 @@ def _load_dates(dates_csv: str) -> Optional[Dict[str, float]]:
                 y = int(m.group(1)); mo = int(m.group(2) or 1); d_ = int(m.group(3) or 1)
                 try:
                     import datetime as _dt
-                    base = _dt.date(y, 1, 1)
-                    dec = y + (base.toordinal() +
-                               (_dt.date(y, mo, min(d_, 28)).toordinal() - base.toordinal())) / 365.25 - 1
-                    # 简化: 年 + 年内天数比例
-                    doy = (_dt.date(y, mo, min(d_, 28)) - base).days
-                    dec = y + doy / 365.25
+                    import calendar as _cal
+                    mo = min(max(mo, 1), 12)
+                    last = _cal.monthrange(y, mo)[1]
+                    # 合法日号原样保留; 仅非法日号回退到当月最后一天
+                    day = _dt.date(y, mo, d_ if 1 <= d_ <= last else last)
+                    doy = (day - _dt.date(y, 1, 1)).days
+                    out[nm] = y + doy / 365.25
                 except ValueError:
                     continue
-                out[nm] = dec
             else:
                 try:
                     out[nm] = float(dt)
@@ -546,8 +579,17 @@ def run_clock_analysis(alignment: str, tree: str, dates_csv: str,
             try:
                 rtt_d = root_to_tip_distances(tree)
                 dates_map = _load_dates(dates_csv)
+                # 2026-10-14: 原先解析失败/样本不足都是**静默**的 —— 稳健 RTT + PIC
+                # 整层消失, 产物里只少一个 robust_report.json, 日志无任何痕迹。
+                if not dates_map:
+                    log.emit('[clock] ①b 稳健 RTT/PIC 跳过: 日期表解析为空 '
+                             f'(表头须含 name/id 与 date/sampling_date/collection_date; '
+                             f'文件: {dates_csv})')
                 if rtt_d and dates_map:
                     common = [t for t in rtt_d if t in dates_map]
+                    if len(common) < 8:
+                        log.emit(f'[clock] ①b 稳健 RTT/PIC 跳过: 可比对 tip 仅 '
+                                 f'{len(common)} 条 (<8)')
                     if len(common) >= 8:
                         xs = [dates_map[t] for t in common]
                         ys = [rtt_d[t] for t in common]
@@ -628,10 +670,20 @@ def run_clock_analysis(alignment: str, tree: str, dates_csv: str,
                                         n_randomizations=drt_randomizations,
                                         threads=threads,
                                         tree_file=tree, log=log)
+            # 2026-10-14: 与 phylo_pipeline.py:2863 (审查 P2-7) 同纪律 ——
+            # DRT 崩溃/未产出结论时写 None ("没算出来" ≠ "没通过"), 并落
+            # drt_status 供下游区分。原写法 `g.get('passed', False)` 把
+            # "崩溃" 与 "判定未通过" 混为一谈 → 下游 caveat 会误报成"DRT 未通过"。
+            _drt_ok = bool(g.get('success'))
             metrics['temporal_signal'] = g.get('conclusion', '')
-            metrics['drt_passed'] = g.get('passed', False)
+            metrics['drt_passed'] = g.get('passed') if _drt_ok else None
+            metrics['drt_status'] = 'ok' if _drt_ok else 'error'
+            if not _drt_ok:
+                metrics['drt_error'] = g.get('error') or '(无错误信息)'
+                log.emit('[clock] ③ DRT 未产出结论 (status=error) → drt_passed 记 None, '
+                         '不写"未通过"')
             if rows:
-                rows[-1].update({'drt_passed': g.get('passed'),
+                rows[-1].update({'drt_passed': g.get('passed') if _drt_ok else None,
                                  'drt_pct': g.get('r2_percentile')})
         else:
             log.emit('[clock] 整体级跳过 (缺树或日期)')

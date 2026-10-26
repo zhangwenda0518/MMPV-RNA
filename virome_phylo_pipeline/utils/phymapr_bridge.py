@@ -328,9 +328,15 @@ if (inherits(res, "try-error")) {
 ## ── 6) 落盘 (单件失败只降级, 不整体失败) ──
 save_one <- function(expr) inherits(try(expr, silent = TRUE), "try-error")
 ggsave(file.path(out_dir, "tree_plot.png"), res$tree_plot, width = 14, height = 9, dpi = 150)
-if (!is.null(res$static_map))
+## 2026-10-16: 图件双格式 (PNG+PDF 同主名); PDF 矢量供出版, 失败只降级
+save_one(ggsave(file.path(out_dir, "tree_plot.pdf"), res$tree_plot,
+                width = 14, height = 9, bg = "white"))
+if (!is.null(res$static_map)) {
   ggsave(file.path(out_dir, "transmission_map_static.png"), res$static_map,
          width = 12, height = 9, dpi = 150)
+  save_one(ggsave(file.path(out_dir, "transmission_map_static.pdf"), res$static_map,
+                  width = 12, height = 9, bg = "white"))
+}
 if (!is.null(res$map_animation)) {
   g <- try(animate(res$map_animation, width = 1200, height = 900, res = 120,
                    fps = 10, renderer = gifski_renderer()), silent = TRUE)

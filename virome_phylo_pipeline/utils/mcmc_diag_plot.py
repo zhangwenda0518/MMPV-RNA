@@ -29,9 +29,12 @@ from utils.ess_metrics import ess_bulk, ess_tail, ess_evolution
 try:
     from utils.sci_palette import (
         apply_sci_style, OKABE_ITO, COL_W_1, COL_W_2, despine, sci_legend)
+    # 2026-10-16: 图件双格式 (PNG+PDF 同主名)
+    from utils.plot_io import save_both
 except ImportError:                                    # pragma: no cover
     from sci_palette import (
         apply_sci_style, OKABE_ITO, COL_W_1, COL_W_2, despine, sci_legend)
+    from plot_io import save_both
 
 
 def _hdi(x, prob=0.95):
@@ -195,13 +198,13 @@ def plot_diagnostics(log_file, out_pdf, burnin_frac=0.1, params=None):
                  f"(burnin={burnin_frac:.0%})", fontsize=6.5)
     despine(ax)
     fig2.tight_layout()
-    fig2.savefig(out_pdf, bbox_inches="tight", dpi=300)
+    save_both(fig2, out_pdf, bbox_inches="tight", dpi=300)
     plt.close(fig2)
 
     # trace+density 也存一份
     fig.tight_layout()
     trace_pdf = out_pdf.replace(".pdf", "_trace.pdf")
-    fig.savefig(trace_pdf, bbox_inches="tight", dpi=300)
+    save_both(fig, trace_pdf, bbox_inches="tight", dpi=300)
     plt.close(fig)
 
     # ESS evolution 面板: bulk/tail 随链长增长 (回答"链长够不够")
@@ -225,7 +228,7 @@ def plot_diagnostics(log_file, out_pdf, burnin_frac=0.1, params=None):
     fig3.suptitle("ESS evolution — curves should plateau above thresholds",
                   fontsize=7, fontweight="bold")
     fig3.tight_layout()
-    fig3.savefig(evo_pdf, bbox_inches="tight", dpi=300)
+    save_both(fig3, evo_pdf, bbox_inches="tight", dpi=300)
     plt.close(fig3)
     return ess_values, trace_pdf, evo_pdf
 
@@ -288,7 +291,7 @@ def plot_chain_scatter(log1, log2, out_pdf, burnin_frac=0.1, params=None):
                  f" deviation is relative to each parameter's own range",
                  fontsize=8, fontweight="bold")
     fig.tight_layout()
-    fig.savefig(out_pdf, bbox_inches="tight", dpi=300)
+    save_both(fig, out_pdf, bbox_inches="tight", dpi=300)
     plt.close(fig)
     return rs, out_pdf
 

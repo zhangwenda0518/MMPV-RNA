@@ -153,9 +153,14 @@ def run():
                             'geneMapDataFrame$color <- "#0072B2"')
 
     # Replace print(p) with ggsave
+    # 2026-10-16: 图件双格式 (PNG+PDF 同主名, 仅扩展名不同) —— 同一处替换里
+    # 追加一条 PNG ggsave (300 dpi, 白底); PDF 那条参数**逐字节不变**。
+    r_out_png = r_out_pdf.with_suffix(".png")
     r_code = r_code.replace(
         'print(p)',
-        f'ggsave("{r_out_pdf.as_posix()}", plot=p, width={args.width}, height={args.height}, limitsize=FALSE)'
+        f'ggsave("{r_out_pdf.as_posix()}", plot=p, width={args.width}, height={args.height}, limitsize=FALSE); '
+        f'ggsave("{r_out_png.as_posix()}", plot=p, width={args.width}, height={args.height}, '
+        f'dpi=300, bg="white", limitsize=FALSE)'
     )
     r_code = r_code.replace(
         'print("Graph generated successfully without overlapping gene names.")',
@@ -173,6 +178,11 @@ def run():
     if r_out_pdf.exists():
         shutil.copy(r_out_pdf, out_pdf)
         print(f"✓ Saved: {out_pdf}  ({r_out_pdf.stat().st_size//1024} KB)")
+    # 2026-10-16: 双格式 —— 同步 PNG 到与 PDF 同主名的位置 (缺则跳过)
+    if r_out_png.exists():
+        out_png = Path(out_pdf).with_suffix(".png")
+        shutil.copy(r_out_png, out_png)
+        print(f"✓ Saved: {out_png}  ({r_out_png.stat().st_size//1024} KB)")
     
     # Cleanup
     shutil.rmtree(work_dir, ignore_errors=True)

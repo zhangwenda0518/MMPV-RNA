@@ -1,0 +1,12 @@
+# DnaSP-Python (utils/dnasp.py) 运行环境
+# 纯 Python 实现, 第三方依赖仅 matplotlib / numpy (函数内延迟导入);
+# 由 dnasp.py 的 reproducibility/ 导出流程复制, 路径约定: 与 dnasp.py 同目录。
+name: dnasp-py
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python>=3.9
+  - numpy
+  - matplotlib
+  - pip

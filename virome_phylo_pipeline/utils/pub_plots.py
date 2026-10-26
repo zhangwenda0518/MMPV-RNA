@@ -68,8 +68,11 @@ def parse_tip_locations(tree):
 # 本模块已 import, 无循环依赖)。
 try:                                       # 包内导入 (管线内运行)
     from utils.sci_palette import OKABE_ITO
+    # 2026-10-16: 图件双格式 (PNG+PDF 同主名); 统一由 plot_io.save_both 收口
+    from utils.plot_io import save_both
 except ImportError:                        # utils/ 目录内直接运行
     from sci_palette import OKABE_ITO
+    from plot_io import save_both
 
 
 def plot_mcc_tree(mcc_tree, out_pdf, tip_location_map=None, title="",
@@ -111,8 +114,8 @@ def plot_mcc_tree(mcc_tree, out_pdf, tip_location_map=None, title="",
 
     fig = tv.plotfig(dpi=dpi)
     fig.set_size_inches(*figsize)
-    fig.savefig(out_pdf, dpi=dpi, format="pdf", facecolor="white",
-                edgecolor="none", bbox_inches="tight")
+    save_both(fig, out_pdf, dpi=dpi, format="pdf", facecolor="white",
+              edgecolor="none", bbox_inches="tight")
     plt.close(fig)
 
     # legend 单独补一张 (TreeViz 不直接暴露 legend axes)
@@ -126,7 +129,7 @@ def plot_mcc_tree(mcc_tree, out_pdf, tip_location_map=None, title="",
                      title="Location")
         ax_lg.axis("off")
         lg_pdf = out_pdf.replace(".pdf", "_legend.pdf")
-        fig_lg.savefig(lg_pdf, bbox_inches="tight", facecolor="white")
+        save_both(fig_lg, lg_pdf, bbox_inches="tight", facecolor="white")
         plt.close(fig_lg)
     return out_pdf, tip_location_map
 
@@ -153,8 +156,9 @@ def plot_upset(sets_df, out_pdf, title="", min_cardinality=1,
     up.render()
     if title:
         up.get_main_ax().set_title(title, fontweight="bold", loc="left")
-    plt.savefig(out_pdf, dpi=dpi, format="pdf", facecolor="white",
-                edgecolor="none", bbox_inches="tight")
+    # ⚠ marsilea 走 pyplot 状态机 (无 fig 变量) → 用 plt.gcf() 交给 save_both 双写
+    save_both(plt.gcf(), out_pdf, dpi=dpi, format="pdf", facecolor="white",
+              edgecolor="none", bbox_inches="tight")
     plt.close("all")
     return out_pdf
 

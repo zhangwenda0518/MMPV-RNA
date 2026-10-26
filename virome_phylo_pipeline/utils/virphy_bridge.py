@@ -40,10 +40,19 @@ try:
     from utils.sci_palette import (
         apply_sci_style, OKABE_ITO, OKABE_BRANCH, SEQ_CMAP,
         COL_W_1, COL_W_2, despine)
+    # 2026-10-16: 图件双格式 (PNG+PDF 同主名); 统一由 plot_io.save_both 收口
+    from utils.plot_io import save_both
 except ImportError:                                    # pragma: no cover
     from sci_palette import (
         apply_sci_style, OKABE_ITO, OKABE_BRANCH, SEQ_CMAP,
         COL_W_1, COL_W_2, despine)
+    from plot_io import save_both
+
+# 2026-10-16: 第三方工具 (TreeTime/BEAST/treeannotator 等) 直写 PDF 的 PNG 兜底
+try:
+    from utils.pdf_to_png import stage_finalize as _pdf_png_finalize
+except ImportError:                                    # pragma: no cover
+    from pdf_to_png import stage_finalize as _pdf_png_finalize
 
 # TreeTime
 try:
@@ -571,7 +580,7 @@ def run_treetime_rtt(
                 despine(ax)
                 ax.legend(fontsize=11, loc="lower right")
                 rtt_plot = os.path.join(output_dir, "RootToTip_regression.pdf")
-                fig.savefig(rtt_plot, bbox_inches='tight', dpi=300, format='pdf')
+                save_both(fig, rtt_plot, bbox_inches='tight', dpi=300, format='pdf')
                 plt.close(fig)
                 result["plots"]["rtt"] = rtt_plot
 
@@ -584,7 +593,7 @@ def run_treetime_rtt(
                                branch_labels=lambda c: "")
                     ax2.set_title("Time-calibrated phylogeny", fontsize=16)
                     tree_plot = os.path.join(output_dir, "TimeTree.pdf")
-                    fig2.savefig(tree_plot, bbox_inches='tight', dpi=300, format='pdf')
+                    save_both(fig2, tree_plot, bbox_inches='tight', dpi=300, format='pdf')
                     plt.close(fig2)
                     result["plots"]["tree"] = tree_plot
                 except RecursionError:
@@ -601,6 +610,14 @@ def run_treetime_rtt(
 
         result["success"] = True
         result["log_messages"] = log.messages
+        # 2026-10-16: 收尾兜底 —— TreeTime 等第三方程序直写的 PDF 若没有同名 PNG,
+        # 这里统一补一张 (幂等; 失败不抛错, 不影响 RTT 结果)。
+        try:
+            _made = _pdf_png_finalize(output_dir, log=log)
+            if _made:
+                log.emit(f"TreeTime-RTT: PDF→PNG 兜底渲染 {len(_made)} 张")
+        except Exception as e:  # noqa: BLE001
+            log.warning(f"PDF→PNG 兜底跳过 ({e})")
         return result
 
     except KeyboardInterrupt:
@@ -672,15 +689,25 @@ out$clock <- dtr$clock
 # 1.6 倍的标题被顶出画布 —— 实测标题上半截被裁掉。
 # 现改为 `par(oma=...)` 预留外层上边距 + `mtext(outer=TRUE)` 写标题：
 # 标题落在预留带内，且完全不动 plot.phylo 自己画的坐标轴。
+## 2026-10-16: 绘图体抽成闭包, 供 PDF / PNG 两个设备复用 (图本身一字未改)
+.draw_dated <- function() {
+    par(oma=c(0, 0, 3.4, 0), family="sans")
+    plot(dtr, cex=0.6)
+    .ntip <- if (!is.null(dtr$tip.label)) length(dtr$tip.label) else NA
+    mtext("Time-calibrated phylogeny (TreeDater)", side=3, line=1.9, cex=1.5,
+          font=2, outer=TRUE)
+    if (!is.na(.ntip))
+        mtext(sprintf("n = %d tips", .ntip), side=3, line=0.55, cex=1.0,
+              outer=TRUE)
+}
 pdf(file.path(output_dir, "Phylogeny_dated.pdf"), width=10, height=8)
-par(oma=c(0, 0, 3.4, 0), family="sans")
-plot(dtr, cex=0.6)
-.ntip <- if (!is.null(dtr$tip.label)) length(dtr$tip.label) else NA
-mtext("Time-calibrated phylogeny (TreeDater)", side=3, line=1.9, cex=1.5,
-      font=2, outer=TRUE)
-if (!is.na(.ntip))
-    mtext(sprintf("n = %d tips", .ntip), side=3, line=0.55, cex=1.0,
-          outer=TRUE)
+.draw_dated()
+dev.off()
+
+## 2026-10-16: 图件双格式 (PNG+PDF 同主名) —— 同图再出 PNG (300 dpi, 白底)
+png(file.path(output_dir, "Phylogeny_dated.png"), width=10, height=8,
+    units="in", res=300, bg="white")
+.draw_dated()
 dev.off()
 
 # ── 参数化自举: TMRCA/速率 CI (ncpu 并行) + LTT 图 ──
@@ -722,6 +749,9 @@ if (!inherits(pb, 'try-error')) {
              labs(title="Lineages-through-time (TreeDater)",
                   x="Time (year)", y="Number of lineages")
         ggsave(file.path(output_dir, "LTT.pdf"), plot=g, width=10, height=8, dpi=300)
+        ## 2026-10-16: 图件双格式 (PNG+PDF 同主名) —— 补同主名 PNG (300 dpi, 白底)
+        ggsave(file.path(output_dir, "LTT.png"), plot=g, width=10, height=8,
+               dpi=300, bg="white")
     }
 }
 
@@ -1053,7 +1083,7 @@ def run_rspp_viz(
                         f'{val:.3f}', ha='center', va='bottom', fontsize=10)
 
         plot_path = os.path.join(output_dir, f"RSPP_{chart_type}.pdf")
-        fig.savefig(plot_path, bbox_inches='tight', dpi=150, format='pdf')
+        save_both(fig, plot_path, bbox_inches='tight', dpi=150, format='pdf')
         plt.close(fig)
         result["plot"] = plot_path
         result["success"] = True
@@ -1170,170 +1200,287 @@ def run_geo_subsampler(
 # Module 5: BSP-Viz (Bayesian Skyline Plot)
 # ═══════════════════════════════════════════════════════════════════
 
-BSP_R_SCRIPT_TEMPLATE = '''
-# Simplified BSP: use R for reading, Python fallback via subprocess
-library(ggplot2)
-library(scales)
+def _natural_key(col):
+    """popSize2 < popSize10 (按列名尾部的整数排序)。"""
+    m = re.search(r'(\d+)$', str(col))
+    return (int(m.group(1)) if m else 0, str(col))
 
-args <- commandArgs(trailingOnly=TRUE)
-log_file <- args[1]
-output_file <- args[2]
-burnin_pct <- as.numeric(args[3])
 
-data <- read.table(log_file, header=TRUE, sep="\\t", comment.char="#")
-if (burnin_pct > 0) {
-    start_row <- floor(nrow(data) * burnin_pct / 100) + 1
-    data <- data[start_row:nrow(data),]
-}
+def _parse_beast_log(log_file, log):
+    """读 BEAST log → (states, DataFrame)。跳过 # 注释行, state 列缺失时为 None。"""
+    import numpy as np
+    rows = []
+    header = None
+    with open(log_file, encoding='utf-8', errors='replace') as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith('#'):
+                continue
+            parts = line.split()
+            if header is None:
+                header = parts
+                continue
+            rows.append(parts)
+    if header is None or not rows:
+        return None, None
+    import pandas as pd
+    df = pd.DataFrame(rows, columns=header)
+    for c in df.columns:
+        df[c] = pd.to_numeric(df[c], errors='coerce')
+    states = df['state'].astype('int64').tolist() if 'state' in df.columns else None
+    return states, df
 
-# Find ALL population size columns (flexible matching)
-# 2026-10-12 修复(真 bug): 原正则 "pop|skyline|PopSize|Skyline" 会命中 BEAST log 里
-# **名字就叫 `skyline` 的那一列** —— 它是 skyline 树先验的 log 概率(实测 -104 ~ -678),
-# 根本不是群体大小。被当成第 6 个 "PopSize" 分组后:
-#   · 每组(同一 Time)的 2.5% 分位数被拉到 ≈ -600;
-#   · scale_y_log10() 对负数取对数 → NaN → ggplot 报
-#     "Removed N rows containing missing values (`geom_ribbon()`)" → **HPD 带整段消失**;
-#   · 中位数也被污染, 极端情况下整幅图只剩空坐标轴(实测 GCVA 的 BSP.pdf 就是空图)。
-# 判据: 只认真正的 popSize 列。
-pop_cols <- grep("popSize|pop\\\\.size", names(data), value=TRUE, ignore.case=TRUE)
-cat("Pop columns found:", paste(pop_cols, collapse=", "), "\\n")
 
-if (length(pop_cols) == 0) {
-    cat("Error: Cannot find skyline/popSize columns\\n")
-    cat("Available columns:", paste(names(data), collapse=", "), "\\n")
-    quit(status=1)
-}
+def _parse_beast_trees(trees_file, log):
+    """读 BEAST .trees → [(state|None, Bio.Phylo tree), ...]。"""
+    from Bio import Phylo
+    out = []
+    pat = re.compile(r'tree\s+STATE_(\d+)', re.IGNORECASE)
+    with open(trees_file, encoding='utf-8', errors='replace') as f:
+        for line in f:
+            m = pat.search(line)
+            if 'tree' not in line.lower():
+                continue
+            # 取首个 '(' 到末尾 ';', 剥掉 Newick 注释段 [&...]
+            start = line.find('(')
+            if start < 0:
+                continue
+            nwk = line[start:line.rfind(';') + 1]
+            if not nwk.endswith(';'):
+                continue
+            nwk = re.sub(r'\[&[^\]]*\]', '', nwk)
+            nwk = re.sub(r'\[[^\]]*\]', '', nwk)
+            try:
+                tr = Phylo.read(io.StringIO(nwk), 'newick')
+            except Exception as e:
+                log.warning(f"[BSP] 树解析失败 (state="
+                            f"{m.group(1) if m else '?'}): {e}")
+                continue
+            out.append((int(m.group(1)) if m else None, tr))
+    return out
 
-# Time column
-if ("TreeHeight" %in% names(data)) {
-    time_col <- "TreeHeight"
-} else {
-    time_col <- grep("time|Time|age|height", names(data), value=TRUE, ignore.case=TRUE)[1]
-}
 
-n_pop <- length(pop_cols)
-
-# Calculate median + 95% HPD for each time point
-df_all <- data.frame()
-for (i in 1:n_pop) {
-    tmp <- data.frame(Time = data[[time_col]], PopSize = data[[pop_cols[i]]], Group = pop_cols[i])
-    df_all <- rbind(df_all, tmp)
-}
-
-time_unique <- sort(unique(df_all$Time))
-medians <- c()
-lowers <- c()
-uppers <- c()
-for (t in time_unique) {
-    vals <- df_all$PopSize[df_all$Time == t]
-    medians <- c(medians, median(vals, na.rm=TRUE))
-    lowers <- c(lowers, quantile(vals, 0.025, na.rm=TRUE))
-    uppers <- c(uppers, quantile(vals, 0.975, na.rm=TRUE))
-}
-
-bsp_df <- data.frame(Time = time_unique, Median = medians, Lower = lowers, Upper = uppers)
-
-# 退化守卫 (2026-10-12): 有效(有限)点不足 2 个, 或中位数无变化(零方差) →
-# 统计量等于算不出来, 按项目规则**不产图**并让 Python 侧删掉旧图。
-ok <- is.finite(bsp_df$Median) & is.finite(bsp_df$Lower) & is.finite(bsp_df$Upper)
-n_ok <- sum(ok)
-n_med <- length(unique(bsp_df$Median[ok]))
-cat("BSP finite points:", n_ok, " distinct medians:", n_med, "\\n")
-if (n_ok < 2 || n_med < 2) {
-    cat("Error: degenerate skyline (finite=", n_ok, ", distinct medians=", n_med,
-        ") -> no plot written\\n")
-    quit(status = 2)
-}
-
-# 2026-10-12: 配色统一 OKABE 蓝 #0072B2（原 #00A0E9 不在项目调色板内）；
-# dpi 150 → 300；标题加粗、去次网格。
-# 2026-10-12（审稿人视角修复）：补图例（阴影 = 95% HPD、实线 = 后验中位数）
-# 并把 x 轴量纲写全（旧版只有 "Time"，读者无法判断是年份还是年前）。
-p <- ggplot(bsp_df, aes(x=Time)) +
-    geom_ribbon(aes(ymin=Lower, ymax=Upper, fill="95% HPD"), alpha=0.30,
-                colour=NA) +
-    geom_line(aes(y=Median, colour="Posterior median"), linewidth=1.2) +
-    scale_fill_manual(name=NULL, values=c("95% HPD"="#56B4E9")) +
-    scale_colour_manual(name=NULL, values=c("Posterior median"="#0072B2")) +
-    scale_y_log10(labels=comma) +
-    theme_bw(base_size=14) +
-    labs(x="Time (years before present)",
-         y=expression("Effective population size ("*N[e]*tau*")"),
-         title="Bayesian skyline plot") +
-    theme(panel.grid.minor=element_blank(),
-          plot.title=element_text(face="bold", hjust=0.5),
-          legend.position=c(0.015, 0.985),
-          legend.justification=c(0, 1),
-          legend.background=element_rect(fill="white", colour=NA),
-          legend.key=element_rect(fill="white", colour=NA))
-
-ggsave(output_file, plot=p, width=10, height=6, dpi=300)
-cat("BSP plot saved to", output_file, "\\n")
-'''
+def _coalescent_ages(tree):
+    """树 → (升序聚合事件年龄, 根高)。年龄 = 距今 (root 最老, tips=0)。"""
+    depths = tree.depths()
+    terms = tree.get_terminals()
+    if not terms:
+        return [], 0.0
+    max_depth = max(depths.get(t, 0.0) for t in terms)
+    internals = [c for c in tree.get_nonterminals()]
+    ages = sorted(max_depth - depths.get(c, 0.0) for c in internals)
+    return ages, max_depth
 
 
 def run_bsp_viz(
     log_file: str,
     output_dir: str,
     burnin_pct: float = 10.0,
-    rscript_path: str = "Rscript",
+    rscript_path: str = "Rscript",          # 兼容旧签名; 本实现为纯 Python, 不再用 R
     log: Optional[LogCollector] = None,
+    trees_file: Optional[str] = None,
 ) -> Dict:
     """
-    从 BEAST .log 文件生成 Bayesian Skyline Plot。
+    Bayesian Skyline Plot —— Tracer 式正确重建 (2026-10-14 重写, 修复 P1)。
+
+    口径 (与 Tracer / Drummond et al. 2005 一致), 对每个后验样本 k:
+      · 从 .trees 的第 k 棵树取聚合事件年龄 (升序, 距今);
+      · 用该样本 log 行的 groupSize 把聚合区间自今向古划成 N 组;
+      · 组 j 的上边界年龄 = 覆盖完前 j 组时的聚合年龄, 组的 Neτ = popSize_j。
+    跨样本: 逐组取中位时间 + Neτ 中位数 + 95% HPD (最短区间, utils.ess.calculate_95hpd)。
+    图: 0→根高的阶梯曲线 + 95% HPD 带 (log-y)。
+
+    历史坑 (旧实现已废): 按 unique(rootHeight) 分箱、箱内取"5 组跨组"分位数 ——
+    x 轴只盖住根高后验区间 (GCVA 实测 28–46 ybp), HPD 是样本内组间离散度,
+    既非任何组的后验、也不覆盖近期群体历史 (reports/UPSTREAM_CONSISTENCY_20261014.md §3.1)。
+
+    依赖: log 须同时含 popSize 与 groupSize 列 (beast1_bridge 2026-10-14 起
+    fileLog 两者都记; 旧 XML 的输出缺 groupSize → 拒出图并给出重跑指引)。
 
     Parameters
     ----------
-    log_file : str
-        BEAST 输出的 .log 文件
+    log_file : str — BEAST .log (含 state 列更佳)
+    trees_file : str — BEAST .trees (缺省时探测 log 同名 .trees)
     output_dir : str
-        输出目录
-    burnin_pct : float
-        burn-in 百分比 (默认 10%)
-    rscript_path : str
-        Rscript 路径
-    log : LogCollector, optional
+    burnin_pct : float — log 与 trees 同比例去 burn-in
+    rscript_path : 兼容旧签名, 未使用
+    log : LogCollector
 
     Returns
     -------
-    dict with keys: success, plot, error
+    dict with keys: success, plot, summary_tsv, n_samples, n_groups,
+        root_height_range, error
     """
+    import numpy as np
+    try:
+        from utils.ess import calculate_95hpd
+    except ImportError:                                    # 脚本方式直跑
+        from ess import calculate_95hpd
+
     log = log or LogCollector()
     os.makedirs(output_dir, exist_ok=True)
-    result = {"success": False, "plot": None, "error": None}
+    result = {"success": False, "plot": None, "summary_tsv": None,
+              "n_samples": 0, "n_groups": 0, "root_height_range": None,
+              "error": None}
+    output_file = os.path.join(output_dir, "BSP.pdf")
 
+    def _fail(msg):
+        result["error"] = msg
+        log.error(f"BSP-Viz: {msg}")
+        # 退化守卫: 本次没算出可用图 → 不留上一次的旧图冒充新结果
+        if os.path.exists(output_file):
+            try:
+                os.remove(output_file)
+                log.warning(f"BSP-Viz: 删除陈旧图 {output_file}")
+            except OSError as _e:
+                log.warning(f"BSP-Viz: 陈旧图删除失败 {output_file}: {_e}")
+        return result
+
+    if not os.path.exists(log_file):
+        return _fail(f"log 不存在: {log_file}")
+
+    # ── 1. log: popSize / groupSize 列 ──
+    log_states, df = _parse_beast_log(log_file, log)
+    if df is None:
+        return _fail(f"log 无可用数据行: {log_file}")
+    pop_cols = sorted([c for c in df.columns
+                       if re.search(r'popSize|pop\.size', c, re.I)],
+                      key=_natural_key)
+    grp_cols = sorted([c for c in df.columns
+                       if re.search(r'groupSize|group\.size', c, re.I)],
+                      key=_natural_key)
+    if not pop_cols:
+        return _fail("log 中找不到 popSize 列 (非 skyline log?)")
+    if not grp_cols:
+        return _fail("log 中找不到 groupSize 列 —— 组边界不可恢复, 无法做正确的 "
+                     "skyline 重建。请在 BEAST1 XML 的 fileLog 里加 "
+                     "<parameter idref=\"skyline.groupSize\"/> 后重跑 "
+                     "(beast1_bridge 2026-10-14 起已自动带上), 或改用 Tracer "
+                     "的 Bayesian Skyline Reconstruction 导出 TSV。")
+    n_groups = len(pop_cols)
+    if len(grp_cols) != n_groups:
+        return _fail(f"popSize({n_groups}) 与 groupSize({len(grp_cols)}) 列数不一致")
+    n_burn = int(len(df) * burnin_pct / 100.0)
+    df = df.iloc[n_burn:].reset_index(drop=True)
+    if log_states is not None:
+        log_states = log_states[n_burn:]        # 与 df 同步去 burn-in (行号才对得上)
+    log.emit(f"[BSP] log: {len(df)} 样本 (burn-in {burnin_pct:.0f}% = {n_burn} 行), "
+             f"{n_groups} 组")
+
+    # ── 2. trees: 与 log 按样本对齐 ──
+    if not trees_file or not os.path.exists(trees_file):
+        _cand = os.path.join(os.path.dirname(log_file),
+                             os.path.splitext(os.path.basename(log_file))[0]
+                             + '.trees')
+        trees_file = _cand if os.path.exists(_cand) else None
+    if not trees_file:
+        return _fail("找不到 .trees 后验树文件 (组时间边界必须从后验树取)")
+    samples = _parse_beast_trees(trees_file, log)
+    if not samples:
+        return _fail(f".trees 无可解析样本: {trees_file}")
+    t_burn = int(len(samples) * burnin_pct / 100.0)
+    samples = samples[t_burn:]
+    tree_states = [s for s, _t in samples]
+    trees = [t for _s, t in samples]
+    if tree_states and tree_states[0] is None:
+        tree_states = [None] * len(trees)
+    if log_states is not None and any(s is not None for s in tree_states):
+        log_map = {s: i for i, s in enumerate(log_states)}
+        pairs = [(log_map[s], i) for i, s in enumerate(tree_states)
+                 if s in log_map]
+        if len(pairs) < max(3, len(df) // 2):
+            log.warning(f"[BSP] state 对齐仅命中 {len(pairs)} 对, 退回按位置对齐")
+            pairs = [(i, i) for i in range(min(len(df), len(trees)))]
+    else:
+        pairs = [(i, i) for i in range(min(len(df), len(trees)))]
+    if len(pairs) < 3:
+        return _fail(f"log×trees 有效配对不足 ({len(pairs)} < 3)")
+    log.emit(f"[BSP] trees: {len(trees)} 棵 (配对 {len(pairs)})")
+
+    # ── 3. 逐样本重建组边界 ──
+    grp_heights = [[] for _ in range(n_groups)]      # 每组的边界年龄 (跨样本)
+    grp_pops = [[] for _ in range(n_groups)]         # 每组的 Neτ (跨样本)
+    skipped = 0
+    for li, ti in pairs:
+        row = df.iloc[li]
+        gsizes = [int(round(float(row[c]))) for c in grp_cols]
+        pops = [float(row[c]) for c in pop_cols]
+        coal, _root_h = _coalescent_ages(trees[ti])
+        if sum(gsizes) != len(coal) or any(g <= 0 for g in gsizes):
+            skipped += 1
+            continue
+        cum = 0
+        for j, g in enumerate(gsizes):
+            cum += g
+            grp_heights[j].append(coal[cum - 1])     # 组的上边界年龄
+            grp_pops[j].append(pops[j])
+    if skipped:
+        log.warning(f"[BSP] {skipped} 个样本 groupSize 与树聚合区间数不匹配, 已跳过")
+    if len(grp_pops[0]) < 3:
+        return _fail(f"有效样本不足 ({len(grp_pops[0])} < 3), 无法重建 skyline")
+
+    # ── 4. 逐组统计 ──
+    summary_rows = []
+    med_h, med_n, lo_n, hi_n = [], [], [], []
+    for j in range(n_groups):
+        h = np.asarray(grp_heights[j], dtype=float)
+        p = np.asarray(grp_pops[j], dtype=float)
+        h_med = float(np.median(h))
+        p_lo, p_hi = calculate_95hpd(p)
+        p_med = float(np.median(p))
+        med_h.append(h_med)
+        med_n.append(p_med)
+        lo_n.append(float(p_lo))
+        hi_n.append(float(p_hi))
+        summary_rows.append({
+            "group": j + 1, "time_median": h_med,
+            "Ne_tau_median": p_med,
+            "Ne_tau_hpd_lower": float(p_lo), "Ne_tau_hpd_upper": float(p_hi),
+            "n_samples": len(p)})
+    if not all(np.isfinite(med_n)) or len(set(np.round(med_n, 12))) < 2:
+        return _fail("退化的 skyline (非有限或零方差中位数) → 不产图")
+    result["n_samples"] = len(grp_pops[0])
+    result["n_groups"] = n_groups
+    result["root_height_range"] = [float(min(med_h)), float(max(med_h))]
+
+    # 汇总 TSV 落盘 (VirPhyKit BSP 模块期望的 Time/Median/Lower/Upper 同构产物)
+    tsv_path = os.path.join(output_dir, "BSP_summary.tsv")
     try:
-        output_file = os.path.join(output_dir, "BSP.pdf")
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.R', delete=False) as f:
-            f.write(BSP_R_SCRIPT_TEMPLATE)
-            r_script = f.name
+        pd.DataFrame(summary_rows).to_csv(tsv_path, sep="\t", index=False)
+        result["summary_tsv"] = tsv_path
+        log.emit(f"[BSP] 汇总表 → {tsv_path}")
+    except OSError as _e:
+        log.warning(f"[BSP] 汇总表落盘失败 (非阻断): {_e}")
 
-        cmd = [rscript_path, r_script, log_file, output_file, str(burnin_pct)]
-        log.emit(f"Running BSP-Viz: {' '.join(cmd)}")
-        proc = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=300)
-        os.unlink(r_script)
+    # ── 5. 绘图: 0→根高阶梯曲线 + 95% HPD 带 ──
+    # OKABE 蓝系 (与 LTT/RTT 面板一致); dpi 300; 图例与量纲齐全。
+    apply_sci_style(base_size=13)
+    xs = [0.0] + med_h                    # n+1 个边界: 组 j 覆盖 (h_{j-1}, h_j]
+    ys = med_n + [med_n[-1]]              # step='post' 需与 xs 等长
+    los = lo_n + [lo_n[-1]]
+    his = hi_n + [hi_n[-1]]
+    fig, ax = plt.subplots(figsize=(10, 6))
+    ax.fill_between(xs, los, his, step='post', alpha=0.30,
+                    color="#56B4E9", label="95% HPD")
+    ax.step(xs, ys, where='post', linewidth=2.0, color="#0072B2",
+            label="Posterior median")
+    ax.set_xlim(0, max(med_h) * 1.03)
+    ax.set_yscale('log')
+    ax.set_xlabel("Time (years before present)", fontsize=14)
+    ax.set_ylabel("Effective population size (" + r"$N_e\tau$" + ")",
+                  fontsize=14)
+    ax.set_title("Bayesian skyline plot", fontsize=16, fontweight='bold')
+    ax.grid(alpha=0.3, which="both")
+    ax.legend(fontsize=11, loc="best")
+    despine(ax)
+    save_both(fig, output_file, bbox_inches='tight', dpi=300, format='pdf')
+    plt.close(fig)
 
-        if proc.returncode != 0:
-            result["error"] = proc.stderr or proc.stdout
-            log.error(f"BSP-Viz failed: {result['error']}")
-            # 退化守卫 (2026-10-12): 本次没算出可用图 → 不能留上一次的旧图冒充新结果
-            if os.path.exists(output_file):
-                try:
-                    os.remove(output_file)
-                    log.warning(f"BSP-Viz: 删除陈旧图 {output_file}")
-                except OSError as _e:
-                    log.warning(f"BSP-Viz: 陈旧图删除失败 {output_file}: {_e}")
-            return result
-
-        result["plot"] = output_file
-        result["success"] = True
-        log.emit(f"BSP-Viz: {output_file}")
-        return result
-
-    except Exception as e:
-        result["error"] = str(e)
-        log.error(f"BSP-Viz failed: {e}")
-        return result
+    result["plot"] = output_file
+    result["success"] = True
+    log.emit(f"[BSP] {n_groups} 组 × {result['n_samples']} 样本, "
+             f"根高中位 {med_h[-1]:.2f} ybp → {output_file}")
+    return result
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -1649,7 +1796,7 @@ def run_mantel_test(
 
     plt.tight_layout()
     plot_path = os.path.join(output_dir, "mantel_test.pdf")
-    fig.savefig(plot_path, bbox_inches='tight', dpi=300, format='pdf')
+    save_both(fig, plot_path, bbox_inches='tight', dpi=300, format='pdf')
     plt.close(fig)
     result["plot"] = plot_path
 
@@ -1793,7 +1940,7 @@ def run_tree_geography(
     ax.set_title("Phylogeny colored by geographic origin", fontsize=16, fontweight='bold')
 
     plot_path = os.path.join(output_dir, "tree_geography.pdf")
-    fig.savefig(plot_path, bbox_inches='tight', dpi=150, format='pdf')
+    save_both(fig, plot_path, bbox_inches='tight', dpi=150, format='pdf')
     plt.close(fig)
     result["plot"] = plot_path
     result["success"] = True
@@ -1887,6 +2034,10 @@ combined <- p1 / p2 + plot_layout(heights=c(2, 1))
 # 画布 = Fig 3 的 2 栏宽度量级（源 9.32 in 排进 4.58 in → 0.49 倍，
 # 13 pt 落到 ≈6.4 pt，可读）。原 12×9 in + 13 pt 排进去只有 5 pt。
 ggsave(output_file, plot=combined, width=9.32, height=7.4, dpi=300)
+# 2026-10-16: 图件双格式 (PNG+PDF 同主名) —— output_file 由调用方传 .pdf,
+# 这里按同主名补一张 PNG (300 dpi, 白底); PDF 那条参数逐字节不变。
+ggsave(sub("\\\\.pdf$", ".png", output_file, ignore.case=TRUE), plot=combined,
+       width=9.32, height=7.4, dpi=300, bg="white")
 cat("VirSpaceTime plot saved to", output_file, "\\n")
 '''
 
@@ -2021,7 +2172,7 @@ def run_virspacetime_python(yearly_table, output_dir, result, log):
 
     plt.tight_layout()
     plot_path = os.path.join(output_dir, "VirSpaceTime.pdf")
-    fig.savefig(plot_path, bbox_inches='tight', dpi=150, format='pdf')
+    save_both(fig, plot_path, bbox_inches='tight', dpi=150, format='pdf')
     plt.close(fig)
     result["plot"] = plot_path
 
@@ -2117,7 +2268,7 @@ def run_tree_host(
         ax.set_title("Phylogeny colored by host species", fontsize=16, fontweight='bold')
 
         plot_path = os.path.join(output_dir, "tree_host.pdf")
-        fig.savefig(plot_path, bbox_inches='tight', dpi=150, format='pdf')
+        save_both(fig, plot_path, bbox_inches='tight', dpi=150, format='pdf')
         plt.close(fig)
         result["plot"] = plot_path
         result["success"] = True
@@ -2306,7 +2457,7 @@ def run_host_differentiation(
 
         plt.tight_layout()
         plot_path = os.path.join(output_dir, "host_differentiation.pdf")
-        fig.savefig(plot_path, bbox_inches='tight', dpi=300, format='pdf')
+        save_both(fig, plot_path, bbox_inches='tight', dpi=300, format='pdf')
         plt.close(fig)
         result["plot"] = plot_path
         result["success"] = True
@@ -2484,7 +2635,7 @@ def run_rrt(
         plt.xticks(rotation=45, ha='right')
 
         plot_path = os.path.join(output_dir, "rrt_plot.pdf")
-        fig.savefig(plot_path, bbox_inches='tight', dpi=150, format='pdf')
+        save_both(fig, plot_path, bbox_inches='tight', dpi=150, format='pdf')
         plt.close(fig)
 
         result["csv_table"] = csv_path

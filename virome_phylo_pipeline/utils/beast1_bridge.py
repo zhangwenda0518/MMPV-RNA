@@ -813,6 +813,11 @@ def generate_beast1_phylogeo_xml(
                 _w(f'      <parameter idref="demoModel.popSize"/>\n')
             elif tree_prior == "skyline":
                 _w(f'      <parameter idref="skyline.popSize"/>\n')
+                # 2026-10-14 (BSP 修复): groupSize 必须逐样本落盘 —— Tracer 式
+                # skyline 重建要用它把每棵后验树的聚合区间划成组, 推出各组的
+                # (时间边界, Ne)。缺它则组边界不可恢复, BSP 无法正确重算
+                # (旧版只能按 rootHeight 分箱, HPD 变成样本内跨组离散度, 已废)。
+                _w(f'      <parameter idref="skyline.groupSize"/>\n')
             if clock_model == "ucln":
                 _w(f'      <parameter idref="ucld.mean"/>\n')
                 _w(f'      <parameter idref="ucld.stdev"/>\n')

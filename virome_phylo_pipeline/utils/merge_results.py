@@ -320,6 +320,49 @@ def merge(work_dir, st):
                 ", ".join(f"{p}={d:.3f}" for p, d in rs[:3]) + "…)")
     except Exception as e:
         log(f"  ⚠️ mcmc diagnostics plot skipped: {e}")
+
+    # 5. ESS 实现验证 + 收敛诊断补充图 (2026-10-14)
+    # 为什么另起一张而不是塞进 mcmc_diagnostics.pdf：
+    #   现有 mcmc_diag_plot 画的是 trace/density/ESS 柱 —— **全部走同一个 ESS 算法**；
+    #   而 convergence_gate 也只按 ESS≥200 判。这两者共用同一个前提，一旦 ESS
+    #   实现或口径有问题，二者会**一起错**。本步补上**不经过 ESS 算法**的第二条
+    #   证据（R-hat / Gelman-Rubin），并用 ESS 口径差（逐链求和 vs 拼接）做第三条。
+    # ⚠ 落盘到 merged/ ⇒ report_builder 的 time 模块 plots glob 含 `**/*.pdf`，
+    #   **自动内联进 HTML 报告**，无需改 report_builder。
+    # ⚠ 失败只告警不阻断（与上面 mcmc diagnostics 同一工程哲学）。
+    try:
+        from utils.ess_convergence_fig import (
+            plot_convergence_diagnostics, plot_ess_verification,
+            read_log as _read_ess_log, key_columns as _ess_key_cols)
+        _single = [l for l in logs if os.path.basename(l) != 'merged.log']
+        if len(_single) >= 2:
+            _st = plot_convergence_diagnostics(
+                _single, f'{merged}/ess_convergence_diagnostics.pdf',
+                subtitle=("%s   ·   %d chains   ·   R-hat is independent of any "
+                          "ESS algorithm   ·   B and C are the same ESS data in "
+                          "two views, not two evidences"
+                          % (os.path.basename(os.path.normpath(work_dir)),
+                             len(_single))))
+            log("  ✅ ess_convergence_diagnostics.pdf (R-hat[%s] min=%.3f %s / "
+                "max=%.3f %s;  %d/%d > 1.1;  worst pooled ESS=%.1f)"
+                % (_st["rhat_source"], _st["rhat_min"], _st["rhat_min_param"],
+                   _st["rhat_max"], _st["rhat_max_param"],
+                   _st["n_gt_practical"], _st["n_params"],
+                   _st["worst_pooled_ess"]))
+        else:
+            log("  ⚠️ ess 收敛诊断跳过: 单链 log 少于 2 条 (%d)" % len(_single))
+        # 金标准验证图：合成真值 + 本 run 真实数据 (panel D)。
+        # ⚠ 每次都出：便于跨 run 对比「ESS 实现本身有没有被改动过」。
+        _ch = [_read_ess_log(p, 0.10)[1] for p in _single] if _single else None
+        _kk = _ess_key_cols(_ch) if _ch else None
+        _st2 = plot_ess_verification(
+            f'{merged}/ess_implementation_verification.pdf',
+            chains=_ch if _kk else None, keys=_kk)
+        log("  ✅ ess_implementation_verification.pdf (N_EFF=%d, coda=%s)"
+            % (_st2["n_eff"], _st2["coda_available"]))
+    except Exception as e:
+        log(f"  ⚠️ ess convergence figs skipped: {e}")
+
     st['completed_at'] = time.strftime('%Y-%m-%d %H:%M:%S')
     json.dump(st, open(f'{work_dir}/run_status.json', 'w'), indent=2)
 

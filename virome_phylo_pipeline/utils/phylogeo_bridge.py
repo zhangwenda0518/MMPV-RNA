@@ -28,6 +28,11 @@ from utils.virphy_bridge import LogCollector
 # 2026-09-15 (审查 P2-9): BF 阈值/发散截断/公式 全管线唯一定义
 from utils.virphy_bridge import (DEFAULT_BF_THRESHOLD, BF_INFINITE_CAP,
                                  bayes_factor, find_indicator_columns)
+# 2026-10-16: 第三方工具 (BEAST/treeannotator/SpreaD3) 直写 PDF 的 PNG 兜底
+try:
+    from utils.pdf_to_png import stage_finalize as _pdf_png_finalize
+except ImportError:                                    # pragma: no cover
+    from pdf_to_png import stage_finalize as _pdf_png_finalize
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -868,6 +873,15 @@ def extract_migration_bf(
         # Generate SpreaD3 JSON
         spread3_json = _generate_spread3_json(migrations, locations, log_file, output_dir, log)
         result["spread3_json"] = spread3_json
+
+        # 2026-10-16: 收尾兜底 —— BEAST/treeannotator 等在 output_dir 里直写的
+        # PDF 若没有同名 PNG, 统一补一张 (幂等; 失败不抛错)。
+        try:
+            _made = _pdf_png_finalize(output_dir, log=log)
+            if _made:
+                log.emit(f"PhyloGeo: PDF→PNG 兜底渲染 {len(_made)} 张")
+        except Exception as e:  # noqa: BLE001
+            log.warning(f"PDF→PNG 兜底跳过 ({e})")
 
         result["success"] = True
         return result

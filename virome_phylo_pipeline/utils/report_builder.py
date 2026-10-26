@@ -2,9 +2,11 @@
 """
 report_builder.py — 模块化系统发育分析汇总 HTML 报告
 
-按 8 大模块 (data → phylogeny → recomb → select → time → geography → popgen) 分节,
+按 8 大模块 (data → phylogeny → popgen → recomb → select → time → geography → report)
+分节, 顺序与 mmpv_common.io_layout.PHYLO_MODULES / phylo_pipeline.STAGE_MODULES 对齐。
 每节展示: stage 状态徽章 + 该模块 summary 表 (csv/tsv/json → HTML table) + plots (png base64 内嵌)。
-单文件零依赖输出 phylo_report.html。
+单文件零依赖输出 phylo_report.html (常驻左侧边栏导航: 模块状态 dot + 病毒锚点,
+任何窗口宽度都不隐藏, 仅打印时隐藏)。
 """
 
 import os
@@ -32,15 +34,23 @@ except ImportError:  # 脱离包环境直接运行时自举
         _sys.path.insert(0, _REPO_ROOT)
     from mmpv_common.io_layout import ph_dir
 
+try:
+    from mmpv_common.table_widgets import TW_BLOCK as _TW
+except Exception:
+    _TW = ""   # 共享表格控件不可达时静默降级为原生表格
+
 # ─────────────────────────────────────────────────────────────
 # 模块定义: 每模块的目录、状态 stage 集、summary 文件、plots glob
 # 相对每个病毒 work_dir 解析
 # ─────────────────────────────────────────────────────────────
 MODULES = [
     {
-        "key": "data", "name": "Data (prep + online)",
+        "key": "data", "name": "Data (prep + metadata + online + clean)",
         "dir": ph_dir("data"),
-        "stages": ["prep", "online"],
+        # 2026-10-16 修 (#5): 徽章原先只有 prep/online —— 09-16 新增的 metadata
+        # (data/metadata/metadata_std.csv) 与 clean (data/clean/clean.fasta) 两个
+        # stage 产物一直在 data 模块里, 但报告上完全不显示其状态 (审计确认)。
+        "stages": ["prep", "metadata", "online", "clean"],
         # data 模块本身无汇总表, 但 seqgrouper 的分组饼图/统计表落在这里
         "summaries": ["ncbi_harvest/seqgroup_*.csv"],
         "plots": ["ncbi_harvest/*.png", "ncbi_harvest/*.pdf", "ncbi_harvest/*.svg",
@@ -55,6 +65,9 @@ MODULES = [
         "plots": ["saturation_out/*.png", "qc/*.png", "tree_circular.png", "splitstree/*.png",
                   "gene_analysis/*.png", "cross_validation/*.png",
                   "qc/*.pdf", "tree_circular.pdf", "**/*.pdf"],
+        # 2026-10-16 修 (#7): 多图模块 (比对/饱和/建树/分基因/交叉验证...) 给 60 张上限,
+        # 原先统一 20 张会静默截断; 被截断的候选仍在报告里带链接列出。
+        "max_imgs": 60,
         "notes": ["MAFFT alignment + IQ-TREE ML tree", "Xia substitution saturation test", "alignment QC"],
     },
     {
@@ -70,6 +83,20 @@ MODULES = [
         "plots": ["dnasp/figures/*.png", "host_analysis/*.png", "distance/*.png",
                   "popgen_metrics.png", "popgen_stats.png",
                   "*hap_state_heatmap.png", "**/*.pdf"],
+        # extra_dirs (2026-10-12): 模块目录外的三棵产物树 (EasyHap 实跑 + MSN 网络)
+        "extra_dirs": [
+            {"dir": "haplo_outputs",
+             "plots": ["*pub.png", "*map.png", "*.html"], "max_imgs": 8,
+             "tables": ["network_stats.json"]},
+            {"dir": "EasyHap_results/analyze",
+             "plots": ["*HaplotypeNetwork.png", "*GroupStackedBar.png", "*GroupPieChart.png"],
+             "max_imgs": 8,
+             "tables": ["*HapSummary.tsv", "*PrivateHaplotypes.tsv"]},
+            {"dir": "EasyHap_results/analyze_genes",
+             "plots": ["*HaplotypeHeatmap.png", "*LD_r2_Heatmap.png",
+                       "*HaplotypeNetwork.png", "*GroupStackedBar.png"],
+             "max_imgs": 30},
+        ],
         "notes": ["haplotype diversity + Tajima's D / Fu's Fs", "host differentiation analysis"],
     },
     {
@@ -84,14 +111,33 @@ MODULES = [
         "key": "select", "name": "Selection (capheine)",
         "dir": ph_dir("select"),
         "stages": ["capheine"],
-        "summaries": ["capheine/drhip/combined_sites.csv", "capheine/multiqc/*summary*.txt"],
+        # 2026-10-16 修 (#2): summaries 原先为空数组 —— capheine 跑完一张表都不渲染。
+        # 现声明两个当前真实落盘口 (相对 select 模块目录):
+        #   · capheine/drhip/combined_summary.csv —— DRHIP 基因级汇总
+        #     (visual_codon_miner.py:249-256 读它; 管线登记 phylo_pipeline.py:917)
+        #   · capheine/selection_out/selection_results.json —— selection_analysis
+        #     parse 产物 (selection_analysis.py:552; 由 phylo_pipeline.py:4958-4971
+        #     的 capheine 后处理写出)
+        # 不声明: drhip/combined_sites.csv (逐位点, 行数大且表格渲染价值低)、
+        # multiqc/capheine_summary.html (整页 HTML, 不属于表格/图件渲染路径)。
+        # 告警门控见 missing_declared_summaries: 模块没跑 (无 stages_done 且无
+        # .checkpoints/capheine.done) 时不告警。
+        "summaries": ["capheine/drhip/combined_summary.csv",
+                      "capheine/selection_out/selection_results.json"],
         "plots": ["capheine/**/*.png", "capheine/**/*.pdf"],
+        # 2026-10-16 修 (#7): capheine 每基因一套图, 20 张必然截断 → 60。
+        "max_imgs": 60,
         "notes": ["HyPhy FEL/MEME/BUSTED etc. + DRHIP site integration"],
     },
     {
-        "key": "time", "name": "Time (rtt + temporal + beast + gene_dating + treetime)",
+        "key": "time", "name": "Time (clock + beast + gene_dating + treetime)",
         "dir": ph_dir("time"),
-        "stages": ["rtt", "temporal", "beast", "gene_dating", "treetime"],
+        # 2026-10-16 修 (#4): 徽章原先写 legacy 子步骤名 rtt/temporal —— 真实 stage
+        # (STAGE_ORDER / STAGE_GROUPS) 是 clock: rtt/temporal/genes 已合并为 clock
+        # (phylo_pipeline._LEGACY_CLOCK_SUBSTAGES), 老名字永远匹配不上 stages_done,
+        # 报告里 clock 完成了也显示灰色。.done 回退判定对旧标记的兼容见
+        # stage_badge 的 _LEGACY_STAGE_ALIASES。
+        "stages": ["clock", "beast", "gene_dating", "treetime"],
         "summaries": ["clock_summary.tsv", "temporal_signal/drt_summary.csv",
                       "beast/merged/parameter_summary.csv",
                       "treetime_rtt/robust/robust_report.json"],
@@ -109,25 +155,60 @@ MODULES = [
         "dir": ph_dir("geography"),
         "stages": ["phylogeo", "geo", "geo_paths", "phymapr"],
         "summaries": ["phylogeography/merged/parameter_summary.json",
-                      "tempmig/migration_yearly_summary.csv", "geo_analysis/spatiotemporal_counts.csv",
-                      # geo_paths (2026-09-16): 事件级路径/episode/LTL/扩散统计
+                      # 2026-10-12 实测对齐: tempmig 是 visualization/migration_bf.csv;
+                      # phymapr 默认关 (未跑则不声明, 免 not-found) —— 跑了 phymapr/
+                      # treetime 的病毒自行可见。
+                      # 2026-10-16 修 (#3): geo_paths 产物已从历史运行目录
+                      # absorb_test_20260916_full/ 归位到 geo_analysis/ —— 落盘口见
+                      # phylo_pipeline.py:1052-1058 的产物登记 (_reg "pathway_qc" /
+                      # "pathways_csv" / "dispersion_summary" / "timescale_consistency"),
+                      # pathways/episodes 由 utils/transmission_paths.run_pathways 写,
+                      # dispersion/velocity_table.csv 由 utils/diffusion_stats 写。
+                      # 旧路径声明导致"表永远 not-found + 新表永远不出现"。
+                      "visualization/migration_bf.csv",
+                      "geo_analysis/spatiotemporal_counts.csv",
                       "geo_analysis/pathways/pathway_qc.json",
-                      "geo_analysis/pathways/pathways.csv", "geo_analysis/pathways/episodes.csv",
-                      "geo_analysis/pathways/ltl_summary.csv",
+                      "geo_analysis/pathways/pathways.csv",
+                      "geo_analysis/pathways/episodes.csv",
                       "geo_analysis/dispersion/dispersion_summary.json",
-                      "geo_analysis/timescale_consistency.json",
-                      "geo_analysis/markov_jumps.json",
-                      # phymapr (2026-10-12): TreeTime 路线 (BM-ASR + 传播地图)
-                      "phymapr/phymapr_summary.json",
-                      "phymapr/pathways.csv", "phymapr/episodes.csv"],
+                      "geo_analysis/dispersion/velocity_table.csv",
+                      "geo_analysis/timescale_consistency.json"],
         # visualization/ 里既有 SpreaD3 地图 (html) 也有发表级多面板图 (pdf)
-        "plots": ["visualization/*.png", "geo_analysis/*.png", "tempmig/*.png",
+        # 2026-10-16 修 (#6): 补 visualization/*.svg —— transmission_map.py:315 与
+        # 多面板静态图在 png/pdf 之外还落 .svg, 原先无 glob 命中 → 静默漏收。
+        "plots": ["visualization/*.png", "visualization/*.svg", "geo_analysis/*.png",
+                  "tempmig/*.png",
                   "visualization/*.gif",
                   "phymapr/*.png", "phymapr/*.gif",
                   "**/*.pdf", "visualization/*.html", "geo_analysis/*.html"],
         "notes": ["CTMC+BSSVS ancestral geographic reconstruction", "Mantel genetic-geographic correlation", "temporal migration",
                   "geo_paths: event-level transmission pathways/episodes/three-tier confidence + dispersal stats (2026-09-16)",
                   "phymapr: TreeTime route BM-ASR + transmission map GIF (2026-10-12)"],
+    },
+    {
+        # 2026-10-16 新增 (#1): 管道真实输出还有第 8 个模块 report/ —— 汇总表 +
+        # 发表级三件套 + 采样分布图, 原先不在 MODULES 里, 报告永远看不到它们。
+        # 落盘口 (相对 ⑤ per-virus work_dir, 目录名经 ph_dir('report') 解析,
+        # standard 布局 = 08_report/):
+        #   · phylo_summary.csv          ← generate_summary() (phylo_pipeline.py:6131-6142,
+        #                                    root 级 = 本模块目录根, 不是 per-virus work_dir 根)
+        #   · publication/*.pdf|png      ← publication_figures 后处理 (Fig1 TempEst /
+        #                                    Fig2 MCC / Fig3 / Fig4 / Table S1; phylo_pipeline.py:6200)
+        #   · sample_plot/*.pdf|png      ← sample_plot 后处理 (采样时间线 + 采样地图; :6170)
+        # stages 留空: prep/report 不写 checkpoint (STAGE_CHECKPOINT_FILES['prep']=None,
+        # report 由 main() 收尾无条件产出, 不是真实阶段分支) → 不给徽章;
+        # 同时使 missing_declared_summaries 对 report 永不告警 (非 stage 产物)。
+        "key": "report", "name": "Report",
+        "dir": ph_dir("report"),
+        "stages": [],
+        "summaries": ["phylo_summary.csv"],
+        "plots": ["publication/*.pdf", "publication/*.png",
+                  "sample_plot/*.pdf", "sample_plot/*.png"],
+        # 2026-10-16 修 (#7): 发表级三件套 + 采样图全是图, 20 张偏紧 → 60。
+        "max_imgs": 60,
+        "notes": ["phylo_summary.csv — headline metrics across viruses (same source as this page)",
+                  "publication/: Fig1 TempEst / Fig2 MCC tree / Fig3 / Fig4 / Table S1",
+                  "sample_plot/: sampling timeline + sampling map"],
     },
 ]
 
@@ -156,8 +237,17 @@ _MIME = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
          ".pdf": "application/pdf"}
 
 # 内联体积上限 (base64 膨胀 ~33%, 报告是单文件, 不能无限膨胀)
-MAX_IMG_KB = 500
+# 2026-10-17 改 (B): 图片上限 500 → 1200 KB —— 300dpi 的发表级 PNG 普遍
+# 600-1100 KB, 卡在 500 时全被踢出内联分支 (报告只剩 PDF embed/下载链接)。
+# PDF 上限 6000 KB 不变; 超限产物照旧进「未内联/被排除」清单, 不静默丢弃。
+MAX_IMG_KB = 1200
 MAX_PDF_KB = 6000
+
+# 2026-10-16 修 (#7): 每模块内联图件上限改为可按模块覆盖 —— 原先全模块硬编码 20 张,
+# 多图模块 (phylogeny / select / report) 稳定被截断。MODULES 条目可用 max_imgs
+# 覆盖; 超出上限的候选不静默丢弃, 在报告里带下载链接列出 (上限 MAX_SKIP_LIST 条)。
+MAX_IMGS_PER_MODULE = 20
+MAX_SKIP_LIST = 30
 
 
 # ─────────────────────────────────────────────────────────────
@@ -227,10 +317,11 @@ def asset_card(path: str, output_dir: Optional[str] = None) -> Tuple[str, str]:
             f'<a href="{href}" download>Download {_html.escape(name, quote=True)}</a></p></div>'), reason
 
 
-def collect_plots(vdir: str, patterns: List[str], max_imgs: int = 20,
+def collect_plots(vdir: str, patterns: List[str], max_imgs: int = MAX_IMGS_PER_MODULE,
                   skipped: Optional[List[Tuple[str, str]]] = None) -> List[str]:
     """按 glob 收集模块可渲染产物 (png/svg/jpg/gif/webp/pdf/html), 同 stem 取优先级最高者。
 
+    max_imgs: 本模块内联上限 (MODULES 条目的 max_imgs 字段覆盖默认值, 见 #7)。
     skipped: 传入 list 时把每个「被排除的候选 + 原因」追加进去 (上限之外、
             同 stem 低优先级、扩展名不在白名单), 由调用方写进报告 —— 排除不等于没发生。
     """
@@ -264,15 +355,27 @@ def collect_plots(vdir: str, patterns: List[str], max_imgs: int = 20,
     return out
 
 
+def _stage_done_on_disk(vdir: str, stage: str) -> bool:
+    """该 stage 是否在磁盘上留下 .done 标记 (与 stage_badge 的回退判定同一口径)。"""
+    return bool(vdir) and os.path.exists(
+        os.path.join(vdir, ".checkpoints", f"{stage}.done"))
+
+
 def missing_declared_summaries(vdir: str, m: Dict, stages_done) -> List[str]:
-    """模块 stage 已完成、但声明产物在磁盘上找不到的条目 (E2/G3 复发护栏)。
+    """模块已跑、但声明产物在磁盘上找不到的条目 (E2/G3 复发护栏)。
 
     历史坑: report_builder 声明 `geo_analysis/spatiotemporal_counts.csv`, 产出端
     若写在别的目录, 报告只会「静默少一张表」。此处把「声明了但没找到」显式列出。
+
+    2026-10-16 修 (#2/#3): 门控由「本轮 stages_done 命中」扩为「或 .checkpoints/<stage>.done
+    在盘上」。原先 stages_done 为空 (report-only 重跑等) 直接整段静默, 声明漂移
+    查不出来; 而模块整个没跑 (既无 stages_done 也无 .done) 时仍不告警 —— 不制造噪音。
     """
-    if not vdir or not stages_done:
+    if not vdir:
         return []
-    if not any(s in stages_done for s in m["stages"]):
+    stages_done = stages_done or []
+    if not (any(s in stages_done for s in m["stages"])
+            or any(_stage_done_on_disk(vdir, s) for s in m["stages"])):
         return []
     missing = []
     for sp in m["summaries"]:
@@ -369,6 +472,44 @@ def render_md(path: str, max_chars: int = 3000) -> str:
     return f'<pre class="md-pre">{text}</pre>'
 
 
+# 2026-10-16 修 (#4): clock 合并了旧 rtt/temporal/genes 三个子步骤
+# (phylo_pipeline._LEGACY_CLOCK_SUBSTAGES)。徽章一律按新 stage 名 (clock) 显示,
+# 但 .done 回退判定要兼容老病毒只写的 rtt.done / temporal.done / genes.done ——
+# 只认 clock.done 会把已完成的老病毒显示成灰色未跑。
+_LEGACY_STAGE_ALIASES = {"clock": ("rtt", "temporal", "genes")}
+
+# 2026-10-17 改 (A): 侧栏状态体系 —— dot 颜色与 .badge ok/fail/skip/off 同色,
+# 左边条 class 走 ③ 的 sb-pass/sb-fail/sb-skip (外加 sb-off 表示"未跑")。
+_SB_COLORS = {"pass": "#27ae60", "fail": "#e74c3c", "skip": "#f39c12", "off": "#95a5a6"}
+_SB_PRIORITY = {"off": 0, "skip": 1, "pass": 2, "fail": 3}
+
+
+def module_state(m: Dict, r: Dict, has_dir: bool, n_rendered: int) -> str:
+    """模块在该病毒下的聚合状态 (侧栏 dot 用): fail > pass > skip > off。
+
+    口径直接复用 stage_badge 的判定 (同一份徽章 HTML 里读 class), 不另写一套
+    完成度逻辑 —— 徽章显示 ok 侧栏就必须是绿点, 两处不许打架。
+    无 stage 的模块 (report: 不写 checkpoint) 有产物目录/渲染物即算 pass。
+    """
+    state = "off"
+    for s in m["stages"]:
+        b = stage_badge(s, r)
+        if 'class="badge fail"' in b:
+            state = _merge_state(state, "fail")
+        elif 'class="badge ok"' in b:
+            state = _merge_state(state, "pass")
+        elif 'class="badge skip"' in b:
+            state = _merge_state(state, "skip")
+    if not m["stages"] and (has_dir or n_rendered):
+        state = _merge_state(state, "pass")
+    return state
+
+
+def _merge_state(a: str, b: str) -> str:
+    """两状态取优先级更高者 (多病毒聚合 / 模块内多 stage 聚合共用)。"""
+    return a if _SB_PRIORITY.get(a, 0) >= _SB_PRIORITY.get(b, 0) else b
+
+
 def stage_badge(stage: str, r: Dict) -> str:
     vdir = r.get("virus_dir", "")
     done = stage in r.get("stages_done", [])
@@ -379,10 +520,13 @@ def stage_badge(stage: str, r: Dict) -> str:
     blocked = stage in r.get("stages_blocked", []) or any(
         b.startswith(f"{stage}(") for b in r.get("stages_blocked", []))
     reason = (r.get("stages_skip_reasons") or {}).get(stage, "")
-    # 本轮未涉及该 stage 时回退看 checkpoint (report 单独重跑场景)
+    # 本轮未涉及该 stage 时回退看 checkpoint (report 单独重跑场景);
+    # 老 stage 名 (clock ← rtt/temporal/genes) 的 .done 标记同样认。
     if not (done or skipped or failed) and vdir:
-        if os.path.exists(os.path.join(vdir, ".checkpoints", f"{stage}.done")):
-            done = True
+        for _mark in (stage,) + _LEGACY_STAGE_ALIASES.get(stage, ()):
+            if os.path.exists(os.path.join(vdir, ".checkpoints", f"{_mark}.done")):
+                done = True
+                break
     if done:
         return f'<span class="badge ok">{stage}</span>'
     if blocked:
@@ -411,6 +555,10 @@ def build_html_report(
     """
     summary_rows = []
     virus_sections = []
+    # 2026-10-16 (#8) / 2026-10-17 改 (A): 侧栏数据 —— virus_nav: (index, 已转义病毒名,
+    # 总状态); mod_state: 模块 key → 跨病毒聚合状态 (多病毒取优先级最高者)。
+    virus_nav = []
+    mod_state: Dict[str, str] = {}
 
     for i, r in enumerate(results):
         # 2026-10-12 修 (P2-7): 病毒名进 HTML (总表 <td> 与卡片 <h3>) 前必须转义 ——
@@ -479,13 +627,46 @@ def build_html_report(
 
             # plots (E1: png/svg/jpg/gif/webp/pdf; 同 stem 取高优先级; 被排除的显式列出)
             plot_skips = []
-            imgs = collect_plots(mdir, m["plots"], skipped=plot_skips) if has_dir else []
+            # 2026-10-16 修 (#7): 逐模块内联上限 —— MODULES 条目的 max_imgs 覆盖默认值
+            # (phylogeny/select/report = 60), 超出部分照旧进 plot_skips 并带链接列出。
+            imgs = collect_plots(mdir, m["plots"],
+                                 max_imgs=m.get("max_imgs", MAX_IMGS_PER_MODULE),
+                                 skipped=plot_skips) if has_dir else []
             img_tags, not_inlined = [], []
             for p in imgs:
                 card, reason = asset_card(p, output_dir)
                 img_tags.append(card)
                 if reason:
                     not_inlined.append((p, reason))
+
+            # extra_dirs (2026-10-12): 模块目录之外的产物树 (EasyHap_results/、
+            # haplo_outputs/… 按 vdir 相对路径收集; 图走 asset_card, 表走
+            # render_table/render_json; 缺目录静默跳过)
+            for xd in m.get("extra_dirs", []):
+                xdir = os.path.join(vdir, xd["dir"]) if vdir else xd["dir"]
+                if not os.path.isdir(xdir):
+                    continue
+                import glob as _glob
+                for sp in xd.get("tables", []):
+                    # 支持 glob (文件名常带区域前缀, 如 GCVA_1_16310.HapSummary.tsv)
+                    _hits = sorted(_glob.glob(os.path.join(xdir, sp))) if any(
+                        ch in sp for ch in "*?[") else [
+                        p for p in [os.path.join(xdir, sp)] if os.path.isfile(p)]
+                    for _p in _hits:
+                        _ext = Path(_p).suffix.lower()
+                        _t = render_json(_p) if _ext == ".json" else render_table(_p)
+                        if _t:
+                            _label = os.path.relpath(_p, vdir) if vdir else _p
+                            tables.append(f'<div class="tbl-wrap"><div class="tbl-title">'
+                                          f'{_label}</div>{_t}</div>')
+                _xsk = []
+                _xi = collect_plots(xdir, xd["plots"],
+                                    max_imgs=xd.get("max_imgs", 20), skipped=_xsk)
+                for p in _xi:
+                    card, reason = asset_card(p, output_dir)
+                    img_tags.append(card)
+                    if reason:
+                        not_inlined.append((p, reason))
 
             # E2: stage 已完成但声明的 summary 产物不在磁盘 → 显式列出 (G3 复发护栏)
             missing = missing_declared_summaries(vdir, m, r.get("stages_done", []))
@@ -499,13 +680,27 @@ def build_html_report(
                 warn_html += ('<p class="asset-note">⚠ assets not inlined: ' + _html.escape(
                     "; ".join(f"{Path(p).name} ({why})" for p, why in not_inlined)) + '</p>')
             if plot_skips:
+                # 2026-10-16 修 (#7): 被排除候选原先只列前 8 个文件名且无链接 ——
+                # 读者看到"被排除"却点不开产物。现改为带相对路径下载链接 (与
+                # asset_card 的 Download 写法一致), 上限 MAX_SKIP_LIST 条, 余量只报数量。
+                _sk_items = "; ".join(
+                    f'<a href="{_html.escape(_rel_href(p, output_dir), quote=True)}" download>'
+                    f'{_html.escape(Path(p).name, quote=True)}</a> ({_html.escape(why, quote=True)})'
+                    for p, why in plot_skips[:MAX_SKIP_LIST])
+                _sk_more = (f'; … {len(plot_skips) - MAX_SKIP_LIST} more not listed'
+                            if len(plot_skips) > MAX_SKIP_LIST else "")
                 warn_html += ('<p class="asset-note">· candidates not embedded in this module ('
-                              f'{len(plot_skips)}): ' + _html.escape(
-                    "; ".join(f"{Path(p).name} ({why})" for p, why in plot_skips[:8])
-                    + ("…" if len(plot_skips) > 8 else "")) + '</p>')
+                              f'{len(plot_skips)}): {_sk_items}{_sk_more}</p>')
 
             # 未运行且无目录 → 整节灰显
             state_cls = "mod" if (has_dir or tables or img_tags) else "mod off"
+            # 2026-10-17 改 (A): 侧栏 dot 的模块状态 (跨病毒聚合)
+            mod_state[m["key"]] = _merge_state(
+                mod_state.get(m["key"], "off"),
+                module_state(m, r, has_dir, len(tables) + len(img_tags)))
+            # 2026-10-16 新增 (#8): 模块锚点供顶栏导航跳转。HTML 要求 id 唯一,
+            # 首个病毒用 mod-{key} (顶栏链接目标), 其余病毒加 -{i} 后缀。
+            _mod_id = f"mod-{m['key']}" if i == 0 else f"mod-{m['key']}-{i}"
             notes = "".join(f'<li>{n}</li>' for n in m.get("notes", []))
             body = ""
             if tables:
@@ -517,7 +712,7 @@ def build_html_report(
             if not body:
                 body = f'<p class="mod-empty">{"not run / not applicable (skip)" if not has_dir else "no table or figure assets in this module"}</p>'
             mod_html.append(f"""
-            <div class="{state_cls}">
+            <div class="{state_cls}" id="{_mod_id}">
                 <div class="mod-head">
                     <h4>{m['name']}</h4>
                     <div class="badges">{badges}</div>
@@ -550,7 +745,7 @@ def build_html_report(
         </tr>""")
 
         virus_sections.append(f"""
-        <div class="virus-card">
+        <div class="virus-card" id="virus-{i}">
             <h3>{vname} <span class="badge {'ok' if overall == 'PASS' else ('fail' if overall == 'FAIL' else 'skip')}">{overall}</span>{overall_note}</h3>
             <div class="metrics">
                 <span>β={fmt_metric(hm['rate'], hm['rate_source'])}</span>
@@ -560,6 +755,32 @@ def build_html_report(
             </div>
             {''.join(mod_html)}
         </div>""")
+        virus_nav.append((i, vname, overall))   # 侧栏病毒跳转清单 (含总状态)
+
+    # ── 常驻左侧边栏 (2026-10-17 改 A: 取代顶部 sticky chips) ──
+    # 视觉与 ③ virome_discovery_pipeline/report_pipeline.py 的 sb 体系同款;
+    # 结构: "Pipeline Modules" (8 模块, 带各自状态 dot) + "Viruses" (各病毒锚点)。
+    # 侧栏常驻 (见 CSS 注释), scroll-spy 高亮当前所在 section。
+    _sb_mods = "".join(
+        f'<a href="#mod-{m["key"]}" class="sb-item sb-{mod_state.get(m["key"], "off")}"'
+        f' title="{_html.escape(m["name"], quote=True)}">'
+        f'<span class="sb-dot" style="background:{_SB_COLORS[mod_state.get(m["key"], "off")]}"></span>'
+        f'<span class="sb-label">{_html.escape(m["key"].title())}</span></a>'
+        for m in MODULES)
+    _sb_viruses = ""
+    for _i, _vn, _ov in virus_nav:
+        _cls = {"PASS": "pass", "FAIL": "fail"}.get(_ov, "skip")   # PARTIAL → skip 色
+        _sb_viruses += (
+            f'<a href="#virus-{_i}" class="sb-item sb-{_cls}" title="{_vn}">'
+            f'<span class="sb-dot" style="background:{_SB_COLORS[_cls]}"></span>'
+            f'<span class="sb-label">{_vn}</span></a>')
+    sidebar = f"""
+<div class="sidebar">
+  <div class="sb-title">Pipeline Modules</div>
+  {_sb_mods}
+  <div class="sb-title" style="margin-top:10px;">Viruses</div>
+  {_sb_viruses}
+</div>"""
 
     # Full HTML
     html = f"""<!DOCTYPE html>
@@ -567,10 +788,14 @@ def build_html_report(
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<!-- impeccable-disable numbered-section-markers,em-dash-overuse: module order & CJK scientific copy -->
 <title>{title}</title>
 <style>
     * {{ margin: 0; padding: 0; box-sizing: border-box; }}
-    body {{ font-family: -apple-system, 'Segoe UI', Arial, sans-serif; background: #f5f6fa; color: #2c3e50; padding: 20px; }}
+    body {{ font-family: -apple-system, 'Segoe UI', Arial, sans-serif; background: #f5f6fa; color: #2c3e50; padding: 20px 20px 20px 0; }}
+    /* 2026-10-17 impeccable: 标题/hero 用衬线, 正文保持系统 sans —— 双字体层级,
+       零外部资源 (EB Garamond 缺失时回退 Georgia / Times)。 */
+    h1, h2, h3, h4 {{ font-family: 'EB Garamond', Georgia, 'Times New Roman', serif; font-weight: 600; letter-spacing: .01em; }}
     h1 {{ text-align: center; margin: 20px 0; font-size: 28px; color: #1a1a2e; }}
     .summary-table {{ width: 100%; max-width: 1100px; margin: 20px auto; border-collapse: collapse; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }}
     .summary-table th {{ background: #1a1a2e; color: white; padding: 12px 16px; text-align: left; font-size: 13px; }}
@@ -608,12 +833,39 @@ def build_html_report(
     .pdf-embed {{ width: 100%; height: 460px; display: block; background: #f0f0f5; }}
     .tag {{ font-size: 10px; padding: 2px 7px; border-radius: 9px; background: #ffffff2e; font-weight: 600; }}
     .tag.warn {{ background: #e74c3c; }}
-    .asset-note {{ font-size: 11px; color: #b9770e; background: #fdf6e3; border-left: 3px solid #f39c12; padding: 6px 10px; margin-top: 8px; line-height: 1.6; }}
+    .asset-note {{ font-size: 11px; color: #8a5a00; background: #fdf6e3; border: 1px solid #f0d9a8; border-radius: 6px; padding: 6px 10px; margin-top: 8px; line-height: 1.6; }}
     .asset-note a {{ color: #2c3e50; }}
     .footer {{ text-align: center; margin-top: 40px; padding: 20px; color: #999; font-size: 12px; }}
+    /* 2026-10-17 改 (A): 顶部 sticky chips 换成常驻左侧边栏 —— 视觉拷贝 ③
+       (virome_discovery_pipeline/report_pipeline.py) 的 sb 体系:
+       .sidebar/.sb-title/.sb-item/.sb-dot/.sb-label/.sb-active + 左边条状态色。
+       ⚠ 用户裁定 (两次投诉侧栏消失): **侧栏常驻, 任何窗口宽度都不隐藏** ——
+       不许在 max-width 断点里给侧栏写 display:none;
+       只在 @media print 隐藏 (存档/打印不需要导航)。 */
+    .sidebar {{ position: fixed; top: 0; left: 0; width: 224px; height: 100vh;
+                background: #ffffff; border-right: 1px solid #e8e8ef;
+                box-shadow: 2px 0 8px rgba(0,0,0,0.04); z-index: 200;
+                display: flex; flex-direction: column; padding-top: 12px; overflow-y: auto; }}
+    .sb-title {{ font-size: 11px; font-weight: 700; color: #7f8c8d; text-transform: uppercase;
+                 letter-spacing: .8px; padding: 8px 16px 6px; margin: 0; }}
+    .sb-item {{ display: flex; align-items: center; gap: 10px; padding: 9px 16px;
+                text-decoration: none; color: #2c3e50; font-size: 12.5px; font-weight: 500;
+                border: 0; transition: background .15s, color .15s; }}
+    .sb-item:hover {{ background: rgba(83,125,150,.08); }}
+    .sb-dot {{ width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }}
+    .sb-label {{ overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }}
+    /* 状态只由 sb-dot 圆点承载 (颜色内联自 _SB_COLORS); 不再用左侧彩条。 */
+    .sb-active {{ background: rgba(83,125,150,.1); font-weight: 600; }}
+    /* 主内容让出侧栏宽度 (body 左 padding 归零, 偏移全部由这里承担 → 内容起点 240px) */
+    .container {{ padding-left: 240px; }}
+    /* 非 sticky 布局: 锚点只需小位移, 不再为吸顶导航留 64px */
+    .virus-card, .mod {{ scroll-margin-top: 16px; }}
+    @media print {{ .sidebar {{ display: none; }} .container {{ padding-left: 20px; }} }}
 </style>
 </head>
 <body>
+{sidebar}
+<div class="container">
 <h1>{title}</h1>
 <p style="text-align:center;color:#888;margin-bottom:30px">
     Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')} · MMPV-RNA PhyloPipeline · VirPhyKit
@@ -639,7 +891,26 @@ def build_html_report(
 {''.join(virus_sections) if virus_sections else '<p style="text-align:center;color:#999;">No results to display</p>'}
 
 <div class="footer">MMPV-RNA PhyloPipeline · Powered by VirPhyKit (Yin &amp; Gao, 2025)</div>
-</body>
+</div><!-- /.container -->
+<script>
+// 侧栏 scroll-spy (2026-10-17 改 A; 从 ③ report_pipeline.py 的同款脚本拷贝,
+// 目标选择器换成本报告的锚点: .virus-card[id] / .mod[id])。纯内联, 零外部资源。
+(function(){{
+  var items=document.querySelectorAll('.sb-item');
+  var targets=document.querySelectorAll('.virus-card[id], .mod[id]');
+  if(!items.length||!targets.length)return;
+  function onScroll(){{
+    var current='';
+    targets.forEach(function(t){{ if(t.getBoundingClientRect().top<=160) current=t.id; }});
+    items.forEach(function(a){{
+      a.classList.toggle('sb-active', a.getAttribute('href')==='#'+current);
+    }});
+  }}
+  window.addEventListener('scroll',onScroll,{{passive:true}});
+  onScroll();
+}})();
+</script>
+{_TW}</body>
 </html>"""
 
     report_path = os.path.join(output_dir, "phylo_report.html")

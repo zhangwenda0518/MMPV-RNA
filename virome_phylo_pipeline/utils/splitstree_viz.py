@@ -69,8 +69,11 @@ import numpy as np
 
 try:                                    # 样式真源 (与本目录其它模块共享同一份)
     from utils.sci_palette import sci_rcparams, OKABE_ITO, COL_W_2
+    # 2026-10-16: 图件双格式 (PNG+PDF 同主名)
+    from utils.plot_io import save_both
 except ImportError:                     # 允许以脚本形式直接跑
     from sci_palette import sci_rcparams, OKABE_ITO, COL_W_2
+    from plot_io import save_both
 
 # 分组弧线的几何常量 (单位: 网络外接半径 R=1.0 的比例)
 _TIP_LINE_R = 1.03     # tip 悬枝终点
@@ -615,9 +618,8 @@ def render(nexus, out_pdf, out_png=None, label_every=None, title=None,
             len(legend_items), group_note or 'meta')
     fig.text(0.5, 0.010, cap + '\n' + cap2, ha='center', va='bottom',
              fontsize=6.0, color='#333333', linespacing=1.55)
-    fig.savefig(out_pdf, dpi=300, facecolor='white')
-    if out_png:
-        fig.savefig(out_png, dpi=300, facecolor='white')
+    # 2026-10-16: 双格式 —— 调用方没给 out_png 时按主名自动补 .png (PNG 必出)
+    save_both(fig, out_pdf, png=out_png, dpi=300, facecolor='white')
     plt.close(fig)
     print('saved:', out_pdf, '(%d zones, %d interleaving pairs, %d group arcs)'
           % (len(zones), n_box_pairs, len(legend_items)))

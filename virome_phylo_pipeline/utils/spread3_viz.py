@@ -27,6 +27,15 @@ from datetime import datetime
 import numpy as np
 import pandas as pd
 
+# 共享表格控件 (筛选/排序/列可选/列固定 + CSV 导出), 注入各 HTML 页面
+try:
+    _REPO_ROOT_TW = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    if _REPO_ROOT_TW not in sys.path:
+        sys.path.insert(0, _REPO_ROOT_TW)
+    from mmpv_common.table_widgets import TW_BLOCK as _TW
+except Exception:
+    _TW = ""   # 不可达时静默降级为原生表格
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from utils.virphy_bridge import LogCollector
 # 2026-09-15 (审查 P2-9): BF 阈值/发散截断/公式 全管线唯一定义
@@ -763,7 +772,7 @@ def _offline_svg_html(nodes, links, all_links, metadata, title) -> str:
   <p class="foot">MMPV-RNA virome_phylo_pipeline · single-file offline map ·
      {metadata.get('generated', '')}</p>
 </div>
-</body>
+{_TW}</body>
 </html>'''
 
 
@@ -896,7 +905,7 @@ allLinks.slice(0, 15).forEach(l => {{
 if (usable.length) map.fitBounds(L.latLngBounds(usable.map(n => [n.latitude, n.longitude])).pad(0.2));
 }} // end Leaflet-available branch
 </script>
-</body>
+{_TW}</body>
 </html>'''
 
 
@@ -1086,7 +1095,7 @@ def build_phylogeo_report(
   MMPV-RNA virome_phylo_pipeline &middot; BEAST Phylogeography &middot; {datetime.now().strftime("%Y-%m-%d %H:%M")}
 </div>
 </div>
-</body>
+{_TW}</body>
 </html>'''
 
     report_path = os.path.join(output_dir, "phylogeo_report.html")

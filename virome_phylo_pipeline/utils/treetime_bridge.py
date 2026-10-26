@@ -28,6 +28,12 @@ import sys
 from typing import Dict, Optional
 
 from utils.virphy_bridge import LogCollector
+# 2026-10-16: 第三方工具 (TreeTime CLI) 直写 PDF 的 PNG 兜底 —— 收尾只转
+# 「没有同名 PNG」的 PDF, 幂等; fitz 缺失时优雅跳过, 不中断管线。
+try:
+    from utils.pdf_to_png import stage_finalize as _pdf_png_finalize
+except ImportError:                                    # pragma: no cover
+    from pdf_to_png import stage_finalize as _pdf_png_finalize
 
 # TreeTime CLI 写出的时间树文件名, 按命中顺序回退 (phymap-workflow 同款清单)
 _TIMETREE_CANDIDATES = (
@@ -248,5 +254,13 @@ def run_treetime_full(
 
     result["success"] = True
     result["timetree_nexus"] = timetree
+    # 2026-10-16: 收尾兜底 —— TreeTime CLI 若在某些配置下写了 PDF (改不了它内部),
+    # 这里按同主名补 PNG; 幂等、失败不抛错。
+    try:
+        _made = _pdf_png_finalize(output_dir, log=log)
+        if _made:
+            log.emit(f"TreeTime: PDF→PNG 兜底渲染 {len(_made)} 张")
+    except Exception as e:  # noqa: BLE001
+        log.warning(f"TreeTime PDF→PNG 兜底跳过 ({e})")
     log.emit(f"TreeTime 时间树完成: {timetree}")
     return result

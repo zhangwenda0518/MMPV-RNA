@@ -182,8 +182,23 @@ def load_sample_metadata(
             log.warning(f"Failed to load Core14 metadata: {e}")
 
     # ── Source 2: SRA_GSA_Merged_Final.csv (fallback) ──
-    merged_csv = os.path.join(info_dir, "..", "search", "SRA_GSA_Merged_Final.csv")
-    merged_csv = os.path.normpath(merged_csv)
+    # ① 的 search 目录名随布局解析 (io_layout m_search: standard=01_Search /
+    # legacy=search)。2026-10-15 修: 原写死 "../search", standard 布局下
+    # 指向不存在的目录, fallback 静默失效。
+    _search_names = []
+    try:
+        from mmpv_common.io_layout import dir_name as _dir_name
+        _search_names.append(_dir_name("m_search"))
+    except Exception:
+        pass
+    if "search" not in _search_names:
+        _search_names.append("search")
+    merged_csv = ""
+    for _sn in _search_names:
+        _cand = os.path.normpath(os.path.join(info_dir, "..", _sn, "SRA_GSA_Merged_Final.csv"))
+        if os.path.exists(_cand):
+            merged_csv = _cand
+            break
     if os.path.exists(merged_csv):
         try:
             with open(merged_csv, encoding='utf-8-sig') as f:

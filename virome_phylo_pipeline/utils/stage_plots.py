@@ -10,6 +10,26 @@ stage_plots.py — 补齐各 stage 的 summary 图 (SCI 风格: 白底/Okabe-Ito
 
 也可独立运行: python utils/stage_plots.py --kind align_qc --fasta aln.fa --outdir d/
 """
+
+# ── 图件四格式导出 (SVG / PNG / PDF / PNG@1200dpi) — 默认开启 ──────────
+# 2026-10-20: 所有出图脚本统一口径; 用 MMPV_FIG_EXPORT=0 可整体关闭,
+# MMPV_FIG_FORMATS=svg,png,pdf,hires 可裁剪, MMPV_FIG_HIRES_DPI 可改高清 dpi。
+try:
+    from mmpv_common.figure_export import install_savefig_hook as _install_fig_hook
+except ImportError:  # 仓库根不在 sys.path (脚本被单独执行) → 向上找 mmpv_common/
+    import os as _os
+    import sys as _sys
+    _d = _os.path.dirname(_os.path.abspath(__file__))
+    while _d and not _os.path.isdir(_os.path.join(_d, "mmpv_common")):
+        _parent = _os.path.dirname(_d)
+        if _parent == _d:
+            break
+        _d = _parent
+    if _d and _d not in _sys.path:
+        _sys.path.insert(0, _d)
+    from mmpv_common.figure_export import install_savefig_hook as _install_fig_hook
+_install_fig_hook()
+# ──────────────────────────────────────────────────────────────────────
 import os
 import re
 import sys
@@ -130,21 +150,30 @@ def _find_meta_for_tree(output_dir):
     2026-10-13: 原只找 `data/sample_metadata.csv`。现同时找 `data/host.csv` ——
     两者都可能各自缺列（本数据的 `sample_metadata.csv` 只有 location 没有 host，
     `host.csv` 只有 host 没有 location），所以**分开查、各取所需**。
+    2026-10-15: 候选目录布局感知（io_layout ph_dir('data'): standard=01_data /
+    legacy=data）—— 原只查 legacy `data/`，standard 默认布局下树图 tip 的
+    宿主/地点着色静默缺失。
     """
     root = os.path.dirname(os.path.abspath(output_dir))
+    try:
+        from mmpv_common.io_layout import ph_dir as _ph_dir
+        _prefixes = []
+        for _p in (_ph_dir('data'), "data"):
+            if _p not in _prefixes:
+                _prefixes.append(_p)
+    except Exception:
+        _prefixes = ["data"]
     out = {}
-    for key, cands in (
-        ("meta", ("data/sample_metadata.csv",
-                  "data/metadata/sample_metadata.csv",
-                  "data/clean/sample_metadata.csv")),
-        ("host", ("data/host.csv",
-                  "data/metadata/host.csv",
-                  "data/clean/host.csv")),
-    ):
-        for rel in cands:
-            p = os.path.join(root, rel)
-            if os.path.exists(p):
-                out[key] = p
+    for key, tail in (("meta", "sample_metadata.csv"), ("host", "host.csv")):
+        for pref in _prefixes:
+            for rel in (f"{pref}/{tail}",
+                        f"{pref}/metadata/{tail}",
+                        f"{pref}/clean/{tail}"):
+                p = os.path.join(root, rel)
+                if os.path.exists(p):
+                    out[key] = p
+                    break
+            if key in out:
                 break
     return out
 
@@ -192,9 +221,330 @@ def _load_host_map(meta_path):
                           reduce=lambda v: v.split(',')[0].strip() or v)
 
 
+def _plot_tree_classic(tree_file, output_dir, log=None, meta=None,
+                       show_tip_labels=True, dpi=300, branch_color="none"):
+    """经典样式环形 ML 树（2026-10-14, 方案 A / ggtree·iTOL 惯例读法）。
+
+    与彩色版 (`plot_tree_circular`) 的分工：
+      · 彩色版 = Fig3 半栏嵌入用（无标签 cladogram + 双环色带）；
+      · 本函数 = **独立大图**用：单色枝 + 等深 cladogram + 全部 tip 标签 +
+        tip 端双色点环（内点 = 宿主物种 / 外点 = 采样地点）。
+
+    branch_color 参数（2026-10-14 补, 用户要求「宿主/地理映射到树枝上」）：
+      · "none"      (默认) 枝不带映射 —— 宿主/地理只在 tip 点上；
+      · "host"      枝色 = 后代 tip 的**众数宿主**（≥90% 纯度才上色, 混合/未
+                    注释枝 = 灰）; 地点点保留, 宿主点撤（避免双重编码）;
+      · "location"  枝色 = 众数地点; 宿主点保留, 地点点撤。
+      ⚠ 这是把旧彩版「内部枝无含义的统一蓝」修正为有统计含义的映射：
+        枝色语义 = 「该枝后代以某组为主」, 图例注明; 不能按 tip 各自着色
+        后直接当内部枝的颜色（那就是 2026-10-14 被判「混乱」的旧病）。
+
+    ⚠ 2026-10-14 彩色版被用户判「颜色混乱」的三个根因，本样式逐一规避：
+      ① 彩色版内部骨架是统一蓝（`OKABE_ITO[4]`），与图例 *L. chinense* 的
+         浅蓝同族 → 读者误读内部枝的宿主含义；本样式**通体单色**，颜色只
+         出现在 tip 点上（语义 = 图例，无一例外）。
+      ② 彩色版内外双环 + 分支共用 OKABE → 宿主与地点撞色；本样式宿主用
+         OKABE、地点用 viridis 冷色系（色相族不同）。
+      ③ 无 tip 标签无法锚定；本样式全部 127 个 accession 可读。
+
+    布局 = **等深 cladogram**（每层等宽、tip 一律拉到最外圈）——与用户提供的
+    参考图同款：127 个标签在统一半径成环, 相邻标签弧间距 ≈ 12 pt > 字高,
+    不叠字。⚠ cladogram 不表达枝长（本树枝长跨度 52.8×, 真实比例会把 120 条
+    tip 挤成中团）—— 尺度信息在 treefile/.iqtree 里, 注记中写明。
+    """
+    try:
+        import matplotlib
+        matplotlib.use('Agg')
+        import matplotlib.pyplot as plt
+        import numpy as np
+    except ImportError:
+        return None
+    from matplotlib.lines import Line2D
+
+    log = log or LogCollector()
+    os.makedirs(output_dir, exist_ok=True)
+    try:
+        txt = open(tree_file).read()
+        # 去掉 bootstrap 支持值标签保留分支长（与彩色版同口径）
+        txt = re.sub(r'\)\s*\d+(\.\d+)?\s*([,):])', r')\2', txt)
+        root = _parse_newick(txt)
+    except Exception as e:
+        log.emit(f"[tree_classic] 解析失败: {e}")
+        return None
+
+    # ── 零长枝塌缩（与彩色版同算法同口径 1e-6, 只塌内部枝）──
+    _n_collapsed = [0]
+
+    def _collapse_zero(n):
+        for _c in list(n['children']):
+            _collapse_zero(_c)
+        _changed = True
+        while _changed:
+            _changed = False
+            _new = []
+            for _c in n['children']:
+                if _c['children'] and (_c.get('length') or 0.0) <= 1e-6:
+                    _new.extend(_c['children'])
+                    _n_collapsed[0] += 1
+                    _changed = True
+                else:
+                    _new.append(_c)
+            n['children'] = _new
+
+    try:
+        _collapse_zero(root)
+    except Exception:                                     # noqa: BLE001
+        _n_collapsed[0] = 0
+
+    # ── 等深 cladogram 布局: x = 层级深度, tip 一律拉到最外圈 ──
+    leaves = []
+
+    def assign(n, depth):
+        n['_nd'] = depth
+        if not n['children']:
+            n['y'] = len(leaves)
+            leaves.append(n)
+        else:
+            for c in n['children']:
+                assign(c, depth + 1)
+            n['y'] = sum(c['y'] for c in n['children']) / len(n['children'])
+
+    assign(root, 0)
+    _max_nd = max(n['_nd'] for n in leaves) or 1
+
+    def _setx(n):
+        n['x'] = float(n['_nd'])          # 等深: 每层等宽
+        for c in n['children']:
+            _setx(c)
+    _setx(root)
+    for _lf in leaves:
+        _lf['x'] = float(_max_nd)         # tip 一律拉到最外圈
+    max_x = float(_max_nd)
+    n_tips = len(leaves)
+    if n_tips < 2:
+        log.emit("[tree_classic] tips < 2, 跳过")
+        return None
+
+    # ── 元数据: 宿主 (OKABE) + 地点 (Dark2, 与宿主无撞色) ──
+    paths = _find_meta_for_tree(output_dir)
+    if meta:
+        paths = dict(paths)
+        paths["host"] = meta
+    host_map = _load_host_map(paths.get("host")) or {}
+    loc_map = _load_location_map(paths.get("meta")) or {}
+
+    def _attr_of(amap):
+        out = {}
+        for lf in leaves:
+            k = _norm_tip(lf.get('label', ''))
+            v = amap.get(k)
+            if v is None and '_' in k:
+                h = k.split('_')[0]
+                v = next((vv for kk, vv in amap.items()
+                          if kk.split('_')[0] == h), None)
+            if v:
+                out[id(lf)] = v
+        return out
+
+    try:
+        from utils.sci_palette import apply_sci_style, OKABE_ITO
+    except ImportError:                                   # 脚本方式直跑
+        from sci_palette import apply_sci_style, OKABE_ITO
+    host_of = _attr_of(host_map)
+    loc_of = _attr_of(loc_map)
+    host_groups = sorted(set(host_of.values()))
+    loc_groups = sorted(set(loc_of.values()))
+    host_color = {g: OKABE_ITO[i] for i, g in enumerate(host_groups)}
+    # 地点用 viridis 冷色系采样 —— 与宿主 OKABE（暖橙/浅蓝/绿）无色相碰撞:
+    # 2026-10-14 首版用 Dark2, 其橙色 (#D95F02) 与宿主 *L. barbarum* 的
+    # #E69F00 同族, 双环同图仍有撞色风险。宿主暖色 / 地点冷色, 语义也顺。
+    try:
+        _loc_cmap = plt.get_cmap('viridis')
+    except AttributeError:                                # matplotlib >= 3.9
+        import matplotlib as _mpl
+        _loc_cmap = _mpl.colormaps['viridis']
+    loc_color = {_g: _loc_cmap(i / max(1, len(loc_groups) - 1))
+                 for i, _g in enumerate(loc_groups)}
+
+    # ── 枝色映射 (branch_color): 自底向上众数继承, ≥90% 纯度才上色 ──
+    _GREY = '#BBBBBB'
+    _AMAP = {"host": host_of, "location": loc_of}.get(branch_color)
+    _PALETTE = {"host": host_color, "location": loc_color}.get(branch_color)
+
+    def _majority(amap, threshold=0.9):
+        """{id(node): 组名} —— 节点子树内有标注 tip 的众数组, 纯度≥threshold 才记录。"""
+        out = {}
+        import collections as _co
+
+        def visit(n):
+            counts = _co.Counter()
+            if not n['children']:
+                g = amap.get(id(n))
+                if g:
+                    counts[g] += 1
+            else:
+                for c in n['children']:
+                    counts.update(visit(c))
+            if counts:
+                g, k = counts.most_common(1)[0]
+                if k / sum(counts.values()) >= threshold:
+                    out[id(n)] = g
+            return counts
+
+        visit(root)
+        return out
+
+    _branch_map = _majority(_AMAP) if (_AMAP and _PALETTE) else None
+
+    # ── 画布: 独立大图 ──
+    apply_sci_style(base_size=7, grid=False)
+    fig = plt.figure(figsize=(9.6, 9.6), dpi=dpi)
+    ax = fig.add_subplot(111, projection='polar')
+    two_pi = 2 * np.pi
+    phase = np.pi / 2                      # 12 点钟起步, 顺时针
+
+    def theta(y):
+        return phase - two_pi * y / n_tips
+
+    # 半径预算（数据单位 = 层级）: tip 环 → 宿主点 → 地点点 → 标签
+    _U = max_x * 0.01
+    _r_dot_in = max_x + _U * 1.2           # 宿主点环
+    _r_dot_out = max_x + _U * 3.0          # 地点点环
+    _r_lab = max_x + _U * 5.2              # 标签统一半径
+
+    _C_TREE = '#4D4D4D'
+    stack = [root]
+    while stack:
+        n = stack.pop()
+        for c in n['children']:
+            if _branch_map is not None:
+                _g = _branch_map.get(id(c))
+                _cc = _PALETTE.get(_g, _GREY) if _g else _GREY
+            else:
+                _cc = _C_TREE
+            ax.plot([theta(c['y']), theta(c['y'])], [n['x'], c['x']],
+                    color=_cc, lw=0.8, solid_capstyle='round', zorder=2)
+            stack.append(c)
+        if n['children']:
+            ys = [c['y'] for c in n['children']]
+            t0, t1 = theta(min(ys)), theta(max(ys))
+            k = max(2, int(abs(t1 - t0) * 160))
+            # 弧段 = 节点自身的枝色 (众数继承), 混合节点灰 —— clade 色块连贯
+            if _branch_map is not None:
+                _g = _branch_map.get(id(n))
+                _cc = _PALETTE.get(_g, _GREY) if _g else _GREY
+            else:
+                _cc = _C_TREE
+            ax.plot(np.linspace(t0, t1, k), [n['x']] * k,
+                    color=_cc, lw=0.8, solid_capstyle='round', zorder=2)
+
+    # ── tip 点环 + 径向标签 ──
+    # 枝色已表达某维度时, 该维度的点撤掉 (双重编码 = 又回到「混乱」老路)
+    _show_host_dots = branch_color != "host"
+    _show_loc_dots = branch_color != "location"
+    for lf in leaves:
+        th = theta(lf['y'])
+        if _show_host_dots and host_of.get(id(lf)):
+            ax.plot([th], [_r_dot_in], 'o', ms=2.6,
+                    color=host_color[host_of[id(lf)]], zorder=4)
+        if _show_loc_dots and loc_of.get(id(lf)):
+            ax.plot([th], [_r_dot_out], 'o', ms=2.6,
+                    color=loc_color[loc_of[id(lf)]], zorder=4)
+        if show_tip_labels and lf.get('label'):
+            # 径向文字: 旋转 = 方位角本身, 左半圈翻 180° + 锚点换边 → 字头朝外
+            _deg = np.degrees(th) % 360.0
+            if 90.0 < _deg < 270.0:
+                _rot, _ha = _deg - 180.0, 'right'
+            else:
+                _rot, _ha = _deg, 'left'
+            ax.text(th, _r_lab, lf['label'], rotation=_rot,
+                    rotation_mode='anchor', ha=_ha, va='center',
+                    fontsize=5.8, color='#222222', zorder=5)
+
+    ax.set_xticks([])
+    ax.set_yticks([])
+    ax.grid(False)
+    ax.spines['polar'].set_visible(False)
+    # 标签区 ≈ 最长标签(22 字符 × 0.6 × 5.8pt) ≈ 1.06 in; 轴半径 ~3.9 in
+    _lab_chars = max((len(lf.get('label') or '') for lf in leaves), default=0)
+    _lab_in = _lab_chars * 0.60 * 5.8 / 72.0
+    _r_lim = _r_lab + _lab_in / 3.9 * _r_lab
+    ax.set_ylim(0, _r_lim * 1.06)
+    ax.set_title(f'Maximum-likelihood tree  (n = {n_tips} tips)',
+                 fontsize=9, fontweight='bold', pad=14)
+
+    # ── 图例: 枝色图例 (branch_color 时) + 点图例, 左边距分栏 ──
+    handles = []
+    _n_branch = 0
+    if _branch_map is not None:
+        # 枝色图例只列**实际出现在枝上的组** (被灰枝吞掉的少数组不列)
+        _used = sorted({_g for _g in _branch_map.values()})
+        handles += [Line2D([], [], color=_PALETTE[g], lw=1.6, label=g)
+                    for g in _used]
+        _n_branch = len(_used)
+    if _show_host_dots:
+        handles += [Line2D([], [], linestyle='none', marker='o', ms=4,
+                           color=host_color[g], label=g) for g in host_groups]
+    if _show_loc_dots:
+        handles += [Line2D([], [], linestyle='none', marker='o', ms=4,
+                           color=loc_color[g], label=g) for g in loc_groups]
+    if not handles:
+        return None
+    _n_h = _n_branch if _branch_map is not None else max(1, len(host_groups))
+    # 图例小标题: 枝色 / 点色各是什么
+    _t1 = ({'host': 'Host plant (branch)',
+            'location': 'Sampling location (branch)'}.get(branch_color,
+                                                           'Host plant (dot)')
+           if handles else '')
+    leg1 = ax.legend(handles=handles[:_n_h],
+                     loc='upper left', bbox_to_anchor=(-0.145, 1.02),
+                     fontsize=6.5, frameon=True, framealpha=0.9,
+                     title=_t1, title_fontsize=6.8,
+                     labelspacing=0.32, borderpad=0.5)
+    ax.add_artist(leg1)
+    _rest = handles[_n_h:]
+    if _rest:
+        _t2 = ('Sampling location (dot)' if branch_color == "host"
+               else 'Host plant (dot)' if branch_color == "location"
+               else 'Sampling location (dot)')
+        ax.legend(handles=_rest, loc='upper left',
+                  bbox_to_anchor=(-0.145, 0.76),
+                  fontsize=6.5, frameon=True, framealpha=0.9,
+                  title=_t2, title_fontsize=6.8,
+                  labelspacing=0.32, borderpad=0.5, ncol=1)
+
+    _note_l1 = ('cladogram (branch lengths not to scale; topology from '
+                'IQ-TREE ML, see treefile/.iqtree for substitutions per site)')
+    if _branch_map is not None:
+        _dim_lab = 'host plant' if branch_color == "host" else 'sampling location'
+        _note_l2 = (f'branch colour = majority {_dim_lab} among descendant tips '
+                    '(≥90% purity; grey = mixed or unassigned)'
+                    + (f'; {len(host_of)}/{n_tips} tips with host'
+                       if branch_color == "location" else '')
+                    + (f'; {_n_collapsed[0]} zero-length internal branches collapsed'
+                       if _n_collapsed[0] else ''))
+    else:
+        _note_l2 = ('dots: inner = host plant, outer = sampling location'
+                    f'; {len(host_of)}/{n_tips} tips with host, '
+                    f'{len(loc_of)}/{n_tips} with location'
+                    + (f'; {_n_collapsed[0]} zero-length internal branches collapsed'
+                       if _n_collapsed[0] else ''))
+    fig.text(0.012, 0.006, _note_l1 + '\n' + _note_l2, fontsize=6.0,
+             color='#666666', ha='left', va='bottom', linespacing=1.4)
+    # 左侧 15% 边距给图例（不用 tight_layout, 它会把极轴撑回满幅）
+    fig.subplots_adjust(left=0.155, right=0.995, top=0.945, bottom=0.055)
+    _suffix = {'host': '_brhost', 'location': '_brloc'}.get(branch_color, '')
+    _finish(fig, os.path.join(output_dir, f'tree_circular{_suffix}.pdf'),
+            os.path.join(output_dir, f'tree_circular{_suffix}.png'))
+    log.emit(f"[tree_classic] {n_tips} tips, host {len(host_of)}, "
+             f"loc {len(loc_of)}, branch_color={branch_color} "
+             f"-> {os.path.join(output_dir, f'tree_circular{_suffix}.png')}")
+    return os.path.join(output_dir, f'tree_circular{_suffix}.png')
+
+
 def plot_tree_circular(tree_file, output_dir, log=None, meta=None, color_by="host",
                        show_branch_length=False, collapse_zero_len=True,
-                       zero_len_tol=1e-6):
+                       zero_len_tol=1e-6, style="colored", branch_color="none"):
     """环形系统发育图 —— 真正的树结构 (径向分支 + 等半径弧)。
 
     2026-10-12 重写: 旧实现只画 `[0, theta] → [0, depth]` 的**放射直线**,
@@ -236,7 +586,15 @@ def plot_tree_circular(tree_file, output_dir, log=None, meta=None, color_by="hos
     ⚠⚠ 实现必须**自底向上递归 + 本层循环到稳定**：早期版本用「walk 快照 +
       逐节点提升」，被提升走的节点仍留在快照里、其孙子被重复检查 ⇒ 移除数
       虚高（实测把 18 条算成 26）。此处每个节点至多被移除一次。
+
+    style 参数（2026-10-14）: "colored"（默认, Fig3 半栏嵌版, 双环+分支着色）
+      | "classic"（独立大图: 单色枝+真实枝长+全标签+tip 双色点环, 见
+      `_plot_tree_classic` —— 用户 2026-10-14 判彩色版「颜色混乱」后按参考
+      图样式新增）。
     """
+    if style == "classic":
+        return _plot_tree_classic(tree_file, output_dir, log=log,
+                                  meta=meta, branch_color=branch_color)
     try:
         import matplotlib
         matplotlib.use('Agg')
@@ -799,11 +1157,20 @@ if __name__ == '__main__':
                     choices=['align_qc', 'tree', 'popgen', 'gene_dating'])
     ap.add_argument('--input', required=True)
     ap.add_argument('--outdir', required=True)
+    ap.add_argument('--style', default='colored', choices=['colored', 'classic'],
+                    help='tree 专用: colored=Fig3 半栏彩版 / classic=单色大图+全标签')
+    ap.add_argument('--meta', default=None,
+                    help='tree 专用: 显式宿主/地点表 CSV (缺省自动发现 data/)')
+    ap.add_argument('--branch-color', default='none',
+                    choices=['none', 'host', 'location'],
+                    help='tree 专用 (classic): 枝色映射 (众数继承, 混合枝灰)')
     a = ap.parse_args()
     if a.kind == 'align_qc':
         print(plot_align_qc(a.input, a.outdir))
     elif a.kind == 'tree':
-        print(plot_tree_circular(a.input, a.outdir))
+        print(plot_tree_circular(a.input, a.outdir, style=a.style,
+                                 meta=a.meta if a.meta else None,
+                                 branch_color=a.branch_color))
     elif a.kind == 'popgen':
         print(plot_popgen(a.input, a.outdir))
     elif a.kind == 'gene_dating':

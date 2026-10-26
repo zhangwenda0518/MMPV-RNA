@@ -21,6 +21,15 @@ from datetime import datetime
 import numpy as np
 import pandas as pd
 
+# 共享表格控件 (筛选/排序/列可选/列固定 + CSV 导出), 注入 HTML 报告
+try:
+    _REPO_ROOT_TW = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    if _REPO_ROOT_TW not in sys.path:
+        sys.path.insert(0, _REPO_ROOT_TW)
+    from mmpv_common.table_widgets import TW_BLOCK as _TW
+except Exception:
+    _TW = ""   # 不可达时静默降级为原生表格
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from utils.virphy_bridge import LogCollector
 # 2026-09-15 (审查 P2-9): BF 阈值与"发散截断值"全管线唯一定义, 见 virphy_bridge
@@ -29,6 +38,8 @@ from utils.virphy_bridge import (DEFAULT_BF_THRESHOLD, BF_INFINITE_CAP,
 # 历史坑: calculate_95hpd 曾只在 _calc_ess 内局部 import, 模块级三处裸用 →
 # NameError → parse_beast_log 返回 error, key_params 空, TMRCA 静默丢失。
 from utils.ess import calculate_ess, calculate_95hpd
+# 2026-10-16: 图件双格式 (PNG+PDF 同主名); 统一由 plot_io.save_both 收口
+from utils.plot_io import save_both
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -695,7 +706,7 @@ def _build_html_report(
   MMPV-RNA virome_phylo_pipeline · BEAST v1.10
 </div>
 </div>
-</body>
+{_TW}</body>
 </html>'''
 
     report_path = os.path.join(output_dir, "beast_analysis_report.html")
@@ -789,7 +800,7 @@ def plot_beast_diagnostics(
 
         plt.tight_layout()
         diag_path = os.path.join(output_dir, "mcmc_diagnostics.pdf")
-        fig.savefig(diag_path, bbox_inches='tight', dpi=150, format='pdf')
+        save_both(fig, diag_path, bbox_inches='tight', dpi=150, format='pdf')
         plt.close(fig)
 
         log.emit(f"MCMC diagnostics: {diag_path} ({n_rows} parameters)")

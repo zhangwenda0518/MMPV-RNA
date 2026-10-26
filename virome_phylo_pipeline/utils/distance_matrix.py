@@ -17,6 +17,13 @@ from collections import OrderedDict
 import numpy as np
 from Bio import SeqIO
 
+# 2026-10-16: 图件双格式 (PNG+PDF 同主名); 统一由 plot_io.save_both 收口。
+# 双路径 import: `-m utils.distance_matrix` 与 `python utils/distance_matrix.py` 均可用。
+try:
+    from utils.plot_io import save_both
+except ImportError:                              # pragma: no cover
+    from plot_io import save_both
+
 # IUPAC 简并碱基映射
 IUPAC_DNA_MAP = {
     'A': 'A', 'T': 'T', 'C': 'C', 'G': 'G',
@@ -128,7 +135,8 @@ def plot_matrix(mat, names, out_path):
     ax.set_title('p-distance matrix')
     fig.colorbar(im, ax=ax, label='p-distance')
     fig.tight_layout()
-    fig.savefig(out_path, dpi=300, bbox_inches='tight')
+    # out_path 历史为 .png (仅 PNG); save_both 按主名补出同名 .pdf → 双格式
+    save_both(fig, out_path, dpi=300, bbox_inches='tight')
     plt.close(fig)
     return out_path
 
@@ -143,7 +151,7 @@ def plot_tree(tree, out_path):
     Phylo.draw(tree, axes=ax, do_show=False)
     ax.set_title('Neighbor-Joining tree (p-distance)')
     fig.tight_layout()
-    fig.savefig(out_path, dpi=300, bbox_inches='tight')
+    save_both(fig, out_path, dpi=300, bbox_inches='tight')
     plt.close(fig)
     return out_path
 

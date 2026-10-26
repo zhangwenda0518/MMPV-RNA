@@ -3531,9 +3531,13 @@ def make_figures(output_dir: Path, results: dict) -> list[Path]:
     try:
         from utils.sci_palette import (apply_sci_style, OKABE_ITO,
                                        COL_W_1, COL_W_2, SEQ_CMAP, despine, sci_legend)
+        # 2026-10-16: 图件双格式 (PNG+PDF 同主名); 原先 7 张图仅 PNG → 由
+        # plot_io.save_both 按主名补出同名 PDF (PDF 参数不变)
+        from utils.plot_io import save_both
     except ImportError:                       # 以脚本方式运行时
         from sci_palette import (apply_sci_style, OKABE_ITO,
                                  COL_W_1, COL_W_2, SEQ_CMAP, despine, sci_legend)
+        from plot_io import save_both
     apply_sci_style(base_size=7)
 
     global_stats = results["global"]
@@ -3565,7 +3569,7 @@ def make_figures(output_dir: Path, results: dict) -> list[Path]:
         despine(axes[1])
         plt.tight_layout(pad=0.4)
         fig_path = figs_dir / "sliding_window.png"
-        plt.savefig(fig_path, dpi=300)
+        save_both(plt.gcf(), fig_path, dpi=300)
         plt.close()
         paths.append(fig_path)
 
@@ -3610,7 +3614,7 @@ def make_figures(output_dir: Path, results: dict) -> list[Path]:
                  y=0.995)
     plt.tight_layout(pad=0.4)
     fig_path = figs_dir / "summary.png"
-    plt.savefig(fig_path, dpi=300)
+    save_both(plt.gcf(), fig_path, dpi=300)
     plt.close()
     paths.append(fig_path)
 
@@ -3730,7 +3734,7 @@ def make_figures(output_dir: Path, results: dict) -> list[Path]:
                      fontweight='bold', y=0.995)
         plt.tight_layout(pad=0.4)
         fig_path = figs_dir / "ld_decay.png"
-        plt.savefig(fig_path, dpi=300)
+        save_both(plt.gcf(), fig_path, dpi=300)
         plt.close()
         paths.append(fig_path)
 
@@ -3749,7 +3753,7 @@ def make_figures(output_dir: Path, results: dict) -> list[Path]:
         despine(ax)
         plt.tight_layout(pad=0.4)
         fig_path = figs_dir / "mismatch.png"
-        plt.savefig(fig_path, dpi=300)
+        save_both(plt.gcf(), fig_path, dpi=300)
         plt.close()
         paths.append(fig_path)
 
@@ -3789,7 +3793,7 @@ def make_figures(output_dir: Path, results: dict) -> list[Path]:
         plt.suptitle("Site frequency spectrum", fontsize=9, fontweight="bold", y=1.02)
         plt.tight_layout(pad=0.4)
         fig_path = figs_dir / "sfs.png"
-        plt.savefig(fig_path, dpi=300, bbox_inches="tight")
+        save_both(plt.gcf(), fig_path, dpi=300, bbox_inches="tight")
         plt.close()
         paths.append(fig_path)
 
@@ -3825,7 +3829,7 @@ def make_figures(output_dir: Path, results: dict) -> list[Path]:
         despine(ax)
         plt.tight_layout(pad=0.4)
         fig_path = figs_dir / "codon_usage.png"
-        plt.savefig(fig_path, dpi=300, bbox_inches="tight")
+        save_both(plt.gcf(), fig_path, dpi=300, bbox_inches="tight")
         plt.close()
         paths.append(fig_path)
 
@@ -3855,7 +3859,7 @@ def make_figures(output_dir: Path, results: dict) -> list[Path]:
         despine(ax)
         plt.tight_layout(pad=0.4)
         fig_path = figs_dir / "fst.png"
-        plt.savefig(fig_path, dpi=300, bbox_inches="tight")
+        save_both(plt.gcf(), fig_path, dpi=300, bbox_inches="tight")
         plt.close()
         paths.append(fig_path)
 

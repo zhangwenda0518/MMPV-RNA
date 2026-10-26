@@ -16,16 +16,27 @@ ucld.mean ESS=4.5, 全部 `converged=False`, 但合并照样"成功"。
 
 判据
 ====
-对 `parameter_summary.csv` 的关键参数取最小 ESS, 与 `MIN_ESS`(=200) 比:
+对 `parameter_summary.csv` 的**关键参数**取最小 ESS, 与 `MIN_ESS`(=200) 比:
   · 全部 key 参数 ESS >= 200  → verdict = "converged"
   · 有任何 key 参数 ESS <  200 → verdict = "not_converged"
   · 无 key 参数行 / 文件缺失   → verdict = "unknown"
 
-⚠ 语义边界 (务必写进下游 caveat):
+关键参数集 = `KEY_PARAM_PATTERNS` 子串匹配 (速率 / 松弛度 / 树高 / 树先验 /
+全局混合)。⚠ 该集合须覆盖**实际产物里出现的全部定年相关列** —— 漏一条就会
+低估最差 ESS (2026-10-14 实测: 曾漏 `coefficientOfVariation`, 上报 4.5 而真值 4.4)。
+
+⚠⚠ `not_converged` 的语义 = **"ESS 不达标"**, 不是 "链未收敛"。两者不可混:
+ESS 低既可能源于链未收敛, 也可能仅源于 logEvery 过大导致样本数太少
+(ESS 上限被样本数压死)。本门禁**不区分**这两种成因, 故 caveat 措辞
+不得断言 "未收敛" (与 §硬规则④ "过度归因" 同一纪律)。
+
+⚠ 语义边界 (下游须理解, 但**不写进 caveat 文案**):
   verdict 只回答 "MCMC 混合是否充分", **不回答 "数据能否定年"**。
-  两者独立 —— 一个零时间信号的数据集即便 ESS 达标, 也不可做分子钟定年
-  (反面同理: ESS 不达标的链, 无论数据有无信号都不可采信其数值)。
-  故本门禁**只降级/标注**, 不"判死"整个管线 (与 sample_floor 的工程哲学一致:
+  两者独立 —— 一个零时间信号的数据集即便 ESS 达标, 也不做分子钟定年;
+  反之 ESS 不达标的链, 其数值也不宜作定量结论。
+  ⚠⚠ 但这两句是**给用者的判读指引**, 不是产物该自我宣告的话 (用户 2026-10-14 裁定:
+  caveat 只记事实, 不写"不可采信/仅供探索"这类价值判断 —— 见 §判据下方措辞纪律)。
+  故本门禁**只记录数值 + 判定**, 不"判死"整个管线 (与 sample_floor 的工程哲学一致:
   要么有结果, 要么有明确告警, 不允许静默产出)。
 
 落盘
@@ -50,20 +61,31 @@ import time
 # 收敛判据的唯一来源 (与 beast_parser 的 ess_threshold 默认值一致)
 from utils.sample_floor import MIN_ESS
 
-# 关键参数 (定年结论实际依赖的那几个)。用小写子串/精确匹配双通道,
-# 与 beast_parser 的 key_names 保持同源语义。
+# 关键参数 (定年结论实际依赖的那几个)。用小写子串匹配, 与 beast_parser 的
+# key_names 保持同源语义。
+#
+# ⚠ 2026-10-14 补全 (实测漏检): 原 11 条模式在真实 BEAST2 UCLN+skyline 产物上
+# **漏掉**了 meanRate / coefficientOfVariation / skyline / skyline.popSize* ——
+# GCVA 实测 `merged/parameter_summary.csv` 里 coefficientOfVariation 的 ESS=4.4
+# **低于**当时上报的 worst_ess=4.5, 即门禁**低估了最差 ESS**。已按真实产物补全。
 KEY_PARAM_PATTERNS = (
-    "posterior",           # 后验 (全局混合)
-    "prior",               # 先验
-    "likelihood",          # 似然
-    "ucld.mean",           # 分子钟速率 (定年核心)
-    "clock.rate",
+    "posterior",                # 后验 (全局混合)
+    "prior",                    # 先验
+    "likelihood",               # 似然 (含 treeLikelihood)
+    "ucld.mean",                # 分子钟速率 (UCLN, 定年核心)
+    "clock.rate",               # 严格钟速率
     "clockrate",
-    "ucld.stdev",          # 松弛钟偏离度
-    "trees.treelength",    # 树长 (与时间尺度耦合)
-    "treemodel.rootheight",
+    "meanrate",                 # 平均速率 (BEAST1 输出名)
+    "ucld.stdev",               # 松弛钟偏离度 (UCLN)
+    "coefficientofvariation",   # 松弛钟 CV (UCLN 的另一写法)
+    "trees.treelength",         # 树长 (与时间尺度耦合)
+    "treelength",
+    "treemodel.rootheight",     # 根高 / TMRCA 相关
     "tmrca",
-    "coalescent",
+    "coalescent",               # 树先验 (BEAST2 通用名)
+    "skyline",                  # 树先验 (Bayesian Skyline, 含 skyline.popSizeN)
+    "demomodel",                # 树先验 (BEAST1 coalescent)
+    "popsize",                  # 树先验参数 (skyline.popSizeN / popSize.t)
 )
 
 
@@ -148,9 +170,21 @@ def evaluate(merged_dir, min_ess=None, log=None):
         _emit(log, f"  ✅ [convergence_gate] {out['reason']}")
     else:
         out["verdict"] = "not_converged"
+        # ⚠ 措辞纪律 (2026-10-14, 2026-10-14 二次修订): **只陈述实测事实**。
+        # 两条约束:
+        #   ① **不要**写死 "MCMC 未收敛" —— ESS 不达标有两个成因, 本门禁
+        #      **无法区分**, 断言其一即为过度归因:
+        #        · 链本身未收敛 (真实问题);
+        #        · 采样间隔 logEvery 过大 → 样本数太少 → ESS 上限被样本数压死
+        #          (GCVA 实测: time/beast 那批 XML 是 logEvery=50000, 5M 链每链仅
+        #           101 个样本, 合并 273 个 → ESS 必然低, 与"是否收敛"无关)。
+        #   ② **不要**加"不可采信 / 仅供探索"这类价值判断 (用户 2026-10-14 裁定):
+        #      本字段是**事实记录** (数值 + 判定), 不是对结果的自我否决。
+        #      用者据数值自行判断; 判据本身 (verdict / worst_ess) 已足够。
         out["reason"] = (f"关键参数最小 ESS={worst_ess:.1f} < {thr:g} "
-                         f"(最差: {worst_param}) — MCMC 未收敛, "
-                         f"该批参数估计不可采信 (数值仅供探索)")
+                         f"(最差: {worst_param}) — ESS 不达标: MCMC 混合不足"
+                         f"或采样间隔过大 (logEvery) 使样本数过少; "
+                         f"请先复核 logEvery 与每链样本数再判是否真未收敛")
         _emit(log, f"  ❌ [convergence_gate] {out['reason']}")
 
     _write(merged_dir, out)

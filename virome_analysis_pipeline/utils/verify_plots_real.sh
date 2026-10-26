@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 # 服务器真实数据验证: QST 全图 (PSTVd af_matrix) + vcf_merge LD菱形
+# 用法: bash verify_plots_real.sh <分析输出根> [管线目录]
+#   旧默认根 ~/virus/data-2026/known_virus_all_v2 已从服务器删除 (2026-10 确认),
+#   必须传入现存的分析输出根; 其内应含 04_post_analysis/<virus>/vc_merge|vcf_merge 等产物。
 set -u
-ROOT=~/virus/data-2026/known_virus_all_v2
-PIPE=~/MMPV-RNA/virome_analysis_pipeline
+ROOT="${1:?用法: bash verify_plots_real.sh <分析输出根> [管线目录]}"
+PIPE="${2:-$HOME/MMPV-RNA/virome_analysis_pipeline}"
 cd "$PIPE" || exit 1
 
 echo "== 1. QST 真实数据 (PSTVd af_matrix.tsv, Host 分组)"

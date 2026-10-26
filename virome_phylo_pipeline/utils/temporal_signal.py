@@ -32,6 +32,8 @@ from scipy import stats
 # ── Path setup ──
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from utils.virphy_bridge import LogCollector, run_treetime_rtt
+# 2026-10-16: 图件双格式 (PNG+PDF 同主名); 统一由 plot_io.save_both 收口
+from utils.plot_io import save_both
 
 
 def date_randomization_test(
@@ -280,16 +282,22 @@ def date_randomization_test(
         real_r2 = result.get("real_r2")
 
         # ── Step 3b: clock rate 是否可与零分布区分 (审查 P2-8) ────────────
-        # ⚠⚠ 2026-10-13 重排: rate_overlap 必须在判定 passed 之前算出。
-        # 原实现把 passed 定义在 rate_overlap 之前, 判定只用了 r2_percentile,
-        # 导致 GCVA 出现「success:false + passed:true + rate_overlap:false」
-        # 三者并存的自相矛盾产物 (真实 rate 1.589e-04 落在随机化 95% CI
-        # [4.11e-06, 1.318e-04] 之外, 却仍判 "Sufficient temporal signal")。
-        # 定义 (与 R² 百分位同构, 不依赖 TreeTime 未暴露的 rate CI):
+        # 定义 (不依赖 TreeTime 未暴露的 rate CI):
         #   把 n 次随机化得到的 clock rate 当零分布, 取其中央 95% 区间
         #   [2.5%, 97.5%]; 真实 rate 落在这个区间内 → rate_overlap=True,
-        #   即"真实速率与随机化速率不可区分"。
+        #   即"真实速率与随机化速率不可区分"(= 无信号)。
         # 需要 >=5 个有效随机化 rate, 否则写 None (样本不足, 不给结论)。
+        #
+        # ⚠⚠ 2026-10-14 更正 (2026-10-13 引入的方向错误):
+        #   10-13 版把 rate_overlap **直接**当作 PASS 条件 (rate_ok = rate_overlap),
+        #   即要求"真实速率落在随机化 95% CI 之内"才判通过 —— 方向反了。
+        #   Duchêne et al. (2015) 的原始判据是:
+        #     "the mean estimate from the original data is OUTSIDE of the 95% CIs
+        #      of the date-randomized replicates" → 判为存在时间结构。
+        #   即 PASS ⟺ rate_overlap == False (真实速率可与随机零分布区分)。
+        #   方向反了的后果: **强信号数据集必然被否决** —— 强信号下随机化日期会
+        #   摧毁时钟, 真实速率必然落在随机分布之外, 于是 10-13 版对"最该通过"
+        #   的数据判 FAILED。这是硬错误, 故更正。
         _valid_rates = [float(v) for v in rate_values if v is not None]
         result["n_valid_randomized_rates"] = len(_valid_rates)
         rate_overlap = None
@@ -308,14 +316,16 @@ def date_randomization_test(
                         f"{result.get('real_clock_rate')}, "
                         f"有效随机化 rate 数={len(_valid_rates)}, 需 >=5)")
 
-        # ── Step 3c: 综合判定 (2026-10-13 修复) ──────────────────────────
-        # DRT 判「有时间信号」须同时满足两个条件:
-        #   ① r2_percentile >= 95   —— 真实日期的 R² 显著优于随机日期
-        #   ② rate_overlap is True  —— 真实速率与随机化速率不可区分
-        # 原实现只用 ①。问题: ① 是**分布内相对位置**, 只看"真实是否比随机好",
-        # **不看 R² 绝对值**。一个零信号数据集 (绝对 R²≈0.05) 只要随机化后掉得更低,
-        # 同样能拿 100 百分位 → 误判 PASSED (GCVA 实测即为此例)。
-        # ② 补上了"速率可识别性"这一必要条件。两者缺一不可 (conjunction)。
+        # ── Step 3c: 综合判定 ───────────────────────────────────────────
+        # DRT 判「有时间信号」须同时满足两个条件。二者其实在问同一件事
+        # (真实日期是否比随机日期携带更多信息), 高度相关, 取合取只作保守加固:
+        #   ① r2_percentile >= 95     —— 真实 R² 显著优于随机 R²
+        #   ② rate_overlap is False   —— 真实速率可与随机零分布区分 (Duchêne 2015 主判据)
+        # ⚠ ② 的方向见 Step 3b 的 2026-10-14 更正说明。
+        # ⚠ 注意 ① 是**分布内相对位置**, 不看 R² 绝对值 —— 分位数高 ≠ R² 高。
+        #   一个绝对 R²≈0.05 的数据集只要随机化后掉得更低, 同样能拿 100 百分位,
+        #   因此**不可**仅凭 DRT 判 PASS 就宣称"信号充足"; 必须结合
+        #   clock_summary.tsv 的绝对 R² 与 RTT 斜率一起解读。
         # 若 ② 无法计算 (有效随机化 rate < 5) → 保守取 False, 不给"通过"结论。
         if valid_r2 and real_r2 is not None:
             percentile = stats.percentileofscore(valid_r2, real_r2)
@@ -327,35 +337,38 @@ def date_randomization_test(
             # isinstance(v, (str, int, float, bool, ...)) 过滤器静默剔除。
             # 实测 8/8 个历史 drt_results.json 里都没有 passed 字段。
             r2_ok = bool(percentile >= 95.0)
-            rate_ok = bool(rate_overlap) if rate_overlap is not None else False
+            # ⚠ 2026-10-14 更正: 原为 bool(rate_overlap) —— 方向反了。
+            # 标准 DRT (Duchêne 2015): 真实速率**落在随机化 95% CI 之外**
+            # (即可区分) 才判有信号。见 Step 3b 说明。
+            rate_ok = bool(rate_overlap is False) if rate_overlap is not None else False
             passed = bool(r2_ok and rate_ok)
             result["passed"] = passed
             result["r2_criterion_met"] = r2_ok
             result["rate_criterion_met"] = rate_ok
 
-            # 交叉核查: 旧实现 (仅凭 R²) 的判定结果。两者不一致时显式告警,
+            # 交叉核查: 仅凭 R² 的判定结果。两者不一致时显式告警,
             # 避免"静默改变历史结论"。
             result["passed_r2_only"] = r2_ok
             if r2_ok and not rate_ok:
                 log.warning(
-                    f"  ⚠ DRT 判定被推翻: R² 百分位 {percentile:.0f}% ≥95 (旧判据 PASSED), "
-                    f"但 rate_overlap={rate_overlap} → 新判据 FAILED。"
-                    f"真实速率落在随机化速率分布之外, 时钟不可识别。")
+                    f"  ⚠ DRT 被 R² 之外的判据否决: R² 百分位 {percentile:.0f}% ≥95, "
+                    f"但 rate_overlap={rate_overlap} → 判 FAILED。"
+                    f"真实速率未能与随机零分布区分, 时钟不可识别。")
 
             if passed:
                 result["conclusion"] = (
                     f"✓ PASSED: Real R² ({real_r2:.4f}) exceeds "
                     f"{percentile:.0f}% of {len(valid_r2)} randomized values "
-                    f"(threshold: 95%), AND clock rate is indistinguishable from "
-                    f"the randomized-date null (rate_overlap=True). "
+                    f"(threshold: 95%), AND the clock rate is distinguishable from "
+                    f"the randomized-date null (rate_overlap=False). "
                     f"Sufficient temporal signal for molecular dating."
                 )
             elif r2_ok and not rate_ok:
                 result["conclusion"] = (
                     f"✗ FAILED: Real R² ({real_r2:.4f}) reaches the "
                     f"{percentile:.0f}th percentile (≥95%), BUT the clock rate "
-                    f"does not overlap the randomized-date null "
-                    f"(rate_overlap={rate_overlap}). Rate is unidentified → "
+                    f"overlaps the randomized-date null "
+                    f"(rate_overlap={rate_overlap}). Rate is not identifiable → "
                     f"temporal signal insufficient for molecular dating."
                 )
             else:
@@ -385,14 +398,9 @@ def date_randomization_test(
         pd.DataFrame(rows).to_csv(summary_csv, index=False)
         result["summary_csv"] = summary_csv
 
-        # Save structured JSON for cross-virus comparison
-        drt_json = os.path.join(output_dir, "drt_results.json")
-        import json as _json
-        _json_safe = {k: v for k, v in result.items()
-                      if isinstance(v, (str, int, float, bool, list, type(None)))}
-        with open(drt_json, 'w') as _jf:
-            _json.dump(_json_safe, _jf, indent=2, default=str)
-        result["drt_json"] = drt_json
+        # NOTE (2026-10-14): drt_results.json 的写盘已后移到函数末尾 (Step 6) ——
+        # 原位置 (此处) 早于 `result["success"] = True`，导致 JSON 里 success 恒为
+        # false，与同一文件里的 passed=true 并存，被误读成"产物自相矛盾"。
 
         # ── Step 5: Visualization ──
         if valid_r2:
@@ -459,14 +467,24 @@ def date_randomization_test(
                     despine(ax2)
 
                 drt_plot = os.path.join(output_dir, "drt_results.pdf")
-                fig.savefig(drt_plot, bbox_inches='tight', dpi=300, format='pdf')
+                save_both(fig, drt_plot, bbox_inches='tight', dpi=300, format='pdf')
                 plt.close(fig)
                 result["drt_plot"] = drt_plot
                 log.emit(f"  DRT plot: {drt_plot}")
             except Exception as e:
                 log.warning(f"  DRT plot failed: {e}")
 
+        # ── Step 6: 写结构化 JSON (须在 success 置位之后) ────────────────
+        # 2026-10-14 修复: 原在 Step 4 写盘, 早于本行 success=True →
+        # drt_results.json 里 success 恒为 false (服务器实测 GCVA 产物即如此)。
         result["success"] = True
+        drt_json = os.path.join(output_dir, "drt_results.json")
+        import json as _json
+        _json_safe = {k: v for k, v in result.items()
+                      if isinstance(v, (str, int, float, bool, list, type(None)))}
+        with open(drt_json, 'w') as _jf:
+            _json.dump(_json_safe, _jf, indent=2, default=str)
+        result["drt_json"] = drt_json
         return result
 
     except Exception as e:

@@ -9,6 +9,13 @@ import argparse, os, re, subprocess, shutil, sys
 from pathlib import Path
 from Bio import SeqIO, Phylo
 
+# 2026-10-16: 图件双格式 (PNG+PDF 同主名); 统一由 plot_io.save_both 收口。
+# 双路径 import: `-m utils.rdp5_validate` 与 `python utils/rdp5_validate.py` 均可用。
+try:
+    from utils.plot_io import save_both
+except ImportError:                              # pragma: no cover
+    from plot_io import save_both
+
 def parse_args():
     p = argparse.ArgumentParser(description="RDP5 recombination validation — one click pipeline")
     p.add_argument("-r", "--rdp5-csv", required=True, help="RDP5 output CSV")
@@ -136,7 +143,9 @@ def make_simplot(rec, minor, major, bp, parents, outpath):
     ax.set_xlabel('Genome Position (bp)'); ax.set_ylabel('Similarity (%)')
     ax.set_title(f'SimPlot: {rec.id[:30]}...')
     ax.legend(loc='lower right'); ax.set_ylim(50, 105); ax.grid(True, alpha=0.3)
-    plt.tight_layout(); plt.savefig(str(outpath), dpi=150); plt.close()
+    # outpath 历史为 .png (仅 PNG); save_both 按主名补出同名 .pdf → 双格式
+    save_both(plt.gcf(), str(outpath), dpi=150)
+    plt.close()
 
 # ── Tree figure generator ──
 def make_tree_figure(tree_a_path, tree_b_path, rec_id, minor_id, major_id, bp, outpath):
@@ -174,7 +183,8 @@ def make_tree_figure(tree_a_path, tree_b_path, rec_id, minor_id, major_id, bp, o
     fig.legend(handles=legend_els, loc='lower center', ncol=4, fontsize=9, bbox_to_anchor=(0.5,-0.02))
     fig.suptitle(f'{rec_id[:35]}... — ML Tree Validation', fontsize=13, fontweight='bold')
     plt.tight_layout(rect=[0,0.05,1,0.93])
-    plt.savefig(str(outpath), dpi=200, bbox_inches='tight'); plt.close()
+    # outpath 历史为 .png (仅 PNG); save_both 按主名补出同名 .pdf → 双格式
+    save_both(fig, str(outpath), dpi=200, bbox_inches='tight'); plt.close()
 
 # ── MAIN ──
 def main():

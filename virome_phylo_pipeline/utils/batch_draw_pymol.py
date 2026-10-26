@@ -1,5 +1,12 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
+# ── 双副本说明 (2026-10-26, P2-1 同名脚本分叉消解) ─────────────────────────────
+# 本文件是**唯一实现**；`virome_phylo_pipeline/batch_draw_pymol.py` 是转发垫片
+# （`from utils.batch_draw_pymol import main`）。
+#   · 入口一：`python3 -m batch_draw_pymol ...` → 垫片 → 本文件
+#   · 入口二：`run_postprocess("batch_draw_pymol", ...)` → 直接解析到本文件
+# 两份都是活的（不同入口、同一实现），**不要归档任一份**；改动需同步核对两个入口。
+# ──────────────────────────────────────────────────────────────────────────────
 """
 @Title: 顶刊级批量正选择映射与 AlphaFold 模型智能渲染流水线 (终极完全体 + 标签自适应散开引擎)
 @Description:

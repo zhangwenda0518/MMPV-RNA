@@ -169,7 +169,12 @@ def run_seqgrouper(
                     fontsize=14, fontweight='bold')
 
         pie_path = os.path.join(output_dir, f"seqgroup_{group_by}.pdf")
-        fig.savefig(pie_path, bbox_inches='tight', dpi=150, format='pdf')
+        # 2026-10-16: 图件双格式 (PNG+PDF 同主名); 与同文件 sci_palette 同款双路径导入
+        try:                                       # 包内导入
+            from utils.plot_io import save_both
+        except ImportError:                        # utils/ 目录内直接运行
+            from plot_io import save_both
+        save_both(fig, pie_path, bbox_inches='tight', dpi=150, format='pdf')
         plt.close(fig)
 
         summary_path = os.path.join(output_dir, f"seqgroup_{group_by}.csv")

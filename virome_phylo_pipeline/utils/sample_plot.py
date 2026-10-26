@@ -35,6 +35,13 @@ import re
 import sys
 from collections import Counter, defaultdict
 
+# 2026-10-16: 图件双格式 (PNG+PDF 同主名); 统一由 plot_io.save_both 收口。
+# 双路径 import: `-m utils.sample_plot` 与 `python utils/sample_plot.py` 均可用。
+try:
+    from utils.plot_io import save_both
+except ImportError:                              # pragma: no cover
+    from plot_io import save_both
+
 # 未识别地名占比超过该阈值即告警 (0.2 = 20%)
 UNRESOLVED_WARN_FRACTION = 0.2
 
@@ -481,7 +488,10 @@ def plot_sample_temporal(rows, date_col, location_col, out_path, log=None,
                 _pie_specs.append((x, i, r_pt,
                                    [(h, n / tot) for h, n
                                     in sorted(comp.items(), key=lambda kv: -kv[1])]))
-            ax2.plot(xs, [i] * len(xs), color=cmap[loc], lw=0.5, alpha=0.55, zorder=2)
+            # 2026-10-15（用户裁定）：Y 轴刻度已**逐行写出地区名** → 行连线不再用
+            #   地点色，改**中性灰**，彻底消除「没有图例解释的颜色」。地点色带随之
+            #   删掉（见下方图例带；无宿主表的那条路径仍然保留地点图例）。
+            ax2.plot(xs, [i] * len(xs), color='#AAAAAA', lw=0.5, alpha=0.55, zorder=2)
     ax2.set_yticks(range(len(locs)))
     ax2.set_yticklabels(locs)
     ax2.set_xlabel('Year')
@@ -546,31 +556,48 @@ def plot_sample_temporal(rows, date_col, location_col, out_path, log=None,
     # ── 图例带：挂在 `_gap_ax`（3 行 GridSpec 的中间那行）上 ──
     # 位置全用 `_gap_ax` 的轴分数，几何由 height_ratios 决定 → 无需 tight_layout，
     # 也不会"图例溢出到面板里"。
-    # 排法：地点图例占左侧（多列横排）、宿主图例竖排靠右、气泡尺度说明放最右。
+    # 排法（2026-10-15 起）：**只有**宿主图例 + 气泡尺度说明。
+    #   ⚠⚠ 地点图例**只在「没有宿主表」时才画** —— 那条路径下气泡是**按地点着色**
+    #     的（见 `if not year_loc_host:` 分支），删掉就没法读图；有宿主表时气泡改按
+    #     宿主着色、行连线改中性灰 → 地点色带**纯冗余**（Y 轴刻度已逐行写出地区名，
+    #     面板 A 的环形树外圈也直接标注了地区名）→ 用户 2026-10-15 裁定删除。
     #   ⚠ 宿主图例**不能**横排 ncol=3 —— 三个双名法名横排会顶到最右、把
     #     `L. ruthenicum` 挤出画布（实测被裁掉且零报错）。
+    # ⚠⚠ 2026-10-15 实测（PyMuPDF 逐 span bbox 对拍，非目视）：图例带**竖直居中
+    #   (y=0.5)** 时，4 行的宿主图例块顶边（y≈166.2 pt）会**压进上排年份刻度**的
+    #   45° 旋转标签 —— '2016' 的 bbox 一直到 y≈171.2 pt，二者实测重叠 **63 pt²**
+    #   （**零报错**，只能量像素）。根因：图例带那一行只有 ~49 pt 高，而 ax1 的旋转
+    #   年份标签比行间距 (hspace=0.06) 还高，必然越界到图例带顶部。
+    #   正解 = 把整条图例带**下移**（锚点 y 0.5 → 0.28），**不动任何坐标区尺寸**：
+    #   下移后距 '2016' 底 ~6 pt、距下排坐标区顶 ~11 pt，上下两清。
+    #   ⚠ 改这个值必须**同时**改下面气泡尺度说明 `_gap_ax.text` 的 y，否则两者错位。
+    _BAND_Y = 0.28
     _fs_leg = 4.9
-    _leg_loc = _gap_ax.legend(handles=handles, loc='center left',
-                              bbox_to_anchor=(0.0, 0.5),
-                              bbox_transform=_gap_ax.transAxes,
-                              ncol=4, fontsize=_fs_leg,
-                              title='location', frameon=False, handletextpad=0.3,
-                              columnspacing=0.85, labelspacing=0.32,
-                              borderpad=0.0, borderaxespad=0.0)
-    _leg_loc.get_title().set_fontsize(_fs_leg)
-    _leg_loc.get_title().set_fontweight('bold')
-    _gap_ax.add_artist(_leg_loc)
     _gbb = None
-    _prev_r = 0.60
-    _loc_w = 0.60
-    try:
-        fig.canvas.draw()
-        _gbb = _gap_ax.get_window_extent()
-        _lb = _leg_loc.get_window_extent(fig.canvas.get_renderer())
-        _loc_w = (_lb.x1 - _gbb.x0) / max(_gbb.width, 1e-9)
-        _prev_r = min(_loc_w + 0.015, 0.72)
-    except Exception:
-        pass
+    _prev_r = 0.0
+    if not year_loc_host:
+        _leg_loc = _gap_ax.legend(handles=handles, loc='center left',
+                                  bbox_to_anchor=(0.0, _BAND_Y),
+                                  bbox_transform=_gap_ax.transAxes,
+                                  ncol=4, fontsize=_fs_leg,
+                                  title='location', frameon=False, handletextpad=0.3,
+                                  columnspacing=0.85, labelspacing=0.32,
+                                  borderpad=0.0, borderaxespad=0.0)
+        _leg_loc.get_title().set_fontsize(_fs_leg)
+        _leg_loc.get_title().set_fontweight('bold')
+        # ⚠ 不要再 `_gap_ax.add_artist(_leg_loc)`！`ax.legend()` 已把图例挂在
+        #   `ax.legend_` 上、由 Axes 正常绘制；再 `add_artist` 会让**同一条图例被
+        #   绘制两次**（2026-10-15 实测：PDF 里每个图例标签都出现两遍，bbox 完全
+        #   重合 → 文字重叠对拍时表现为一堆「自重叠」，把真正的碰撞淹没掉）。
+        _prev_r = 0.60
+        try:
+            fig.canvas.draw()
+            _gbb = _gap_ax.get_window_extent()
+            _lb = _leg_loc.get_window_extent(fig.canvas.get_renderer())
+            _loc_w = (_lb.x1 - _gbb.x0) / max(_gbb.width, 1e-9)
+            _prev_r = min(_loc_w + 0.015, 0.72)
+        except Exception:
+            pass
 
     if year_loc_host:
         _h_handles = [Line2D([], [], marker='o', linestyle='none', markersize=3.4,
@@ -578,7 +605,7 @@ def plot_sample_temporal(rows, date_col, location_col, out_path, log=None,
                              markeredgecolor='white', markeredgewidth=0.4, label=h)
                       for h in _hosts]
         _leg_h = _gap_ax.legend(handles=_h_handles, loc='center left',
-                                bbox_to_anchor=(_prev_r, 0.5),
+                                bbox_to_anchor=(_prev_r, _BAND_Y),
                                 bbox_transform=_gap_ax.transAxes,
                                 ncol=1, fontsize=_fs_leg,
                                 title='host plant', frameon=False,
@@ -587,12 +614,13 @@ def plot_sample_temporal(rows, date_col, location_col, out_path, log=None,
                                 borderaxespad=0.0)
         _leg_h.get_title().set_fontsize(_fs_leg)
         _leg_h.get_title().set_fontweight('bold')
-        _gap_ax.add_artist(_leg_h)
+        # ⚠ 同上：不要 `add_artist(_leg_h)`（会双绘）。
         try:
             fig.canvas.draw()
+            if _gbb is None:                 # 无宿主表时地点图例已算过；有宿主表时补算
+                _gbb = _gap_ax.get_window_extent()
             _lb2 = _leg_h.get_window_extent(fig.canvas.get_renderer())
-            if _gbb is not None:
-                _prev_r = (_lb2.x1 - _gbb.x0) / max(_gbb.width, 1e-9)
+            _prev_r = (_lb2.x1 - _gbb.x0) / max(_gbb.width, 1e-9)
         except Exception:
             _prev_r += 0.22
 
@@ -602,15 +630,15 @@ def plot_sample_temporal(rows, date_col, location_col, out_path, log=None,
     _vmax_txt = int(max(_all_counts or [1]))
     _note = f'area \u221d isolates; max = {_vmax_txt}'
     if _prev_r < 0.78:
-        _gap_ax.text(min(_prev_r + 0.02, 0.99), 0.5, _note,
+        _gap_ax.text(min(_prev_r + 0.02, 0.99), _BAND_Y, _note,
                      ha='left', va='center', fontsize=_fs_leg, color='#444444',
                      transform=_gap_ax.transAxes)
     else:
-        _gap_ax.text(0.0, 0.5, _note, ha='left', va='center',
+        _gap_ax.text(0.0, _BAND_Y, _note, ha='left', va='center',
                      fontsize=_fs_leg, color='#444444',
                      transform=_gap_ax.transAxes)
 
-    fig.savefig(out_path, dpi=300, bbox_inches='tight')
+    save_both(fig, out_path, dpi=300, bbox_inches='tight')
     plt.close(fig)
     return out_path
 
@@ -889,7 +917,7 @@ def plot_sample_map(rows, location_col, out_path, log=None):
                             ('lower right', (0.99, 0.012)),
                             ('upper right', (0.99, 0.99))],
                            title='isolates', fontsize=5.6, extra_boxes=avoid)
-    fig.savefig(out_path, dpi=300, bbox_inches='tight')
+    save_both(fig, out_path, dpi=300, bbox_inches='tight')
     plt.close(fig)
     return out_path
 

@@ -25,6 +25,14 @@ from collections import defaultdict
 
 from Bio import Phylo
 
+# 2026-10-16: 图件双格式 (PNG+PDF 同主名); 统一由 plot_io.save_both 收口。
+# 本模块按 `-m utils.tempmig_full` 调用 (run_postprocess 口径), 也容忍
+# 直接 `python utils/tempmig_full.py` (此时 sys.path[0]=utils/)。
+try:
+    from utils.plot_io import save_both
+except ImportError:                              # pragma: no cover
+    from plot_io import save_both
+
 
 def parse_beast_annotation(clade):
     """从 BEAST 1.x clade 注释提取 location + height。支持两种注释格式:
@@ -293,7 +301,7 @@ def run_tempmig_full(mcc_tree_file, dates_csv, output_dir, trait='location'):
         ax.spines['top'].set_visible(False)
         ax.spines['right'].set_visible(False)
         plot_path = os.path.join(output_dir, 'migration_over_time.pdf')
-        fig.savefig(plot_path, dpi=300, format='pdf', bbox_inches='tight')
+        save_both(fig, plot_path, dpi=300, format='pdf', bbox_inches='tight')
         plt.close(fig)
 
         # 10. 热门迁移路线

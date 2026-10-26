@@ -46,8 +46,11 @@ import matplotlib.pyplot as plt
 
 try:                                     # 样式真源 (与本目录其它模块共享同一份)
     from utils.sci_palette import sci_rcparams, OKABE_ITO, COL_W_1, COL_W_2
+    # 2026-10-16: 图件双格式 (PNG+PDF 同主名)
+    from utils.plot_io import save_both
 except ImportError:                      # 允许以脚本形式直接跑
     from sci_palette import sci_rcparams, OKABE_ITO, COL_W_1, COL_W_2
+    from plot_io import save_both
 
 try:
     from splitstree_viz import (_setup_font, load_group_map, _match_groups,
@@ -67,6 +70,44 @@ except ImportError:
 
     def _short_group(grp):
         return str(grp).split(',')[-1].strip() or str(grp)
+
+# ── 组→色固定映射 (2026-10-14 修复, 全模块唯一定义) ─────────────────────────
+# 病根: 本模块原先有**四处独立取色** —— 弧线/弧名按「组大小降序」取 OKABE,
+# tip 点/标签/图例按「组名升序」取 OKABE —— 两组排序在宿主数据上不一致
+# (barbarum 103 / ruthenicum 14 / chinense 3 → 弧序=b,r,c / 名序=b,c,r),
+# 于是面板 D 里 ruthenicum 拿了 chinense 的浅蓝、chinense 拿了 ruthenicum 的绿,
+# 与面板 C (sci_palette 固定映射) 直接对撞 —— 同图同物不同色。
+# 现钉死: 已知宿主组 (大小写不敏感) → 全线约定色; 其余组 (地点等) → viridis
+# 冷色系按名升序采样 (与 classic 树地点点同族, 不与宿主暖色撞)。
+_HOST_FIXED = {
+    'lycium barbarum': '#E69F00',    # OKABE_ITO[0]
+    'lycium chinense': '#56B4E9',    # OKABE_ITO[1]
+    'lycium ruthenicum': '#009E73',  # OKABE_ITO[2]
+}
+
+
+def _canonical_group_color(gnames):
+    """组名可迭代对象 → {组名: 颜色}。
+
+    已知宿主组用 _HOST_FIXED 固定色; 其余组按名升序从 viridis 采样,
+    且避开已占用的固定色 (宿主/地点混出时也不撞)。
+    """
+    known, unknown, used = {}, [], set()
+    for g in gnames:
+        c = _HOST_FIXED.get(str(g).strip().lower())
+        if c:
+            known[g] = c
+            used.add(c)
+        else:
+            unknown.append(g)
+    for i, g in enumerate(sorted(unknown)):
+        frac = i / max(1, len(unknown) - 1) if len(unknown) > 1 else 0.5
+        col = matplotlib.colormaps['viridis'](frac)
+        if matplotlib.colors.to_hex(col).upper() in {u.upper() for u in used}:
+            col = matplotlib.colormaps['viridis'](
+                min(1.0, frac + 0.618 / max(1, len(unknown))))
+        known[g] = col
+    return known
 
 C_EDGE = '#1a1a1a'          # 网络线 (与文献 NeighborNet 一致: 统一深色, 权重只控线宽)
 C_TIP = '#111111'
@@ -261,9 +302,10 @@ def draw_group_arcs(ax, tips, labels, groups, fontsize=8.0, min_sep=None,
         return best
 
     items = sorted(by_group.items(), key=lambda kv: (-len(kv[1]), kv[0]))
+    gcolor = _canonical_group_color(by_group.keys())
     pts, labels_out = [], []
     for gi, (grp, ids) in enumerate(items):
-        color = OKABE_ITO[gi % len(OKABE_ITO)]
+        color = gcolor[grp]
         ids_sorted = sorted(ids, key=lambda i: pol[i][0])
         ths = [pol[i][0] for i in ids_sorted]
         runs = [r for r in _angular_runs(ths, _ARC_GAP) if (r[1] - r[0]) >= _ARC_MIN_RUN]
@@ -400,7 +442,7 @@ def draw_group_arcs(ax, tips, labels, groups, fontsize=8.0, min_sep=None,
                                             foreground='white')])
         pts.append((lx, ly))
 
-    legend = [(g, OKABE_ITO[k % len(OKABE_ITO)], len(v))
+    legend = [(g, gcolor[g], len(v))
               for k, (g, v) in enumerate(items)]
     pad_needed = 0.0
     if pts:
@@ -860,7 +902,7 @@ def render(coords, out_pdf, out_png=None, nexus=None, title=None,
     if groups:
         gmap = _match_groups(labels.values(), groups) or {}
     gnames = sorted({v for v in gmap.values()})
-    gcolor = {g: OKABE_ITO[i % len(OKABE_ITO)] for i, g in enumerate(gnames)}
+    gcolor = _canonical_group_color(gnames)
     tip_color = {}
     for i, lab in labels.items():
         g = gmap.get(lab)
@@ -1057,9 +1099,9 @@ def render(coords, out_pdf, out_png=None, nexus=None, title=None,
         fig.text(0.5, 0.008, cap, ha='center', va='bottom',
                  fontsize=6.0, color='#333333')
 
-    fig.savefig(out_pdf, dpi=300, facecolor='white')
-    if out_png:
-        fig.savefig(out_png, dpi=300, facecolor='white')
+    # 2026-10-16: 双格式 —— 调用方没给 out_png 时按主名自动补 .png (PNG 必出,
+    # 例: Fig3 面板 D 的 neighbornet_panel.pdf 现在也有同名 PNG)
+    save_both(fig, out_pdf, png=out_png, dpi=300, facecolor='white')
     plt.close(fig)
     print('saved: %s (%d nodes, %d edges, %d labels, %d group colours)'
           % (out_pdf, len(nodes), len(edges), n_drawn, len(gnames)))
