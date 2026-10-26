@@ -27,7 +27,8 @@ panvirome_novel_known.py — 新病毒 vs 已知病毒综合判定表生成器
   {base}/cdd_hits.tsv
 
 用法:
-  python panvirome_novel_known.py --base ~/virus/data-2026/data-test \
+  python panvirome_novel_known.py \
+      --base /home/zhangwenda/MMPV-paper/goji-virome/02_novel_virus \
       --species barbarum,ruthenicum,chinense,amarum --detect-tag bowtie2
 """
 

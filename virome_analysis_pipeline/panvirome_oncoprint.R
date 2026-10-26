@@ -1,4 +1,32 @@
 #!/usr/bin/env Rscript
+# ── 图件四格式导出 (SVG / PNG / PDF / PNG@1200dpi) — 默认开启 ──────────
+# 2026-10-20: 所有出图脚本统一口径; MMPV_FIG_EXPORT=0 可整体关闭。
+# 钩子只拦截 ggsave(); pdf()/png() 直写的老代码请改用 save_figure()。
+local({
+  .find_repo <- function(start) {
+    d <- normalizePath(start, mustWork = FALSE)
+    repeat {
+      if (dir.exists(file.path(d, "mmpv_common"))) return(d)
+      p <- dirname(d)
+      if (identical(p, d)) return(NA_character_)
+      d <- p
+    }
+  }
+  .here <- tryCatch({
+    a <- commandArgs(FALSE)
+    f <- sub("^--file=", "", a[grep("^--file=", a)])
+    if (length(f)) dirname(normalizePath(f[1], mustWork = FALSE)) else getwd()
+  }, error = function(e) getwd())
+  .root <- .find_repo(.here)
+  if (is.na(.root)) .root <- .find_repo(getwd())
+  if (!is.na(.root)) {
+    source(file.path(.root, "mmpv_common", "figure_export.R"), local = FALSE)
+    install_ggsave_hook()
+  } else {
+    message("[figure_export] 未找到 mmpv_common/, 跳过四格式导出")
+  }
+})
+# ──────────────────────────────────────────────────────────────────────
 # panvirome_oncoprint.R — 病毒准种突变瀑布图 (ComplexHeatmap OncoPrint)
 # 用法: Rscript panvirome_oncoprint.R --input Matrix_06.csv --output Figure_5.pdf
 
@@ -46,7 +74,6 @@ cat(sprintf("  输入: %s\n", opt$input))
 onco_mat <- as.matrix(read.csv(opt$input, row.names = 1, check.names = FALSE))
 cat(sprintf("  矩阵: %d 变异 x %d 样本\n", nrow(onco_mat), ncol(onco_mat)))
 
-pdf(opt$output, width = opt$width, height = opt$height)
 ht <- oncoPrint(onco_mat,
   alter_fun = alter_fun, col = col_map,
   remove_empty_columns = TRUE, remove_empty_rows = TRUE,
@@ -56,6 +83,7 @@ ht <- oncoPrint(onco_mat,
   column_title = opt$title,
   heatmap_legend_param = list(title = "Fixation State", at = names(col_map))
 )
-draw(ht)
-invisible(dev.off())
+# 2026-10-20: 四格式统一 (SVG/PNG/PDF/PNG@1200dpi); 每格式各重画一次
+draw_figure_formats(function() draw(ht), opt$output,
+                    width = opt$width, height = opt$height, bg = "white")
 cat(sprintf("  → %s\n", opt$output))

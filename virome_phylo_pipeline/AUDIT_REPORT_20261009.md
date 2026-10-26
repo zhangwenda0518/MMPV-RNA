@@ -7,7 +7,7 @@
 > P0-4 (--virus 退出码) ✅ 已修 — 且 10-12 重写中丢失的整套退出码/blocked/Incomplete 记账已恢复 (含 CSV 两列与 `_beast_ran` 闸门)；
 > P1-1 (--strip-illegal 无效) ✅ 已修；P1-2 部分 ✅ (capheine ncbi_ref / work_dir beast / gene_align_generator 三处硬编码目录已换 ph_dir)；
 > P1-3 未修 (clock 的 summary_rows 非空即 mark)；P1-4 ✅ 已修 (行数闸门恢复)；P1-5 未动。
-> 详见 `outputs/MMPV_FULL_REVIEW_20261013/REVIEW_SUMMARY_20261013.md`。
+> 详见 `archive/20261026_artifacts/outputs/MMPV_FULL_REVIEW_20261013/REVIEW_SUMMARY_20261013.md`。
 
 - 审查日期：2026-10-09
 - 审查对象：`D:\桌面\延伸基因组\MMPV-RNA\virome_phylo_pipeline`

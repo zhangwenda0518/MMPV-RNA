@@ -13,11 +13,27 @@ preprocess.py — 数据预处理独立脚本 (清洗 + 去宿主)
     --host_align_db /db/bowtie2_host/host \
     --threads 20 --jobs 4 --rrna
 
+输出子目录随 I/O 布局 (2026-10-15 起, 原硬编码 clean/ + host/ 与两套布局的
+目录契约都不符, 下游 ③ 按约定找不到产物):
+  standard (默认) : 01_CleanData/ 02_HostDepleted
+  legacy          : 00a_CleanData/ 00b_HostDepleted
+交接 ③: python virome_pipeline.py --input_reads <output_dir>/02_HostDepleted ...
+
 依赖: clean-data.py, host_depletion.py (同目录)
 """
 
 import argparse, subprocess, sys, os, logging, shutil
 from pathlib import Path
+
+# 跨管线统一 I/O 布局 (mmpv_common/, 仓库根): 输出子目录名随布局解析
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+try:
+    from mmpv_common.io_layout import dir_name as layout_dir_name, normalize_layout_env
+except Exception:   # 脱离包环境时退化为 standard 名 (不阻断清洗/去宿主本身)
+    layout_dir_name = None
+    normalize_layout_env = None
 
 
 def setup_logger(out_dir):
@@ -51,7 +67,8 @@ def run(cmd, logger, name):
 def main():
     p = argparse.ArgumentParser(description="数据预处理 (清洗 + 去宿主)")
     p.add_argument("-i", "--input", required=True, help="原始 FASTQ 目录")
-    p.add_argument("-o", "--output-dir", required=True, help="输出根目录 (生成 clean/ 和 host/ 子目录)")
+    p.add_argument("-o", "--output-dir", required=True,
+                   help="输出根目录 (生成 01_CleanData/ 与 02_HostDepleted/, 名字随 --io-layout)")
 
     # 清洗
     g = p.add_argument_group("清洗 (clean-data.py)")
@@ -74,10 +91,20 @@ def main():
     g.add_argument("--skip-clean", action="store_true", help="跳过清洗")
     g.add_argument("--skip-depletion", action="store_true", help="跳过去宿主")
     g.add_argument("--force", action="store_true", help="强制重跑")
+    g.add_argument("--io-layout", choices=["standard", "legacy"], default=None,
+                   help="I/O 布局 (输出子目录名 01_CleanData/02_HostDepleted 或 "
+                        "00a_CleanData/00b_HostDepleted); 缺省: MMPV_IO_LAYOUT 环境变量, 再缺省 standard")
     g.add_argument("--threads", type=int, default=20, help="线程数")
     g.add_argument("--jobs", type=int, default=4, help="并行数")
 
     args = p.parse_args()
+    # 布局解析 (2026-10-15): CLI > 环境变量 > standard, 与其余编排器同一链路
+    if normalize_layout_env is not None:
+        _layout = normalize_layout_env(args.io_layout)
+        clean_name = layout_dir_name('d_clean', _layout)
+        host_name = layout_dir_name('d_hostdep', _layout)
+    else:
+        clean_name, host_name = "01_CleanData", "02_HostDepleted"
     script_dir = Path(__file__).parent.resolve()
     out = Path(args.output_dir).resolve()
     in_dir = Path(args.input).resolve()
@@ -92,7 +119,7 @@ def main():
 
     # ── Step 1: 清洗 ──
     if not args.skip_clean:
-        clean_dir = out / "clean"
+        clean_dir = out / clean_name
         parts = [
             f"python {script_dir / 'clean-data.py'}",
             f"-i {reads_dir}",
@@ -142,7 +169,7 @@ def main():
             logger.error("去宿主需要宿主参考: --host_db <库目录> 或 --kraken2_db + --host_align_db")
             sys.exit(1)
 
-        host_dir = out / "host"
+        host_dir = out / host_name
         parts = [
             f"python {script_dir / 'host_depletion.py'}",
             f"--tool {args.tool}",
@@ -168,9 +195,10 @@ def main():
         logger.info("  [SKIP] 去宿主")
 
     logger.info("=" * 50)
-    logger.info("预处理完成!")
+    logger.info("预处理完成!  (布局 %s: clean=%s, hostdep=%s)",
+                (os.environ.get("MMPV_IO_LAYOUT") or "standard"), clean_name, host_name)
     if not args.skip_depletion:
-        logger.info("  清洁 reads: %s", out / "host")
+        logger.info("  清洁 reads: %s  (交接 ③: --input_reads %s)", host_dir, host_dir)
     logger.info("=" * 50)
 
 

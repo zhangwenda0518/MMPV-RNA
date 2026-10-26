@@ -3,7 +3,9 @@
             src_{headers,rows} / cmt_{headers,rows} / bs_{headers,rows} /
             miuvig_rows / asm_rows / topo_rows[{contig,taxonomy,rule_topology,
             final_topology,cls,seq_length,dtr,evidence}] / topo_summary / checklist /
-            js -#}
+            sqn{state,size_kb,mtime,name,href,path} / artifact_links[{label,href,path}] /
+            js
+    (sqn / artifact_links 始终由 report_html.py 传入; `is defined` 守卫仅为兼容旧上下文) -#}
 {% extends "base.html.j2" %}
 {% import "macros.html.j2" as m %}
 {% block title %}{{ run_title }} — GenBank Submission Report{% endblock %}
@@ -20,7 +22,7 @@
 .header .stat.warn .num { color: #fcd34d; }
 .header .stat .label { font-size: 11px; opacity: .8; text-transform: uppercase; letter-spacing: .5px; }
 .header .progress { height: 8px; background: rgba(255,255,255,.25); border-radius: 4px; overflow: hidden; margin-top: 12px; }
-.header .progress .progress-bar { height: 100%; width: 0; background: #6ee7b7; border-radius: 4px; transition: width .3s; }
+.header .progress .progress-bar { height: 100%; width: 100%; background: #6ee7b7; border-radius: 4px; transform: scaleX(0); transform-origin: left; transition: transform .3s; }
 .header .suvtk-summary { background: rgba(255,255,255,.10); padding: 10px 16px; border-radius: 6px; font-size: 13px; color: rgba(255,255,255,.92); margin-top: 10px; }
 
 .toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; margin-bottom: 12px; }
@@ -58,6 +60,26 @@ td.filled { background: var(--success-light); }
 .toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(20px); background: var(--ink); color: #fff; padding: 10px 18px; border-radius: 6px; font-size: 13px; opacity: 0; transition: all .3s; z-index: 999; }
 .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 .toast.error { background: var(--danger); }
+
+/* ── 分区跳转 chips (sticky 顶栏; 点击=展开+滚动; 打印隐藏) ── */
+.section-nav { position: sticky; top: 0; z-index: 60; display: flex; gap: 6px; flex-wrap: wrap; align-items: center; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; margin-bottom: 12px; box-shadow: 0 2px 8px rgba(0,0,0,.08); }
+.section-nav .nav-label { font-size: 11px; color: var(--ink-secondary); text-transform: uppercase; letter-spacing: .5px; margin-right: 4px; }
+.section-nav a { font-size: 12px; color: var(--primary); border: 1px solid var(--border); border-radius: 999px; padding: 3px 10px; background: var(--surface-alt); white-space: nowrap; }
+.section-nav a:hover { background: var(--primary-light); border-color: var(--primary); text-decoration: none; }
+.section { scroll-margin-top: 56px; }   /* 跳转目标不被 sticky 导航条遮住 */
+
+/* ── .sqn 终产物状态卡 (header 统计条下) ── */
+.sqn-status { background: rgba(255,255,255,.10); border-radius: 6px; padding: 8px 16px; font-size: 13px; color: rgba(255,255,255,.92); margin-top: 8px; }
+.sqn-status .tag { font-weight: 700; }
+.sqn-status.generated .tag { color: #6ee7b7; }
+.sqn-status.not-yet .tag { color: #fcd34d; }
+.sqn-status a { color: #93c5fd; }
+
+/* ── 产物链接 (suvtk / hypothetical 输出文件) ── */
+.artifact-links { font-size: 12px; color: rgba(255,255,255,.85); margin-top: 6px; }
+.artifact-links a { color: #93c5fd; margin: 0 2px; }
+
+@media print { .section-nav { display: none; } }
 {% endblock %}
 
 {% block header %}
@@ -71,12 +93,30 @@ td.filled { background: var(--success-light); }
 <div class="stat warn"><div class="num" id="missingCount">-</div><div class="label">Missing</div></div>
 </div>
 <div class="progress"><div class="progress-bar" id="completeBar"></div></div>
+{% if sqn is defined %}<div class="sqn-status {{ 'generated' if sqn.state == 'generated' else 'not-yet' }}">
+<b>SQN</b>
+{%- if sqn.state == 'generated' %} <span class="tag">✓ generated</span>{% if sqn.size_kb is not none %} · {{ sqn.size_kb }} KB{% endif %}{% if sqn.mtime %} · {{ sqn.mtime }}{% endif %} · {% if sqn.href %}<a href="{{ sqn.href }}">{{ sqn.name }}</a>{% else %}{{ sqn.path }}{% endif %}
+{%- else %} <span class="tag">— not yet</span> · run suvtk table2asn → {{ sqn.name }}
+{%- endif %}
+</div>{% endif %}
 <div class="suvtk-summary">{% if suvtk_parts %}{{ suvtk_parts|join(' | ') }}{% else %}<span style="color:#bbb">suvtk not run (optional)</span>{% endif %}</div>
+{% if artifact_links is defined and artifact_links %}<div class="artifact-links">Artifacts:
+{%- for a in artifact_links %} {% if a.href %}<a href="{{ a.href }}" title="{{ a.path }}">{{ a.label }}</a>{% else %}<span title="outside report tree">{{ a.label }}</span> — {{ a.path }}{% endif %}{% if not loop.last %} · {% endif %}{% endfor %}</div>{% endif %}
 </div>
 {% endblock %}
 
 {% block content %}
 <div class="container">
+<nav class="section-nav" aria-label="Sections">
+<span class="nav-label">Jump to</span>
+<a href="#srcSection" onclick="return openSectionAndJump('srcSection')">source.src</a>
+<a href="#cmtSection" onclick="return openSectionAndJump('cmtSection')">.cmt</a>
+<a href="#bsSection" onclick="return openSectionAndJump('bsSection')">BioSample</a>
+<a href="#miuvigSection" onclick="return openSectionAndJump('miuvigSection')">MIUVIG</a>
+<a href="#topoSection" onclick="return openSectionAndJump('topoSection')">Topology</a>
+<a href="#asmSection" onclick="return openSectionAndJump('asmSection')">Assembly</a>
+<a href="#checklistSection" onclick="return openSectionAndJump('checklistSection')">Checklist</a>
+</nav>
 <div class="toolbar">
 <button class="btn primary" onclick="downloadTSV('srcTable','source.src')">⬇ source.src</button>
 <button class="btn success" onclick="downloadTSV('bsTable','biosample_template.tsv')">⬇ BioSample</button>
@@ -168,7 +208,7 @@ Assembly Parameters (assembly.tsv)
 {{ m.data_table(['Parameter', 'Value'], asm_rows, table_id='asmTable') }}
 </div></div>
 
-<div class="section">
+<div class="section" id="checklistSection">
 <div class="section-title">Submission Checklist</div>
 <div class="section-body">
 <ul class="checklist">{% for c in checklist %}<li class="{{ c[0] }}">{% if c[0] == 'done' %}✓{% else %}☐{% endif %} {{ c[1] }}</li>{% endfor %}</ul>

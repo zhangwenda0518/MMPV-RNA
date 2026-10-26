@@ -514,8 +514,25 @@ class PopGenAnalyzer:
         acs = {g: _ac_matrix(ss) for g, ss in by_group.items() if ss}
 
         def _pair_fst(ac1, ac2):
-            num, den = _hudson_fst(ac1, ac2)
-            ok = np.isfinite(den) & (den > 0)
+            # 2026-10-13 修 (用户报告 E 面板大面积空白/数值虚高): hudson_fst 是
+            # **双等位**估计量 (要求 (n,2) 计数), 直接喂 4 列 ACGT 矩阵会算出
+            # 错误数值且多数配对 NaN → None (实测 Ningxia 5 对全消失, 余下数值
+            # 虚高 ~17 倍)。现按「两群体合并计数恰为 2 个 ACGT 等位」筛选双等位
+            # 位点, 多等位位点保守跳过 (标准做法), 再喂 Hudson。
+            pooled = ac1 + ac2
+            mask = (pooled > 0).sum(axis=1) == 2
+            if not mask.any():
+                return None
+            idx = np.argsort(-pooled[mask], axis=1)[:, :2]   # 每位点两等位 (按 pooled 计数序, 群间一致)
+            b1 = np.take_along_axis(ac1[mask], idx, axis=1)
+            b2 = np.take_along_axis(ac2[mask], idx, axis=1)
+            num, den = _hudson_fst(b1, b2)
+            # 2026-10-14 修 (用户报告 E 面板 10 对 NaN): 某群体在位点上全 gap 时
+            # 计数行全零 → Hudson 内部 0/0 = NaN。过滤: 两群在该位点都必须有计数。
+            tot1 = b1.sum(axis=1)
+            tot2 = b2.sum(axis=1)
+            ok = (np.isfinite(num) & np.isfinite(den) & (den > 0)
+                  & (tot1 > 0) & (tot2 > 0))
             if not ok.any():
                 return None
             return round(float(np.sum(num[ok]) / np.sum(den[ok])), 4)
@@ -701,6 +718,158 @@ class PopGenAnalyzer:
     # ════════════════════════════════════════════════════
     # 4. 保守性图谱 (Shannon 熵)
     # ════════════════════════════════════════════════════
+    def sliding_tracks(self, window=100, step=50, group_col=None,
+                       min_n=2, reference=None):
+        """滑窗 π / Fst 轨道 (2026-10-22 新增, 供单倍型状态热图轨道层)。
+
+        与 hastat view -t pi/-t fst 的滑窗口径对齐 (论文 Fig.2 构图: π 按群体
+        各一条线, Fst 按群体两两各一条线): 窗口按**比对列**滑动, 每个窗口对
+        每个群体算一次组内 π (pairwise deletion, 仅 ACGT), 对每个群体对算一次
+        Hudson (1992) Fst (scikit-allel; 双等位列筛选, 多等位保守跳过)。
+        窗口数过多时按 step 倍增降采样, 保证轨道点数 ≤ 400 (与热图 max_sites
+        同量级)。
+
+        返回 {'pi': {group: [(pos, val), ...]},
+               'fst': {pair_label: [(pos, val), ...]}} —— pair_label 形如
+        "A|B" (群体名按字典序, '|' 分隔, 避免群体名本身含下划线时分不清)。
+        无元数据/无群体时 'pi' 退化为 {'all': [...]} (全体序列一个 π 轨道),
+        'fst' 为空 dict。pos 为窗口中心的**参考坐标** (1-based, 经比对列→参考
+        坐标映射); 缺参考映射时退化为比对列坐标 (调用方需知情: 无 genes 时
+        热图横轴也是列坐标)。
+        """
+        seqs = [s for _, s in self.sequences_used]
+        n = len(seqs)
+        out = {'pi': {}, 'fst': {}}
+        if n < 2 or self.L < window:
+            out['pi'] = {'all': []}
+            return out
+        # 比对列 → 参考坐标 (有参考可比时; 失败则退化为列坐标)
+        col2ref = None
+        if reference is not None:
+            try:
+                from utils.seq_match import resolve_reference
+                _rn, ref_seq = resolve_reference(self.sequences_used, reference,
+                                                 who="popgen.sliding_tracks")
+                col2ref = {}
+                seen = 0
+                for i, c in enumerate(ref_seq):
+                    if c != '-':
+                        seen += 1
+                        col2ref[i] = seen
+            except Exception as e:  # noqa: BLE001
+                print(f"[popgen] 滑窗轨道参考映射失败, 退化为列坐标: {e}",
+                      file=sys.stderr)
+        # 群体划分 (π 按群体 / Fst 按群体对); 无元数据时 π 只有 'all' 一个轨道
+        pops = {}
+        if group_col:
+            try:
+                pops = self._populations(group_col)
+            except Exception as e:  # noqa: BLE001
+                print(f"[popgen] 滑窗轨道分组失败, 仅出全体 π: {e}", file=sys.stderr)
+        tab = Counter(pops.values())
+        keep = sorted(g for g, c in tab.items() if c >= max(1, min_n))
+        by_group = {g: [] for g in keep}
+        if pops:
+            for sid, s in self.sequences_used:
+                g = pops.get(sid)
+                if g in by_group:
+                    by_group[g].append(s)
+        multi = len(by_group) >= 2
+        # 单群体也要出该群体的 π 轨道 (论文 B 面板下方只有一条 π 线的情形)
+        pi_keys = keep if keep else ['all']
+        for g in keep:
+            out['pi'][g] = []
+        if not keep:
+            out['pi']['all'] = []
+        pair_keys = []
+        if multi:
+            for a_i in range(len(keep)):
+                for b_i in range(a_i + 1, len(keep)):
+                    pair_keys.append((keep[a_i], keep[b_i]))
+                    out['fst'][f"{keep[a_i]}|{keep[b_i]}"] = []
+
+        def _pos_of(col):
+            if col2ref is not None and col in col2ref:
+                return col2ref[col]
+            return col + 1
+
+        def _pi_of(win_seqs):
+            m = len(win_seqs)
+            if m < 2:
+                return None
+            npairs = ndiff = 0
+            for i in range(m - 1):
+                for j in range(i + 1, m):
+                    npairs += 1
+                    ndiff += sum(1 for a, b in zip(win_seqs[i], win_seqs[j])
+                                 if a != b and a in 'ACGT' and b in 'ACGT')
+            return (ndiff / npairs / window) if npairs else None
+
+        # 窗口数上限 400: step 倍增直到满足 (窗口不重叠也不稀疏到没信息)
+        eff_step = max(1, step)
+        while (self.L - window) // eff_step + 1 > 400 and eff_step < self.L:
+            eff_step *= 2
+        try:
+            from allel.stats.fst import hudson_fst as _hudson_fst
+        except ImportError:
+            _hudson_fst = None
+            if pair_keys:
+                print("[popgen] 滑窗 Fst 轨道需要 scikit-allel, 仅出 π",
+                      file=sys.stderr)
+                pair_keys = []
+        for start in range(0, self.L - window + 1, eff_step):
+            end = start + window
+            pos = _pos_of((start + end) // 2)
+            win = [s[start:end] for s in seqs]
+            for g in pi_keys:
+                if g == 'all':
+                    v = _pi_of(win)
+                else:
+                    v = _pi_of([s[start:end] for s in by_group.get(g, [])])
+                if v is not None:
+                    out['pi'][g].append((pos, round(v, 6)))
+            for g1, g2 in pair_keys:
+                if _hudson_fst is None:
+                    continue
+                ac1 = _ac_matrix([s[start:end] for s in by_group[g1]])
+                ac2 = _ac_matrix([s[start:end] for s in by_group[g2]])
+                pooled = ac1 + ac2
+                mask = (pooled > 0).sum(axis=1) == 2
+                if not mask.any():
+                    continue
+                idx = np.argsort(-pooled[mask], axis=1)[:, :2]
+                b1 = np.take_along_axis(ac1[mask], idx, axis=1)
+                b2 = np.take_along_axis(ac2[mask], idx, axis=1)
+                num, den = _hudson_fst(b1, b2)
+                ok = (np.isfinite(num) & np.isfinite(den) & (den > 0)
+                      & (b1.sum(axis=1) > 0) & (b2.sum(axis=1) > 0))
+                if ok.any():
+                    v = float(np.sum(num[ok]) / np.sum(den[ok]))
+                    out['fst'][f"{g1}|{g2}"].append(
+                        (pos, round(max(0.0, min(1.0, v)), 4)))
+        # 空的轨道键删掉 (绘图侧按空列表跳过, 但干净点更好)
+        out['pi'] = {k: v for k, v in out['pi'].items() if v}
+        out['fst'] = {k: v for k, v in out['fst'].items() if v}
+        return out
+
+    def hap_group_map(self, group_col, min_n=1):
+        """单倍型 → 主导群体 映射 (2026-10-22, 供热图行色条)。
+
+        按该单倍型各成员序列的群体计数取多数; 并列时取字典序第一个 (确定性)。
+        只收 ≥ min_n 条的群体; 单倍型无元数据/无匹配群体 → 不出现在映射里
+        (绘图侧该行无色条, 与论文里未着色行一致)。
+        """
+        pops = self._populations(group_col)
+        out = {}
+        for hid, _seq, _cnt, members in self._hap_freq_table():
+            gs = Counter(pops.get(m, '') for m in members if pops.get(m))
+            if not gs:
+                continue
+            g, c = sorted(gs.items(), key=lambda kv: (-kv[1], kv[0]))[0]
+            if c >= max(1, min_n):
+                out[hid] = g
+        return out
+
     def entropy_profile(self, out_tsv=None):
         # 2026-09-15 (P2-15): 与 diversity 同口径, 用已排除参考/外群的序列集
         seqs = [s for _, s in self.sequences_used]
@@ -813,8 +982,24 @@ def main():
                     help='按命名约定自动排除参考基因组/外群序列 (默认关闭)')
     ap.add_argument('--exclude-ids', default=None,
                     help='额外排除的序列 id, 逗号分隔 (精确匹配)')
+    ap.add_argument('--fst-site', type=float, default=None,
+                    help='[2026-10-12] 注入全局位点法 Fst 值 (配合 --skip-global-fst, '
+                         '来源=历史报告/论文口径, json 标注 source=manual)')
+    ap.add_argument('--fst-p', type=float, default=None,
+                    help='注入全局 Fst 的置换 p 值 (配合 --fst-site)')
+    ap.add_argument('--skip-global-fst', action='store_true',
+                    help='[2026-10-12] 跳过全局 Fst (含 MJN 网络) —— 近全唯一单倍型数据集'
+                         '(病毒全长常见)的 MJN 准中介枚举是指数爆炸 (实测 PSTVd 348GB / '
+                         'GCVA 32GB 帽被杀, 均 _quasi_medians MemoryError); pairwise '
+                         'Fst 矩阵与按群体统计不受影响。全局值可沿用历史报告。')
     ap.add_argument('--genes-csv', default=None,
                     help='[2026-10-12] 基因坐标 CSV (gene,start,end), 供单倍型状态热图画基因结构带')
+    ap.add_argument('--window', type=int, default=100,
+                    help='[2026-10-22] 单倍型热图 π/Fst 滑窗轨道窗口 (bp, 比对列); 0 或负值关闭轨道')
+    ap.add_argument('--step', type=int, default=50,
+                    help='[2026-10-22] 滑窗步长 (bp); 窗口数超 400 时自动倍增降采样')
+    ap.add_argument('--no-tracks', action='store_true',
+                    help='[2026-10-22] 关闭 π/Fst 滑窗轨道 (只出基因带+热图)')
     ap.add_argument('--stats-json', default=None,
                     help='[2026-10-12] 额外输出结构化统计 JSON (全局+按群体+Fst 矩阵), '
                          '供 utils/popgen_plots.py 渲染多面板统计图')
@@ -835,7 +1020,11 @@ def main():
     _td_s = f"{_td:.4f}" if _td is not None else "NA (S=0, 无多态位点)"
     print(f"Tajima's D = {_td_s}  Fu's Fs = {d.get('fu_fs')}")
 
-    if args.metadata:
+    f = None
+    if args.metadata and args.skip_global_fst:
+        print("[popgen_analysis] --skip-global-fst: 跳过全局 Fst (MJN 爆炸防护), "
+              "全局值请沿用历史报告或fst_pairwise")
+    elif args.metadata:
         f = pg.fst(args.group, min_n=args.min_n, n_perm=args.perm)
         if f.get('fst_site') is not None:
             print(f"Fst(位点法) = {f['fst_site']:.4f}, p = {f['p']:.3f} (组: {f['groups']})")
@@ -853,6 +1042,10 @@ def main():
         except Exception as e:  # noqa: BLE001
             print(f"[popgen_analysis] 按群体统计失败: {e}", file=sys.stderr)
         if args.metadata:
+            if f is None and args.fst_site is not None:
+                f = {'fst_site': args.fst_site, 'p': args.fst_p,
+                     'fst_haplotype': {},
+                     'source': 'manual injection (historical report)'}
             out['fst'] = f
             try:
                 out['fst_pairwise'] = pg.fst_pairwise(args.group, min_n=args.min_n)
@@ -887,11 +1080,23 @@ def main():
                                            for r in pv['rows']]
                     open(_base + '.private_haplotypes.tsv', 'w', encoding='utf-8').write('\n'.join(_lines) + '\n')
                 en = out.get('enrichment') or {}
+                # 无可检验单倍型时也写空表 (带表头+注释行) —— 与 "没跑过" 可区分,
+                # report 声明不再常驻 not-found
+                if not en.get('rows'):
+                    open(_base + '.haplotype_enrichment.tsv', 'w', encoding='utf-8').write(
+                        'hap_id\tcount\tgroup\tin_group\tgroup_n\tp\tq\tstar\n'
+                        '# n_tests=0 (no haplotype reached min_hap_count)\n')
                 if en.get('rows'):
                     _head = 'hap_id\tcount\tgroup\tin_group\tgroup_n\tp\tq\tstar'
                     _lines = [_head] + [f"{r['hap_id']}\t{r['count']}\t{r['group']}\t{r['in_group']}\t{r['group_n']}\t{r['p']:.4g}\t{r['q']:.4g}\t{r['star']}"
                                         for r in en['rows']]
-                    open(_base + '.haplotype_enrichment.tsv', 'w', encoding='utf-8').write('\n'.join(_lines) + '\n')
+                    open(_base + '.haplotype_enrichment.tsv', 'w', encoding='utf-8').write(
+                        'hap_id\tcount\tgroup\tin_group\tgroup_n\tp\tq\tstar\n'
+                        '# n_tests=0 (no haplotype reached min_hap_count)\n')
+                # 2026-10-22 修 (PSTVd 冒烟实测): 聚类组成 CSV 在 en.get('rows')
+                # 分支内引用未定义的 `cl` → 一旦有可检验单倍型, 整个 CSV 导出块
+                # NameError 中止 (私有单倍型/富集 CSV 也连带丢)。改为读
+                # out['clusters'] 自身, 与前面 JSON 同源; en 分支只写富集表。
                 cl = out.get('clusters') or {}
                 if cl.get('composition'):
                     _head = 'cluster\tn\tgroup_sizes'
@@ -904,7 +1109,10 @@ def main():
             json.dump(out, fh, ensure_ascii=False, indent=2)
         print(f"[popgen_analysis] 结构化统计 → {args.stats_json}")
         # 单倍型 FASTA + 等位状态热图 (2026-10-12, 借 EasyHap
-        # plot_haplotype_heatmap 思想; 位点多时纯栅格, 基因结构带可选 --genes-csv)
+        # plot_haplotype_heatmap 思想; 位点多时纯栅格, 基因结构带可选 --genes-csv;
+        # 2026-10-22 重构为 hastat 论文 Fig.2 构图: 自上而下
+        # Fst 轨道 (按群体两两) → π 轨道 (按群体) → 基因结构带 (下缘变异位点
+        # 倒三角) → 单倍型矩阵 (左侧行色条按主导群体着色), 全共享基因组横轴)
         try:
             _base = os.path.splitext(args.stats_json)[0]
             _table = pg._hap_freq_table()
@@ -916,13 +1124,42 @@ def main():
                 with open(args.genes_csv, encoding='utf-8-sig') as gf:
                     _genes = [(r['gene'], int(r['start']), int(r['end']))
                               for r in csv.DictReader(gf)]
+            # 滑窗轨道 (--window/--step 控制; 默认 100/50): π 按群体、Fst 按
+            # 群体两两; 无元数据时退化为单一 'all' π 轨道、无 Fst。
+            _tracks = None
+            _hap_groups = None
+            if args.metadata:
+                try:
+                    _hap_groups = pg.hap_group_map(args.group, min_n=1)
+                except Exception as e:  # noqa: BLE001
+                    print(f"[popgen_analysis] 单倍型主导群体映射失败 (行无色条): {e}",
+                          file=sys.stderr)
+            if not getattr(args, 'no_tracks', False) and args.window > 0:
+                try:
+                    _tracks = pg.sliding_tracks(
+                        window=args.window, step=args.step,
+                        group_col=args.group if args.metadata else None,
+                        min_n=args.min_n)
+                except Exception as e:  # noqa: BLE001
+                    print(f"[popgen_analysis] 滑窗轨道失败 (热图继续): {e}",
+                          file=sys.stderr)
             from utils.popgen_plots import render_hap_state_heatmap
             _hr = render_hap_state_heatmap(
                 [(h, s, c) for h, s, c, _m in _table],
                 _base + '.hap_state_heatmap.pdf', _base + '.hap_state_heatmap.png',
-                title='Haplotype allele states', genes=_genes)
+                title='Haplotype allele states', genes=_genes, tracks=_tracks,
+                hap_groups=_hap_groups)
+            _tag = []
+            if _genes:
+                _tag.append(f"{len(_genes)} genes")
+            if _tracks:
+                _tag.append(f"π×{len(_tracks.get('pi') or {})}/"
+                            f"Fst×{len(_tracks.get('fst') or {})} tracks")
+            if _hap_groups:
+                _tag.append(f"{len(set(_hap_groups.values()))} group colors")
             print(f"[popgen_analysis] 单倍型状态热图 → {_base + '.hap_state_heatmap.png'} "
-                  f"({_hr.get('n_haps', 0)} x {_hr.get('n_sites', 0)})")
+                  f"({_hr.get('n_haps', 0)} x {_hr.get('n_sites', 0)}"
+                  + (f", {', '.join(_tag)}" if _tag else '') + ")")
         except Exception as e:  # noqa: BLE001
             print(f"[popgen_analysis] 单倍型状态热图失败: {e}", file=sys.stderr)
 

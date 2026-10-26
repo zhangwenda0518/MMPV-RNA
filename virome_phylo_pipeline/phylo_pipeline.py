@@ -932,9 +932,12 @@ def rediscover_stage_state(virus_dir: str, stage: str) -> Dict:
                     v = _rd_num(g.get(k))
                     if v is not None:
                         mets[k] = v
-                b = _rd_bool(g.get("drt_passed"))
-                if b is not None:
-                    mets["drt_passed"] = b
+                # 2026-10-14: tsv 里该列**存在就设键** (哪怕值是 NA) —— 否则
+                # "DRT 未产出结论" 在 resume 路径下会退化成"键缺失", 与正常执行
+                # 路径 (clock_analysis 显式写 None) 不一致 → caveat 静默消失。
+                _raw_drt = g.get("drt_passed")
+                if _raw_drt is not None and str(_raw_drt).strip() != "":
+                    mets["drt_passed"] = _rd_bool(_raw_drt)   # 认不出 → None (= 无结论)
         # ② PIC 严格钟 (clock_analysis 写 robust_report.json 的 pic_strict_clock)
         rr = _reg("robust_report", t, "treetime_rtt", "robust", "robust_report.json")
         if rr:
@@ -2443,7 +2446,7 @@ def run_stage_splitstree(prep, aln_file, args, logger) -> Dict:
         return results
     outdir = os.path.join(out_dir, ph_dir('phylogeny'), "splitstree")
     try:
-        from splitstree_bridge import main as _bridge_main
+        from utils.splitstree_bridge import main as _bridge_main
     except ImportError:
         logger.warning("  [splitstree] splitstree_bridge 不可用, 跳过")
         return results
@@ -2511,7 +2514,7 @@ def run_stage_splitstree(prep, aln_file, args, logger) -> Dict:
             _done = False
             if str(getattr(args, "splitstree_layout", "native") or "native") != "equal_angle":
                 try:
-                    from splitstree_bridge import native_coords
+                    from utils.splitstree_bridge import native_coords
                     os.makedirs(os.path.dirname(_coords), exist_ok=True)
                     native_coords(os.path.join(outdir, "neighbornet.stree6"),
                                   _coords, width=2886, height=1496)
@@ -2628,6 +2631,30 @@ def run_stage_popgen(prep, aln_file, args, logger) -> Dict:
         cmd.append("--exclude-reference")
     if getattr(args, "popgen_exclude_ids", None):
         cmd += ["--exclude-ids", str(args.popgen_exclude_ids)]
+    # 2026-10-22: 基因坐标 CSV 存在 → 单倍型热图带基因结构带+逐基因连接线;
+    # π/Fst 滑窗轨道默认开 (popgen_analysis --window/--step, 无需元数据也出 π)。
+    # datasets.yaml 的 genes_csv 是相对 {dir} 的相对路径 (dataset_config 只展开
+    # {dir} 占位符, 不做 join), 故这里按 _dcfg['dir'] 拼; 文件不在则不传
+    # (popgen_analysis 侧 genes=None, 热图退化为纯栅格+轨道)。
+    _gcsv = None
+    _vkey = prep.get("dataset_key", "")
+    if _vkey:
+        try:
+            from utils.dataset_config import dataset as _ds_get
+            _dcfg = _ds_get(_vkey) or {}
+        except Exception:
+            _dcfg = {}
+        _gcfg = prep.get("genes_csv") or _dcfg.get("genes_csv")
+        if _gcfg:
+            _cands = [_gcfg if os.path.isabs(_gcfg)
+                      else os.path.join(_dcfg.get("dir", ""), _gcfg),
+                      _gcfg if os.path.isabs(_gcfg) else os.path.join(out_dir, _gcfg)]
+            for _gcand in _cands:
+                if _gcand and os.path.exists(_gcand):
+                    _gcsv = _gcand
+                    break
+    if _gcsv:
+        cmd += ["--genes-csv", _gcsv]
     meta = prep.get("meta_csv", "")
     if meta and os.path.exists(meta):
         cmd += ["--metadata", meta]
@@ -2813,7 +2840,7 @@ def run_stage_clock(prep, aln_file, tree_file, tools, args, logger,
     gbk = prep.get("annotation_gb")
     if gbk and not os.path.exists(gbk):
         gbk = None
-    from clock_analysis import run_clock_analysis
+    from utils.clock_analysis import run_clock_analysis
     cr = run_clock_analysis(
         alignment=aln_file, tree=tree_file,
         dates_csv=prep.get("dates_csv", ""), out_dir=out_dir,
@@ -2986,6 +3013,52 @@ def run_stage_gene_dating(prep, results, args, logger) -> None:
         logger.warning(f"  [gene_dating] 失败: {(gdr.stderr or gdr.stdout)[-400:]}")
 
 
+def _temporal_caveat_from_metrics(metrics) -> Optional[str]:
+    """由 DRT 状态 + RTT 回归 p 值生成**时间信号 caveat (只陈述实测事实)**; 无则返回 None。
+
+    2026-10-14 新增 (抽成纯函数以便单测)。**四态**语义 —— 键的**存在性**有意义:
+      · 键缺失     → clock 阶段**未评估** DRT (可能未启用该检查) → 不加 caveat。
+      · `is False` → DRT **明确判定未通过** → 原 caveat。
+      · `is None`  → DRT **未产出结论** (崩溃/未跑) ≠ 未通过 (P2-7 纪律)。
+        原版此处 caveat **静默消失**, 读者会默认"没问题" → 现另给**独立**提示, 并用
+        RTT 回归 p 值补一个「绝对信号量」参考。
+        ⚠ p 值是标准统计量 (α=0.05 为通用显著性水平, **非自造阈值**) —— 与 DRT 的
+        「相对检验」互补: DRT 分位高/低**不**代表绝对 R² 高/低。
+      · `is True`  → 不加 caveat。
+
+    ⚠⚠ 措辞纪律 (2026-10-14 二次裁定, 用户): **只陈述实测事实, 不做自我否决**。
+      本条 caveat 是**事实记录** (DRT 状态 + 判据数值 + RTT p 值), 不是对结果的
+      价值判断。故**不得**出现「仅供探索 / 不做定年结论 / 暂不做定量结论 /
+      不可采信」这类把产物整体降级的措辞 —— 用者据数值自行判断。
+      (与 `convergence_gate.py:179` 同一裁定, 那次只改到了门禁模块, 本条是补齐。)
+
+    ⚠ 本分支文案**刻意避开「未通过」字样** —— 否则下游若有 `"未通过" in caveat`
+      这类字符串匹配会误判 (即"字符串匹配当语义判定"的坑)。要判语义请认 `drt_passed`。
+
+    p_value 由 clock 阶段写入 (clock_summary.tsv → run_stage_clock 或
+    rediscover_stage_state 两条路径都覆盖; STAGE_ORDER 里 clock 排在 treetime 之前)。
+    """
+    m = metrics or {}
+    if "drt_passed" not in m:
+        return None
+    drt = m["drt_passed"]
+    if drt is False:
+        return ("clock 阶段 DRT 未通过 (判据: r2_percentile >= 95 且 "
+                "rate_overlap == False): 真实 R²/速率未能与随机化零分布区分")
+    if drt is not None:
+        return None
+    p = m.get("p_value")
+    if p is None:
+        sig = "RTT 回归 p 值亦不可得 → 时间信号完全未评估"
+    else:
+        pv = float(p)
+        sig = (f"RTT 回归 p={pv:.4g} (α=0.05 下"
+               + ("显著, 提示存在时间信号" if pv < 0.05
+                  else "不显著, 无时间信号证据") + ")")
+    return (f"clock 阶段 DRT 无结论 (未产出, 非判定失败): 时间信号未经随机化检验; "
+            f"{sig}")
+
+
 def run_stage_treetime(prep, aln_file, tree_file, args, logger, results) -> None:
     """treetime: TreeTime CLI 完整时间树 (timetree.nexus) — phymapr 路线前置。
 
@@ -3027,11 +3100,14 @@ def run_stage_treetime(prep, aln_file, tree_file, args, logger, results) -> None
                      ("rng_seed", "treetime_rng_seed")):
         if _m.get(_k) is not None:
             results["metrics"][_dst] = _m[_k]
-    # DRT 未通过 → 时间树仅供探索, 不进论文定年结论 (与 clock 阶段同一纪律:
-    # "PSTVd 不报 TMRCA" 同源)
-    if results["metrics"].get("drt_passed") is False:
-        results["metrics"]["treetime_temporal_caveat"] = (
-            "clock 阶段 DRT 未通过: 时间树仅供探索, 不做定年结论")
+    # DRT 状态 → 时间信号 caveat (只陈述实测事实, 不自我否决 —— 用户 2026-10-14
+    # 裁定: 产物是可用结果, 不写「仅供探索」这类整体降级措辞)。判定逻辑见
+    # `_temporal_caveat_from_metrics` (2026-10-14 抽出: 原版只认 `is False`,
+    # DRT 崩溃时 caveat 静默消失)。
+    _caveat = _temporal_caveat_from_metrics(results["metrics"])
+    if _caveat:
+        results["metrics"]["treetime_temporal_caveat"] = _caveat
+        logger.warning(f"  [treetime] 时间树 caveat: {_caveat}")
     logger.info(f"  [treetime] timetree.nexus → {tt['timetree_nexus']}")
 
 
@@ -3507,14 +3583,28 @@ def run_stage_genes(prep, results, aln_file, tools, args, logger) -> None:
             drt_dir = os.path.join(gene_dir, "drt")
             for gr in gene_results:
                 gname = gr.get('gene', '')
-                g_aln = os.path.join(gene_dir, "alignments", f"{gname}.fasta")
-                if not (gname and os.path.exists(g_aln)):
+                # 2026-10-14 修正: 产物真实布局是 `alignments/{gene}.mafft.fasta`
+                # 与 `trees/{gene}/{gene}.treefile` (GCVA 实测)。原写法找
+                # `{gene}.fasta` / `trees/{gene}.treefile` → os.path.exists 恒假
+                # → 本循环**全部静默 continue** (无日志、无产物, 看起来像"没基因")。
+                # 本函数当前无调用点 (见函数 docstring), 属死代码; 但留着错误路径
+                # 就是陷阱, 故对齐 clock_analysis.py:651-665 的双布局查找。
+                g_aln = next((p for p in (
+                    os.path.join(gene_dir, "alignments", f"{gname}.mafft.fasta"),
+                    os.path.join(gene_dir, "alignments", f"{gname}.fasta"),
+                ) if os.path.exists(p)), None)
+                if not (gname and g_aln):
+                    logger.info(f"  [genes] DRT skip {gname}: 找不到比对文件 "
+                                f"(alignments/{gname}.mafft.fasta)")
                     continue
                 n_seq = sum(1 for l in open(g_aln) if l.startswith('>'))
                 if n_seq < 10 or n_seq > 500:
                     logger.info(f"  [genes] DRT skip {gname}: 序列数 {n_seq} 超出 [10,500] 合理区间")
                     continue
-                g_tree = os.path.join(gene_dir, "trees", f"{gname}.treefile")
+                g_tree = next((p for p in (
+                    os.path.join(gene_dir, "trees", gname, f"{gname}.treefile"),
+                    os.path.join(gene_dir, "trees", f"{gname}.treefile"),
+                ) if os.path.exists(p)), None)
                 try:
                     gd = date_randomization_test(
                         fasta_file=g_aln, dates_csv=dates_csv_g,
@@ -4022,8 +4112,9 @@ def run_phase_beast(prep, phase_results, args, tools, logger) -> Dict:
                                 results["outputs"]["beast_log"] = chain1_log
                                 results["outputs"]["beast_trees"] = os.path.join(beast_dir, "beast11.trees")
                 # 收敛门禁: 把 merged/convergence_gate.json 的结论带入 metrics,
-                # 供报告层据实标注 (未收敛 → 数值仅供探索)。⚠ 门禁只判"MCMC 混合",
-                # 与"数据有无时间信号"独立 (后者由 DRT/R² 管)。
+                # 供报告层据实标注。⚠ 门禁只判"MCMC 混合", 与"数据有无时间信号"
+                # 独立 (后者由 DRT/R² 管)。⚠⚠ 措辞纪律 (用户 2026-10-14 裁定):
+                # 只陈述实测数值, **不写**「仅供探索 / 不做定量结论」这类自我否决。
                 _gate = os.path.join(beast_dir, "merged", "convergence_gate.json")
                 if os.path.exists(_gate):
                     try:
@@ -4033,10 +4124,10 @@ def run_phase_beast(prep, phase_results, args, tools, logger) -> Dict:
                         results["metrics"]["beast_worst_ess"] = _g.get("worst_ess")
                         if _g.get("verdict") != "converged":
                             results["metrics"]["beast_convergence_caveat"] = (
-                                "MCMC 未收敛 (关键参数最小 ESS "
-                                f"{_g.get('worst_ess')} < 200, 最差: {_g.get('worst_param')}): "
-                                "参数估计仅供探索, 不做定量结论")
-                            log.warning(f"  [beast] ⚠ 收敛门禁: {results['metrics']['beast_convergence_caveat']}")
+                                "MCMC 关键参数最小 ESS "
+                                f"{_g.get('worst_ess')} < 200 (最差: {_g.get('worst_param')}) "
+                                "— 未达常规阈值")
+                            log.warning(f"  [beast] 收敛门禁: {results['metrics']['beast_convergence_caveat']}")
                     except Exception as _ge:
                         log.warning(f"  [beast] 读取 convergence_gate.json 失败: {_ge}")
             except Exception as e:
@@ -4878,8 +4969,11 @@ def process_virus(prep, stages: List[str], args, tools, logger) -> Dict:
                 drhip_csv = os.path.join(out_dir, ph_dir('select'), "capheine", "drhip", "combined_sites.csv")
                 cln_dir = os.path.join(out_dir, ph_dir('select'), "capheine", "hyphy", "CLN")
                 if os.path.exists(drhip_csv) and os.path.isdir(cln_dir):
+                    # --ref-id: 新版 capheine 基因前缀是内部文件名 (ref_cds-noStopCodons.part_L),
+                    # 不传的话图题会把它当参考 ID 显示; 传病毒名由 miner 智能截取登录号
                     run_postprocess("visual_codon_miner", log,
                                     "--drhip", drhip_csv, "--clndir", cln_dir,
+                                    "--ref-id", prep['virus_name'],
                                     "--outdir", os.path.join(out_dir, ph_dir('select'), "capheine", "codon_miner"))
                 # 后处理: 正选择位点 3D 结构可视化 (batch_draw_pymol) 已改为按需手动运行, 不进管线
                 # (基因名与 AlphaFold 资产库命名不匹配时全部跳过, 每次白跑; 需要时:
@@ -6081,7 +6175,11 @@ Stages: """ + ", ".join(f"{k}({v})" for k, v in STAGE_DESC.items()),
     _res_by_virus = {r.get("virus"): r for r in all_results}
     for vq in virus_queue:
         vname = vq["virus_name"]
-        vdir = os.path.join(str(output_dir), vname)
+        # 工作目录必须取 prep 的真实 output_dir: batch 建目录用的是 vkey
+        # (accession, 如 NC_002634.1), 而 virus_name 是 ④ 完整目录名
+        # (如 Soybean_mosaic_virus_NC_002634.1) —— 用 vname 拼出的是幽灵目录,
+        # gene_dating/beast 探测恒落空, sample_plot/publication 写错树 (2026-10-15 修)。
+        vdir = vq.get("output_dir") or os.path.join(str(output_dir), vname)
         v_meta = vq.get("meta_csv") or vq.get("dates_csv", "")
         v_report = os.path.join(vdir, ph_dir('report'))
         _vout = (_res_by_virus.get(vname) or {}).get("outputs", {})

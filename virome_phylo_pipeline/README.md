@@ -168,7 +168,7 @@ python run_phylogeo.py --virus GCVA --prior skyline --chains 5 --threads 8
 python -m utils.merge_results --virus GCVA          # 多链合并（原根目录 merge_results.py 已迁入 utils/）
 
 # 群体遗传学
-python -m utils.popgen_analysis --fasta X.fasta --metadata Y.csv --group location
+python -m popgen_analysis --fasta X.fasta --metadata Y.csv --group location
 
 # DnaSP 全套 (Fu&Li/Rm/Ka-Ks/LD/SFS...)
 python -m utils.dnasp_bridge --fasta X.fasta --out dir
@@ -188,17 +188,17 @@ python -m utils.rdp5_validate -r ~/rdp5_results/my_prefix.csv -a alignment.fas
 # 3) 断点分布图 (需 R + RDP5_RBDP_Rgrapher)
 python -m utils.rdp5_bdp_plot -b "my_prefix breakpoint distribution.csv" -g orf_coords.csv -p ...BreakpointPositions.csv -n Virus
 # 4) 统一入口 (串联 + dnasp Rm 交叉验证)
-python -m utils.recombination_analysis --fasta aln.fas --prefix my --rdp5-csv my.csv \
+python -m recombination_analysis --fasta aln.fas --prefix my --rdp5-csv my.csv \
        --genes genes.csv --outdir out
 
 # 重组区处理 (mask_recombination.py, 默认排除跨末端事件)
 # 策略 A: mask 重组区间 → N (区域层面稳健性验证)
-python -m utils.mask_recombination --fasta aln.fasta --rdp5 my.csv --genes genes.csv --outdir mask_out
+python -m mask_recombination --fasta aln.fasta --rdp5 my.csv --genes genes.csv --outdir mask_out
 # 策略 B: 删除明确重组序列 (保守, 建树推荐, 默认仅删高置信≥3方法重组子)
-python -m utils.mask_recombination --fasta aln.fasta --rdp5 my.csv --genes genes.csv --outdir drop_out --drop-recombinants
+python -m mask_recombination --fasta aln.fasta --rdp5 my.csv --genes genes.csv --outdir drop_out --drop-recombinants
 
 # 单倍型全套输出 (着色: location/host)
-python -m utils.build_haplo_outputs --virus GCVA --color-by host
+python -m build_haplo_outputs --virus GCVA --color-by host
 ```
 
 > ⚠️ `python pstvd_qc.py`（旧的 coverage≥85% 质控构建脚本）**已不存在**；

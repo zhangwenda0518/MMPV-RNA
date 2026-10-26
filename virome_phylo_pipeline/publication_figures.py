@@ -32,6 +32,8 @@ import matplotlib.patheffects as pe
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from utils.virphy_bridge import LogCollector
+# 2026-10-16: 图件双格式 (PNG+PDF 同主名); 统一由 plot_io.save_both 收口
+from utils.plot_io import save_both
 from utils.ess import calculate_ess, calculate_95hpd
 
 # ═══════════════════════════════════════════════════════════════════
@@ -221,8 +223,8 @@ def plot_temprest(
     ax.spines['right'].set_visible(False)
 
     plt.tight_layout()
-    fig.savefig(output_path, dpi=300, format='pdf', facecolor='white',
-               edgecolor='none', bbox_inches='tight')
+    save_both(fig, output_path, dpi=300, format='pdf', facecolor='white',
+              edgecolor='none', bbox_inches='tight')
     plt.close(fig)
 
     log.emit(f"TempEst: {output_path} (R²={r2:.3f}, rate={slope:.2e}, n={len(valid_tips)})")
@@ -323,8 +325,8 @@ def plot_mcc_tree_publication(
 
     ax.set_title(title, fontsize=16, fontweight='bold', loc='left', pad=20)
 
-    fig.savefig(output_path, dpi=300, format='pdf', facecolor='white',
-               edgecolor='none', bbox_inches='tight')
+    save_both(fig, output_path, dpi=300, format='pdf', facecolor='white',
+              edgecolor='none', bbox_inches='tight')
     plt.close(fig)
     log.emit(f"MCC tree: {output_path} ({len(locations)} locations)")
 

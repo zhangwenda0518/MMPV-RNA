@@ -44,7 +44,7 @@ import logging
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
-from mmpv_common.io_layout import layout_dirs as _layout_dirs
+from mmpv_common.io_layout import layout_dirs as _layout_dirs, normalize_layout_env
 _D = _layout_dirs(os.environ.get("MMPV_IO_LAYOUT"))
 from pathlib import Path
 from datetime import datetime
@@ -1111,6 +1111,9 @@ def main():
         description="submission_pipeline.py — MMPV-RNA → NCBI 提交统一入口",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
+    parser.add_argument('--io-layout', choices=['standard', 'legacy'], default=None,
+                        help='I/O 布局 (缺省: MMPV_IO_LAYOUT 环境变量, 再缺省 standard; '
+                             '2026-10-15 新增 — 原先只吃环境变量, 独立运行 legacy 项目会被静默按 standard 解析)')
     sub = parser.add_subparsers(dest='command', help='管道模式')
 
     # ── known 模式: 已知病毒 (INFO → suvtk) ──
@@ -1187,6 +1190,11 @@ def main():
 
     args = parser.parse_args()
 
+    # 布局解析 (2026-10-15): CLI > 环境变量 > standard。解析结果写回环境供子进程
+    # 继承, 并重绑模块级 _D —— _D 原先只在 import 时按环境变量算一次。
+    global _D
+    _D = _layout_dirs(normalize_layout_env(getattr(args, 'io_layout', None)))
+
     # ── known 模式 ──
     if args.command == 'known':
         out = Path(args.output)
@@ -1245,6 +1253,10 @@ def main():
         sys.exit(1)
 
     log = setup_logger(str(work_dir))
+
+    # 提交未完成项登记 (2026-10-15): gate 未过 / .sqn 未生成 / 缺输入不再只打日志,
+    # main 末尾聚合后非零退出 —— 旧行为可"gate 未过、无 .sqn"仍退出 0 (假成功)。
+    submission_failures = []
 
     # ── 自动检测管道类型 ──
     pipeline_type = args.pipeline_type
@@ -1511,8 +1523,29 @@ def main():
             log.info("  复用已存在的 source.src: %s (如需重新生成请先删除)", src_file)
         else:
             # 从 taxonomy 和 ref_info 读取实际数据
-            ref_info_path = work_dir.parent / _D["d_analysis"] / "ref_info.tsv"
+            # ref_info 定位 (2026-10-15 修): ref_info.tsv 在 ③ 输出根的 d_analysis
+            # (standard=11_ViromeAnalysis / legacy=09a_Virome_Analysis) 下 —— 按文档
+            # 姿势 --work-dir <③根> 时应查 work_dir 本身; 旧的 work_dir.parent 只在
+            # 把 work-dir 指到 rescue 子目录时才命中, 两姿势互斥且失败时静默落
+            # 'unclassified plant virus' 占位。现两布局 × 两级全探测, 未命中告警。
+            _da_names = []
+            for _da in (_D["d_analysis"],
+                        _layout_dirs("standard")["d_analysis"],
+                        _layout_dirs("legacy")["d_analysis"]):
+                if _da not in _da_names:
+                    _da_names.append(_da)
+            _ref_info_cands = [base / da / "ref_info.tsv"
+                               for da in _da_names
+                               for base in (work_dir, work_dir.parent)]
+            ref_info_path = next((c for c in _ref_info_cands if c.is_file()),
+                                 _ref_info_cands[0])
             has_ref_info = ref_info_path.is_file()
+            if not has_ref_info:
+                log.warning(
+                    "  未找到 ref_info.tsv (已探测: %s) — source.src 的 Organism 将落 "
+                    "'unclassified plant virus' 占位; 如需真实物种名, 请把 --work-dir "
+                    "指向 ③ 输出根或手工放置 ref_info.tsv",
+                    "; ".join(str(c) for c in _ref_info_cands))
             # 输入可能是 9b 的 class_KEEP.fasta (HQ 子集), 而 ref_info 覆盖 HQ 全集,
             # 只保留输入 fasta 中实际存在的序列 ID, 避免 source.src 出现多余行导致 table2asn 对不上
             fasta_ids = {rec.id for rec in SeqIO.parse(str(fasta), "fasta")}
@@ -1702,11 +1735,14 @@ def main():
         # 5. suvtk table2asn → .sqn
         if not gate_ok:
             log.error("  提交前硬校验未通过 → 跳过 suvtk table2asn (确需跳过请加 --skip-gate)")
+            submission_failures.append("提交前硬校验 gate 未通过 (已跳过 table2asn)")
         elif reoriented_fna and reoriented_fna.exists() and updated_tbl and os.path.exists(updated_tbl):
             if not comments_file.exists():
                 log.warning("  comments.cmt 不存在, 跳过 suvtk table2asn")
+                submission_failures.append("comments.cmt 缺失 (跳过 table2asn)")
             elif not sbt_file.exists():
                 log.warning("  template.sbt 不存在, 跳过 suvtk table2asn")
+                submission_failures.append("template.sbt 缺失 (跳过 table2asn)")
             else:
                 # 直连 NCBI table2asn (argv 列表, 不经 shell — Windows 中文路径安全);
                 # suvtk 0.1.x/0.2.x 不可用或直连失败时回退 suvtk 包装器
@@ -1737,11 +1773,13 @@ def main():
                              (sv_dir / "submission.sqn").stat().st_size // 1024)
                 else:
                     log.warning("  submission.sqn 未生成, 请检查")
+                    submission_failures.append("submission.sqn 未生成 (table2asn 两级均未产出)")
         else:
             missing = []
             if not reoriented_fna or not reoriented_fna.exists(): missing.append("reoriented.fna")
             if not updated_tbl or not os.path.exists(updated_tbl): missing.append("featuretable.tbl")
             log.warning("  缺少输入文件, 跳过 table2asn: %s", ", ".join(missing))
+            submission_failures.append("缺输入文件: " + ", ".join(missing))
 
     # ── 统一生成 topology.tsv (circular/linear, 供 sequin .fsa 头部与报告复用) ──
     topo_out = sub_out / "topology.tsv"
@@ -1859,6 +1897,13 @@ def main():
         gb_dir = work_dir / "genbank_submission" / args.run_title
         log.info("  [sequin] output:  %s/", gb_dir)
     log.info("=" * 60)
+
+    # 聚合退出码 (2026-10-15): 登记的未完成项非空 → 非零退出。
+    # 旧行为 gate 失败 / .sqn 未生成只打日志, main 正常返回 0 —— 批处理把
+    # 失败提交当成功 (与 ⑤ 的 0/1/2 语义、③ 的 failed_stages 口径对齐)。
+    if submission_failures:
+        log.error("提交流程存在未完成项 (退出码 1): %s", "; ".join(submission_failures))
+        sys.exit(1)
 
 
 if __name__ == '__main__':

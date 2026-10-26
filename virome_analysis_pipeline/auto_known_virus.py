@@ -7,10 +7,10 @@ full-length assembly, and post-hoc characterization.
 
 Stages:
   1. detect    - Rapid quantification (batch_virus_depth.py)
-  2. filter    - High-confidence filtering (filter_summary.py) [auto with --filter]
+  2. filter    - High-confidence filtering (utils/filter_summary.py) [auto with --filter]
   3. variants  - Variant calling + SnpEff + SnpGenie (batch_virus_variants.py)
   4. full      - De novo full-length assembly (virus-full.py)
-  5. extract   - Extract longest contigs (extract_full_fasta.py)
+  5. extract   - Extract longest contigs (utils/extract_full_fasta.py)
   6. post      - VCF visualization + SnpEff macro + MAF + SnpGenie
   7. similarity - Full-length similarity panorama (virus_auto_pipeline.py)
   8. dvg        - DVG & recombination detection (batch_virema_dvg.py)
@@ -381,11 +381,11 @@ def main():
         log.info("  Tool:    %s", args.tool)
         if s in ("all", "detect"):   log.info("  [1/9] Detect:   batch_virus_depth.py")
         # [P2-23c] 与下方 Stage2 执行条件保持一致 (--filter 默认 True, 但仅 all/filter 阶段才跑)
-        if args.filter and s in ("all", "filter"): log.info("  [2/9] Filter:   filter_summary.py")
+        if args.filter and s in ("all", "filter"): log.info("  [2/9] Filter:   utils/filter_summary.py")
         if s in ("all", "variants"):  log.info("  [3/9] Variants: batch_virus_variants.py (caller=%s snpeff=%s snpgenie=%s)", args.variant_caller, args.snpeff, args.snpgenie)
         if s in ("all", "post"):      log.info("  [4/9] Post-hoc: VCF viz + SnpEff + MAF + SnpGenie")
         if s in ("all", "full"):      log.info("  [5/9] Full:     batch_virus_full.py")
-        if s in ("all", "extract"):   log.info("  [6/9] Extract:  extract_full_fasta.py")
+        if s in ("all", "extract"):   log.info("  [6/9] Extract:  utils/extract_full_fasta.py")
         if s in ("all", "similarity"): log.info("  [7/9] Similarity: virus_auto_pipeline.py")
         if s in ("all", "dvg"):       log.info("  [8/9] DVG:    batch_virema_dvg.py")
         if s in ("all", "report"):    log.info("  [9/9] Report: generate_pipeline_report.py")
@@ -969,11 +969,11 @@ def _run_pipeline_stages(args, out, reads, log, script_dir, _pipeline_tmp):
 # Each entry: (stage_num, name, script, input_from, output_dir_key, checkpoint)
 STAGES = [
     (1,  "detect",     "batch_virus_depth.py",     None,            "detect_dir",     "best.summary.tsv"),
-    (2,  "filter",     "filter_summary.py",         "detect_dir",    "filter_dir",     "high_conf.summary.tsv"),
+    (2,  "filter",     "utils/filter_summary.py",   "detect_dir",    "filter_dir",     "high_conf.summary.tsv"),
     (3,  "variants",   "batch_virus_variants.py",   "get_summary()", "variants_dir",   "all_summary.tsv"),
     (4,  "post",       "virus_vcf_pipeline.py",     "variants_dir",  "post_dir",       "figs/"),
     (5,  "assembly",   "batch_virus_full.py",       "variants_dir",  "assembly_dir",   "*/"),
-    (6,  "extract",    "extract_full_fasta.py",     "assembly_dir",  "extract_dir",    "*.fasta"),
+    (6,  "extract",    "utils/extract_full_fasta.py", "assembly_dir", "extract_dir",    "*.fasta"),
     (7,  "similarity", "virus_auto_pipeline.py",    "variants_dir",  "similarity_dir", "pipeline_results/"),
     (8,  "dvg",        "batch_virema_dvg.py",       "get_summary()", "dvg_dir",       "Summary_Analysis_Report/"),
     (9,  "report",     "generate_pipeline_report.py","*",             "report_dir",     "Pipeline_Summary_Report.html"),

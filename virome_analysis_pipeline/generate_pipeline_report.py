@@ -25,6 +25,16 @@ if _REPO_ROOT not in sys.path:
 from mmpv_common.io_layout import layout_dirs as _layout_dirs, locate_analysis_dir
 _D = _layout_dirs(os.environ.get("MMPV_IO_LAYOUT"))
 
+# --phylo-root (2026-10-15): ⑤ 系统发育管线输出根 (results_* 目录), main() 里赋值。
+# capheine 正选择分析已迁 ⑤ (select 模块), 本管线新跑不会再产出 07_capheine;
+# 提供此参数后 Stage 7 各触点额外扫描 <phylo_root>/**/select|05_select/capheine 产物。
+PHYLO_ROOT = None
+
+try:
+    from mmpv_common.table_widgets import TW_BLOCK as _TW
+except Exception:
+    _TW = ""   # 共享表格控件不可达时静默降级为原生表格
+
 
 def _esc(v):
     """HTML-escape a value to prevent XSS injection."""
@@ -211,8 +221,13 @@ def collect_dvg_charts(dvg_dir, virus_acc):
             if d.is_dir() and (virus_acc in d.name or short in d.name):
                 vdir = d; break
         else: return charts
+    # 图类白名单 (与生产者 virema_summary_report.R 的 ggsave 输出对齐):
+    # 前 4 类为 Circos/Arc/NT 频率/Top 事件, 后 4 类为单病毒散点与
+    # 删除/重复覆盖度、donor 断点 NT 偏好 (R 侧 prefix_{name}.png)。
     for suffix, label in [("Circos_4Track.png","DVG Circos"),("Arc_Diagram.png","DVG Arc"),
-            ("Acceptor_NT_Freq.png","DVG Acceptor NT"),("Top_Events.png","DVG Top Events")]:
+            ("Acceptor_NT_Freq.png","DVG Acceptor NT"),("Top_Events.png","DVG Top Events"),
+            ("Scatterplot.png","DVG Scatterplot"),("Deletions.png","DVG Deletions Coverage"),
+            ("Duplications.png","DVG Duplications Coverage"),("Donor_NT_Freq.png","DVG Donor NT")]:
         for f in vdir.glob(f"*{suffix}"):
             b64 = img_to_base64(f, 3000)
             charts[f"dvg_{suffix}"] = {"label":label,"path":str(f.relative_to(dvg_dir)),"base64":b64,"ext":f.suffix[1:]}
@@ -394,6 +409,14 @@ def _collect_capheine_summary(out_dir, virus_acc):
     out = Path(out_dir)
     # capheine 已迁 ⑤ virome_phylo_pipeline (select 模块); 07_capheine 仅作 legacy 产物候选
     vdir = _find_virus_dir(out / "07_capheine", virus_acc)
+    if not vdir and PHYLO_ROOT is not None:
+        # 新链路: <phylo_root>/**/<acc>/.../select|05_select/capheine/drhip/combined_summary.csv
+        pr = Path(PHYLO_ROOT)
+        if pr.is_dir():
+            for p in sorted(pr.rglob(os.path.join("drhip", "combined_summary.csv"))):
+                if virus_acc in p.parts:
+                    vdir = p.parent.parent
+                    break
     if not vdir: return None
     cs = vdir / "drhip" / "combined_summary.csv"
     df = safe_read_csv(cs)
@@ -438,7 +461,15 @@ def _collect_similarity_data(out_dir, virus_acc):
         return {"available": False, "reason": "empty (single sample?)"}
     heatmap_png = mat_dir / "overall_NT_only_heatmap.png"
     dist_png = mat_dir / "overall_NT_only_distribution.png"
-    csv_f = mat_dir / "overall_NT_only_pairwise.csv"
+    # [P2-24e] 相似性 csv 文件名错配修复: 生产者 virus_auto_pipeline.py 写
+    #   {prefix}_{align_method}.csv (execute_single_output/execute_composite_output,
+    #   --align_method 默认 sdt_exact) → 旧硬编码 overall_NT_only_pairwise.csv
+    #   在默认跑法下必然 miss。改为 glob overall_NT_only*.csv, 命中任一即用;
+    #   多命中时优先级 pairwise > sdt_exact > 其他 (mafft/复合矩阵等)。
+    _csv_prio = {"overall_NT_only_pairwise.csv": 0, "overall_NT_only_sdt_exact.csv": 1}
+    _csv_cands = sorted(mat_dir.glob("overall_NT_only*.csv"))
+    csv_f = (min(_csv_cands, key=lambda p: (_csv_prio.get(p.name, 2), p.name))
+             if _csv_cands else mat_dir / "overall_NT_only_pairwise.csv")
     if not heatmap_png.exists():
         return {"available": False, "reason": "empty matrices"}
     result = {"available": True, "images": {}, "stats": {}}
@@ -517,45 +548,6 @@ def _find_virus_dir(stage_path, virus_acc):
         if d.is_dir() and (virus_acc in d.name or short in d.name):
             return d
     return None
-
-
-def _find_virus_files(out_dir, stage_rel, virus_acc, subdir_patterns):
-    """Find per-virus files in a stage directory and return HTML.
-
-    subdir_patterns: list of (subdir_rel, globs) tuples.
-    """
-    out = Path(out_dir)
-    stage_path = out / stage_rel
-    vdir = None
-
-    # For S3, lookup is reversed: stage/{subdir}/{virus_dir}[/{sample_dir}]
-    if stage_rel == _D['a_variants']:
-        html = ""
-        for subd_rel, globs in subdir_patterns:
-            subd = stage_path / subd_rel
-            if not subd.is_dir(): continue
-            vd = _find_virus_dir(subd, virus_acc)
-            if not vd: continue
-            for g in globs:
-                for f in sorted(vd.rglob(g))[:6]:
-                    if not f.is_file(): continue
-                    rel = f.relative_to(vd)
-                    html += f'<p style="font-size:11px;color:var(--ink-secondary);margin:2px 0">{_esc(subd_rel)}/{_esc(vd.name)}/{_esc(rel)}</p>'
-        return html
-
-    # For S4/S7/S8: stage/{virus_dir}/...
-    vdir = _find_virus_dir(stage_path, virus_acc)
-    if not vdir: return ""
-    html = ""
-    for subd_rel, globs in subdir_patterns:
-        search_dir = vdir / subd_rel if subd_rel else vdir
-        if not search_dir.is_dir(): continue
-        for g in globs:
-            for f in sorted(search_dir.rglob(g))[:8]:
-                if not f.is_file(): continue
-                rel = f.relative_to(vdir)
-                html += f'<p style="font-size:11px;color:var(--ink-secondary);margin:2px 0">{_esc(rel)}</p>'
-    return html
 
 
 def _build_virus_summary_table(viruses):
@@ -684,6 +676,10 @@ def _resolve_dir(base_dir, path_segment):
 
 
 # ── Pipeline methods section (auto-generated from stage metadata) ──
+# [P2-24f] 编号以 auto_known_virus.py 的 STAGES 注册表为准 (本管线 v3.0 起为 9 阶段):
+#   1 detect / 2 filter / 3 variants / 4 post / 5 full / 6 extract / 7 similarity /
+#   8 dvg / 9 report。Selection (capheine) 已迁 ⑤, 作遗留附录用字母后缀 "6b" 占位,
+#   不占用 1-9 数字槽, 保证编号唯一递增 (原先 DVG 与 Report 都标 9)。
 STAGE_METHODS = [
     (1, "Detection", "batch_virus_depth.py",
      "Virus detection was performed using Salmon pseudo-alignment in quantification mode "
@@ -728,7 +724,7 @@ STAGE_METHODS = [
      "N-filled regions were resolved using reference-guided gap filling. Contigs with "
      ">10% ambiguous bases were excluded."),
 
-    (7, "Selection Analysis", "virome_phylo_pipeline (⑤ output; v3.0 migration)",
+    ("6b", "Selection Analysis", "virome_phylo_pipeline (⑤ output; v3.0 migration)",
      "Codon-level positive selection is produced by ⑤ virome_phylo_pipeline (select module) since "
      "the v3.0 migration; the legacy capheine_pipeline.py / 07_capheine directory is retained only "
      "as an artifact candidate. The analysis integrates "
@@ -738,14 +734,14 @@ STAGE_METHODS = [
      "BUSTED (Branch-Site Unrestricted Statistical Test), CONTRAST-FEL, and RELAX. "
      "Results were aggregated via DRHIP. Non-coding viruses (viroids) were automatically excluded."),
 
-    (8, "Similarity Panorama", "virus_auto_pipeline.py",
+    (7, "Similarity Panorama", "virus_auto_pipeline.py",
      "Pairwise nucleotide and amino acid similarity matrices were computed for each virus "
      "across all samples using Biopython pairwise alignment (SDT-strict mode, no gap penalty). "
      "CD-HIT soft deduplication at adaptive identity thresholds removed redundant sequences. "
      "SciPy hierarchical clustering produced optimally ordered triangular heatmaps at 600 DPI. "
      "Multi-gene concatenated CDS matrices were also generated when multiple CDS regions were available."),
 
-    (9, "DVG & Recombination", "batch_virema_dvg.py",
+    (8, "DVG & Recombination", "batch_virema_dvg.py",
      "Defective viral genomes and recombination events were detected using ViReMa "
      "with seed length 25, micro-indel threshold 15 bp. Recombination landscapes "
      "were visualized via Circos plots showing junction networks. Viruses with "
@@ -968,6 +964,12 @@ def generate_html(out_dir, out_html, viruses, ai_html="", stage_summaries=None):
         for pat in pats:
             for f in spath.rglob(pat) if "**" in pat else spath.glob(pat):
                 if f.is_file(): collected.append(f)
+        if sn == 7 and PHYLO_ROOT is not None:
+            # --phylo-root: 追加 ⑤ 管线 capheine 位点统计图 (selection_per_gene.png/pdf)
+            pr = Path(PHYLO_ROOT)
+            if pr.is_dir():
+                for f in sorted(pr.rglob("selection_per_gene.*")):
+                    if f.is_file(): collected.append(f)
         # Dedup: skip PDF when PNG with same stem exists
         png_stems = {f.stem for f in collected if f.suffix.lower() in ('.png','.jpg','.jpeg','.svg')}
         for f in collected:
@@ -976,7 +978,11 @@ def generate_html(out_dir, out_html, viruses, ai_html="", stage_summaries=None):
             try:
                 fn = str(f.relative_to(spath)) if f.parent != spath else f.name
             except ValueError:
-                fn = f.name
+                # ⑤ phylo 产物不在 spath 下: 以 <病毒acc>/文件名 作标签
+                try:
+                    fn = f"{f.parts[f.parts.index('gcva_analysis') - 1]}/{f.name}"
+                except ValueError:
+                    fn = f.name
             if fn.endswith('.tsv') or fn.endswith('.csv'):
                 try:
                     rows = []
@@ -1201,6 +1207,26 @@ def generate_html(out_dir, out_html, viruses, ai_html="", stage_summaries=None):
                         cells += f'<td>{c}</td><td>{d}</td><td>{rd}</td><td>{tp}</td>'
                     stage_sections += f'<tr>{cells}</tr>'
                 stage_sections += '</table></div>'
+        # [P2-24g] Stage 2: filter_summary_plot 无条件内嵌 (原内嵌分支挂在 has_sub 循环内,
+        # 而 S2 has_sub=False → 永不执行); png 优先, 缺失/超限时回退既有 pdf <object> 通道
+        if sn == 2:
+            fp_png = out / _D['a_filter'] / "filter_summary_plot.png"
+            fp_pdf = out / _D['a_filter'] / "filter_summary_plot.pdf"
+            s2_plot_html = ""
+            if fp_png.is_file():
+                b64_p = img_to_base64(fp_png, 3000)   # 超限 / --no_images → None
+                if b64_p:
+                    s2_plot_html = (f'<div class="chart-card"><div class="chart-title">Filter Summary</div>'
+                                    f'<img src="data:image/png;base64,{b64_p}" loading="lazy" alt="Filter Summary"></div>')
+            if not s2_plot_html and fp_pdf.is_file():
+                b64_d = img_to_base64(fp_pdf, 1000)
+                if b64_d:
+                    s2_plot_html = (f'<div class="chart-card"><div class="chart-title">Filter Summary (PDF)</div>'
+                                    f'<object data="data:application/pdf;base64,{b64_d}" type="application/pdf" width="100%" height="500px"><p>PDF</p></object></div>')
+            if not s2_plot_html and fp_png.is_file():
+                s2_plot_html = _img_placeholder("Filter Summary")
+            if s2_plot_html:
+                stage_sections += s2_plot_html
         # Stage 1: Detection table + co-infection (cards already inserted above before _stage_files)
         if sn == 1 and detection_summary:
             ds = detection_summary
@@ -1252,6 +1278,46 @@ def generate_html(out_dir, out_html, viruses, ai_html="", stage_summaries=None):
                         else: stage_sections += _img_placeholder(fn)
                         break
             stage_sections += '</div>'
+            # [P2-24h] S1 depth_plots 零覆盖修复: batch_plot_virus_depth.py --mode depth 产物
+            # (auto_known_virus.py 接线为 01_Detection/depth_plots/{sample}/*_depth.png);
+            # 按样本分组折叠内嵌, 总上限 40 张, 超出仅列文件名 (避免巨型 HTML)
+            depth_root = None
+            for _root in (detect_dir / 'depth_plots', detect_dir / 'plots' / 'depth_plots'):
+                if _root.is_dir():
+                    depth_root = _root
+                    break
+            if depth_root is not None:
+                by_sample = {}
+                for sdir in sorted(depth_root.iterdir()):
+                    if not sdir.is_dir(): continue
+                    files = [f for f in sorted(sdir.glob("*_depth.png")) if f.is_file()]
+                    if files: by_sample[sdir.name] = files
+                if by_sample:
+                    _DEPTH_CAP = 40
+                    n_total = sum(len(v) for v in by_sample.values())
+                    stage_sections += '<h3 style="color:var(--ink-secondary);font-size:14px;margin-top:12px">Sequencing Depth Plots</h3>'
+                    stage_sections += (f'<p style="color:var(--ink-secondary);font-size:11px;margin:2px 0">'
+                                       f'{n_total} per-virus depth plots across {len(by_sample)} samples '
+                                       f'(max {_DEPTH_CAP} embedded; remaining listed by filename)</p>')
+                    n_embedded = 0
+                    overflow = []
+                    for sname in sorted(by_sample):
+                        stage_sections += f'<details style="margin:4px 0"><summary style="font-weight:600;color:var(--accent);cursor:pointer;font-size:13px">{_esc(sname)} ({len(by_sample[sname])} plots)</summary><div class="chart-gallery" style="margin-top:6px">'
+                        for f in by_sample[sname]:
+                            if n_embedded >= _DEPTH_CAP:
+                                overflow.append(f"{sname}/{f.name}")
+                                continue
+                            b64 = img_to_base64(str(f), 2000)
+                            if b64:
+                                stage_sections += f'<div class="chart-card"><div class="chart-title">{_esc(f.name)}</div><img src="data:image/png;base64,{b64}" loading="lazy" alt="{_esc(f.name)}"></div>'
+                            else:
+                                stage_sections += _img_placeholder(f.name)
+                            n_embedded += 1
+                        stage_sections += '</div></details>'
+                    if overflow:
+                        stage_sections += f'<details style="margin:4px 0"><summary style="font-size:12px;color:var(--ink-secondary);cursor:pointer">Not embedded &mdash; {len(overflow)} plots over the {_DEPTH_CAP}-plot cap</summary>'
+                        stage_sections += ''.join(f'<p style="font-size:11px;color:var(--ink-secondary);margin:2px 0">{_esc(o)}</p>' for o in overflow)
+                        stage_sections += '</details>'
         # Stage 9: DVG per-virus statistics table
         if sn == 9:
             dvg_m = out / os.path.join(_D['a_dvg'], 'Summary_Analysis_Report/Matrix_Sample_Wise_Recombination_Statistics.csv')
@@ -1295,6 +1361,31 @@ def generate_html(out_dir, out_html, viruses, ai_html="", stage_summaries=None):
                     note = f'0 (all {n_asm} filtered)' if n_asm > 0 else '-'
                     rows += f'<tr><td>{_esc(sp)}</td><td>{_esc(acc)}</td><td>{note}</td><td>-</td><td>-</td><td>-</td><td>-</td></tr>'
             stage_sections += '<div class="tb-scroll"><table style="font-size:12px;margin-top:8px"><tr><th>Species</th><th>Accession</th><th>Numbers</th><th>Avg bp</th><th>Min bp</th><th>Max bp</th><th>N%</th></tr>' + rows + '</table></div>'
+        # [P2-24j] Stage 5: assembly_stats 图内嵌 (原先只由 copy_results_to_report 复制、不内嵌);
+        # 阶段级单图 (非每病毒), png 优先, 仅 pdf 时走既有 <object> 通道 (阈值 1000KB),
+        # 超限/缺 png 时保留原复制行为并给文件名占位卡
+        if sn == 5:
+            _ext_dir = _resolve_dir(out_dir, _D['a_extract'])
+            asm_png = _ext_dir / "assembly_stats.png"
+            asm_pdf = _ext_dir / "assembly_stats.pdf"
+            s5_plot_html = ""
+            if asm_png.is_file():
+                b64_a = img_to_base64(str(asm_png), 2000)
+                if b64_a:
+                    s5_plot_html = (f'<div class="chart-card"><div class="chart-title">Assembly Stats</div>'
+                                    f'<img src="data:image/png;base64,{b64_a}" loading="lazy" alt="assembly_stats.png"></div>')
+            if not s5_plot_html and asm_pdf.is_file():
+                b64_ap = img_to_base64(str(asm_pdf), 1000)
+                if b64_ap:
+                    s5_plot_html = (f'<div class="chart-card"><div class="chart-title">Assembly Stats (PDF)</div>'
+                                    f'<object data="data:application/pdf;base64,{b64_ap}" type="application/pdf" width="100%" height="500px"><p>PDF</p></object></div>')
+                else:
+                    s5_plot_html = _img_placeholder("assembly_stats.pdf (copied to S5_Assembly_Stats/)")
+            elif not s5_plot_html and asm_png.is_file():
+                s5_plot_html = _img_placeholder("assembly_stats.png (copied to S5_Assembly_Stats/)")
+            if s5_plot_html:
+                stage_sections += '<h3 style="color:var(--ink-secondary);font-size:14px;margin-top:12px">Assembly Stats Plot</h3>'
+                stage_sections += s5_plot_html
         if has_sub:
             stage_sections += '<div style="margin-left:20px">'
             for acc, data in sorted(viruses.items()):
@@ -1401,14 +1492,7 @@ def generate_html(out_dir, out_html, viruses, ai_html="", stage_summaries=None):
                         stage_sections += '<p style="color:var(--ink-secondary);font-size:12px">DVG charts not available for this virus.</p>'
                 else:
                     # S3/S4/S7/S8: locate per-virus result files
-                    if sn == 2:
-                        fp_filter = out / _D['a_filter'] / "filter_summary_plot.png"
-                        b64_f = img_to_base64(fp_filter, 3000)
-                        if b64_f:
-                            stage_sections += f'<div class="chart-card"><div class="chart-title">Filter Summary</div><img src="data:image/png;base64,{b64_f}" loading="lazy" alt="Filter Summary"></div>'
-                        else:
-                            stage_sections += '<p style="color:var(--ink-secondary);font-size:12px">Filter summary plot not available.</p>'
-                    elif sn == 5:
+                    if sn == 5:
                         # Count extracted contigs per virus
                         ext_dir = _resolve_dir(out_dir, _D['a_extract'])
                         vd = _find_virus_dir(ext_dir, acc)
@@ -1431,6 +1515,32 @@ def generate_html(out_dir, out_html, viruses, ai_html="", stage_summaries=None):
                             stage_sections += f'<tr><td>{vs.get("samples","?")}</td><td>{ref_len}</td><td>{cov_s}</td><td>{depth_s}</td><td>{pi_s}</td><td>{sh_s}</td></tr></table>'
                         else:
                             stage_sections += '<p style="color:var(--ink-secondary);font-size:12px">No variant summary available.</p>'
+                        # [P2-24k] 产物清单: S3 无可内嵌图 (VCF/consensus/SnpEff 注释均为文本产物),
+                        # 列出 03_Variants/ 下本病毒的实际文件名, 消除"该阶段在报告里无实体产物痕迹"
+                        artifacts = []
+                        _ART_CAP = 15
+                        for sub_rel, globs in (
+                            ("virus-variants", ("*.filtered.vcf", "*.variants.vcf")),
+                            ("virus-consensus", ("*.consensus.fasta", "*.fasta", "*.fa")),
+                            ("virus-SnpEff", ("*.ann.vcf", "*.annotation_summary.tsv")),
+                        ):
+                            if len(artifacts) >= _ART_CAP: break
+                            subd = out / _D['a_variants'] / sub_rel
+                            if not subd.is_dir(): continue
+                            vd = _find_virus_dir(subd, acc)
+                            if not vd: continue
+                            _seen = set()
+                            for g in globs:
+                                for f in sorted(vd.rglob(g)):
+                                    if len(artifacts) >= _ART_CAP: break
+                                    if not f.is_file() or f in _seen: continue
+                                    _seen.add(f)
+                                    artifacts.append(f"{sub_rel}/{vd.name}/{f.relative_to(vd).as_posix()}")
+                        if artifacts:
+                            stage_sections += f'<details style="margin:6px 0"><summary style="font-weight:600;color:var(--accent);cursor:pointer;font-size:13px">Stage artifacts ({len(artifacts)}) &mdash; VCF / consensus / SnpEff</summary>'
+                            for a in artifacts:
+                                stage_sections += f'<p style="font-size:11px;color:var(--ink-secondary);margin:2px 0"><code>{_esc(a)}</code></p>'
+                            stage_sections += '</details>'
                     elif sn == 4:
                         # Stage 4: Assembly - per-sample stage evolution
                         asm_data = assembly_summary.get(acc, {})
@@ -1532,6 +1642,7 @@ def generate_html(out_dir, out_html, viruses, ai_html="", stage_summaries=None):
 
     funnel_section = _build_funnel_section(out)
     html = f"""<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<!-- impeccable-disable numbered-section-markers,em-dash-overuse: stage IDs are pipeline identifiers; CJK scientific copy -->
 <title>Virus Pipeline Report</title>
 <style>
 /* ═══════════════════════════════════════════
@@ -1646,7 +1757,7 @@ h3 {{font-size:15px; font-weight:600; color: var(--ink); margin:16px 0 6px}}
 .flow-arrow {{align-self:center;color:#b9c2cf;padding:0 6px;font-size:13px;user-select:none}}
 .skip-chip {{
   display:flex;align-items:center;gap:8px;padding:11px 14px;margin:4px 0;
-  background:#fffbeb;border:1px solid #fde68a;border-left:3px solid var(--warning);
+  background:#fffbeb;border:1px solid #fde68a;
   border-radius:var(--radius);font-size:12px;line-height:1.5;color:#92400e;
 }}
 @media print {{
@@ -1759,7 +1870,7 @@ section {{margin-bottom:22px; padding-top:8px; scroll-margin-top:20px}}
   content:'\\25B2'; font-size:8px; transition:transform 0.15s; margin-left:auto;
 }}
 .nav-header.collapsed::after {{transform:rotate(180deg)}}
-.nav-sub {{overflow:hidden; max-height:2000px; transition:max-height 0.25s ease}}
+.nav-sub {{overflow:hidden; max-height:2000px}}
 .nav-sub.collapsed,.stage-sub {{max-height:0}}
 .stage-toggle::after {{content:' \\25BC';font-size:7px;margin-left:4px;opacity:.4}}
 .stage-toggle.expanded::after {{content:' \\25B2'}}
@@ -1818,9 +1929,8 @@ section {{margin-bottom:22px; padding-top:8px; scroll-margin-top:20px}}
   *, *::after {{transition-duration:0s!important; animation-duration:0s!important}}
 }}
 
-/* ── Responsive ── */
-@media (max-width:800px) {{
-  .sidebar{{display:none}}.main{{margin-left:0; padding:20px 16px}}
+/* ── Responsive（2026-10-17 用户裁定：侧栏常驻，不再随宽度隐藏）── */
+@media (max-width:560px) {{
   #back-to-top{{right:12px; bottom:12px}}
 }}
 @media print {{
@@ -1987,7 +2097,8 @@ window.addEventListener('scroll',function(){{
 </main>
 <div class="lightbox" id="lightbox" onclick="if(event.target===this)closeLightbox()">
     <button class="lightbox-close" onclick="closeLightbox()" aria-label="Close">&times;</button>
-    <img id="lightbox-img" src="" alt="">
+    <!-- impeccable-disable-next-line broken-image -- src is assigned by openLightbox JS -->
+    <img id="lightbox-img" alt="">
     <div class="lightbox-caption" id="lightbox-caption"></div>
     <button class="lightbox-dl" id="lightbox-dl" onclick="downloadLightbox()">Download</button>
 </div>
@@ -2188,7 +2299,7 @@ function runVirusAI(sn,acc){{
     }}).catch(e=>{{target.textContent='Error: '+e;}});
 }}
 </script>
-</body></html>"""
+{_TW}</body></html>"""
 
     with open(out_html, "w", encoding="utf-8") as f:
         f.write(html)
@@ -2307,6 +2418,17 @@ def copy_results_to_report(out_dir, report_dir):
         for vdir in cap_dir.iterdir():
             if vdir.is_dir() and not vdir.name.startswith("run_"):
                 _cp(str(vdir.relative_to(out)), f"S7_Capheine/{vdir.name}")
+    # Stage 7 (phylo): --phylo-root 提供时额外打包 ⑤ capheine 位点统计图
+    if PHYLO_ROOT is not None:
+        pr = Path(PHYLO_ROOT)
+        if pr.is_dir():
+            for f in sorted(pr.rglob("selection_per_gene.*")):
+                if f.is_file():
+                    try:
+                        acc = f.parts[f.parts.index("gcva_analysis") - 1]
+                    except ValueError:
+                        acc = f.parent.parent.name
+                    _cp(str(f), f"S7_Capheine/{acc}/{f.name}")
 
     # Stage 8: Similarity (recursive: heatmaps are nested deep); 布局感知目录
     sim_dir = locate_analysis_dir(out, "similarity")
@@ -2536,6 +2658,9 @@ def main():
     parser.add_argument("-d", "--dir", required=True, help="Pipeline output root directory")
     parser.add_argument("-o", "--output", default=None, help="HTML report output path")
     parser.add_argument("--no_images", action="store_true", help="Skip image embedding (faster, smaller)")
+    parser.add_argument("--phylo-root", default=None,
+                        help="⑤ 系统发育管线输出根 (results_* 目录); 提供后 Stage 7 正选择节额外扫描 "
+                             "capheine 产物 (selection_per_gene 位点图 + drhip combined_summary 汇总)")
     # --ai-api-key: 编排器 auto_known_virus.py 传此名; --ai-key 为历史名, 两者等价
     parser.add_argument("--ai-key", "--ai-api-key", dest="ai_key", default="",
                         help="OpenAI/DeepSeek API key for AI summary")
@@ -2547,6 +2672,9 @@ def main():
     # --no_images: 关闭所有图片字节内嵌 (卡片保留文件名占位)
     global _SKIP_IMAGES
     _SKIP_IMAGES = bool(args.no_images)
+    # --phylo-root: ⑤ 管线输出根, Stage 7 正选择节据此扫描 capheine 产物
+    global PHYLO_ROOT
+    PHYLO_ROOT = Path(args.phylo_root) if getattr(args, "phylo_root", None) else None
     # Configure AI summary
     if args.ai_key:
         generate_ai_summary._provider = args.ai_provider

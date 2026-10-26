@@ -22,7 +22,16 @@ CONTACT = ('Zhang', 'Wenda', '', 'Ningxia University',
            'College of Life Sciences', 'Yinchuan', 'Ningxia', 'China', '', '750021')
 # 解包顺序: last, first, middle, affil, div, city, sub, country, street, postal
 
-BASE = Path(os.environ.get('MMPV_SUBMIT_BASE', '/home/zhangwenda/virus/data-2026/data-test'))
+# 以下路径均可用环境变量覆盖, 默认值为 2026-10-26 ssh 实测的服务器现网位置:
+#   BASE  → MMPV_SUBMIT_BASE (各数据集 *_out 目录的父目录)
+#   MIX   → MMPV_SUBMIT_MIX  (mix 数据集输出目录)
+#   T2ASN → MMPV_T2ASN       (table2asn 可执行文件绝对路径)
+# 旧默认 '/home/zhangwenda/virus/data-2026/...' 已整体不存在 (目录被迁移), 故更正;
+# 两份脚本原先的 MIX 前缀还不一致 (本文件多一段 data-2026/), 现统一。
+BASE = Path(os.environ.get('MMPV_SUBMIT_BASE',
+                           '/home/zhangwenda/MMPV-paper/goji-virome/02_novel_virus'))
+MIX = Path(os.environ.get('MMPV_SUBMIT_MIX',
+                          '/home/zhangwenda/virus/ningxiagouqi/11.merge_assembly/mix/out'))
 DATASETS = {
     'barbarum':   BASE / 'RNA-Lycium_barbarum_out',
     'ruthenicum': BASE / 'RNA-Lycium_ruthenicum_out',
@@ -31,8 +40,7 @@ DATASETS = {
     'Fusarium':   BASE / 'RNA-Fusarium_nematophilum_out',
     'Alternaria': BASE / 'RNA-Alternaria_alternata_out',
     'Aphis':      BASE / 'RNA-Aphis_gossypii_out',
-    'mix':        Path(os.environ.get('MMPV_SUBMIT_MIX',
-                                      '/home/zhangwenda/virus/data-2026/ningxiagouqi/11.merge_assembly/mix/out')),
+    'mix':        MIX,
 }
 HOST_MAP = {
     'barbarum': 'Lycium barbarum', 'ruthenicum': 'Lycium ruthenicum',
@@ -40,6 +48,7 @@ HOST_MAP = {
     'Fusarium': 'Fusarium nematophilum', 'Alternaria': 'Alternaria alternata',
     'Aphis': 'Aphis gossypii', 'mix': 'Lycium spp. (mixed samples)',
 }
+# table2asn 可执行文件; 可用环境变量 MMPV_T2ASN 覆盖 (默认值与服务器现网一致)
 T2ASN = os.environ.get('MMPV_T2ASN', '/home/zhangwenda/.pixi/bin/table2asn')
 
 SRC_COLS = ['Sequence_ID', 'Organism', 'Isolate', 'Collection_date', 'geo_loc_name',
@@ -221,11 +230,25 @@ def main():
     ds = sys.argv[1]
     csv_path = Path(sys.argv[2]) if len(sys.argv) > 2 else Path(f'/tmp/submission_csv_{ds}.csv')
     root = DATASETS.get(ds)
-    if not root or not root.exists():
-        print(f'[ERROR] 未知数据集或目录不存在: {ds}')
+    if not root:
+        print(f'[ERROR] 未知数据集: {ds}（可选: {", ".join(DATASETS)}）')
+        sys.exit(1)
+    if not root.is_dir():
+        hint = ''
+        if ds == 'mix':
+            hint = ('\n        mix 数据集目前无提交产物 (11.merge_assembly/ 仅 merge 中间文件);'
+                    ' 先跑提交管线, 或用 MMPV_SUBMIT_MIX 指向实际输出目录。')
+        print(f'[ERROR] 数据集目录不存在: {root}{hint}')
         sys.exit(1)
     sub = root / f'submission_{ds}_virome'
     sv, idn = sub / 'suvtk_submission', sub / 'id_norm'
+    for need in (idn / 'source_filled.src', sv / 'submission.sqn'):
+        if not need.exists():
+            print(f'[ERROR] 缺少必需文件: {need} — 该数据集尚未完成提交准备, 先跑 fix_sqn.py')
+            sys.exit(1)
+    if not csv_path.is_file():
+        print(f'[ERROR] CSV 不存在: {csv_path}')
+        sys.exit(1)
 
     # 1. 读入并校验
     rows = load_csv(csv_path)

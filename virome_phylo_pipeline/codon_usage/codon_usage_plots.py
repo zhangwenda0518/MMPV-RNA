@@ -8,13 +8,33 @@
 产出:
     ENC_plot.pdf/png    ENC vs GC3s 中性进化图 (Wright 1990 标准曲线,
                         无 GC3s 突变偏倚时期望 Nc=61 的上下包络)
-    PR2_plot.png        A3/(A3+T3) vs G3/(G3+C3) 奇偶偏差 (等价 A/T=G/C 平衡点 0.5,0.5)
-    neutrality_plot.png GC12 vs GC3s 中性线 (Sueoka 风格, 线性拟合+置信带)
-    RSCU_heatmap.png    密码子×样本 RSCU 热图 (氨基酸分组条带标注)
+    PR2_plot.pdf/png    A3/(A3+T3) vs G3/(G3+C3) 奇偶偏差 (等价 A/T=G/C 平衡点 0.5,0.5)
+    neutrality_plot.pdf/png  GC12 vs GC3s 中性线 (Sueoka 风格, 线性拟合+置信带)
+    RSCU_heatmap.pdf/png     密码子×样本 RSCU 热图 (氨基酸分组条带标注)
                         (样本 >40 时自动抽 top-N by 编码长度, 防高瘦图)
 
 依赖: matplotlib + numpy + pandas (服务器 mambaforge 均有); 无 seaborn。
 """
+
+# ── 图件四格式导出 (SVG / PNG / PDF / PNG@1200dpi) — 默认开启 ──────────
+# 2026-10-20: 所有出图脚本统一口径; 用 MMPV_FIG_EXPORT=0 可整体关闭,
+# MMPV_FIG_FORMATS=svg,png,pdf,hires 可裁剪, MMPV_FIG_HIRES_DPI 可改高清 dpi。
+try:
+    from mmpv_common.figure_export import install_savefig_hook as _install_fig_hook
+except ImportError:  # 仓库根不在 sys.path (脚本被单独执行) → 向上找 mmpv_common/
+    import os as _os
+    import sys as _sys
+    _d = _os.path.dirname(_os.path.abspath(__file__))
+    while _d and not _os.path.isdir(_os.path.join(_d, "mmpv_common")):
+        _parent = _os.path.dirname(_d)
+        if _parent == _d:
+            break
+        _d = _parent
+    if _d and _d not in _sys.path:
+        _sys.path.insert(0, _d)
+    from mmpv_common.figure_export import install_savefig_hook as _install_fig_hook
+_install_fig_hook()
+# ──────────────────────────────────────────────────────────────────────
 import argparse
 import os
 import sys
@@ -222,7 +242,8 @@ def rscu_heatmap(df, rscu, outdir, max_samples=40):
     cb.set_label("RSCU", fontsize=8)
     cb.ax.tick_params(labelsize=7)
     ax.set_title(f"RSCU heatmap (n={len(r)})", fontsize=10, pad=6)
-    for ext in ("png",):
+    # 2026-10-16: 由仅 PNG 补齐 PDF (双格式口径; 与 ENC/PR2/neutrality 三图一致)
+    for ext in ("png", "pdf"):
         fig.savefig(os.path.join(outdir, f"RSCU_heatmap.{ext}"))
     plt.close(fig)
 
@@ -246,7 +267,8 @@ def main():
     neutrality_plot(df, outdir)
     rscu_heatmap(df, rscu, outdir)
     print(f"codon usage plots -> {outdir}\n"
-          f"  ENC_plot.png/pdf, PR2_plot.png/pdf, neutrality_plot.png/pdf, RSCU_heatmap.png")
+          f"  ENC_plot.png/pdf, PR2_plot.png/pdf, neutrality_plot.png/pdf, "
+          f"RSCU_heatmap.png/pdf")
     print(f"  (n = {len(df)} sequences)")
 
 

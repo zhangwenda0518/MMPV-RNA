@@ -9,8 +9,10 @@ virus_detection_summary.py — 病毒检测结果综合表（panvirome 风格）
 
 用法:
   python virus_detection_summary.py \
-    --base ~/virus/data-2026/known_virus_all_v2 \
+    --base <04_Analysis 输出根> \
     --out virus_detection_summary.tsv
+  # 例: --base ~/MMPV-paper/goji-virome/04_Analysis
+  # (旧示例根 ~/virus/data-2026/known_virus_all_v2 已于 2026-10 前从服务器删除)
 """
 import argparse
 import os

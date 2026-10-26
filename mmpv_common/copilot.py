@@ -28,7 +28,12 @@ import json
 import re
 import shlex
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+
+# 仓库根 (copilot.py 在 mmpv_common/ 下)。仅用于「脚本是否还在仓库里」的存在性判定,
+# 不参与任何路径拼接执行 —— 本模块【不执行】命令。
+_REPO_ROOT = Path(__file__).resolve().parent.parent
 
 try:
     from mmpv_common import stage_cards
@@ -72,6 +77,12 @@ class CommandSpec:
     stage_required: bool = False                     # --stage 本身是否 argparse 必填 (required=True)
     subcommands: Tuple[SubCommand, ...] = ()         # 顶层子命令 (仅 submission)
     aliases: Tuple[Tuple[str, str], ...] = ()        # 短选项 → 长选项 (canonical 名)
+    # 编排器已被归档时, 填其**真实**仓库相对路径 (如 "archive/2026.../x.py")。
+    # 非空 ⟹ 该 spec 只用于「历史命令仍可校验」, 不可运行:
+    #   · `script` 保留历史路径 (validate/_match_spec 要认得老命令 & 老文档里的写法);
+    #   · `archived_to` 指向真实位置, 两条路径都算命中;
+    #   · validate() 做存在性判定, 命中归档 spec → 明确警告 + 强制人工确认门。
+    archived_to: str = ""
 
 
 # ── ② data_preprocessing.py (--help 逐条核对, 2026-10) ─────────────────
@@ -105,7 +116,7 @@ _DISC_RUN_FLAGS = ("--skip_clean", "--skip_depletion", "--skip_clumpify", "--dry
                    "--keep_rrna", "--keep_taxids", "--vmtouch", "--rrna_chunk_size",
                    "--rrna_report", "--deplete_steps", "--align_config", "--deplete_debug",
                    "--refinec_threads", "--refinec_frag_min_len", "--refinec_min_id",
-                   "--refinec_min_cov")
+                   "--refinec_min_cov", "--n-total-samples")
 # assembly / identification / cobra / cluster
 _DISC_ASM_FLAGS = ("--asm_tmp_dir", "--asm_keep_temp", "--nr_db", "--skip_uniprot_filter",
                    "--skip_nr_filter", "--skip_id_plots", "--clean_failed", "--ident_ext",
@@ -262,11 +273,15 @@ COMMAND_SPECS: Dict[str, CommandSpec] = {
         hint="python public_metadata_pipeline/build_host_pipeline.py "
              "--species 'Solanum lycopersicum' --taxid 4081 --stage all --threads 30",
     ),
-    # ⑥ EVE 已归档 2026-10-11 → archive/20261011_endogenous_virus_pipeline;
-    # spec 保留 (test_agent_tools/test_ai_driven 的 validate 用例依赖; 历史命令仍可校验)
+    # ⑥ EVE 已归档 2026-10-11 → archive/20261011_endogenous_virus_pipeline/。
+    # spec 保留 (test_agent_tools/test_ai_driven 的 validate 用例依赖; 历史命令仍可校验)。
+    # `script` 故意保留归档前的历史路径 —— 老日志/老文档里的命令写法必须继续认得;
+    # 真实位置写在 `archived_to`, _match_spec 两条路径都命中, validate 会做存在性判定
+    # 并给出「已归档, 真实路径在此」的警告 + 强制人工确认门 (永不自动执行)。
     "eve": CommandSpec(
         key="eve",
         script="endogenous_virus_pipeline/eve_screen.py",
+        archived_to="archive/20261011_endogenous_virus_pipeline/eve_screen.py",
         desc="⑥ EVE 内源病毒筛查【已归档, 不可运行】(discover/verdict/annotate)",
         stages=("all", "discover", "verdict", "annotate"),
         required=("-o",),
@@ -364,7 +379,30 @@ def _match_spec(script_token: str) -> Optional[CommandSpec]:
     for spec in COMMAND_SPECS.values():
         if t.endswith(spec.script) or t == spec.script:
             return spec
+        # 已归档 spec: 归档后的真实路径同样命中 (两条路径都认, 老命令不失效)
+        if spec.archived_to and (t.endswith(spec.archived_to) or t == spec.archived_to):
+            return spec
     return None
+
+
+def _script_state(spec: CommandSpec) -> str:
+    """脚本落盘状态: "live" | "archived" | "missing"。
+
+    仅做存在性判定, 不执行任何东西。用 `archived_to` 区分「本来就没写」和
+    「曾经有、现在被归档了」—— 后者要给出可操作的真实路径, 不能只说文件不存在。
+    """
+    if (_REPO_ROOT / spec.script).is_file():
+        return "live"
+    if spec.archived_to and (_REPO_ROOT / spec.archived_to).is_file():
+        return "archived"
+    return "missing"
+
+
+def _archived_warning(spec: CommandSpec) -> str:
+    """归档 spec 的警告文案 —— 必须给出真实路径, 否则等于换个地方断链。"""
+    return (f"脚本已归档: {spec.script} 不在仓库现状里; 真实路径 "
+            f"{spec.archived_to} (归档 ≠ 可运行: 该 spec 仅用于历史命令校验, "
+            f"不建议直接执行归档副本)")
 
 
 # 允许出现在脚本之前的解释器/启动器词元 (python / pixi run 等)
@@ -509,12 +547,20 @@ def validate(command: str) -> ValidationResult:
     for f_ in dangerous_hit:
         warnings.append(f"危险参数 {f_}: 将强制重跑已完成阶段, 请确认磁盘与时长预算")
 
+    # ── 归档断链防护: spec 的脚本已不在仓库现状 (被归档) 时, 说清楚真实路径 ──
+    # 这类 spec 保留只为「历史命令仍可校验」, 绝不能被当成可跑命令放行:
+    # ok 时强制人工确认门 (agent 收到 requires_confirmation 且无 confirm_fn 会直接跳过)。
+    archived = _script_state(spec) == "archived"
+    if archived:
+        warnings.append(_archived_warning(spec))
+
     plan = Plan(spec=spec, tokens=full_tokens, stages=stages, flags=flags,
                 subcommand=sub.name if sub is not None else "")
     preview = dry_run_preview(plan)
-    # 危险 flag 才需要"先确认再跑"; 校验失败就是拒绝 (ok=False), 不是"确认后可跑"
+    # 危险 flag 才需要"先确认再跑"; 校验失败就是拒绝 (ok=False), 不是"确认后可跑"。
+    # 归档 spec 校验通过时同样置确认门 (它压根不该被执行)。
     return ValidationResult(ok=not errors, errors=errors, warnings=warnings,
-                            requires_confirmation=bool(dangerous_hit),
+                            requires_confirmation=bool(dangerous_hit) or (archived and not errors),
                             preview=preview)
 
 
@@ -523,6 +569,10 @@ def dry_run_preview(plan: Plan) -> str:
         f"[dry-run 预览] 管线: {plan.spec.key} — {plan.spec.desc}",
         f"脚本: {plan.spec.script}",
     ]
+    if _script_state(plan.spec) == "archived":
+        # 预览里也要显式标出, 否则人只看到「脚本: <旧路径>」会以为能直接粘终端跑。
+        # 用 [归档] 而非 emoji: Windows GBK 控制台 print 会 UnicodeEncodeError。
+        lines.append(f"[归档] 不可运行; 真实路径: {plan.spec.archived_to}")
     if plan.subcommand:
         lines.append(f"子命令: {plan.subcommand}")
     lines.append(f"stage: {' '.join(plan.stages) if plan.stages else '(编排器默认)'}")
@@ -586,7 +636,8 @@ def _stages_text() -> str:
             choices = "子命令: " + " ".join(s.name for s in spec.subcommands)
         else:
             choices = " ".join(spec.stages)
-        lines.append(f"{spec.key} ({spec.script}): {choices}")
+        tag = " [已归档, 不可运行]" if spec.archived_to else ""
+        lines.append(f"{spec.key} ({spec.script}){tag}: {choices}")
     return "\n".join(lines)
 
 

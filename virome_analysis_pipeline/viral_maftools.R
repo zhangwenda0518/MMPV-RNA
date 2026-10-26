@@ -1,4 +1,32 @@
 #!/usr/bin/env Rscript
+# ── 图件四格式导出 (SVG / PNG / PDF / PNG@1200dpi) — 默认开启 ──────────
+# 2026-10-20: 所有出图脚本统一口径; MMPV_FIG_EXPORT=0 可整体关闭。
+# 钩子只拦截 ggsave(); pdf()/png() 直写的老代码请改用 save_figure()。
+local({
+  .find_repo <- function(start) {
+    d <- normalizePath(start, mustWork = FALSE)
+    repeat {
+      if (dir.exists(file.path(d, "mmpv_common"))) return(d)
+      p <- dirname(d)
+      if (identical(p, d)) return(NA_character_)
+      d <- p
+    }
+  }
+  .here <- tryCatch({
+    a <- commandArgs(FALSE)
+    f <- sub("^--file=", "", a[grep("^--file=", a)])
+    if (length(f)) dirname(normalizePath(f[1], mustWork = FALSE)) else getwd()
+  }, error = function(e) getwd())
+  .root <- .find_repo(.here)
+  if (is.na(.root)) .root <- .find_repo(getwd())
+  if (!is.na(.root)) {
+    source(file.path(.root, "mmpv_common", "figure_export.R"), local = FALSE)
+    install_ggsave_hook()
+  } else {
+    message("[figure_export] 未找到 mmpv_common/, 跳过四格式导出")
+  }
+})
+# ──────────────────────────────────────────────────────────────────────
 
 # =========================================================
 # 脚本名称：master_viral_maftools.R (The Masterpiece Edition v20)
@@ -229,14 +257,13 @@ cat(sprintf("   => 项目矩阵装甲达成 | N=%d | 有效突变总量=%d\n", n
 
 # ================== 渲染流水线 ==================
 safe_plot <- function(filepath, width, height, call_expr) {
-  pdf(filepath, width = width, height = height)
-  res <- tryCatch({ suppressWarnings(eval(call_expr)); TRUE }, error = function(e) { cat("   -[拦截]: ", e$message, "\n"); FALSE })
-  while(dev.cur() > 1) dev.off(); if(!res && file.exists(filepath)) file.remove(filepath)
-  # PNG version
-  png_path <- sub("\\.pdf$", ".png", filepath)
-  png(png_path, width = width, height = height, units = "in", res = 300)
-  res2 <- tryCatch({ suppressWarnings(eval(call_expr)); TRUE }, error = function(e) { cat("   -[PNG拦截]: ", e$message, "\n"); FALSE })
-  while(dev.cur() > 1) dev.off(); if(!res2 && file.exists(png_path)) file.remove(png_path)
+  # 2026-10-20: 四格式统一 (SVG/PNG/PDF/PNG@1200dpi); 每格式各重画一次
+  out <- tryCatch(
+    draw_figure_formats(function() eval(call_expr), filepath,
+                        width = width, height = height),
+    error = function(e) { cat("   -[拦截]: ", e$message, "\n"); list() })
+  if (!length(out) && file.exists(filepath)) file.remove(filepath)
+  invisible(out)
 }
 
 cat("\n================ 基因空间绘图起跑 ================\n")

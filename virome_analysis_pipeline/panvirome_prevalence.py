@@ -27,7 +27,7 @@ CheckV 完备性、以及 taxonomy 的完整分类等级，生成一张"序列�
 
 用法示例:
   python panvirome_prevalence.py \
-      --base ~/virus/data-2026/data-test \
+      --base /home/zhangwenda/MMPV-paper/goji-virome/02_novel_virus \
       --species barbarum,ruthenicum,chinense,amarum \
       --detect-tag bowtie2 \
       --out prevalence_full_table.tsv

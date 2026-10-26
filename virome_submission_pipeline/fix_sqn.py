@@ -27,10 +27,23 @@ if _REPO_ROOT not in sys.path:
 from mmpv_common.io_layout import layout_dirs as _layout_dirs
 _D = _layout_dirs(os.environ.get("MMPV_IO_LAYOUT"))
 
-BASE = Path(os.environ.get('MMPV_SUBMIT_BASE', '/home/zhangwenda/virus/data-2026/data-test'))
-MIX = Path(os.environ.get('MMPV_SUBMIT_MIX', '/home/zhangwenda/virus/ningxiagouqi/11.merge_assembly/mix/out'))
+# 以下三个路径均可用环境变量覆盖, 默认值为 2026-10-26 ssh 实测的服务器现网位置:
+#   BASE   → MMPV_SUBMIT_BASE   (各数据集 *_out 目录的父目录)
+#   MIX    → MMPV_SUBMIT_MIX    (mix 数据集输出目录)
+#   CORE13 → MMPV_SUBMIT_CORE13 (Global_Unified_Metadata_Core13.tsv)
+# 实测依据: 7 个 RNA-*_out 及其 submission_<ds>_virome 均在 02_novel_virus/ 下;
+#           Core13 在 01_data/sra_rna.data4/global_metadata/ 下 (159,722 B, 07-29)。
+# 旧默认 '/home/zhangwenda/virus/data-2026/...' 已整体不存在 (目录被迁移), 故更正。
+# 注意: mix 数据集在服务器上**尚无提交产物** (11.merge_assembly/ 只有 merge 中间文件,
+#       mix/out 不存在、全盘无 submission_mix_virome) → 用 mix 前须先跑提交管线,
+#       或用 MMPV_SUBMIT_MIX 指向实际输出目录。
+BASE = Path(os.environ.get('MMPV_SUBMIT_BASE',
+                           '/home/zhangwenda/MMPV-paper/goji-virome/02_novel_virus'))
+MIX = Path(os.environ.get('MMPV_SUBMIT_MIX',
+                          '/home/zhangwenda/virus/ningxiagouqi/11.merge_assembly/mix/out'))
 CORE13 = Path(os.environ.get('MMPV_SUBMIT_CORE13',
-                            '/home/zhangwenda/virus/data-2026/sra_rna.data4/global_metadata/Global_Unified_Metadata_Core13.tsv'))
+                             '/home/zhangwenda/MMPV-paper/goji-virome/01_data/sra_rna.data4'
+                             '/global_metadata/Global_Unified_Metadata_Core13.tsv'))
 
 DATASETS = {
     'barbarum': BASE / 'RNA-Lycium_barbarum_out',
@@ -333,6 +346,16 @@ def main():
     print(f'Core13 元数据: {len(meta_all)} 条 Run')
     for name, out_root in DATASETS.items():
         if only and name != only:
+            continue
+        # 数据集可能尚未跑到提交阶段 (mix 当前就没有产物): 明确跳过, 不要报"异常"
+        sub = out_root / f'submission_{name}_virome'
+        if not out_root.is_dir():
+            hint = ('  ← mix 需先跑提交管线, 或用 MMPV_SUBMIT_MIX 指向实际输出目录'
+                    if name == 'mix' else '')
+            print(f'[{name}] ⊘ 跳过: 数据集目录不存在 ({out_root}){hint}')
+            continue
+        if not sub.is_dir():
+            print(f'[{name}] ⊘ 跳过: 无提交准备目录 ({sub})')
             continue
         try:
             process(name, out_root, meta_all)

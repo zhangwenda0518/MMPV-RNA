@@ -25,6 +25,12 @@ from Bio import AlignIO
 from Bio.Seq import Seq
 from Bio import BiopythonWarning
 
+# 2026-10-16: 图件双格式 (PNG+PDF 同主名); 双路径 import 容忍脚本直跑
+try:
+    from utils.plot_io import save_both
+except ImportError:                              # pragma: no cover
+    from plot_io import save_both
+
 warnings.simplefilter('ignore', BiopythonWarning)
 
 def get_args():
@@ -45,6 +51,9 @@ def get_args():
                         help="drhip 结果文件路径 (如: drhip/combined_sites.csv)")
     parser.add_argument("--clndir", type=str, default="hyphy/CLN",
                         help="密码子比对文件所在目录 (默认: hyphy/CLN)")
+    parser.add_argument("--ref-id", dest="ref_id", type=str, default=None,
+                        help="图题显示用的参考序列 ID (如 OR489165.1 或病毒名); "
+                             "不传时回退从 DRHIP 基因前缀推断 (新版 capheine 前缀是内部文件名, 显示不友好)")
     
     # 手动模式参数
     parser.add_argument("-i", "--input", type=str, help="输入比对文件 (FASTA)")
@@ -57,10 +66,14 @@ def get_args():
     
     return parser.parse_args()
 
-def parse_drhip_csv(drhip_file, cln_dir):
+def parse_drhip_csv(drhip_file, cln_dir, ref_id=None):
     """
     解析 capheine DRHIP combined_sites.csv.
     兼容多种选择标记: fel_selection=positive / prime_marker 非空 / meme_marker p<0.05.
+    ref_id: 图题显示用的参考序列 ID (如 OR489165.1)。不传时回退旧逻辑
+    (gene_prefix.split('.cds')[0]); 2026-10-15 起新版 capheine 的基因前缀是
+    ref_cds-noStopCodons.part_L (无 .cds 段), 旧逻辑会把内部文件名当参考 ID
+    显示在图题 —— 主管线经 --ref-id 传入病毒名, 此处再智能截取登录号。
     """
     print(f"[*] 正在解析 DRHIP 综合统计报告: {drhip_file}")
     if not os.path.exists(drhip_file):
@@ -86,13 +99,20 @@ def parse_drhip_csv(drhip_file, cln_dir):
             except (ValueError, IndexError):
                 continue
 
-            # Judge significance: fel_selection=positive OR prime_marker non-empty OR meme qval < 0.05
-            # 历史坑: DRHIP 无 meme_marker 列 (真实列 meme_pval/meme_qval), 回退默认索引 2
-            # 落在 composition 列上 → float() 恒 ValueError 被 camera → MEME 位点全部静默丢失
+            # Judge significance: fel_selection=positive OR prime_marker non-empty OR meme p/qval < 0.05
+            # 历史坑 (2026-10-15 修): DRHIP 列名随版本变过 —— 旧版 meme_pval/meme_qval,
+            # 当前版 meme_marker。旧回退逻辑按固定数字索引兜底, 当前表头下落在
+            # majority_residue (字母) 上 → float() 恒 ValueError → MEME-only 位点
+            # (论文图 L:1047 即此类) 全部静默丢失。现按列名识别, 认不出则不启用
+            # MEME 判据, 不再盲猜索引。
             is_positive = False
             fel_col = header_map.get('fel_selection', 5)
             prime_col = header_map.get('prime_marker', 6)
-            meme_col = header_map.get('meme_qval', header_map.get('meme_pval', 7))
+            meme_col = None
+            for _k in ('meme_qval', 'meme_pval', 'meme_marker'):
+                if _k in header_map:
+                    meme_col = header_map[_k]
+                    break
 
             if len(row) > fel_col and str(row[fel_col]).strip().lower() == 'positive':
                 is_positive = True
@@ -109,10 +129,16 @@ def parse_drhip_csv(drhip_file, cln_dir):
             if not is_positive:
                 continue
 
-            ref_id = gene_prefix.split('.cds')[0]
+            if ref_id:
+                # 智能截取登录号: Cytorhabdovirus_sp_lycii_OR489165.1 → OR489165.1
+                # (末段含 '.' 且含数字视为登录号; PSTVd 这类无登录号名保持原样)
+                tail = ref_id.rsplit('_', 1)[-1]
+                disp_ref = tail if ('.' in tail and any(c.isdigit() for c in tail)) else ref_id
+            else:
+                disp_ref = gene_prefix.split('.cds')[0]
             fasta_path = os.path.join(cln_dir, f"{gene_prefix}-nodups.fasta")
             if fasta_path not in tasks:
-                tasks[fasta_path] = {'ref': ref_id, 'sites': set()}
+                tasks[fasta_path] = {'ref': disp_ref, 'sites': set()}
             tasks[fasta_path]['sites'].add(site)
             positive_count += 1
 
@@ -191,7 +217,9 @@ def plot_publication_figure(df, file_basename, ref_id, site, outdir):
     plt.tight_layout()
     
     plot_file = os.path.join(outdir, f"{param_gene}_Protein_Site_{site}_Evolution.png")
-    plt.savefig(plot_file, dpi=300, bbox_inches='tight')
+    # 2026-10-16: 原先仅 PNG → save_both 按主名补出同名 PDF (双格式)。
+    # ⚠ 本函数走 pyplot 状态机 (plt.figure, 无 fig 变量) → 用 plt.gcf()。
+    save_both(plt.gcf(), plot_file, dpi=300, bbox_inches='tight')
     plt.close()
 
 def plot_gene_summary(summary_csv, outdir):
@@ -216,9 +244,11 @@ def plot_gene_summary(summary_csv, outdir):
         sig = ' ***' if pval < 0.001 else ' **' if pval < 0.01 else ' *' if pval < 0.05 else ''
         ax.text(v + max(df['positive_sites'])*0.02, i, f'{v}{sig}', va='center', fontweight='bold')
     plt.tight_layout()
-    fig.savefig(os.path.join(outdir, 'selection_per_gene.pdf'), dpi=300, bbox_inches='tight')
+    # 2026-10-16: 图件双格式 (PNG+PDF 同主名); 统一由 plot_io.save_both 收口。
+    # 原为 pdf(dpi300)+png(dpi150) 两行手写, 现 PNG 统一到 300 dpi 规范, PDF 参数不变。
+    _pdf_path = os.path.join(outdir, 'selection_per_gene.pdf')
     png_path = os.path.join(outdir, 'selection_per_gene.png')
-    fig.savefig(png_path, dpi=150, bbox_inches='tight')
+    save_both(fig, _pdf_path, png=png_path, dpi=300, bbox_inches='tight')
     plt.close()
     print(f"    [+] 基因总结图已生成: {png_path}")
 
@@ -281,7 +311,7 @@ def main():
     
     # 模式选择器
     if args.drhip:
-        tasks = parse_drhip_csv(args.drhip, args.clndir)
+        tasks = parse_drhip_csv(args.drhip, args.clndir, ref_id=args.ref_id)
         process_tasks(tasks, args.outdir)
     elif args.input and args.ref and args.sites:
         tasks = {args.input: {'ref': args.ref, 'sites': set(args.sites)}}

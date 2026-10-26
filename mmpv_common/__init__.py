@@ -15,8 +15,10 @@
   report_template -- 报告层 Jinja2 模板统一出口 (templates/*.html.j2,
                     autoescape + StrictUndefined, 零外部资源)
   provenance_export -- AI 参与溯源一键导出 (JSON + 方法学 MD, 零 AI 调用)
+  figure_export -- 图件四格式统一导出 (SVG/PNG/PDF/PNG@1200dpi + savefig 钩子)
 
 仓库根 mmpv_ai.py 为统一 CLI 入口; 设计论证见 doc/AI_DRIVEN_DESIGN.md。
+图件导出规范见 doc/FIGURE_EXPORT.md。
 """
 
 __version__ = "0.2.1"

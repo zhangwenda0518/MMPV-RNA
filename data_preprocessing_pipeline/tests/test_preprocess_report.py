@@ -8,6 +8,11 @@
   P2-6 表格/JSON 转义; P2-10 中位数偶数取均值
   (2026-10-13) seqkit 重跑临时随机路径批次不双倍累加 (只取最后一批;
   FINAL 稳定路径行为不回归); 比对率样本键带点样本名不被截断
+  (2026-10-16) 分节 HTML + 侧栏导航; 表尾 TOTAL 行; Fastp_Dup(%) 列;
+  每样本 fastp / kraken2 报告与资源表的相对链接 (缺失不渲染)
+  (2026-10-16 晚) 版式改回 ③ report_pipeline 老 stage 卡体系:
+  #stage-CleanData/#stage-HostDep/[#stage-BBNorm] + sb-item 侧栏 + chart-box
+  (chart_s00b + Show % 切换) + app-table/tfoot + 页尾 Handoff details
 """
 import importlib.util
 import json
@@ -202,12 +207,16 @@ def test_median_even_takes_mean():
 
 
 def test_generate_html_escapes_cells_and_json(tmp_path):
-    """样本名进表格要 HTML 转义; 进 <script> 的 JSON 要转义 '<' (不产生裸 script)。"""
+    """样本名进表格要 HTML 转义; 进 <script> 的 JSON 要转义 '<' (不产生裸 script)。
+
+    表尾带 TOTAL 行 (<tfoot>), Fastp_Dup(%) 列与 TSV 同步出现在表头。
+    """
     evil = "A&B<script>alert(1)</script>"
     rows = [{"Sample": evil, "Raw_Reads": 100, "Fastp_Clean_Reads": 90, "Fastp_Q30(%)": 90.0,
-             "Depletion_Input": 90, "After_Kraken2": None, "After_HostAlign": 80,
-             "After_rRNA": None, "Retained(%)": 88.9, "Aligner_Rate(%)": "UNPARSED",
-             "Final_Files": 2, "Final_Source": "depleted", "Status": "PASS"}]
+             "Fastp_Dup(%)": 12.3, "Depletion_Input": 90, "After_Kraken2": None,
+             "After_HostAlign": 80, "After_rRNA": None, "Retained(%)": 88.9,
+             "Aligner_Rate(%)": "UNPARSED", "Final_Files": 2, "Final_Source": "depleted",
+             "Status": "PASS"}]
     out = tmp_path / "r.html"
     pr.generate_html(rows, out, 20.0)
     html = out.read_text(encoding="utf-8")
@@ -216,12 +225,15 @@ def test_generate_html_escapes_cells_and_json(tmp_path):
     assert "\\u003cscript" in html
     assert json.dumps({"k": 1}) and "var CD=" in html
     assert "<th>Final_Source</th>" in html and "<th>Aligner_Rate(%)</th>" in html
+    assert "<th>Fastp_Dup(%)</th>" in html
+    assert "<tfoot>" in html and ">TOTAL<" in html
 
 
 def test_summary_tsv_has_source_column(tmp_path):
     """TSV 含来源列, TOTAL 行来源留空 (求和列不含字符串列)。"""
     rows = [{"Sample": "S1", "Raw_Reads": 10, "Fastp_Clean_Reads": None, "Fastp_Q30(%)": None,
-             "Depletion_Input": 10, "After_Kraken2": None, "After_HostAlign": 5, "After_rRNA": None,
+             "Fastp_Dup(%)": None, "Depletion_Input": 10, "After_Kraken2": None,
+             "After_HostAlign": 5, "After_rRNA": None,
              "Retained(%)": 50.0, "Aligner_Rate(%)": 95.5, "Final_Files": 2,
              "Final_Source": "normalized", "Status": "PASS"}]
     out = tmp_path / "s.tsv"
@@ -231,3 +243,135 @@ def test_summary_tsv_has_source_column(tmp_path):
     assert lines[1].split("\t")[pr.SUMMARY_COLS.index("Final_Source")] == "normalized"
     total = lines[-1].split("\t")
     assert total[0] == "TOTAL" and total[pr.SUMMARY_COLS.index("Final_Source")] == ""
+    assert total[pr.SUMMARY_COLS.index("Fastp_Dup(%)")] == ""    # 比率列不求和
+
+
+# ── fastp 重复率列 / 分节侧栏 / 明细链接 (2026-10-16 审计修复) ──────
+
+def _mk_row(sample="S1", source="depleted", status="PASS", **kw):
+    row = {"Sample": sample, "Raw_Reads": 1000, "Fastp_Clean_Reads": 900, "Fastp_Q30(%)": 93.0,
+           "Fastp_Dup(%)": 7.4, "Depletion_Input": 900, "After_Kraken2": None,
+           "After_HostAlign": 800, "After_rRNA": None, "Retained(%)": 88.9,
+           "Aligner_Rate(%)": 95.5, "Final_Files": 2, "Final_Source": source,
+           "Status": status}
+    row.update(kw)
+    return row
+
+
+def test_fastp_dup_rate_into_rows_and_tsv(tmp_path):
+    """fastp duplication.rate 不再丢弃: build_rows / SUMMARY_COLS / TSV 都带 Fastp_Dup(%)。"""
+    clean = tmp_path / "clean"; (clean / "logs").mkdir(parents=True)
+    (clean / "logs" / "S1_fastp_report.json").write_text(json.dumps({
+        "summary": {"before_filtering": {"total_reads": 1000},
+                    "after_filtering": {"total_reads": 900, "q30_rate": 0.93}},
+        "duplication": {"rate": 0.074},
+    }), encoding="utf-8")
+    _touch(clean / "3.clumpify" / "S1_1.fa.gz"); _touch(clean / "3.clumpify" / "S1_2.fa.gz")
+    row, = pr.build_rows(clean, None, 20.0)
+    assert "Fastp_Dup(%)" in pr.SUMMARY_COLS
+    assert row["Fastp_Q30(%)"] == 93.0 and row["Fastp_Dup(%)"] == 7.4
+    out = tmp_path / "s.tsv"
+    pr.write_summary_tsv([row], out)
+    lines = [l for l in out.read_text(encoding="utf-8").splitlines() if l]
+    i = pr.SUMMARY_COLS.index("Fastp_Dup(%)")
+    assert lines[0].split("\t")[i] == "Fastp_Dup(%)"
+    assert lines[1].split("\t")[i] == "7.4"
+    assert lines[2].split("\t")[i] == ""                   # TOTAL 行比率列留空
+
+
+def test_html_stage_cards_sidebar_and_bbnorm_visibility(tmp_path):
+    """老版式锚点: #stage-CleanData/#stage-HostDep (+bbnorm 卡仅在产物出现时) 与侧栏 sb-item。"""
+    out = tmp_path / "r.html"
+    pr.generate_html([_mk_row()], out, 20.0)
+    html = out.read_text(encoding="utf-8")
+    assert 'class="sidebar"' in html and '<div class="sb-title">Pipeline Modules</div>' in html
+    for sid in ("stage-CleanData", "stage-HostDep"):
+        assert f'id="{sid}"' in html and f'href="#{sid}"' in html
+    assert 'id="stage-BBNorm"' not in html and 'href="#stage-BBNorm"' not in html
+    assert html.count('class="sb-item') == 2 and html.count('class="stage stage-') == 2
+    # Handoff 不再是独立侧栏节, 只在页尾 details
+    assert 'id="handoff"' in html and 'href="#handoff"' not in html
+    # ① 布局相关产物目录存在 → 渲染 + 侧栏出现
+    bb = tmp_path / pr._D["d_bbnorm"]
+    bb.mkdir()
+    pr.generate_html([_mk_row()], out, 20.0)
+    html = out.read_text(encoding="utf-8")
+    assert 'id="stage-BBNorm"' in html and 'href="#stage-BBNorm"' in html
+    assert html.count('class="sb-item') == 3
+    # ② 无目录但 Final_Source=normalized → 同样渲染
+    bb.rmdir()
+    pr.generate_html([_mk_row(source="normalized")], out, 20.0)
+    html = out.read_text(encoding="utf-8")
+    assert 'id="stage-BBNorm"' in html and "samples normalized" in html
+
+
+def test_html_old_visual_language_fragments(tmp_path):
+    """③ 老报告同款版式: stage 卡徽章/图标色、KPI 行、app-table+tfoot、chart-box
+    + Show % 切换、表格分页 JS、scroll-spy、打印媒体查询。"""
+    out = tmp_path / "r.html"
+    pr.generate_html([_mk_row(status="PASS"), _mk_row(sample="S2", status="LOW_RETAINED")],
+                     out, 20.0)
+    html = out.read_text(encoding="utf-8")
+    # stage 卡 (≥2 张 pass) + 图标缩写/色值严格按老报告
+    assert html.count('class="stage stage-pass"') >= 2
+    for icon, color in ((">CLN<", "#607d8b"), (">DEP<", "#546e7a")):
+        assert icon in html and color in html
+    assert 'class="stage-badge s-pass">✓ PASS<' in html
+    assert html.count("kpi-card") >= 5 and 'class="kpi-row"' in html
+    # 表格: app-table + tfoot TOTAL + 状态徽章 (老 tb-badge)
+    assert '<table class="app-table" id="stagetbl_s00b_preprocessing_summary">' in html
+    assert "<tfoot>" in html and ">TOTAL<" in html and 'class="tb-badge tb-pass"' in html
+    # 图表: chart-box + chart_s00b + Show % 切换 + scroll-spy (③ 原样实现)
+    assert 'class="chart-box"' in html and 'id="chart_s00b"' in html
+    assert 'class="pct-btn" data-chart="chart_s00b" data-mode="abs"' in html
+    assert "toggleStackedPct" in html and "sb-active" in html
+    assert "window.addEventListener('scroll'" in html
+    assert "new Chart(document.getElementById('chart_s00b')" in html
+    # 打印/窄屏: 侧栏隐藏
+    assert "@media print" in html and ".sidebar{display:none}" in html
+    # 页尾 Handoff details + 侧栏无该项
+    assert 'id="handoff"' in html and "assembly_ready.list" in html
+
+
+def test_html_table_pagination_over_ten_rows(tmp_path):
+    """>10 行时走 ③ 同款分页: .pag-row 隐藏行 + 空 pager div + Prev/Next 分页 JS。"""
+    rows = [_mk_row(sample=f"S{i:02d}", source="depleted") for i in range(12)]
+    out = tmp_path / "r.html"
+    pr.generate_html(rows, out, 20.0)
+    html = out.read_text(encoding="utf-8")
+    assert html.count('class="tr-pass pag-row"') == 12
+    assert 'id="pager_stagetbl_s00b_preprocessing_summary"' in html
+    assert "document.getElementById('stagetbl_s00b_preprocessing_summary').querySelector('tbody')" in html
+    assert "totalPages" in html and "Page <b>" in html
+    assert "<tfoot>" in html and ">TOTAL<" in html          # TOTAL 行不受分页影响
+    # 3 行 (默认夹具) 不分页
+    out2 = tmp_path / "r2.html"
+    pr.generate_html([_mk_row()], out2, 20.0)
+    html2 = out2.read_text(encoding="utf-8")
+    assert "pag-row" not in html2 and "pager_stagetbl_" not in html2
+
+
+def test_html_detail_links_fastp_kraken2_resource(tmp_path):
+    """Clean 段列每样本 fastp 报告; Host Depletion 段列 kraken2 报告 + 资源表
+    (均为 os.path.relpath 相对链接); 文件/目录缺失时对应块不渲染。"""
+    clean, dep = tmp_path / "clean", tmp_path / "dep"
+    (clean / "logs").mkdir(parents=True)
+    (dep / "logs" / "kraken2_report").mkdir(parents=True)
+    (clean / "logs" / "S1_fastp_report.html").write_text("<html></html>", encoding="utf-8")
+    (dep / "logs" / "kraken2_report" / "S1_kraken2_report.txt").write_text("x", encoding="utf-8")
+    (dep / "logs" / "host_depletion_resource_usage.tsv").write_text("a\tb\n", encoding="utf-8")
+    out = tmp_path / "r.html"
+    pr.generate_html([_mk_row()], out, 20.0, None, clean_dir=clean, deplete_dir=dep)
+    html = out.read_text(encoding="utf-8")
+    assert "Per-sample fastp QC reports (1)" in html
+    assert "clean/logs/S1_fastp_report.html" in html
+    assert "1 per-sample Kraken2 reports" in html
+    assert "dep/logs/kraken2_report/S1_kraken2_report.txt" in html
+    assert "Resource usage table:" in html
+    assert "dep/logs/host_depletion_resource_usage.tsv" in html
+    # 未给目录 (旧 3 参调用) → 三个明细块都不渲染
+    out2 = tmp_path / "r2.html"
+    pr.generate_html([_mk_row()], out2, 20.0)
+    html2 = out2.read_text(encoding="utf-8")
+    assert "Per-sample fastp QC reports" not in html2
+    assert "Kraken2 reports" not in html2 and "Resource usage table" not in html2

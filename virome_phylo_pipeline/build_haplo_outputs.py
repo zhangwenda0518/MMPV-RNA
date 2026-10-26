@@ -10,6 +10,26 @@
 用法:
   python build_haplo_outputs.py --virus PSTVd|GCVA
 """
+
+# ── 图件四格式导出 (SVG / PNG / PDF / PNG@1200dpi) — 默认开启 ──────────
+# 2026-10-20: 所有出图脚本统一口径; 用 MMPV_FIG_EXPORT=0 可整体关闭,
+# MMPV_FIG_FORMATS=svg,png,pdf,hires 可裁剪, MMPV_FIG_HIRES_DPI 可改高清 dpi。
+try:
+    from mmpv_common.figure_export import install_savefig_hook as _install_fig_hook
+except ImportError:  # 仓库根不在 sys.path (脚本被单独执行) → 向上找 mmpv_common/
+    import os as _os
+    import sys as _sys
+    _d = _os.path.dirname(_os.path.abspath(__file__))
+    while _d and not _os.path.isdir(_os.path.join(_d, "mmpv_common")):
+        _parent = _os.path.dirname(_d)
+        if _parent == _d:
+            break
+        _d = _parent
+    if _d and _d not in _sys.path:
+        _sys.path.insert(0, _d)
+    from mmpv_common.figure_export import install_savefig_hook as _install_fig_hook
+_install_fig_hook()
+# ──────────────────────────────────────────────────────────────────────
 import argparse
 import csv
 import json
@@ -22,6 +42,8 @@ from utils.seq_ids import base_sample_id
 from utils.dataset_config import (dataset as get_dataset, colors as get_colors,
                                   provinces as get_provinces, env as get_env,
                                   repo as get_repo, known_dataset_names)
+# 2026-10-16: 图件双格式 (PNG+PDF 同主名); 统一由 plot_io.save_both 收口
+from utils.plot_io import save_both
 
 # 优先取 datasets.yaml 的 env.pypopart_path（默认已是 {repo}/biosoft/pypopart/src）；
 # 兜底同样按仓库定位，不写死本机绝对路径
@@ -195,7 +217,8 @@ def build(virus, color_by='location', net='auto'):
                 edgecolors='red', linewidths=2.5, ax=ax)
             print(f"  重组子三角标记: {len(recomb_nodes)} 节点")
     fig.savefig(base + '.svg', bbox_inches='tight')
-    fig.savefig(base + '.pdf', bbox_inches='tight')
+    # 2026-10-16: 原先 svg+pdf 无 PNG (日志却写着 {png,svg,pdf}) → 补 PNG 双输出
+    save_both(fig, base + '.pdf', bbox_inches='tight')
     plt.close(fig)
     print(f"  → {base}.{{png,svg,pdf}}")
 
@@ -251,9 +274,11 @@ def build(virus, color_by='location', net='auto'):
         ax.set_title(f'{virus} haplotype network over sampling provinces', fontsize=11)
         ax.set_ylim(20, 45); ax.set_xlim(95, 130)
         fig.tight_layout()
-        fig.savefig(f"{cfg['out']}/{virus.lower()}_network_map.png", dpi=300, bbox_inches='tight')
+        # 2026-10-16: 原先仅 PNG → save_both 按主名补出同名 PDF (双格式)
+        save_both(fig, f"{cfg['out']}/{virus.lower()}_network_map.png",
+                  dpi=300, bbox_inches='tight')
         plt.close(fig)
-        print(f"  → {virus.lower()}_network_map.png")
+        print(f"  → {virus.lower()}_network_map.png (+.pdf)")
     except Exception as e:
         print(f"  地理地图失败: {e}")
 

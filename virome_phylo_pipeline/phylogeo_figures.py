@@ -31,6 +31,8 @@ from matplotlib import cm
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from utils.virphy_bridge import LogCollector
+# 2026-10-16: 图件双格式 (PNG+PDF 同主名); 统一由 plot_io.save_both 收口
+from utils.plot_io import save_both
 # 历史坑: calculate_95hpd 曾只在 plot_skyline/plot_clock_rate 局部 import,
 # _draw_skyline_on_ax 三处裸用 → NameError → Panel C 必空。
 from utils.ess import calculate_95hpd
@@ -158,8 +160,8 @@ def plot_mcc_tree(
     ax.set_title('A. Maximum Clade Credibility Tree', fontsize=14, fontweight='bold',
                 loc='left', pad=10)
 
-    fig.savefig(output_path, bbox_inches='tight', dpi=300, format='pdf',
-                facecolor='white', edgecolor='none')
+    save_both(fig, output_path, bbox_inches='tight', dpi=300, format='pdf',
+              facecolor='white', edgecolor='none')
     plt.close(fig)
     log.emit(f"MCC tree: {output_path}")
 
@@ -223,8 +225,8 @@ def plot_skyline(
         ax.text(0.02, 0.02, "⚠ " + "; ".join(ser["warnings"])[:160],
                 transform=ax.transAxes, fontsize=7, color='#b9770e', va='bottom')
 
-    fig.savefig(output_path, bbox_inches='tight', dpi=300, format='pdf',
-                facecolor='white', edgecolor='none')
+    save_both(fig, output_path, bbox_inches='tight', dpi=300, format='pdf',
+              facecolor='white', edgecolor='none')
     plt.close(fig)
     log.emit(f"Skyline: {output_path}")
 
@@ -487,8 +489,8 @@ def plot_clock_rate(
     ax.legend(fontsize=10, framealpha=0.9)
     ax.tick_params(labelsize=10)
 
-    fig.savefig(output_path, bbox_inches='tight', dpi=300, format='pdf',
-                facecolor='white', edgecolor='none')
+    save_both(fig, output_path, bbox_inches='tight', dpi=300, format='pdf',
+              facecolor='white', edgecolor='none')
     plt.close(fig)
     log.emit(f"Clock rate: {output_path}")
 
@@ -552,8 +554,8 @@ def plot_migration_heatmap(
     cbar = plt.colorbar(im, ax=ax, shrink=0.8)
     cbar.set_label('log10(Bayes Factor)', fontsize=10)
 
-    fig.savefig(output_path, bbox_inches='tight', dpi=300, format='pdf',
-                facecolor='white', edgecolor='none')
+    save_both(fig, output_path, bbox_inches='tight', dpi=300, format='pdf',
+              facecolor='white', edgecolor='none')
     plt.close(fig)
     log.emit(f"Migration heatmap: {output_path}")
 
@@ -661,8 +663,8 @@ def build_multipanel_figure(
                  ha='center', va='top', fontsize=15, color='#c0392b',
                  fontweight='bold')
 
-    fig.savefig(output_path, bbox_inches='tight', dpi=300, format='pdf',
-                facecolor='white', edgecolor='none')
+    save_both(fig, output_path, bbox_inches='tight', dpi=300, format='pdf',
+              facecolor='white', edgecolor='none')
     plt.close(fig)
 
     log.emit(f"Multi-panel figure: {output_path}")

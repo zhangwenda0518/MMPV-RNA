@@ -582,7 +582,7 @@ barbarum 推不出的 1 行：`Unknown:Unknown`（确无地理信息）。
 | **Checkpoint** | `time/treetime/timetree.nexus` |
 | **单独运行** | `--stage treetime` |
 | **默认状态** | **关闭**（config `treetime.enabled: false`；`--stage` 点名 / CLI 开关 / config 改 true 三种开启方式） |
-| **metrics** | `treetime_clock_rate`、`treetime_n_tips_total/used/pruned_undated`、`treetime_clock_filter_iqd/coalescent/rng_seed`；clock 阶段 DRT 未通过时打 `treetime_temporal_caveat` 警示旗标（产物仅供探索，不进论文定年结论——与"PSTVd 不报 TMRCA"同一纪律） |
+| **metrics** | `treetime_clock_rate`、`treetime_n_tips_total/used/pruned_undated`、`treetime_clock_filter_iqd/coalescent/rng_seed`；clock 阶段 DRT 未通过时打 `treetime_temporal_caveat` 旗标（**只陈述实测判据数值**，不写"仅供探索"这类自我否决措辞——用户 2026-10-14 裁定） |
 | **失败语义** | 有日期 tip <3 / treetime 未装 / CLI 失败 → skip(na)（`timetree.nexus 未产出`; 2026-10-13 与代码对齐: 默认关闭的 stage, 工具缺失**不阻断主线**, 不计 blocked、不影响退出码） |
 
 ---

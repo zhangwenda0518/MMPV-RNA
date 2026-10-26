@@ -23,6 +23,14 @@ import numpy as np
 from Bio import SeqIO
 from Bio.Seq import Seq
 
+# 2026-10-16: 图件双格式 (PNG+PDF 同主名); 统一由 plot_io.save_both 收口。
+# 本文件既被 `-m saturation_analysis` 拉起, 也被 phylo_pipeline 直接 import,
+# 两种 cwd 都覆盖 (缺 utils 包时退化为同目录直导入)。
+try:
+    from utils.plot_io import save_both
+except ImportError:                              # pragma: no cover
+    from plot_io import save_both
+
 # 转换/颠换定义
 TRANSITIONS = {('A', 'G'), ('G', 'A'), ('T', 'C'), ('C', 'T')}
 TRANSVERSIONS = {('A', 'T'), ('A', 'C'), ('G', 'T'), ('G', 'C'),
@@ -215,7 +223,8 @@ def plot_saturation(p_values, ti_tv_ratios, out_path):
             pass
     despine(ax)
     fig.tight_layout(pad=0.4)
-    fig.savefig(out_path, dpi=300, bbox_inches='tight')
+    # out_path 历史为 .png (仅 PNG); save_both 按主名补出同名 .pdf → 双格式
+    save_both(fig, out_path, dpi=300, bbox_inches='tight')
     plt.close(fig)
     return out_path
 

@@ -16,8 +16,19 @@ panvirome_novel_known_report.py — 新病毒判定报告生成器
 import argparse
 import csv
 import json
+import os
+import sys
 from collections import Counter
 from pathlib import Path
+
+# 共享表格控件 (筛选/排序/列可选/列固定 + CSV 导出)
+_REPO_ROOT_TW = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _REPO_ROOT_TW not in sys.path:
+    sys.path.insert(0, _REPO_ROOT_TW)
+try:
+    from mmpv_common.table_widgets import TW_BLOCK as _TW
+except Exception:
+    _TW = ""   # 不可达时静默降级为原生表格
 
 # 判定类别 -> 颜色（深色 SCI 配色）
 JUDGE_COLORS = {
@@ -183,7 +194,7 @@ tr:hover td {{ background:#232a33; }}
 </div></div>
 
 {chart_block}
-</body></html>"""
+{_TW}</body></html>"""
 
     with open(args.out, "w", encoding="utf-8") as f:
         f.write(html)

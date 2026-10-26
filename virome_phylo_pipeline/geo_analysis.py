@@ -31,7 +31,7 @@ CLI (2026-09-16):
   - 16 papers: 多数用 Mantel + BSSVS，RRT和TempMig是补充
 """
 
-import csv, os, sys, re, random
+import csv, json, os, sys, re, random
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 from collections import defaultdict
@@ -44,6 +44,8 @@ from Bio import SeqIO, AlignIO, Phylo
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from utils.virphy_bridge import LogCollector
+# 2026-10-16: 图件双格式 (PNG+PDF 同主名); 统一由 plot_io.save_both 收口
+from utils.plot_io import save_both
 
 import matplotlib
 matplotlib.use('Agg')
@@ -304,7 +306,7 @@ def run_rrt(
         ax.legend(fontsize=10, framealpha=0.9)
 
         rrt_plot = os.path.join(output_dir, "rrt_results.pdf")
-        fig.savefig(rrt_plot, dpi=300, format='pdf', bbox_inches='tight')
+        save_both(fig, rrt_plot, dpi=300, format='pdf', bbox_inches='tight')
         plt.close(fig)
         result["plot"] = rrt_plot
 
@@ -457,7 +459,7 @@ def run_tempmig(
         ax.spines['right'].set_visible(False)
 
         plot_path = os.path.join(output_dir, "tempmig.pdf")
-        fig.savefig(plot_path, dpi=300, format='pdf', bbox_inches='tight')
+        save_both(fig, plot_path, dpi=300, format='pdf', bbox_inches='tight')
         plt.close(fig)
         result["plot"] = plot_path
 
@@ -951,7 +953,7 @@ def run_rrt_tree(
             ax.legend()
             ax.grid(True)
             plot_path = os.path.join(output_dir, "rrt_tree.pdf")
-            fig.savefig(plot_path, dpi=300, format='pdf', bbox_inches='tight')
+            save_both(fig, plot_path, dpi=300, format='pdf', bbox_inches='tight')
             plt.close(fig)
             result["plot"] = plot_path
 

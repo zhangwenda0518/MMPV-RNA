@@ -15,6 +15,26 @@ OmniVirusAssembler - 生产级最终版本 (Production Edition V9.0 - Ultimate)
 - [V8.5] 环化闭合检测: 精准切割，附带 [Circular=True] 标记。
 """
 
+# ── 图件四格式导出 (SVG / PNG / PDF / PNG@1200dpi) — 默认开启 ──────────
+# 2026-10-20: 所有出图脚本统一口径; 用 MMPV_FIG_EXPORT=0 可整体关闭,
+# MMPV_FIG_FORMATS=svg,png,pdf,hires 可裁剪, MMPV_FIG_HIRES_DPI 可改高清 dpi。
+try:
+    from mmpv_common.figure_export import install_savefig_hook as _install_fig_hook
+except ImportError:  # 仓库根不在 sys.path (脚本被单独执行) → 向上找 mmpv_common/
+    import os as _os
+    import sys as _sys
+    _d = _os.path.dirname(_os.path.abspath(__file__))
+    while _d and not _os.path.isdir(_os.path.join(_d, "mmpv_common")):
+        _parent = _os.path.dirname(_d)
+        if _parent == _d:
+            break
+        _d = _parent
+    if _d and _d not in _sys.path:
+        _sys.path.insert(0, _d)
+    from mmpv_common.figure_export import install_savefig_hook as _install_fig_hook
+_install_fig_hook()
+# ──────────────────────────────────────────────────────────────────────
+
 import sys
 import os
 import argparse

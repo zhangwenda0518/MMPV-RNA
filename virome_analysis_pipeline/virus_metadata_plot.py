@@ -24,6 +24,26 @@ v2 核心改进 (相对 v1 的 135 张原始计数交叉表):
 兼容旧接口 (-v / -m / -o 不变)。v1 旧行为在 utils/virus_metadata_plot.py 保留。
 """
 
+# ── 图件四格式导出 (SVG / PNG / PDF / PNG@1200dpi) — 默认开启 ──────────
+# 2026-10-20: 所有出图脚本统一口径; 用 MMPV_FIG_EXPORT=0 可整体关闭,
+# MMPV_FIG_FORMATS=svg,png,pdf,hires 可裁剪, MMPV_FIG_HIRES_DPI 可改高清 dpi。
+try:
+    from mmpv_common.figure_export import install_savefig_hook as _install_fig_hook
+except ImportError:  # 仓库根不在 sys.path (脚本被单独执行) → 向上找 mmpv_common/
+    import os as _os
+    import sys as _sys
+    _d = _os.path.dirname(_os.path.abspath(__file__))
+    while _d and not _os.path.isdir(_os.path.join(_d, "mmpv_common")):
+        _parent = _os.path.dirname(_d)
+        if _parent == _d:
+            break
+        _d = _parent
+    if _d and _d not in _sys.path:
+        _sys.path.insert(0, _d)
+    from mmpv_common.figure_export import install_savefig_hook as _install_fig_hook
+_install_fig_hook()
+# ──────────────────────────────────────────────────────────────────────
+
 import os
 import sys
 import argparse
@@ -587,18 +607,27 @@ def main():
 
     meta_file = args.meta
     if not meta_file or not os.path.exists(meta_file):
-        # 自动尝试定位全局元数据
+        # 自动尝试定位全局元数据 (由 public_metadata_pipeline/gsa_sra.info.py 生成,
+        # 产出目录随其 -o 参数)。2026-10-26: 旧 ~/virus/data-2026 根已整体迁移,
+        # 现网位置为 <MMPV_GOJI_ROOT>/01_data/sra_rna.data4/global_metadata/,
+        # 也可用 MMPV_CORE14_META 直接指定该文件。
         script_dir = Path(__file__).resolve().parent
+        _goji = os.environ.get("MMPV_GOJI_ROOT") or str(
+            Path.home() / "MMPV-paper" / "goji-virome")
         for cand in [
             Path(meta_file).expanduser() if meta_file else None,
+            Path(os.environ["MMPV_CORE14_META"]).expanduser()
+            if os.environ.get("MMPV_CORE14_META") else None,
+            Path(_goji).expanduser() / "01_data" / "sra_rna.data4" / "global_metadata"
+            / "Global_Unified_Metadata_Core14.tsv",
             script_dir.parent.parent / "sra_rna.data4" / "global_metadata" / "Global_Unified_Metadata_Core14.tsv",
-            Path.home() / "virus" / "data-2026" / "sra_rna.data4" / "global_metadata" / "Global_Unified_Metadata_Core14.tsv",
         ]:
             if cand and cand.exists():
                 meta_file = str(cand)
                 break
         else:
-            print("❌ 未找到队列元数据。请用 -m 指定 852 样本队列元数据表。")
+            print("❌ 未找到队列元数据。请用 -m 指定 852 样本队列元数据表"
+                  " (Global_Unified_Metadata_Core14.tsv, 由 public_metadata_pipeline/gsa_sra.info.py 生成)。")
             sys.exit(1)
 
     analyzer = VirusMetadataAnalyzer(args.virus, meta_file, args.outdir,

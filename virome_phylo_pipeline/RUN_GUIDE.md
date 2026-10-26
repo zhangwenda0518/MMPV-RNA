@@ -367,14 +367,14 @@ python phylo_pipeline.py --virus GCVA --stage geography   # 双路线一起跑 (
 cd ~/MMPV-RNA/virome_phylo_pipeline
 
 # 正选择下游（消费 capheine 产物）
-python -m utils.selection_suite fubar --capheine-dir <virus>/select/capheine/
+python -m selection_suite fubar --capheine-dir <virus>/select/capheine/
 
 # 重组检测 / mask（stage rdp5 的手工等价调用）
-python -m utils.recombination_analysis --fasta aln.fasta --prefix my --outdir rec_out
-python -m utils.mask_recombination --fasta aln.fasta --rdp5 rec_out/my.csv --mask --outdir mask_out
+python -m recombination_analysis --fasta aln.fasta --prefix my --outdir rec_out
+python -m mask_recombination --fasta aln.fasta --rdp5 rec_out/my.csv --mask --outdir mask_out
 
 # 群体遗传
-python -m utils.popgen_analysis --fasta X.fasta --metadata Y.csv --group location
+python -m popgen_analysis --fasta X.fasta --metadata Y.csv --group location
 
 # 链合并（phylogeo/beast 多链收尾的手工入口）
 python -m utils.merge_results --virus GCVA

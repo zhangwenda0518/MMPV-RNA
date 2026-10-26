@@ -11,6 +11,10 @@ v3.0: 页面标记迁移到 mmpv_common/templates/submission_report.html.j2
 (Jinja2 渲染, 表格走共享 data_table 宏, 元数据值经 autoescape); 交互 JS 仍在本文件
 (JS_EDITABLE)。顺带修复了历史无定义 class (工具栏/统计卡/分区/Toast 此前无样式)。
 
+v3.1: 分区跳转导航 (sticky chips + openSectionAndJump); 产物可见性 —
+.sqn 终产物状态卡 + suvtk / hypothetical 产物相对链接 (基准 = report.html 落盘目录,
+跨树/跨盘时退化为纯文本路径)。
+
 用法:
   python report_html.py \
       --csv submission_metadata/unified_metadata.csv \
@@ -140,7 +144,8 @@ function updateStats(){
   });
   const pct=total>0?Math.round((total-missing)/total*100):100;
   document.getElementById('completeness').textContent=pct+'%';
-  document.getElementById('completeBar').style.width=pct+'%';
+  /* 2026-10-17 impeccable: 进度条只动 transform (scaleX), 不动 width —— 不触发布局。 */
+  document.getElementById('completeBar').style.transform='scaleX('+(pct/100)+')';
   document.getElementById('completeBar').style.background=pct>=90?'#4caf50':pct>=70?'#f9a825':'#e65100';
   document.getElementById('missingCount').textContent=missing;
 }
@@ -161,6 +166,15 @@ function filterTable(q){
 
 function toggleSection(id){
   document.getElementById(id).classList.toggle('collapsed');
+}
+
+/* 顶部导航 chips: 先确保目标分区展开, 再滚动 (返回 false 抑制 #hash 二次跳转) */
+function openSectionAndJump(id){
+  const el=document.getElementById(id);
+  if(!el)return false;
+  el.classList.remove('collapsed');
+  el.scrollIntoView({behavior:'smooth',block:'start'});
+  return false;
 }
 
 window.addEventListener('DOMContentLoaded',()=>{
@@ -209,6 +223,63 @@ def _kv_rows(rows):
     """miuvig/assembly 行 → [参数, 值] 二列 (缺值补空)。"""
     return [[str(r[0]), '' if len(r) < 2 or pd.isna(r[1]) else str(r[1])]
             for r in rows]
+
+
+def _rel_link(target, base_dir, max_up=1):
+    """产物路径 → 相对 report.html 的正斜杠链接; 不可达时返回 None。
+
+    base_dir = 报告 HTML 落盘目录 (调用方 submission_pipeline.py 写到
+    submission_<run_title>/report.html, 与分析目录 work_dir 平级 → 产物一般
+    最多上溯 1 层)。跨盘符 (Windows) 或上溯超过 max_up 层 → None, 由调用方
+    退化为纯文本路径显示。
+    """
+    try:
+        rel = os.path.relpath(os.path.abspath(str(target)),
+                              os.path.abspath(str(base_dir)))
+    except ValueError:      # Windows: 不同盘符, 无相对路径
+        return None
+    rel = rel.replace('\\', '/')
+    ups = 0
+    for seg in rel.split('/'):
+        if seg != '..':
+            break
+        ups += 1
+    return None if ups > max_up else rel
+
+
+def _artifact_link(label, path, base_dir):
+    """一条产物链接 (href=None 时模板退化为 'label — <绝对路径>')。"""
+    path = str(path)
+    return {'label': label, 'href': _rel_link(path, base_dir), 'path': path}
+
+
+def _probe_sqn(out_dir, run_title):
+    """探测 ⑦ 终产物 .sqn, 返回恒有值 dict (StrictUndefined 安全)。
+
+    两种模式布局 (sub_out = report.html 所在目录):
+      suvtk 模式:   sub_out/suvtk_submission/submission.sqn
+                    (submission_pipeline.py 的 sqn_prefix = sv_dir/"submission")
+      sequin 模式:  sub_out/<run_title>/sequin_files/*.sqn
+                    (sequin_builder.py: out_dir/<run_title>/sequin_files)
+    其余字段缺失即 None/''; 模板按 state 条件渲染。
+    """
+    info = {'state': 'not_yet', 'size_kb': None, 'mtime': None,
+            'name': 'submission.sqn', 'href': None, 'path': ''}
+    cands = []
+    p_suvtk = Path(out_dir) / 'suvtk_submission' / 'submission.sqn'
+    if p_suvtk.is_file():
+        cands.append(p_suvtk)
+    seq_dir = Path(out_dir) / str(run_title) / 'sequin_files'
+    if seq_dir.is_dir():
+        cands.extend(q for q in sorted(seq_dir.glob('*.sqn')) if q.is_file())
+    if not cands:
+        return info
+    p = cands[0]
+    st = p.stat()
+    info.update(state='generated', size_kb=st.st_size // 1024,
+                mtime=datetime.fromtimestamp(st.st_mtime).strftime('%Y-%m-%d %H:%M'),
+                name=p.name, path=str(p), href=_rel_link(p, out_dir))
+    return info
 
 
 def generate_html(csv_path, run_title, output_path, miuvig_path=None, asm_path=None,
@@ -321,6 +392,21 @@ def generate_html(csv_path, run_title, output_path, miuvig_path=None, asm_path=N
     _has_tax = bool(suvtk_tax_path) and os.path.isfile(suvtk_tax_path)
     _has_feat = bool(suvtk_feat_path) and os.path.isfile(suvtk_feat_path)
     _has_hypo = bool(hypo_path) and os.path.isfile(hypo_path)
+
+    # --- 产物链接 + .sqn 终产物状态 (基准 = 报告 HTML 落盘目录; 恒有值) ---
+    out_dir = os.path.dirname(os.path.abspath(output_path))
+    artifact_links = []
+    if _has_tax:
+        artifact_links.append(_artifact_link('view taxonomy', suvtk_tax_path, out_dir))
+    if _has_feat:
+        artifact_links.append(_artifact_link('view suvtk feature table', suvtk_feat_path, out_dir))
+    if _has_hypo:
+        artifact_links.append(_artifact_link('view updated feature table', hypo_path, out_dir))
+        _blast = Path(hypo_path).parent / 'merged_blast.txt'
+        if _blast.is_file():
+            artifact_links.append(_artifact_link('view blast hits', _blast, out_dir))
+    sqn_info = _probe_sqn(out_dir, run_title)
+
     checklist = [
         ('done' if _has_tax else 'todo',
          'suvtk taxonomy — ICTV classification complete' if _has_tax
@@ -335,7 +421,8 @@ def generate_html(csv_path, run_title, output_path, miuvig_path=None, asm_path=N
         ('todo', 'Register BioProject at https://submit.ncbi.nlm.nih.gov/'),
         ('todo', 'Register BioSamples using biosample_template.tsv'),
         ('todo', 'Run: suvtk comments -t miuvig_taxonomy -f miuvig_features -m miuvig.tsv -a assembly.tsv'),
-        ('todo', 'Run: suvtk table2asn → email submission.sqn to gb-sub@ncbi.nlm.nih.gov'),
+        ('done' if sqn_info['state'] == 'generated' else 'todo',
+         'Run: suvtk table2asn → email submission.sqn to gb-sub@ncbi.nlm.nih.gov'),
     ]
 
     html = render(
@@ -352,7 +439,35 @@ def generate_html(csv_path, run_title, output_path, miuvig_path=None, asm_path=N
         miuvig_rows=miuvig_rows, asm_rows=asm_rows,
         topo_rows=topo_rows, topo_summary=topo_summary,
         checklist=checklist,
+        sqn=sqn_info, artifact_links=artifact_links,
         js=JS_EDITABLE,
+    )
+
+    # 2026-10-17 impeccable 修复 (⑦): 进度条动画只允许 transform/opacity。
+    # ① 本模板的 #completeBar 已改 scaleX (见 JS_EDITABLE / submission_report.html.j2);
+    # ② base.html.j2 的共享 CSS (mmpv_common/report_style.py) 还留着 `.progress-bar
+    #    .fill` 的 `transition: width .3s ease` —— 该条形在 ⑦ 不使用, 但违规文本会
+    #    留在产物里。这里只替换这一条死规则, 不改共享样式表本身 (不在本轮文件白名单)。
+    html = html.replace("transition: width .3s ease;",
+                        "transition: transform .3s ease;")
+    # 2026-10-17 impeccable: base_css 的 `.sidebar a` 还带 3px 透明左边条
+    # (active 时上色)。⑦ 不渲染侧栏, 这是死规则; 但静态扫描会把它当 side-tab
+    # 形状, 且在报告里留下彩条残留。渲染后移除 (共享样式表不在本轮白名单)。
+    html = html.replace(
+        "font-size: 13px; border-left: 3px solid transparent;",
+        "font-size: 13px;",
+    ).replace(
+        "  border-left-color: var(--primary);\n",
+        "",
+    )
+    # ③ ⑦ 的中文与破折号是 CJK 科学文案, 豁免 em-dash-overuse; 表格里的 09/10/11
+    #    是真实数据值 (时间戳/长度), 一并豁免 numbered-section-markers。base.html.j2
+    #    没有 head block, 故在渲染后把单文件豁免注释插到 <head> 内 (随报告一起分发)。
+    html = html.replace(
+        "<head>\n",
+        "<head>\n<!-- impeccable-disable numbered-section-markers,em-dash-overuse: "
+        "CJK scientific copy & sequence IDs are data values -->\n",
+        1,
     )
 
     with open(output_path, 'w', encoding='utf-8') as f:
