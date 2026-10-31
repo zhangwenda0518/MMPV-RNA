@@ -806,18 +806,25 @@ class UnifiedVirusPipeline:
                     for _row in _df.to_dicts():
                         if _row.get('Sample') in _cur_names:
                             _rows_by_sample[_row['Sample']] = _row  # 新文件覆盖旧文件
-                if _rows_by_sample:
-                    self._resume_rows = list(_rows_by_sample.values())
-                    self._resume_done = set(_rows_by_sample)
-                    self.logger.info(f"⏭️ 断点续传: 上一轮已有 {len(self._resume_done)} 个样本结果, 本轮只重算缺失样本")
-                    # 回收行先落盘, 旧批次文件再清理 —— 保证 Ctrl+C 后链路不断
-                    pl.DataFrame(self._resume_rows, schema=METRICS_SCHEMA).write_parquet(_bdir / 'resume_pool.parquet')
-                    for _pf in _old_files:
-                        if _pf.name != 'resume_pool.parquet':
-                            try:
-                                _pf.unlink()
-                            except OSError:
-                                pass
+            if _rows_by_sample:
+                self._resume_rows = list(_rows_by_sample.values())
+                self._resume_done = set(_rows_by_sample)
+                self.logger.info(f"⏭️ 断点续传: 上一轮已有 {len(self._resume_done)} 个样本结果, 本轮只重算缺失样本")
+                # 回收行先落盘, 旧批次文件再清理 —— 保证 Ctrl+C 后链路不断
+                pl.DataFrame(self._resume_rows, schema=METRICS_SCHEMA).write_parquet(_bdir / 'resume_pool.parquet')
+                for _pf in _old_files:
+                    if _pf.name != 'resume_pool.parquet':
+                        try:
+                            _pf.unlink()
+                        except OSError:
+                            pass
+
+        # [UX] 启动汇总: setup_logger 只挂 FileHandler, logger.info 全进日志文件;
+        # 终端上只有 tqdm (stderr) —— 样本/批次/回收总数必须显式打 stderr 才可见
+        _summary = (f"🧾 样本总数: {len(self.samples)} | 批次数: {len(batches)} "
+                    f"(batch_size={self.args.batch_size}) | 断点回收: {len(self._resume_done)} 个样本")
+        self.logger.info(_summary)
+        print(_summary, file=sys.stderr, flush=True)
 
         for i, batch in enumerate(batches):
             batch_idx = i + 1; batch_file = self.output_dir / 'batches' / f'batch_{batch_idx:04d}.parquet'
@@ -838,6 +845,8 @@ class UnifiedVirusPipeline:
             if len(batch_todo) < len(batch):
                 self.logger.info(f"🔁 批次 {batch_idx}: 断点续传回收 {len(batch) - len(batch_todo)} 个已完成样本, 重算 {len(batch_todo)} 个")
             self.logger.info(f"📦 开始计算 [批次 {batch_idx}/{len(batches)}] (内含 {len(batch_todo)} 个样本)...")
+            print(f"📦 批次 {batch_idx}/{len(batches)} | 本批 {len(batch_todo)} 样本 | 已回收 {len(self._resume_done)}",
+                  file=sys.stderr, flush=True)
             res_list = []
             ctx = mp.get_context('spawn')
             with ProcessPoolExecutor(max_workers=self.args.threads, mp_context=ctx) as executor:
