@@ -27,7 +27,10 @@ from pathlib import Path
 import colorlog
 import numpy as np
 import pandas as pd
-import pysam
+try:
+    import pysam  # 仅 BAM 统计函数使用; 缺失时该函数报错, 不阻断纯提取/比对路径
+except ImportError:
+    pysam = None
 from tqdm import tqdm
 
 
@@ -345,6 +348,8 @@ def worker_calc_metrics(args):
     }
 
     if bam_path and Path(bam_path).exists():
+        if pysam is None:
+            raise RuntimeError("pysam 未安装, 无法做 BAM 级统计 (纯提取/比对不受影响); pip install pysam")
         try:
             with pysam.AlignmentFile(bam_path, "rb") as bamfile:
                 try:
@@ -1230,15 +1235,8 @@ class PostProcessPipeline:
         bam_map = self.resolve_bam_map(df["Sample"].unique().tolist(), ref_map)
         
         if not bam_map:
-            logger.error("❌ 无可用 BAM！请检查样本名与文件名的对应关系"
-                         "（--extract_only 模式需先运行 --stage variants 产出比对 BAM）。")
+            logger.error("❌ 无可用 BAM！请检查样本名与文件名的对应关系。")
             sys.exit(1)
-
-        # [extract 独立阶段] --extract_only: 只做靶向 reads 提取 (复用已有 BAM),
-        # 跳过 summary 重算/consensus/变异检测 —— 编排器 --stage extract 走此分支
-        if getattr(self.args, 'extract_only', False):
-            self._run_extract_reads(df, bam_map)
-            return
 
         df = self.generate_final_summaries(df, bam_map)
 
@@ -1308,10 +1306,8 @@ def main():
     src_ex.add_argument("--bam", help="已有 BAM 文件夹 (跳过提取步骤)")
 
     mod = parser.add_argument_group("功能开关")
-    mod.add_argument("--extract_reads", action="store_true", help="从 BAM 提取目标病毒的 reads")
-    mod.add_argument("--extract_only", action="store_true",
-                     help="只做靶向 reads 提取 (复用 --bam 下已有 BAM), 跳过 summary/consensus/变异检测; "
-                          "编排器 --stage extract 使用")
+    mod.add_argument("--extract_reads", action="store_true", help="从 BAM 提取目标病毒的 reads "
+                     "(独立版见 batch_extract_reads.py, 编排器 Stage 4 使用)")
     mod.add_argument("--consensus", action="store_true", help="生成共识序列")
     mod.add_argument("--call_variants", action="store_true", help="检出变异位点")
     mod.add_argument("--variant_caller", choices=["freebayes", "ivar", "lofreq"], default="freebayes",

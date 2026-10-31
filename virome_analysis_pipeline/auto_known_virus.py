@@ -9,7 +9,7 @@ Stages:
   1. detect    - Rapid quantification (batch_virus_depth.py)
   2. filter    - High-confidence filtering (utils/filter_summary.py) [auto with --filter]
   3. variants  - Alignment + variant calling + SnpEff + SnpGenie (batch_virus_variants.py)
-  4. extract   - Targeted virus reads extraction [阶段重排: 自 variants 独立] (batch_virus_variants.py --extract_only)
+  4. extract   - Targeted virus reads extraction [阶段重排: 自 variants 独立] (batch_extract_reads.py)
   5. post      - VCF visualization + SnpEff macro + MAF + SnpGenie
   6. full      - De novo full-length assembly + 集成全长序列提取 (batch_virus_full.py + utils/extract_full_fasta.py)
   7. similarity - Full-length similarity panorama (virus_auto_pipeline.py)
@@ -220,7 +220,8 @@ def main():
              "post, full, similarity, dvg, report. Accepts space- or comma-separated "
              "values, e.g. --stage detect,filter or --stage detect filter; always "
              "executed in pipeline order regardless of the given order (default: all). "
-             "[阶段重排] extract = 靶向 reads 提取 (自 variants 独立); 原全长序列提取默认并入 full",
+             "[阶段重排] extract = 靶向 reads 提取 (独立脚本 batch_extract_reads.py); "
+             "原全长序列提取默认并入 full",
     )
     g.add_argument("--no-resume", action="store_true", help="Disable checkpoint resume (always re-run)")
     g.add_argument("--force", action="store_true", help="Force re-run, ignore all checkpoints")
@@ -459,7 +460,7 @@ def main():
         # [P2-23c] 与下方 Stage2 执行条件保持一致 (--filter 默认 True, 但仅 all/filter 阶段才跑)
         if args.filter and "filter" in s: log.info("  [2/9] Filter:   utils/filter_summary.py")
         if "variants" in s:  log.info("  [3/9] Variants: batch_virus_variants.py (比对+变异, caller=%s snpeff=%s snpgenie=%s)", args.variant_caller, args.snpeff, args.snpgenie)
-        if "extract" in s:   log.info("  [4/9] Extract:  batch_virus_variants.py --extract_only (靶向 reads 提取)")
+        if "extract" in s:   log.info("  [4/9] Extract:  batch_extract_reads.py (靶向 reads 提取)")
         if "post" in s:      log.info("  [5/9] Post-hoc: VCF viz + SnpEff + MAF + SnpGenie")
         if "full" in s:      log.info("  [6/9] Full:     batch_virus_full.py + 集成全长提取 (extract_full_fasta)")
         if "similarity" in s: log.info("  [7/9] Similarity: virus_auto_pipeline.py")
@@ -771,17 +772,13 @@ def _run_pipeline_stages(args, out, reads, log, script_dir, _pipeline_tmp):
             log.info("[4/9] Extract (reads): checkpoint OK, skip")
         else:
             log.info("-" * 40)
-            log.info("[4/9] Extract: 靶向 reads 提取 (batch_virus_variants.py --extract_only)")
+            log.info("[4/9] Extract: 靶向 reads 提取 (batch_extract_reads.py)")
             bam_src = args.bam if args.bam else str(variants_dir / "virus-bam")
             parts = [
-                f"python {script_dir / 'batch_virus_variants.py'}",
+                f"python {script_dir / 'batch_extract_reads.py'}",
+                f"--summary {get_summary()}",
                 f"--bam {bam_src}",
                 f"--output_dir {variants_dir}",
-                f"--summary {get_summary()}",
-                f"--info {args.ref_info}",
-                f"--reference {args.reference}",
-                "--extract_reads",
-                "--extract_only",
                 f"--threads {args.threads}",
                 f"--jobs {args.jobs}",
             ]
@@ -1159,7 +1156,7 @@ STAGES = [
     (1,  "detect",     "batch_virus_depth.py",     None,            "detect_dir",     "best.summary.tsv"),
     (2,  "filter",     "utils/filter_summary.py",   "detect_dir",    "filter_dir",     "high_conf.summary.tsv"),
     (3,  "variants",   "batch_virus_variants.py",   "get_summary()", "variants_dir",   "all_summary.tsv"),
-    (4,  "extract",    "batch_virus_variants.py --extract_only", "variants_dir(virus-bam)", "variants_dir", "extract_reads.ok"),
+    (4,  "extract",    "batch_extract_reads.py",    "variants_dir(virus-bam)", "variants_dir", "extract_reads.ok"),
     (5,  "post",       "virus_vcf_pipeline.py",     "variants_dir",  "post_dir",       "figs/"),
     (6,  "full",       "batch_virus_full.py + utils/extract_full_fasta.py", "variants_dir+extract", "assembly_dir", "*/"),
     (7,  "similarity", "virus_auto_pipeline.py",    "variants_dir",  "similarity_dir", "pipeline_results/"),

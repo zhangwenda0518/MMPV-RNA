@@ -352,7 +352,7 @@ Entry: `python public_metadata_pipeline/preprocess_unified.py --sra-dir ... --ou
 | 1 | `detect` | batch_virus_depth.py | Salmon/Kallisto/Bowtie2 rapid quantification + Poisson filtering |
 | 2 | `filter` | utils/filter_summary.py | High-confidence filtering |
 | 3 | `variants` | batch_virus_variants.py | Alignment + FreeBayes/iVar/LoFreq variant calling + consensus (no longer extracts reads) |
-| 4 | `extract` | batch_virus_variants.py --extract_only | **Targeted virus reads extraction** (independent from variants; output `03_Variants/virus_reads/`, hard dependency of full) |
+| 4 | `extract` | batch_extract_reads.py | **Targeted virus reads extraction** (standalone script; output `03_Variants/virus_reads/`, hard dependency of full) |
 | 5 | `post` | virus_vcf_pipeline.py | VCF visualization + SnpEff macro + MAF waterfall + SnpGenie dN/dS |
 | 6 | `full` | batch_virus_full.py → virus-full.py (+ utils/extract_full_fasta.py) | **Full-length genome build (OmniVirusAssembler V9.0)**: 12 refinement steps — SHIVER-like Divine Fusion solid backbone → read-level iterative polishing (single-base accuracy) → gmcloser + abyss-sealer dual-engine gap closing → circularization detection (Circular=True); tail integrates the former extract stage (longest-contig extraction + N-fill, `--no_full_extract` to skip) |
 | 7 | `similarity` | virus_auto_pipeline.py | Full-length similarity heatmap + hierarchical clustering (MAFFT --auto) |
