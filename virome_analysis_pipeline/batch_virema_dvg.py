@@ -380,6 +380,8 @@ class BatchViReMaPipeline:
         for d in [self.d_refs, self.d_results, self.d_all_beds]:
             d.mkdir(parents=True, exist_ok=True)
         self.df, self.ref_map, self.sample_files, self.mol_types = None, {}, {}, {}
+        # [P2-24h] 阶段任务统计: 复用 run_virema/run_ditector 内的 ok/fail 局部计数, 供 main() 定退出码
+        self.ok_tasks, self.fail_tasks = 0, 0
 
     def run(self):
         engine = "DI-tector" if self.args.ditector else "ViReMa"
@@ -400,6 +402,7 @@ class BatchViReMaPipeline:
 
         self.run_auto_r_report()
         logger.info(f"Done -> {self.out}")
+        return self.ok_tasks, self.fail_tasks
 
     def check_dependencies(self):
         missing = []
@@ -526,6 +529,7 @@ class BatchViReMaPipeline:
                         fail += 1; logger.error(f"CRASH: {s}/{v} - {e}")
                     pbar.update(1); pbar.set_postfix_str(f"OK:{ok} FAIL:{fail}")
         logger.info(f"ViReMa: {ok} OK, {fail} failed")
+        self.ok_tasks, self.fail_tasks = ok, fail
         # [P2-24h] 全部任务失败: 写 run.partial 标记 + 日志明示 (原实现静默继续, 阶段无从区分全败)
         if fail and ok == 0:
             logger.error(f"ViReMa: 全部 {fail} 个任务失败，本阶段未完成 (写 run.partial 标记)")
@@ -560,6 +564,7 @@ class BatchViReMaPipeline:
                         fail += 1; logger.error(f"CRASH: {s}/{v} - {e}")
                     pbar.update(1); pbar.set_postfix_str(f"OK:{ok} FAIL:{fail}")
         logger.info(f"DI-tector: {ok} OK, {fail} failed")
+        self.ok_tasks, self.fail_tasks = ok, fail
         # [P2-24h] 同上: 全失败写 run.partial 标记
         if fail and ok == 0:
             logger.error(f"DI-tector: 全部 {fail} 个任务失败，本阶段未完成 (写 run.partial 标记)")
@@ -655,4 +660,16 @@ if __name__ == "__main__":
     ctl.add_argument("--resume", action="store_true")
 
     args = parser.parse_args()
-    BatchViReMaPipeline(args).run()
+    ok, fail = BatchViReMaPipeline(args).run()
+
+    # [P2-24h] 退出码: 复用上面的 ok/fail 统计 (与写 run.partial 的条件同源, 不新造状态)
+    #   全部任务失败 (0 成功且确有失败) → exit 1, 供上游调度识别"阶段未完成";
+    #   部分失败是常态 → 显著警告但照旧 exit 0, 不阻断; 无失败 → 静默 exit 0
+    if fail and ok == 0:
+        logger.error(f"全部任务失败 (0 OK, {fail} failed) -> exit 1 "
+                     f"(标记: {Path(args.output_dir) / 'run.partial'})")
+        sys.exit(1)
+    if fail:
+        logger.warning("=" * 72)
+        logger.warning(f"⚠️ 部分任务失败: {ok} OK, {fail} failed — 结果不完整, 详见上方 FAIL/CRASH 日志 (exit 0, 不阻断)")
+        logger.warning("=" * 72)

@@ -31,6 +31,7 @@ import gzip
 import argparse
 import subprocess
 import hashlib
+import zipfile
 from pathlib import Path
 from datetime import datetime
 from typing import List, Optional, Set, Tuple
@@ -296,6 +297,22 @@ def download_organelle_genome(species: str, organelle: str, out_dir: str,
 
 
 
+def _zip_ok(path: str) -> bool:
+    """校验 zip 是否完整。
+
+    半截下载的 zip 没有中央目录, zipfile.is_zipfile 直接返回 False;
+    能打开时再用 testzip() 逐条校验 CRC (失败返回首个坏成员名)。
+    仅在下载判定时调用一次; 大文件偏慢但可接受。
+    """
+    try:
+        if not zipfile.is_zipfile(path):
+            return False
+        with zipfile.ZipFile(path, 'r') as zf:
+            return zf.testzip() is None
+    except (OSError, ValueError, EOFError, zipfile.BadZipFile):
+        return False
+
+
 def chan_datasets(args) -> bool:
     """通道 1: NCBI datasets CLI (官方首选)"""
     if args.skip_datasets:
@@ -305,8 +322,16 @@ def chan_datasets(args) -> bool:
         return False
     genome_zip = os.path.join(args.outdir, 'genome_down.zip')
     if os.path.isfile(genome_zip) and os.path.getsize(genome_zip) > 1000:
-        UI.ok(f"基因组压缩包已存在: {genome_zip}")
-        return True
+        UI.info(f"校验已有压缩包完整性: {genome_zip}")
+        if _zip_ok(genome_zip):
+            UI.ok(f"基因组压缩包已存在且完整: {genome_zip}")
+            return True
+        UI.warn(f"检测到损坏/半截 zip, 删除后重下: {genome_zip}")
+        try:
+            os.remove(genome_zip)
+        except OSError as e:
+            UI.err(f"删除损坏 zip 失败: {e}")
+            return False
     cmd = [
         'datasets', 'download', 'genome', 'taxon', args.species,
         '--filename', genome_zip,
@@ -464,6 +489,8 @@ def main():
                         help='仅验证现有下载')
     parser.add_argument('--skip-datasets', action='store_true',
                         help='跳过 NCBI datasets 步骤 (使用已有文件)')
+    parser.add_argument('--force', action='store_true',
+                        help='删除已有 zip/解压目录/合并产物, 强制重新下载')
 
     parser.add_argument('--source', default='auto',
                         choices=['auto', 'datasets', 'ngd', 'ftp', 'gget'],
@@ -478,6 +505,22 @@ def main():
     UI.header(f"宿主参考基因组下载: {args.species}")
 
     os.makedirs(args.outdir, exist_ok=True)
+
+    # [R1] --force: 清掉下载/解压/合并产物, 强制全量重下 (配合编排器 --force 下传)
+    if getattr(args, 'force', False):
+        import shutil as _sh
+        for _p in (os.path.join(args.outdir, 'genome_down.zip'),
+                   os.path.join(args.outdir, 'all.genome.uniq.fasta')):
+            try:
+                if os.path.isfile(_p):
+                    os.remove(_p)
+                    print(f"[force] 已删除: {_p}")
+            except OSError:
+                pass
+        _ext = os.path.join(args.outdir, 'extracted')
+        if os.path.isdir(_ext):
+            _sh.rmtree(_ext)
+            print(f"[force] 已删除: {_ext}/")
 
     # 验证模式
     if args.verify_only:
@@ -540,13 +583,18 @@ def main():
             else:
                 UI.err(f"解压失败: {result.stderr[:200]}")
                 # 尝试用 Python zipfile
-                import zipfile
                 try:
                     with zipfile.ZipFile(genome_zip, 'r') as zf:
                         zf.extractall(extracted_dir)
                     UI.ok("解压完成 (Python zipfile)")
                 except Exception as e:
                     UI.err(f"Python 解压也失败: {e}")
+                    # 防御: 删除半截/损坏 zip, 避免下次启动仍被判定为"已下载"
+                    try:
+                        os.remove(genome_zip)
+                        UI.warn(f"已删除损坏的压缩包: {genome_zip}")
+                    except OSError as rm_err:
+                        UI.warn(f"删除损坏压缩包失败: {rm_err}")
         else:
             UI.ok("已解压，跳过")
     else:
@@ -573,7 +621,8 @@ def main():
         )
         generate_genome_report(args.outdir, fasta_files, merged_fasta)
     else:
-        UI.warn("未找到任何 FASTA 文件")
+        UI.err("未找到任何 FASTA 文件 — 宿主基因组下载/解压失败, 请重跑")
+        sys.exit(1)
 
     # 可选: 细胞器基因组
     if args.include_organelles:

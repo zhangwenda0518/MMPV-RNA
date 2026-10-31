@@ -124,9 +124,11 @@ def test_any_mask_source_enables_stage(workdir, extra):
 
 
 def test_stage_all_includes_mask_when_enabled(workdir):
+    # [D] 掩码启用时 hostdb 换用独立 checkpoint 键 hostdb_evemask (2026-11-01):
+    # 目标目录随掩码切换, 旧的非掩码 hostdb=done 不得把掩码库构建永久跳过
     args = make_args(workdir, ["--eve-verdict", "x.tsv"], stage="all")
     assert bhp.plan_stages(args) == \
-        ["genome-down", "eve-mask", "hostdb", "eve-report"]
+        ["genome-down", "eve-mask", "hostdb_evemask", "eve-report"]
 
 
 def test_explicit_stage_without_source_errors(workdir):

@@ -647,6 +647,9 @@ class BuildHostPipeline:
         ]
         if self.args.kunpeng_native:
             cmd_parts.append('--kunpeng-native')
+        # [R1] --force 下传: build_hostbase 内部 step checkpoint 需显式 force 才重算
+        if getattr(self.args, 'force', False):
+            cmd_parts.append('--force')
         if self.args.taxonomy_dir:
             if os.path.isfile(os.path.join(self.args.taxonomy_dir, 'names.dmp')):
                 cmd_parts.append(f'--taxonomy {shlex.quote(self.args.taxonomy_dir)}')

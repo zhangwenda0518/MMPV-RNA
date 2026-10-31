@@ -41,6 +41,22 @@ import shutil
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
+
+try:
+    from viralverify_nbc import (
+        resolve_classifier as _vv_resolve_classifier,
+        load_classifier as _vv_load_classifier,
+        score_hmms as _vv_score_hmms,
+        collect_contig_hmms as _vv_collect_contig_hmms,
+    )
+except ImportError:  # 以 virome_discovery_pipeline.virus_identification 导入时
+    from virome_discovery_pipeline.viralverify_nbc import (
+        resolve_classifier as _vv_resolve_classifier,
+        load_classifier as _vv_load_classifier,
+        score_hmms as _vv_score_hmms,
+        collect_contig_hmms as _vv_collect_contig_hmms,
+    )
+
 import resource
 import multiprocessing
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -233,6 +249,13 @@ def parse_arguments():
                        help="VirSorter2 数据库路径 (默认: {db_dir}/db)")
     method_group.add_argument("--viralverify_hmm",
                        help="ViralVerify HMM 模型路径 (默认: {db_dir}/ViralVerify/nbc_hmms.h3m)")
+    method_group.add_argument("--viralverify_classifier",
+                       help="ViralVerify Naive Bayes 模型表 classifier_table_uniq.txt "
+                            "(默认: 自动在 HMM 同目录 / {db_dir}/ViralVerify / {db_dir}/viralverify_db 查找)")
+    method_group.add_argument("--viralverify_threshold", type=float, default=7.0,
+                       help="ViralVerify NBC 判定阈值 (原版默认 7.0; 调高减少假阳性)")
+    method_group.add_argument("--viralverify_mode", choices=['auto', 'nbc', 'hits'], default='auto',
+                       help="ViralVerify 判定模式: auto=有模型表走 NBC, 否则 HMM-hit; nbc=优先 NBC; hits=旧行为")
     method_group.add_argument("--virhunter_path",
                        default=str(SCRIPT_DIR.parent / "biosoft/virhunter/predict_cpu.py"),
                        help="VirHunter predict_cpu.py 路径")
@@ -764,15 +787,45 @@ def run_virsorter2(input_fasta, sample, base_dir, args):
 
 
 def run_viralverify_pyhmmer(input_fasta, sample, base_dir, args):
-    """VirSorter2 HMM 加速版: Prodigal + pyhmmer.hmmsearch"""
+    """ViralVerify: Prodigal ORF + pyhmmer hmmsearch + Naive Bayes（原版打分移植）。
+
+    默认用 bit_cutoffs="noise" 对应原版 hmmsearch --cut_nc；分类器表缺失或
+    --viralverify_mode hits 时回退到旧的 hit.included 判定（高召回/低特异）。
+    """
     result_file = os.path.join(base_dir, f"{sample}_virus.viralverify.result.id")
     if is_file_valid(result_file, 1) and not args.force: return result_file
     vv_dir = os.path.join(base_dir, "viralverify_output")
     os.makedirs(vv_dir, exist_ok=True)
 
     hmm_db = args.viralverify_hmm or os.path.join(args.db_dir, "ViralVerify", "nbc_hmms.h3m")
-    
+    if not os.path.isfile(hmm_db):
+        safe_print(f"  [{sample}] ViralVerify HMM 库不存在: {hmm_db}")
+        open(result_file, 'w').close()
+        return result_file
+
+    mode = getattr(args, "viralverify_mode", "auto") or "auto"
+    threshold = float(getattr(args, "viralverify_threshold", 7.0) or 7.0)
+    classifier_path = None if mode == "hits" else _vv_resolve_classifier(
+        explicit=getattr(args, "viralverify_classifier", None),
+        hmm_db=hmm_db,
+        db_dir=getattr(args, "db_dir", None),
+        repo_dir=str(SCRIPT_DIR.parent),
+    )
+    classifier = None
+    if classifier_path:
+        try:
+            classifier = _vv_load_classifier(classifier_path)
+        except OSError as exc:
+            safe_print(f"  [{sample}] ViralVerify 分类器表读取失败 ({classifier_path}): {exc}")
+    if mode != "hits" and not classifier:
+        safe_print(f"  [{sample}] ViralVerify 分类器表未找到，回退 HMM-hit 判定 "
+                   f"(高召回/低特异)；用 --viralverify_classifier 指定")
+
     # Step 1: Prodigal gene prediction
+    if not shutil.which("prodigal"):
+        safe_print(f"  [{sample}] 未找到 prodigal，ViralVerify 跳过 (结果为空)")
+        open(result_file, 'w').close()
+        return result_file
     faa_file = os.path.join(vv_dir, f"{sample}_proteins.faa")
     prodigal_cmd = f"prodigal -p meta -c -i '{input_fasta}' -a '{faa_file}' -o /dev/null"
     ok, _ = run_command(prodigal_cmd, os.path.join(vv_dir, "prodigal.log"))
@@ -785,18 +838,55 @@ def run_viralverify_pyhmmer(input_fasta, sample, base_dir, args):
         import pyhmmer
         from pyhmmer.easel import SequenceFile
         from pyhmmer.plan7 import HMMFile
-        
+
+        def _iter_hits(use_noise_cutoffs):
+            with HMMFile(hmm_db) as hmms:
+                with SequenceFile(faa_file, digital=True) as seq_file:
+                    seqs = seq_file.read_block()
+                    kwargs = {"cpus": args.threads}
+                    if use_noise_cutoffs:
+                        kwargs["bit_cutoffs"] = "noise"  # 原版 hmmsearch --cut_nc
+                    for top_hits in pyhmmer.hmmer.hmmsearch(hmms, seqs, **kwargs):
+                        yield top_hits
+
+        # hits 模式保留旧行为（默认 E-value 阈值）；auto/nbc 用原版 --cut_nc 语义
+        use_noise_cutoffs = mode != "hits"
+        try:
+            hit_iter = _iter_hits(use_noise_cutoffs)
+            first = next(hit_iter, None)
+        except TypeError:
+            safe_print(f"  [{sample}] pyhmmer 不支持 bit_cutoffs，改用默认阈值")
+            hit_iter = _iter_hits(False)
+            first = next(hit_iter, None)
+
+        if first is None:
+            contig_hmms = {}
+        else:
+            import itertools
+            contig_hmms = _vv_collect_contig_hmms(itertools.chain([first], hit_iter))
+
+        if classifier and contig_hmms:
+            n_total = sum(len(hs) for hs in contig_hmms.values())
+            n_known = sum(1 for hs in contig_hmms.values() for h in hs if h in classifier)
+            if n_known == 0:
+                safe_print(f"  [{sample}] 警告: 分类器表与 HMM 名称零匹配 "
+                           f"(0/{n_total})，请检查 classifier_table 版本是否与 HMM 库配套")
+
         viral_ids = set()
-        with pyhmmer.plan7.HMMFile(hmm_db) as hmms:
-            with pyhmmer.easel.SequenceFile(faa_file, digital=True) as seq_file:
-                seqs = seq_file.read_block()
-                for hits in pyhmmer.hmmer.hmmsearch(hmms, seqs, cpus=args.threads):
-                    for hit in hits:
-                        if hit.included:
-                            # hit.name = protein/sequence name: >contigID_geneNum => extract contigID
-                            cid = hit.name.rsplit('_', 1)[0]
-                            viral_ids.add(cid)
-        
+        if classifier:
+            score_file = os.path.join(base_dir, f"{sample}_virus.viralverify.nbc.tsv")
+            with open(score_file, 'w', encoding='utf-8') as fout:
+                fout.write("contig_id\tprediction\tscore\tn_hmms\thmms\n")
+                for contig in sorted(contig_hmms):
+                    prediction, score, used = _vv_score_hmms(
+                        contig_hmms[contig], classifier, threshold)
+                    fout.write("%s\t%s\t%.4f\t%d\t%s\n" % (
+                        contig, prediction, score, len(used), ",".join(sorted(used))))
+                    if prediction == "Virus":
+                        viral_ids.add(contig)
+        else:
+            viral_ids = set(contig_hmms)
+
         with open(result_file, 'w') as fout:
             for cid in sorted(viral_ids):
                 fout.write(cid + '\n')
@@ -816,7 +906,7 @@ def run_viralverify_pyhmmer(input_fasta, sample, base_dir, args):
                                 fout.write(line[1:].strip().split()[0] + '\n')
                 except Exception:
                     pass
-    
+
     return result_file
 
 
@@ -1160,6 +1250,10 @@ def process_sample(filepath, sample, args):
     os.makedirs(output_dir, exist_ok=True)
     
     final_flag = os.path.join(output_dir, f"{sample}.processing.done")
+    if args.force:
+        # --force: 先清掉上一轮完成标记, 本轮中断/失败时不会残留假"已完成"
+        try: os.remove(final_flag)
+        except OSError: pass
     if os.path.exists(final_flag) and not args.force: return sample, True, "已完成"
     
     if args.clean_failed and os.path.exists(output_dir):

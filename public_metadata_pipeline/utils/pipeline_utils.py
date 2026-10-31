@@ -75,14 +75,44 @@ class Checkpoint:
         self.state: Dict[str, Any] = self._load()
 
     def _load(self) -> Dict[str, Any]:
-        if os.path.exists(self.file):
-            with open(self.file, 'r') as f:
-                return json.load(f)
-        return {'stages': {}}
+        if not os.path.exists(self.file):
+            return {'stages': {}}
+        try:
+            with open(self.file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            if not isinstance(data, dict):
+                raise ValueError(f"根节点类型异常: {type(data).__name__}")
+            if not isinstance(data.get('stages'), dict):
+                data['stages'] = {}
+            return data
+        except (json.JSONDecodeError, OSError, ValueError) as e:
+            # 上次写入中途被杀 / 磁盘错误 → 留档坏文件后重新初始化, 绝不阻塞管线
+            backup = f"{self.file}.corrupt-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+            try:
+                os.replace(self.file, backup)
+                kept = f"已留档: {backup}"
+            except OSError:
+                kept = f"留档失败, 已忽略: {self.file}"
+            print(f"  [WARNING] checkpoint 状态文件损坏或不可读 ({e}); "
+                  f"{kept}; 已重新初始化为空状态")
+            return {'stages': {}}
 
     def _save(self) -> None:
-        with open(self.file, 'w') as f:
-            json.dump(self.state, f, indent=2, ensure_ascii=False)
+        # 原子写: 同目录临时文件 (带 pid 防并发碰撞) → os.replace, 不留半截 JSON
+        tmp = f"{self.file}.tmp.{os.getpid()}"
+        try:
+            with open(tmp, 'w', encoding='utf-8') as f:
+                json.dump(self.state, f, indent=2, ensure_ascii=False)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, self.file)
+        except BaseException:
+            try:
+                if os.path.exists(tmp):
+                    os.remove(tmp)
+            except OSError:
+                pass
+            raise
 
     def is_done(self, stage: str) -> bool:
         return self.state.get('stages', {}).get(stage, {}).get('status') == 'done'

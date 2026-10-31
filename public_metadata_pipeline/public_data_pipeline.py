@@ -511,6 +511,9 @@ class PublicDataPipeline:
             f'--source {shlex.quote(self.args.host_download_source)} '
             f'{ncbi}'
         )
+        # [R1] --force 下传: 清 zip/解压/合并产物, 强制重下
+        if getattr(self.args, 'force', False):
+            cmd += ' --force'
         rc = run_cmd(cmd, s, self.log_dir, secrets=self._secrets(), timeout=7200)
         fasta = os.path.join(genome_dir, 'all.genome.uniq.fasta')
         if rc == 0 and os.path.isfile(fasta):
@@ -543,6 +546,9 @@ class PublicDataPipeline:
             f'--k2-libs {shlex.quote(self.HOST_K2_LIBS)} '
             f'--taxid {host_taxid}'
         )
+        # [R1] --force 下传: 否则 build_hostbase 内部 step checkpoint 会把强制重跑静默跳过
+        if getattr(self.args, 'force', False):
+            cmd += ' --force'
         UI.warn("Kraken2 建库可能耗时数小时 (checkpoint 支持断点与跳过)")
         rc = run_cmd(cmd, s, self.log_dir, secrets=self._secrets(), timeout=86400 * 3)
         if rc == 0 and os.path.isdir(hostdb_dir):
@@ -589,6 +595,9 @@ class PublicDataPipeline:
         cmd = (f'{self._py()} {shlex.quote(screen)} -g {shlex.quote(fasta)} '
                f'-n {shlex.quote(name)} --outdir {shlex.quote(eve_dir)} '
                f'--stage 1,2,3 --fast -t {threads}')
+        # [R1] --force 下传: eve_screen 的 per-stage 产物判定需要显式 force 才会重算
+        if getattr(self.args, 'force', False):
+            cmd += ' --force'
         UI.warn("EVE 扫描耗时较长 (滑窗 blastx); 结果仅作分析/参考库")
         if run_cmd(cmd, s, self.log_dir, secrets=self._secrets(),
                    timeout=86400 * 2) != 0:

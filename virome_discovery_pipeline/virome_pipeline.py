@@ -1771,7 +1771,11 @@ class ViromePipeline:
             genus_len_path = self.script_dir.parent / "database" / "genus_lens"
         if genus_len_path.is_file():
             parts.append(f"--genus-len {genus_len_path}")
-        if not self.args.force:
+        if self.args.force:
+            # [R6c] force 必须显式传 --no-resume: rescue 的 --resume 默认 True,
+            # 不传参数时 force 照样走断点, 形同虚设
+            parts.append("--no-resume")
+        else:
             parts.append("--resume")
         # Flye 样本映射 (让 rescue 精确找到 Flye contig 的来源样本)
         flye_map = self.d['merge_samples'] / "flye_coassembly" / "flye_sample_map.json"
@@ -4246,6 +4250,11 @@ def main():
 
     stages = set(args.stage)  # 支持多阶段: --stage clean deplete
 
+    # [R7] 记录显式 CLI 意图: --skip_clean/--skip_depletion 原先被 stages 推导无条件
+    # 覆盖 → 死参数; 现改为显式传入时覆盖推导 (推导值仍作默认)。
+    _cli_skip_clean = bool(getattr(args, 'skip_clean', False))
+    _cli_skip_depletion = bool(getattr(args, 'skip_depletion', False))
+
     # profile 阶段跳过 (pipeline_config.yaml: cleanup.skip_clean/skip_depletion,
     # assembly.skip_assembly, identification.skip_identification) 只在 --stage all 时生效:
     # 展开成显式阶段集合后剔除被跳过者, 后续 skip 标志/Flow 日志/DB 校验/执行全部沿用
@@ -4298,6 +4307,17 @@ def main():
         flow.append('CheckV')
         flow.append(f'Rescue({args.host_filter})')
         logger.info("  Flow:     %s", ' → '.join(flow))
+
+    # [R7] 显式 CLI 覆盖 stages 推导 (死参数修复)。注意: --stage all 时跳过
+    # clean/deplete 会让后续阶段缺输入, 属使用者显式选择, 会在对应阶段响亮报错。
+    if _cli_skip_clean:
+        args.skip_clean = True
+        stages.discard('clean')
+        logger.info("  Flow:     --skip_clean 显式生效: clean 已剔除")
+    if _cli_skip_depletion:
+        args.skip_depletion = True
+        stages.discard('deplete')
+        logger.info("  Flow:     --skip_depletion 显式生效: deplete 已剔除")
     logger.info("  Log Level: %s", args.log_level)
     if args.stop_on_error:
         logger.info("  模式:      遇错即停 (--stop-on-error)")
@@ -4378,7 +4398,15 @@ def main():
     # co-assembly 模式: 03a(COBRA) 无逐样本延伸意义, 03b(merge+Flye) 也一并跳过
     # (cluster 的 coassembly 兑底已改从 02a/02b 收集 ALL_merged 候选)
     if getattr(args, 'coassembly', False):
-        skipped_03 = [s for s in ('cobra', 'merge') if _all or s in stages]
+        # [R7] 显式 --stage cobra/merge + --coassembly → fail loud (原实现静默移除,
+        # 用户的显式请求被吞且旧 .ok 不清理)
+        _explicit03 = [s for s in ('cobra', 'merge') if (not _all) and (s in stages)]
+        if _explicit03:
+            raise SystemExit(
+                "[ERROR] --coassembly 与显式 --stage " + ','.join(_explicit03) +
+                " 不兼容: co-assembly 模式下 COBRA/merge 无逐样本意义; "
+                "请去掉 --coassembly 或从 --stage 中移除这两项")
+        skipped_03 = [s for s in ('cobra', 'merge') if _all]
         if skipped_03:
             logger.info("[co-assembly] 跳过 Stage 03 (COBRA + merge): %s", ','.join(skipped_03))
         stage_order = [s for s in stage_order if s not in ('cobra', 'merge')]

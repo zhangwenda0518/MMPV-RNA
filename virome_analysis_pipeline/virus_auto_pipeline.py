@@ -669,8 +669,12 @@ def build_mat_mafft(recs, is_p, ign, mafft, threads, desc, metric, out_dir, cach
         print(f"      🔄[全局续传] 加载完整 MAFFT 缓存列阵！")
         try:
             mat = np.load(cache_file)
-            if mat.shape == (n, n):
+            # [NaN校验] shape 匹配且无未计算对位才整体返回; 有 NaN(上次刷盘后被中断) →
+            # 弃用缓存, 落到下方 np.full 全量重算, 结尾原子刷盘覆盖写回同一 cache_file
+            if mat.shape == (n, n) and not np.isnan(mat).any():
                 return mat
+            if mat.shape == (n, n):
+                print(f"      ⚠️ MAFFT 缓存含未计算对位 (NaN)，弃用缓存，全量重算...")
         except: pass
 
     mat = np.full((n, n), np.nan)
@@ -740,9 +744,13 @@ def build_mat_sdt_exact(recs, is_p, ign, aligner_path, aligner_type, threads, de
     if resume and cache_file.exists():
         try:
             mat = np.load(cache_file)
-            if mat.shape == (n, n):
+            # [NaN校验] shape 匹配且无未计算对位才整体返回; 有 NaN(两次刷盘之间被杀) →
+            # 弃用缓存, 落到下方 np.full 全量重算, 结尾原子刷盘覆盖写回同一 cache_file
+            if mat.shape == (n, n) and not np.isnan(mat).any():
                 print(f"      🔄[SDT续传] 加载SDT比对缓存，已算对位秒跳过！")
                 return mat
+            if mat.shape == (n, n):
+                print(f"      ⚠️ SDT 缓存含未计算对位 (NaN)，弃用缓存，全量重算...")
         except Exception:
             pass
 

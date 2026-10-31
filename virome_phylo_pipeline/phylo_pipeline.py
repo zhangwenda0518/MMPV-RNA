@@ -4766,6 +4766,15 @@ def process_virus(prep, stages: List[str], args, tools, logger) -> Dict:
     # 只有一次 09-01 的失败残留, 没有任何 CSV)。
     if 'rdp5' in stages and aln_file:
         _rdp_skip_reason = _skipped_marker('rdp5')
+        # [R9] --force 压过 .skipped: 原 .skipped 优先级高于 .done 且不看 force,
+        # 装好 RDP5/换长序列后只能手删标记才能重开
+        if _rdp_skip_reason and args.force:
+            log.info(f"  [rdp5] --force: 清除不适用标记, 强制重跑")
+            try:
+                os.remove(os.path.join(out_dir, CHECKPOINT_DIR, "rdp5.skipped"))
+            except OSError:
+                pass
+            _rdp_skip_reason = ""
         if _rdp_skip_reason:
             log.info(f"  [rdp5] 已记录不适用, skip: {_rdp_skip_reason}")
             _skip('rdp5')
@@ -4957,6 +4966,14 @@ def process_virus(prep, stages: List[str], args, tools, logger) -> Dict:
     # ── capheine: 正选择分析 (Phase S) ──
     if 'capheine' in stages:
         _cap_skip = _skipped_marker('capheine')
+        # [R9] --force 压过 .skipped (同 rdp5): 原优先级高于 .done 且不看 force
+        if _cap_skip and args.force:
+            log.info("  [capheine] --force: 清除不适用标记, 强制重跑")
+            try:
+                os.remove(os.path.join(out_dir, CHECKPOINT_DIR, "capheine.skipped"))
+            except OSError:
+                pass
+            _cap_skip = ""
         if _cap_skip:
             # 2026-10-11: "不适用"也具备幂等性 —— 类病毒无 CDS 时不必每次重跑
             # gbk_extractor 才能再次得出同一结论。
@@ -5055,14 +5072,28 @@ def process_virus(prep, stages: List[str], args, tools, logger) -> Dict:
                 os.path.join(bd, "beast11.log")]
 
     def _beast_ran() -> bool:
-        """是否真跑过后验 (链日志/合并产物非空)。--skip_beast_run 只出 XML → False。
+        """是否真跑完后验。--skip_beast_run 只出 XML → False。
 
         2026-10-13 恢复 (P1): 该闸门在 10-12 工作区重写中丢失 → --skip_beast_run
         写下 .done 后正式跑被 checkpoint 静默跳过, 形成"已跑过"假象。
+        [R9] 收紧: 被杀链留下的非空 beast1.log/beast11.log 不再算"跑过"——
+        判据改为: 合并产物存在 (merged.log / mcc.tree), 或链日志存在且
+        run_status.json 记录全部链完成 (utils.merge_results.all_done)。
         """
-        _cands = _beast_log_candidates() + [os.path.join(
-            out_dir, ph_dir('time'), "beast", "merged", "mcc.tree")]
-        return any(os.path.exists(c) and os.path.getsize(c) > 0 for c in _cands)
+        bd = os.path.join(out_dir, ph_dir('time'), "beast")
+        _merged = [os.path.join(bd, "merged", "merged.log"),
+                   os.path.join(bd, "merged", "mcc.tree")]
+        if any(os.path.exists(c) and os.path.getsize(c) > 0 for c in _merged):
+            return True
+        _chains = [os.path.join(bd, "beast1.log"), os.path.join(bd, "beast11.log")]
+        if not any(os.path.exists(c) and os.path.getsize(c) > 0 for c in _chains):
+            return False
+        try:
+            from utils.merge_results import load_task, all_done as _all_done
+            _st = load_task(bd)
+            return bool(_st and _all_done(bd, _st))
+        except Exception:
+            return False
 
     if 'beast' in stages:
         _beast_done = _done('beast')

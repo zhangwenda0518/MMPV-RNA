@@ -425,14 +425,14 @@ def _contig_cluster_samples(contig_id, clusters, fasta_info=None, max_samples=10
 # 分支 A: CheckV 并行评估
 # ══════════════════════════════════════════════════════════════
 
-def branch_a(ref_fasta, work_dir, checkv_db, threads, jobs, threshold=90.0):
+def branch_a(ref_fasta, work_dir, checkv_db, threads, jobs, threshold=90.0, resume=True):
     """CheckV 并行评估 centroids。返回 (pass_fa, fail_fa, pass_count, fail_count)。支持断点续传。"""
     d = Path(work_dir) / "branch_a"; d.mkdir(parents=True, exist_ok=True)
 
-    # 断点续传: 最终输出文件已存在 → 直接恢复
+    # 断点续传: 最终输出文件已存在 → 直接恢复 (resume=False 时清除重算)
     pass_fa = d / "branchA_pass.fasta"
     fail_fa = d / "branchA_fail.fasta"
-    if pass_fa.is_file() and fail_fa.is_file():
+    if resume and pass_fa.is_file() and fail_fa.is_file():
         n_pass = sum(1 for _ in SeqIO.parse(str(pass_fa), "fasta"))
         n_fail = sum(1 for _ in SeqIO.parse(str(fail_fa), "fasta"))
         if n_pass + n_fail > 0:
@@ -465,8 +465,8 @@ def branch_a(ref_fasta, work_dir, checkv_db, threads, jobs, threshold=90.0):
         chunk_fa = tmp_dir / "chunk.fasta"
         cv_tsv = tmp_dir / "checkv_out" / "completeness.tsv"
 
-        # 断点续传: completeness.tsv 已存在 → 直接解析
-        if cv_tsv.is_file():
+        # 断点续传: completeness.tsv 已存在 → 直接解析 (resume=False 时重算)
+        if resume and cv_tsv.is_file():
             pids, fids, sids, _ = parse_checkv(cv_tsv, threshold)
         else:
             SeqIO.write(chunk, chunk_fa, "fasta")
@@ -524,7 +524,7 @@ def _cleanup_merged(r1, r2, merged_reads_dir=None):
                 pass
 
 
-def branch_b(fail_fa, fastq_dir, work_dir, checkv_db, threads, jobs, vsi_path, salmon_bin, clusters=None, fasta_info=None, max_vsi_samples=10, min_vsi_len=2000, threshold=90.0, genus_map=None, genus_lens=None, flye_sample_map=None, seg_meta=None):
+def branch_b(fail_fa, fastq_dir, work_dir, checkv_db, threads, jobs, vsi_path, salmon_bin, clusters=None, fasta_info=None, max_vsi_samples=10, min_vsi_len=2000, threshold=90.0, genus_map=None, genus_lens=None, flye_sample_map=None, seg_meta=None, resume=True):
     """对 A 失败序列并行 Virseqimprover (cluster 内多样本 reads 聚合)。返回 (pass_fa, fail_fa, pass_count, fail_count)"""
     d = Path(work_dir) / "branch_b"; d.mkdir(parents=True, exist_ok=True)
     log_dir = d / "logs"; log_dir.mkdir(exist_ok=True)
@@ -572,10 +572,14 @@ def branch_b(fail_fa, fastq_dir, work_dir, checkv_db, threads, jobs, vsi_path, s
         ok_marker = out_dir / "run.ok"
         fail_marker = out_dir / ".vsi_failed"
         err_marker = out_dir / ".vsi_error"
-        if ok_marker.is_file():
+        if ok_marker.is_file() and resume:
             if vsi_fa.is_file() and vsi_fa.stat().st_size > 0:
                 with lock: stats["ok"] += 1
                 return sid, str(vsi_fa), "已完成"
+        elif ok_marker.is_file() and not resume:
+            # [R6c] --no-resume: 已完成目录清除后重算 (err/fail 语义不变)
+            import shutil as _shutil
+            _shutil.rmtree(str(out_dir), ignore_errors=True)
         elif err_marker.is_file():
             # 延伸报错(崩溃/超时/缺reads): 最多重跑 1 次, 之后跳过进 branch C
             retries = 0
@@ -1231,7 +1235,7 @@ def main():
         # 写 centroids 到临时文件供 branch_a
         tmp_centroids = out / "input_centroids.fasta"
         SeqIO.write(centroids_records, tmp_centroids, "fasta")
-        fa_a_pass, fa_a_fail, cnt_a, cnt_a_fail = branch_a(str(tmp_centroids), out, args.checkv_db, args.threads, args.jobs, args.checkv_threshold)
+        fa_a_pass, fa_a_fail, cnt_a, cnt_a_fail = branch_a(str(tmp_centroids), out, args.checkv_db, args.threads, args.jobs, args.checkv_threshold, resume=args.resume)
 
     # 合并 orchestrator 预通过的 CheckV pass 计数 (免拯救, 不在 rescue centroids 中)
     # v6.6.1: n_pre 单独留存, 报告里必须与候选表内的拯救数分开记账
@@ -1261,7 +1265,7 @@ def main():
         if getattr(args, 'genus_len', None):
             genus_lens = _load_genus_len(args.genus_len)
             seg_meta = _load_genus_seg_meta(args.genus_len)
-        fa_b_pass, fa_b_fail, cnt_b, cnt_b_fail = branch_b(fa_a_fail, args.fastq_dir, out, args.checkv_db, args.threads, args.jobs, args.virseqimprover_path, args.salmon_bin, clusters, fasta_info, args.max_vsi_samples, args.min_vsi_len, args.checkv_threshold, genus_map=genus_map, genus_lens=genus_lens, flye_sample_map=flye_sample_map, seg_meta=seg_meta)
+        fa_b_pass, fa_b_fail, cnt_b, cnt_b_fail = branch_b(fa_a_fail, args.fastq_dir, out, args.checkv_db, args.threads, args.jobs, args.virseqimprover_path, args.salmon_bin, clusters, fasta_info, args.max_vsi_samples, args.min_vsi_len, args.checkv_threshold, genus_map=genus_map, genus_lens=genus_lens, flye_sample_map=flye_sample_map, seg_meta=seg_meta, resume=args.resume)
 
     # 3. 合并
     print("\n── Step 3: 合并 ──")

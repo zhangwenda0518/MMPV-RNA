@@ -2215,8 +2215,15 @@ def main():
                     keep_output=args.keep_classifier_output,
                     splitter=splitter, kractor_bin=args.kractor_bin)
             except Exception as e:
-                logger.error(f"Kun-peng 批量分类失败: {e}")
-                sys.exit(1)
+                # 单批分类失败不再中止整轮: 该批全部样本记失败 (与 kraken2 单样本失败
+                # 同一套记账), 继续下一批; 批内已成功样本的 .checkpoints marker 不受影响,
+                # 循环结束后由统一的 exit 1 收尾。
+                logger.error(f"Kun-peng 批量分类失败 (batch {bi}/{len(batches)}, "
+                             f"{len(group)} 个样本): {e}")
+                for _idx, _ins, _outs, _sample_id in group:
+                    logger.error(f"[{_sample_id}] 批量分类失败, 记为失败")
+                    UI.update_progress(success=False)
+                continue
             try:
                 _run_group(group, pre_map)
             finally:

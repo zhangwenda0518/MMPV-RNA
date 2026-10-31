@@ -634,6 +634,12 @@ def _run_pipeline_stages(args, out, reads, log, script_dir, _pipeline_tmp):
                     log, "plot_depth_all")
             log.info("  [1/10 viz] Stage 1 plots complete -> %s", detect_dir)
         log.info("  Detection complete -> %s", detect_dir)
+        # [P1] run.ok 产物校验: batch_virus_depth 在 0 产出/全失败时也 exit 0 ——
+        # 无非空 summary 说明 detect 实际未完成, 拒绝写 run.ok (防"假完成"永久跳过)
+        if not (best_summary.is_file() and best_summary.stat().st_size > 0):
+            log.error("  [1/9] batch_virus_depth exit=0 但未产出 %s — 拒绝标记完成, 请检查样本/参考后重跑",
+                      best_summary)
+            sys.exit(1)
         _mark_stage_ok(detect_dir)
         _ai_emit("detect")
         _AI_STAGE["current"] = None

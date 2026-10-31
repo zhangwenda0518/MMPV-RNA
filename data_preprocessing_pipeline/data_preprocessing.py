@@ -97,21 +97,93 @@ def find_host_db(args):
                 if host_align_db: break
     return kraken2_db, host_align_db
 
-def ensure_hostdb(args, log):
+# ensure_hostdb 索引完整性校验: build_hostbase.py 把各工具索引写到 hostdb/<tool>/
+HOSTDB_INDEX_PATTERNS = {
+    'bowtie2': ('*.bt2', '*.bt2l'),
+    'hisat2': ('*.ht2', '*.ht2l'),
+    'minimap2': ('*.mmi',),
+    'kraken2': ('*.k2d',),
+}
+
+def hostdb_required_tools(args):
+    """ensure_hostdb 构建/校验所需的工具清单 (kraken2 + 当前比对工具 + 可选 kunpeng)."""
+    tools = ['kraken2', args.aligner]
+    if args.classifier == 'kunpeng':
+        # kraken2 建好后由 hashshard 原地追加分片: 同一个 hostdb/kraken2
+        # 同时支持 Kraken2 与 Kun-peng, 不必再复制一份完整参考。
+        tools.append('kunpeng')
+    return tools
+
+def hostdb_index_missing(hostdb, tools):
+    """检查宿主库中各工具索引是否齐全且非空 (>0 字节), 返回缺失项描述 (空=完整).
+
+    kraken2 → 任一 *.k2d; kunpeng → hash_config.k2d + 至少一个 hash_*.k2d;
+    bowtie2 → *.bt2 / *.bt2l; hisat2 → *.ht2 / *.ht2l; minimap2 → 任一 *.mmi。
+    索引默认位于 hostdb/<tool>/, 该子目录不存在时退回整个 hostdb 递归查找。
+    """
+    hostdb = Path(hostdb)
+    missing = []
+
+    def _targets(sub):
+        d = hostdb / sub
+        return [(d, False)] if d.is_dir() else [(hostdb, True)]
+
+    def _hit(targets, patterns, exclude=()):
+        for d, recursive in targets:
+            for pat in patterns:
+                for p in (d.rglob(pat) if recursive else d.glob(pat)):
+                    if p.name in exclude:
+                        continue
+                    try:
+                        if p.is_file() and p.stat().st_size > 0:
+                            return True
+                    except OSError:
+                        continue
+        return False
+
+    for tool in tools:
+        if tool == 'kunpeng':
+            # 原生库在 hostdb/kunpeng/; 非原生由 kraken2 库 hashshard
+            # 原地追加到 hostdb/kraken2/。
+            dirs = [d for d in (hostdb / 'kunpeng', hostdb / 'kraken2') if d.is_dir()]
+            targets = [(d, False) for d in dirs] or [(hostdb, True)]
+            if not _hit(targets, ('hash_config.k2d',)):
+                missing.append('kunpeng: hash_config.k2d')
+            if not _hit(targets, ('hash_*.k2d',), exclude=('hash_config.k2d',)):
+                missing.append('kunpeng: hash_*.k2d')
+            continue
+        patterns = HOSTDB_INDEX_PATTERNS.get(tool)
+        if not patterns:
+            continue
+        if not _hit(_targets(tool), patterns):
+            missing.append(f"{tool}: {'/'.join(patterns)}")
+    return missing
+
+def ensure_hostdb(args, log, required_tools=None):
     """无现成库时现场构建宿主参考 (--host_fasta 或 --host_species+--host_taxid).
 
     直接调用 download_host_genome.py (四通道下载) + build_hostbase.py (只建 kraken2 +
     当前比对工具), 结果写入 {output_dir}/<宿主参考目录>/hostdb/ (布局感知:
     legacy=host_reference, standard=05_HostRef), 并回填 args.host_db。
+
+    required_tools: 需要校验索引完整性的工具列表 (None=不校验, 保持旧调用兼容);
+    目录存在但索引不全 (上次构建被中断的半成品) 时不再复用, 直接走重建。
     """
     # 布局感知落点: h_genome 键的父目录 (legacy=host_reference / standard=05_HostRef),
     # 与 preprocess_unified.py 的 hostref 阶段保持同一落点
     host_reference = Path(args.output_dir) / os.path.split(layout_dir_name('h_genome'))[0]
     hostdb = host_reference / 'hostdb'
+    check_tools = list(required_tools) if required_tools else []
     if hostdb.is_dir() and any(hostdb.iterdir()) and not args.force:
-        log.info("  复用已有宿主参考: %s (--force 重建)", hostdb)
-        args.host_db = str(hostdb)
-        return
+        missing = hostdb_index_missing(hostdb, check_tools) if check_tools else []
+        if not missing:
+            log.info("  复用已有宿主参考: %s (--force 重建)", hostdb)
+            args.host_db = str(hostdb)
+            return
+        # 半成品库复用会让 find_host_db 找不到比对索引 → 静默降级为仅分类去宿主,
+        # 因此这里判定为不可复用, 走下面的 build_hostbase 重建路径 (断点续传)。
+        log.warning("  宿主库目录存在但索引不完整 (缺 %s)，触发重建: %s",
+                    ', '.join(missing), hostdb)
 
     bin_dir = SCRIPT_DIR.parent / 'public_metadata_pipeline'
     genome_dir = host_reference / 'genome'
@@ -135,11 +207,7 @@ def ensure_hostdb(args, log):
         log.error("未找到宿主基因组 FASTA: %s", fasta)
         sys.exit(1)
 
-    tools = ['kraken2', args.aligner]
-    if args.classifier == 'kunpeng':
-        # kraken2 建好后由 hashshard 原地追加分片: 同一个 hostdb/kraken2
-        # 同时支持 Kraken2 与 Kun-peng, 不必再复制一份完整参考。
-        tools.append('kunpeng')
+    tools = check_tools or hostdb_required_tools(args)
     log.info("[前置] 宿主索引构建 (build_hostbase.py: %s)", ','.join(tools))
     parts = [
         f"python {bin_dir / 'build_hostbase.py'}",
@@ -480,7 +548,7 @@ def main():
                 log.error("  ③ --host_fasta <FASTA> 或 --host_species X --host_taxid N   (现场构建到 {output_dir}/宿主参考目录/)")
                 sys.exit(1)
             if not has_db:
-                ensure_hostdb(args, log)
+                ensure_hostdb(args, log, hostdb_required_tools(args))
             run_deplete(args, log, reads_dir)
             cleanup_00a_after_deplete(args.output_dir, log)
         except SystemExit as e:

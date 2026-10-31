@@ -61,19 +61,22 @@ def run(cmd, desc="", timeout=None, check=True):
 # vclust
 # ══════════════════════════════════════════════════════════════
 
-def run_vclust_prefilter_align_cluster(fasta_in, out_dir, ani=0.95, qcov=0.85, threads=4, algorithm="leiden"):
-    """vclust 三件套: prefilter → align → cluster。返回 clusters.tsv 路径 (支持断点续传)"""
+def run_vclust_prefilter_align_cluster(fasta_in, out_dir, ani=0.95, qcov=0.85, threads=4, algorithm="leiden", resume=True):
+    """vclust 三件套: prefilter → align → cluster。返回 clusters.tsv 路径 (支持断点续传)
+
+    resume=False 时忽略已有中间/最终文件, 全量重算 (编排器 --force 对应不传 --resume)。
+    """
     d = Path(out_dir); d.mkdir(parents=True, exist_ok=True)
     pre, atsv, ctsv, ids = d / "vclust_prefilter.txt", d / "vclust_ani.tsv", d / "vclust_clusters.tsv", d / "vclust_ani.ids.tsv"
-    # 断点续传: 最终结果已存在
-    if ctsv.is_file() and ctsv.stat().st_size > 100:
+    # 断点续传: 最终结果已存在 (仅 resume 时复用)
+    if resume and ctsv.is_file() and ctsv.stat().st_size > 100:
         print(f"  [RESUME] vclust clusters 已存在 → {ctsv}")
         return str(ctsv)
-    # 断点续传: ani.tsv 已存在, 跳过 prefilter+align
-    if atsv.is_file() and atsv.stat().st_size > 100:
+    # 断点续传: ani.tsv 已存在, 跳过 prefilter+align (仅 resume 时复用)
+    if resume and atsv.is_file() and atsv.stat().st_size > 100:
         print(f"  [RESUME] vclust ani.tsv 已存在, 跳过 prefilter+align → {atsv}")
     else:
-        if not pre.is_file() or pre.stat().st_size < 100:
+        if not resume or not pre.is_file() or pre.stat().st_size < 100:
             run(["vclust", "prefilter", "-i", str(fasta_in), "-o", str(pre), "--min-ident", str(ani), "--threads", str(threads)], "vclust prefilter")
         else:
             print(f"  [RESUME] vclust prefilter 已存在 → {pre}")
@@ -90,13 +93,16 @@ TAG_REF = "ref|"
 TAG_OUR = "our|"
 
 
-def tag_and_merge_fasta(contig_fa, ref_fa, out_dir):
-    """去重参考 → 给 ID 加前缀 → 合并: ref → ref|xxx, contig → our|xxx。返回 (merged_fa, ref_id_set)"""
+def tag_and_merge_fasta(contig_fa, ref_fa, out_dir, resume=True):
+    """去重参考 → 给 ID 加前缀 → 合并: ref → ref|xxx, contig → our|xxx。返回 (merged_fa, ref_id_set)
+
+    resume=False 时忽略已有 merged FASTA, 重新去重+合并 (编排器 --force)。
+    """
     d = Path(out_dir); d.mkdir(parents=True, exist_ok=True)
     merged = d / "cdhit_combined.fasta"
 
-    # 断点续传: merged FASTA 已存在
-    if merged.is_file() and merged.stat().st_size > 0:
+    # 断点续传: merged FASTA 已存在 (仅 resume 时复用)
+    if resume and merged.is_file() and merged.stat().st_size > 0:
         print(f"  [RESUME] CD-HIT merged FASTA 已存在 → {merged}")
         ref_ids = {rec.id for rec in SeqIO.parse(merged, "fasta") if rec.id.startswith(TAG_REF)}
         return str(merged), ref_ids
@@ -167,7 +173,7 @@ def split_cdhit_clusters(clusters_dict, ref_id_set):
     return known, novel, association
 
 
-def run_cdhit_reference_clustering(input_fa, ref_fa, out_dir, ani=0.95, qcov=0.85, threads=4, min_length=500):
+def run_cdhit_reference_clustering(input_fa, ref_fa, out_dir, ani=0.95, qcov=0.85, threads=4, min_length=500, resume=True):
     """
     CD-HIT 参考引导预聚类:
       1. 合并 contig + 参考 (加 ref|/our| 前缀)
@@ -179,10 +185,10 @@ def run_cdhit_reference_clustering(input_fa, ref_fa, out_dir, ani=0.95, qcov=0.8
     d = Path(out_dir) / "2_cdhit"; d.mkdir(parents=True, exist_ok=True)
 
     # 1. 合并
-    merged_fa, ref_ids = tag_and_merge_fasta(input_fa, ref_fa, d)
+    merged_fa, ref_ids = tag_and_merge_fasta(input_fa, ref_fa, d, resume=resume)
 
     # 2. vclust cd-hit 聚类
-    ctsv = run_vclust_prefilter_align_cluster(merged_fa, d / "vclust_cdhit", ani, qcov, threads, algorithm="cd-hit")
+    ctsv = run_vclust_prefilter_align_cluster(merged_fa, d / "vclust_cdhit", ani, qcov, threads, algorithm="cd-hit", resume=resume)
     all_clusters = parse_vclust_clusters(ctsv)
     print(f"  CD-HIT 聚类: {len(all_clusters)} 个簇")
 
@@ -490,7 +496,8 @@ def main():
             novel_fa, known_centroids_fa, n_known_clusters, n_novel, association_map = \
                 run_cdhit_reference_clustering(input_fa, ref_fa, out,
                                                args.cdhit_ani, args.cdhit_qcov,
-                                               args.threads, args.min_length)
+                                               args.threads, args.min_length,
+                                               resume=args.resume)
             print(f"  CD-HIT 结果: {n_known_clusters} 个 known 簇有关联 contig, {n_novel} 新颖 contig → vclust Leiden")
             # 保存 association 表到 centroids
             assoc_out = out / "4_centroids" / "known_association.tsv"
@@ -519,7 +526,7 @@ def main():
         tc, ts, sgl = compute_cluster_stats(clusters, fasta_info, d2)
     else:
         print("\n── Step 2: vclust 初步聚类 ──")
-        ctsv = run_vclust_prefilter_align_cluster(input_fa, d2, args.ani, args.qcov, args.threads)
+        ctsv = run_vclust_prefilter_align_cluster(input_fa, d2, args.ani, args.qcov, args.threads, resume=args.resume)
         clusters = parse_vclust_clusters(ctsv)
         fasta_info = load_fasta_info(input_fa)
         tc, ts, sgl = compute_cluster_stats(clusters, fasta_info, d2)
