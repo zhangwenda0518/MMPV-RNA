@@ -949,6 +949,12 @@ def _run_pipeline_stages(args, out, reads, log, script_dir, _pipeline_tmp):
                 log.error("Variant summary not found: %s (run Stage 3 first)", var_summary)
                 _ai_emit("assembly", "failed")
                 sys.exit(1)
+            # [阶段重排] full 硬依赖 Stage 4 extract 的靶向 reads
+            _vr = variants_dir / "virus_reads"
+            if not (_vr.is_dir() and any(_vr.iterdir())):
+                log.error("virus_reads/ 缺失或为空: %s — 先运行 --stage extract", _vr)
+                _ai_emit("assembly", "failed")
+                sys.exit(1)
 
             vsi = args.virus_full_script or str(script_dir / "virus-full.py")
             parts = [

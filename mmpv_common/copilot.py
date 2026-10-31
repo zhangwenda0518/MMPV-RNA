@@ -90,7 +90,8 @@ _PREP_FLAGS = ("--input_reads", "--output_dir", "-o", "--io-layout", "--host_db"
                "--host_align_db", "--host_fasta", "--host_species", "--host_taxid",
                "--aligner", "--seq_type", "--rrna", "--rrna_tool", "--silva_index",
                "--classifier", "--kunpeng_bin", "--kunpeng_hash_capacity", "--min_hit_groups",
-               "--kraken2_confidence", "--skip_clumpify", "--dedup", "--clumpify_memory",
+               "--kraken2_confidence", "--skip-clumpify", "--skip_clumpify",
+               "--dedup", "--clumpify_memory",
                "--no_compress", "--threads", "-t", "--jobs", "-j", "--force",
                "--keep_rrna", "--tmp_dir", "--warn_retained")
 
@@ -111,7 +112,8 @@ _DISC_FILTER_FLAGS = ("--host-filter", "--skip-sdt", "--sdt-min-ratio", "--sdt-t
                       "--hmm-min-specific", "--hmm-promote-keep", "--no-hmm-promote-keep",
                       "--hmm-promote-min", "--hmm-require-family", "--hmm-count-ambiguous")
 # 流程控制 + clean/deplete 细化
-_DISC_RUN_FLAGS = ("--skip_clean", "--skip_depletion", "--skip_clumpify", "--dry-run",
+_DISC_RUN_FLAGS = ("--skip_clean", "--skip_depletion", "--skip-clumpify",
+                   "--skip_clumpify", "--dry-run",
                    "--log-level", "--stop-on-error", "--dedup", "--clumpify_memory",
                    "--no_compress", "--clean_debug", "--deplete_tmp", "--kraken2_confidence",
                    "--keep_rrna", "--keep_taxids", "--vmtouch", "--rrna_chunk_size",
@@ -232,7 +234,7 @@ COMMAND_SPECS: Dict[str, CommandSpec] = {
         key="analysis",
         script="virome_analysis_pipeline/auto_known_virus.py",
         desc="④ 已知病毒深度分析 (detect/variants/full/dvg/report…)",
-        stages=("all", "detect", "filter", "variants", "full", "extract", "post",
+        stages=("all", "detect", "filter", "variants", "extract", "post", "full",
                 "similarity", "dvg", "report"),
         # 该编排器手工校验 reads_dir/output_dir/ref_info/reference 四件套
         # (--config 可从 profile 里补, 见 auto_known_virus.py 参数校验段)
