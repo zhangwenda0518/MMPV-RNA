@@ -1487,6 +1487,11 @@ def merge_global_results(df_sra, df_gsa, out_dir, fill_date, mode, api_client, a
         if col not in df_global.columns: df_global[col] = pd.NA
     df_final_14 = df_global[FINAL_14].copy().replace(["Not_Provided", "not_provided", "None", ""], pd.NA)
     save_dual_format(df_final_14, os.path.join(out_dir, "Global_Unified_Metadata_Core14"))
+    # [P1] 总失败守卫: 单 accession 失败只打印, 此前全失败也 exit 0, 编排器把空结果
+    # 标成 done, 样本永久缺失。Core14 零行 = 全部失败, 非零退出交上层重试。
+    if df_final_14.empty:
+        print("❌ 全部 accession 解析失败, Core14 零行 — 以非零退出交编排器重试")
+        sys.exit(1)
     full_f = save_dual_format(df_global, os.path.join(out_dir, "Global_Unified_Metadata_Full"))
     generate_global_datavzrd(full_f, out_dir)
     

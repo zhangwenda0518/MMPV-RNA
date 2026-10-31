@@ -30,6 +30,7 @@ _install_fig_hook()
 
 import argparse
 import re
+import sys
 from pathlib import Path
 
 try:
@@ -453,6 +454,15 @@ def main():
                 sf.write(f"n_contigs,total_bp,longest,N50,N90\n")
                 sf.write(f"{n},{total_bp},{lengths[0]},{n50},{n90}\n")
 
+    # [P1] 退出码语义 (此前无任何非零退出路径): 写入失败, 或"有目标却 0 成功且存在真缺失"
+    # → 非零退出, 编排器不会把空产出标成 run.ok; 太短/N超标是质量排除, 不算失败。
+    _write_fails = sum(1 for r in status_records if r['status'] == 'write_fail')
+    _attempted = success_count + missing_count + empty_count + short_fail_count + n_fail_count
+    if _write_fails or (_attempted and success_count == 0 and (missing_count or empty_count)):
+        print(f"❌ extract 失败: 写入失败 {_write_fails} 个; 0 成功且 {missing_count + empty_count} 个目标缺失/为空")
+        return 1
+    return 0
+
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

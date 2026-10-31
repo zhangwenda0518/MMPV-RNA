@@ -218,11 +218,14 @@ class PublicDataPipeline:
             f'--outdir {shlex.quote(self.dirs["info"])}'
         )
         rc = run_cmd(cmd, s, self.log_dir, secrets=self._secrets())
-        if rc == 0:
+        # [P1] 产物校验: info 子进程单 accession 失败只打印、全失败仍可能 exit 0;
+        # rc==0 但 Core14 缺失/空 → 按失败记账, 下轮重试
+        _core14 = os.path.join(self.dirs["info"], "Global_Unified_Metadata_Core14.csv")
+        if rc == 0 and os.path.isfile(_core14) and os.path.getsize(_core14) > 0:
             UI.ok(f"output: {self.dirs['info']}/Global_Unified_Metadata_Core14.csv")
             self.ckpt.mark_done(s)
             return True
-        self.ckpt.mark_fail(s, f"exit={rc}")
+        self.ckpt.mark_fail(s, f"exit={rc}" if rc != 0 else "Core14 产物缺失/空 (info 子进程可能全部 accession 失败)")
         return False
 
     def _prescreen_filtered_list(self, mode: str) -> Optional[str]:

@@ -507,6 +507,8 @@ def main():
                 f"-t {args.threads}",
                 f"-j {args.jobs}",
             ]
+            if args.force:
+                parts.append("--force")
             log.info("[bbnorm] 覆盖度归一化 (target=70 mindepth=2), 输入: %s", reads_dir)
             if not run_cmd(' '.join(parts), log, "BBNorm"):
                 sys.exit(1)

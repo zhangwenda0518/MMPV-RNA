@@ -37,6 +37,7 @@ import sys
 import time
 import glob
 import gzip
+import json
 import shutil
 import atexit
 import signal
@@ -848,22 +849,181 @@ def seqkit_filter_by_ids(seqkit, src, dst, pattern_file, invert, threads=4):
     subprocess.run(cmd, check=True)
 
 
+def kractor_filter_reads(kractor_bin, seq1, seq2, out1, out2, raw_txt, raw_report,
+                         keep_taxids_list, mfilter, prefix=''):
+    """用 kractor 直接按 taxid 分流，返回 total_output_records。
+
+    mfilter=True  → 保留 unclassified(0) + keep_taxids(含子代)
+    mfilter=False → --exclude 上述集合，只留宿主
+    kractor 依赖完整的 per-read 输出；缺行时调用方应先回退 seqkit。
+    """
+    for p in (out1, out2):
+        if p and os.path.exists(p):
+            os.remove(p)
+    cmd = [kractor_bin, '-i', str(seq1)]
+    if seq2:
+        cmd += ['-i', str(seq2)]
+    cmd += ['-o', str(out1)]
+    if seq2:
+        cmd += ['-o', str(out2)]
+    cmd += ['-k', str(raw_txt)]
+    if keep_taxids_list:
+        if not raw_report or not os.path.isfile(raw_report):
+            raise RuntimeError("kractor --children 需要 kreport2，但文件不存在")
+        cmd += ['-r', str(raw_report), '--children']
+    if not mfilter:
+        cmd.append('--exclude')
+    cmd += ['-t', '0'] + [str(t) for t in keep_taxids_list]
+    cmd.append('--summary')
+    proc = subprocess.run(cmd, capture_output=True, text=True)
+    if proc.returncode != 0:
+        raise RuntimeError(f"kractor 失败 (exit={proc.returncode}): "
+                           f"{(proc.stderr or '')[-400:]}")
+    out = proc.stdout or ''
+    lo, hi = out.find('{'), out.rfind('}')
+    if lo < 0 or hi < lo:
+        raise RuntimeError("kractor --summary 未返回 JSON")
+    try:
+        summary = json.loads(out[lo:hi + 1])
+        return int(summary['total_output_records'])
+    except (ValueError, KeyError) as e:
+        raise RuntimeError(f"kractor summary 解析失败: {e}")
+
+
+def parse_kunpeng_output(out_txt, report_file, host_pattern,
+                         keep_taxids_list, prefix, sample_name):
+    """解析 Kun-peng per-read 输出 → 宿主 read ID 模式文件 + 统计。
+
+    out_txt: `output_*.txt` 路径列表 (单样本 1 个; batch 传入该样本对应的那个)。
+    """
+    expanded = build_children_taxids(report_file, keep_taxids_list) if keep_taxids_list else set()
+    n_classified = n_host = n_rescued = n_u_lines = n_output_lines = 0
+    with open(host_pattern, 'w', encoding='utf-8') as pf:
+        for txt in out_txt:
+            with open(txt, 'r', encoding='utf-8', errors='replace') as fh:
+                for line in fh:
+                    tid, rid = process_kraken_output_line(line)
+                    if not rid:
+                        continue
+                    n_output_lines += 1
+                    if tid <= 0:
+                        n_u_lines += 1    # U 行: 非宿主 (部分版本会写, 部分不写)
+                        continue
+                    n_classified += 1
+                    if expanded and tid in expanded:
+                        n_rescued += 1    # 病毒等保留类群: 不算宿主
+                        continue
+                    pf.write(strip_read_suffix(rid) + '\n')
+                    n_host += 1
+    # 总数以 kreport 的 U 行为准: output 里的 U 行与它重叠, 不能相加
+    # (0.7.11 实测 50k 对: output 47,075 C + 1,861 U, kreport U=2,925;
+    #  真实总数 = 47,075 + 2,925 = 50,000)。
+    n_unclassified = report_unclassified_count(report_file)
+    if n_unclassified == 0 and n_u_lines:
+        n_unclassified = n_u_lines      # 无 kreport 时的兜底
+    total = n_classified + n_unclassified
+    stats = {'records': total, 'classified': n_classified,
+             'unclassified': n_unclassified, 'output_u_lines': n_u_lines,
+             'output_lines': n_output_lines,
+             'total': total, 'host': n_host, 'rescued': n_rescued,
+             'outputs': len(out_txt)}
+    logger.info(f"{prefix}   Kun-peng 分类 {n_classified:,} 条 + 未分类 {n_unclassified:,} 条"
+                f" (合计 {total:,}); 宿主 {n_host:,} 条"
+                f" ({(n_host / max(total, 1)) * 100:.2f}%); 救回保留 taxID {n_rescued:,} 条")
+    if n_host > 5_000_000:
+        # seqkit grep -f 会把全部模式装进内存哈希; 大样本并行时这是主要内存项
+        logger.warning(f"{prefix}   宿主 ID {n_host:,} 个; seqkit grep 约需 "
+                       f"{n_host * 80 / 1e9:.1f} GB 内存做模式匹配, 注意控制 --jobs")
+    return stats
+
+
+def kunpeng_split_reads(seq1, seq2, host_pattern, n_host, mfilter, temp_dir,
+                        ext_tmp, prefix, sample_name, threads,
+                        splitter='seqkit', kractor_bin='kractor',
+                        raw_txt=None, raw_report=None, keep_taxids_list=None,
+                        stats=None):
+    """按 taxid/宿主 ID 分流 (mfilter=True 保留非宿主; False 只留宿主)。
+
+    splitter='kractor' / 'auto': 直接消费 Kun-peng 的 per-read 输出 + kreport2，
+    无需先构建宿主 ID 集合；输出条数必须与预期一致，否则回退 seqkit。
+    """
+    expected = None
+    if stats:
+        expected = (stats.get('total', 0) - n_host) if mfilter else n_host
+    complete = (bool(stats)
+                and stats.get('output_lines', -1) == stats.get('total', -2))
+    if splitter in ('auto', 'kractor') and raw_txt and os.path.isfile(raw_txt):
+        if not complete:
+            logger.warning(f"{prefix}   Kun-peng 输出不完整 "
+                           f"({stats.get('output_lines')}/{stats.get('total')})，"
+                           f"跳过 kractor，回退 seqkit")
+        else:
+            dst1 = os.path.join(temp_dir, f'kp_filtered_1{ext_tmp}')
+            dst2 = os.path.join(temp_dir, f'kp_filtered_2{ext_tmp}') if seq2 else None
+            try:
+                n = kractor_filter_reads(
+                    kractor_bin, seq1, seq2, dst1, dst2, raw_txt, raw_report,
+                    keep_taxids_list or [], mfilter, prefix)
+                expected_records = (expected * (2 if seq2 else 1)
+                                    if expected is not None else None)
+                if expected_records is not None and n != expected_records:
+                    raise RuntimeError(f"输出 {n} 条记录，预期 {expected_records} 条"
+                                       f"（{expected} 对）")
+                logger.info(f"{prefix}   kractor 分流完成: "
+                            f"{(n // 2) if seq2 else n:,} 条"
+                            f"{' (paired)' if seq2 else ''}")
+                return dst1, dst2
+            except Exception as e:
+                logger.warning(f"{prefix}   kractor 不可用/计数不符，回退 seqkit: {e}")
+                for p in (dst1, dst2):
+                    if p and os.path.exists(p):
+                        try:
+                            os.remove(p)
+                        except OSError:
+                            pass
+
+    seqkit = shutil.which('seqkit') or 'seqkit'
+    inputs = [seq1] + ([seq2] if seq2 else [])
+    outs = []
+    for i, src in enumerate(inputs, 1):
+        dst = os.path.join(temp_dir, f'kp_filtered_{i}{ext_tmp}')
+        if n_host == 0:
+            # 无宿主命中: invert 模式原样保留输入 (比空跑一遍 seqkit 省一大截 I/O)。
+            # 注意 gz 输入必须解压后再写, 否则 dst 是 .fastq 却装着 gzip 字节流。
+            if mfilter:
+                if str(src).lower().endswith('.gz'):
+                    with gzip.open(src, 'rb') as fin, open(dst, 'wb') as fout:
+                        shutil.copyfileobj(fin, fout)
+                else:
+                    shutil.copyfile(src, dst)
+            else:
+                open(dst, 'w').close()
+        else:
+            suffix = detect_read_suffix(src)
+            pat = write_suffixed_patterns(
+                host_pattern, os.path.join(temp_dir, f'{sample_name}_kp_host_ids_{i}.txt'), suffix)
+            try:
+                seqkit_filter_by_ids(seqkit, src, dst, pat, invert=mfilter, threads=threads)
+            except subprocess.CalledProcessError as e:
+                logger.error(f"{prefix}   seqkit grep 失败 (exit={e.returncode}): {src}")
+                return None
+            except FileNotFoundError:
+                logger.error(f"{prefix}   找不到 seqkit; --classifier kunpeng 需要 seqkit 做 read 分流")
+                return None
+        outs.append(dst)
+    return outs[0], (outs[1] if len(outs) > 1 else None)
+
+
 def kunpeng_classify_and_split(kr2_idx, seq1, seq2, threads, confidence,
                                keep_taxids_list, mfilter, temp_dir,
                                report_file, ext_tmp, prefix, sample_name,
                                tool_logs_dir, kunpeng_bin='kun_peng',
                                min_hit_groups=2, keep_classifier_output=False,
-                               keep_dir=None):
-    """Kun-peng 初筛 + 按 read ID 分流，返回 (temp1, temp2, stats)。
+                               keep_dir=None, splitter='seqkit',
+                               kractor_bin='kractor'):
+    """单样本 Kun-peng 初筛 + 分流 (--kunpeng-batch-size 1 时使用)。
 
-    分流语义完全对齐 kraken2 分支：
-      · mfilter=True  → temp1/temp2 = 非宿主 reads (unclassified + keep-taxids 救回)
-      · mfilter=False → temp1/temp2 = 宿主 reads (classified 中非 keep-taxids 部分)
-    Kun-peng 不提供 --classified-out/--unclassified-out，因此分两步：
-    解析 per-read 输出得到宿主 ID → seqkit grep 反选。
-
-    keep_classifier_output=True 时必须给 keep_dir: per-read 输出与 chunk 落到
-    keep_dir，而不是随样本删除的临时目录。
+    批量模式请用 kunpeng_batch_classify(): 一次进程处理整批, 分片只加载一次。
     """
     keep_classifier_output = bool(keep_classifier_output and keep_dir)
     raw_base = keep_dir if keep_classifier_output else temp_dir
@@ -900,74 +1060,251 @@ def kunpeng_classify_and_split(kr2_idx, seq1, seq2, threads, confidence,
     elif keep_taxids_list:
         logger.warning(f"{prefix}   Kun-peng 未生成 kreport2, --keep-taxids 只能匹配 taxID 本身")
 
-    expanded = build_children_taxids(report_file, keep_taxids_list) if keep_taxids_list else set()
     host_pattern = os.path.join(temp_dir, f'{sample_name}_kp_host_ids.txt')
-    n_records = n_host = n_rescued = 0
-    with open(host_pattern, 'w', encoding='utf-8') as pf:
-        for txt in out_txt:
-            with open(txt, 'r', encoding='utf-8', errors='replace') as fh:
-                for line in fh:
-                    tid, rid = process_kraken_output_line(line)
-                    if not rid:
-                        continue
-                    n_records += 1
-                    if tid <= 0:
-                        continue          # U 行: 非宿主
-                    if expanded and tid in expanded:
-                        n_rescued += 1    # 病毒等保留类群: 不算宿主
-                        continue
-                    pf.write(strip_read_suffix(rid) + '\n')
-                    n_host += 1
-    n_unclassified = report_unclassified_count(report_file)
-    total = n_records + n_unclassified
-    stats.update(records=n_records, unclassified=n_unclassified,
-                 total=total, host=n_host, rescued=n_rescued)
-    logger.info(f"{prefix}   Kun-peng 分类 {n_records:,} 条 + 未分类 {n_unclassified:,} 条"
-                f" (合计 {total:,}); 宿主 {n_host:,} 条"
-                f" ({(n_host / max(total, 1)) * 100:.2f}%); 救回保留 taxID {n_rescued:,} 条")
-    if n_host > 5_000_000:
-        # seqkit grep -f 会把全部模式装进内存哈希; 大样本并行时这是主要内存项
-        logger.warning(f"{prefix}   宿主 ID {n_host:,} 个; seqkit grep 约需 "
-                       f"{n_host * 80 / 1e9:.1f} GB 内存做模式匹配, 注意控制 --jobs")
-
-    # ---- 按 read ID 分流 (mfilter=True 反选宿主; False 只要宿主) ----
-    seqkit = shutil.which('seqkit') or 'seqkit'
-    inputs = [seq1] + ([seq2] if seq2 else [])
-    outs = []
-    for i, src in enumerate(inputs, 1):
-        dst = os.path.join(temp_dir, f'kp_filtered_{i}{ext_tmp}')
-        if n_host == 0:
-            # 无宿主命中: invert 模式原样保留输入 (比空跑一遍 seqkit 省一大截 I/O)。
-            # 注意 gz 输入必须解压后再写, 否则 dst 是 .fastq 却装着 gzip 字节流。
-            if mfilter:
-                if str(src).lower().endswith('.gz'):
-                    with gzip.open(src, 'rb') as fin, open(dst, 'wb') as fout:
-                        shutil.copyfileobj(fin, fout)
-                else:
-                    shutil.copyfile(src, dst)
-            else:
-                open(dst, 'w').close()
-        else:
-            suffix = detect_read_suffix(src)
-            pat = write_suffixed_patterns(
-                host_pattern, os.path.join(temp_dir, f'{sample_name}_kp_host_ids_{i}.txt'), suffix)
-            try:
-                seqkit_filter_by_ids(seqkit, src, dst, pat, invert=mfilter, threads=threads)
-            except subprocess.CalledProcessError as e:
-                logger.error(f"{prefix}   seqkit grep 失败 (exit={e.returncode}): {src}")
-                return None, None, stats
-            except FileNotFoundError:
-                logger.error(f"{prefix}   找不到 seqkit; --classifier kunpeng 需要 seqkit 做 read 分流")
-                return None, None, stats
-        outs.append(dst)
+    stats.update(parse_kunpeng_output(out_txt, report_file, host_pattern,
+                                      keep_taxids_list, prefix, sample_name))
+    temp1, temp2 = kunpeng_split_reads(seq1, seq2, host_pattern, stats['host'],
+                                       mfilter, temp_dir, ext_tmp, prefix,
+                                       sample_name, threads,
+                                       splitter=splitter, kractor_bin=kractor_bin,
+                                       raw_txt=out_txt[0] if out_txt else None,
+                                       raw_report=report_file,
+                                       keep_taxids_list=keep_taxids_list,
+                                       stats=stats)
 
     if not keep_classifier_output:
         shutil.rmtree(kp_out, ignore_errors=True)
         shutil.rmtree(kp_chunk, ignore_errors=True)
     else:
         logger.info(f"{prefix}   已保留 Kun-peng 中间输出: {kp_out}")
-    return outs[0], (outs[1] if len(outs) > 1 else None), stats
+    if temp1 is None:
+        return None, None, stats
+    return temp1, temp2, stats
 
+
+def kunpeng_batch_classify(batch, db, kunpeng_bin, threads, confidence,
+                           keep_taxids_list, logs_dir, work_root,
+                           mode='classify', min_hit_groups=2,
+                           keep_output=False, splitter='seqkit',
+                           kractor_bin='kractor', stage_shm=True):
+    """批量 Kun-peng 分类: 一个进程处理整批, 索引/分片只加载一次。
+
+    batch: [(task_idx, [seq1, seq2?], [out1, out2?], sample_id), ...]
+    返回 ({task_idx: {'host_pattern': path, 'stats': stats}}, batch_dir)。
+
+    mode='classify' (Kun-peng-M, 分片按需加载, 低内存) 支持 .list 输入;
+    mode='direct'   (Kun-peng-F, 全量加载, 最快) 不支持 .list, 直接传所有路径。
+    PE/SE 会分成两次调用 (同一个 -P 批次不能混单端)。
+    """
+    os.makedirs(work_root, exist_ok=True)
+    batch_dir = tempfile.mkdtemp(prefix='kunpeng_batch_', dir=work_root)
+    batch_id = os.path.basename(batch_dir)
+    raw_dir = os.path.join(logs_dir, 'kunpeng_raw', batch_id) if keep_output else batch_dir
+    report_dir = os.path.join(logs_dir, 'kraken2_report')
+    os.makedirs(report_dir, exist_ok=True)
+    out_root = os.path.join(raw_dir, 'out')
+    chunk_root = os.path.join(raw_dir, 'chunk')
+    os.makedirs(out_root, exist_ok=True)
+    os.makedirs(chunk_root, exist_ok=True)
+
+    result = {}
+    keep_raw = keep_output or splitter in ('auto', 'kractor')
+
+    # --- 输入预载 /dev/shm: 阵列 ~30MB/s 喂不饱批分类线程; 先把本批输入整批拷进
+    # --- 内存盘 (有 cpx 用 cpx), splitr/direct/kractor 全改读内存盘, 批结束清理。
+    # --- 空间不足或校验失败则跳过, 退回阵列直读 (原行为)。
+    stage_dir = None
+    path_map = {}
+    if stage_shm:
+        try:
+            # 预载预算 = shm 剩余 × 0.85 - 5GB (给 kraken2 挂载/其他用户留余量);
+            # 逐样本自适应: 按批内顺序尽量多装, 单样本装不下就跳过试下一个 (部分预载)
+            _budget = int(shutil.disk_usage('/dev/shm').free * 0.85) - (5 << 30)
+            _picked, _used = [], 0
+            for idx, ins, _o, _s in batch:
+                _paths = [os.path.abspath(p) for p in ins]
+                _sz = sum(os.path.getsize(p) for p in _paths)
+                if _sz > 0 and _used + int(_sz * 1.05) <= _budget:
+                    _picked.append((idx, _paths))
+                    _used += int(_sz * 1.05)
+            all_files = sorted({p for _i, ps in _picked for p in ps})
+            in_total = sum(os.path.getsize(p) for p in all_files)
+            # 解压直读判定: kunpeng 的 gz 解压是单线程 (~40MB/s/文件), 100 线程喂不饱;
+            # 预载时并行解压成明文 FASTA, 分类读明文 (扫描是并行的, 能吃满线程)。
+            # 明文体积 ≈ gz × 4.2, 装不下就退回 gz 预载。
+            _gz_files = [p for p in all_files if p.lower().endswith('.gz')]
+            _decompress = bool(_gz_files) and shutil.disk_usage('/dev/shm').free > int(in_total * 4.2) + (10 << 30)
+            if _decompress:
+                logger.info(f"   解压直读: {len(_gz_files)}/{len(all_files)} 个 gz 输入将并行解压为明文 FASTA"
+                            f" (绕过单线程解压瓶颈)")
+            if in_total > 0:
+                stage_dir = os.path.join('/dev/shm', f'kunpeng_stage_{os.getpid()}_{batch_id}')
+                os.makedirs(stage_dir, exist_ok=True)
+                if len(_picked) == len(batch):
+                    logger.info(f"   📥 输入预载 /dev/shm: 整批 {len(_picked)} 样本 "
+                                f"{in_total/(1024**3):.1f}GB → {stage_dir}")
+                else:
+                    logger.info(f"   📥 输入预载 /dev/shm: 自适应 {len(_picked)}/{len(batch)} 样本 "
+                                f"{in_total/(1024**3):.1f}GB (预算 {_budget/(1024**3):.0f}GB), 其余阵列直读")
+                import threading as _th
+                _stop = _th.Event()
+
+                def _stage_progress():
+                    while not _stop.wait(30):
+                        try:
+                            _d = sum(os.path.getsize(os.path.join(r, x))
+                                     for r, _dirs, fs in os.walk(stage_dir) for x in fs)
+                            logger.info(f"   ⏳ 预载进度: {_d/(1024**3):.1f}/{in_total/(1024**3):.1f}GB "
+                                        f"({100.0*_d/max(1,in_total):.1f}%)")
+                        except Exception:
+                            pass
+                _pt = _th.Thread(target=_stage_progress, daemon=True)
+                _pt.start()
+                cpx_bin = shutil.which('cpx')
+                _ok = False
+                if _decompress:
+                    import concurrent.futures as _cf
+                    _gz_src = [p for p in all_files if p.lower().endswith('.gz')]
+                    _plain_src = [p for p in all_files if not p.lower().endswith('.gz')]
+                    _pigz = shutil.which('pigz') or shutil.which('gzip')
+                    logger.info(f"   复制工具: {os.path.basename(_pigz)} -dc × 8 并行 (解压直读)")
+                    def _dgz(s):
+                        d = os.path.join(stage_dir,
+                                         os.path.basename(s)[:-3] if s.lower().endswith('.gz')
+                                         else os.path.basename(s))
+                        try:
+                            with open(d, 'wb') as _out:
+                                _r = subprocess.run([_pigz, '-dc', s], stdout=_out,
+                                                    stderr=subprocess.DEVNULL,
+                                                    stdin=subprocess.DEVNULL)
+                            return _r.returncode == 0 and os.path.getsize(d) > 0
+                        except Exception:
+                            return False
+                    with _cf.ThreadPoolExecutor(max_workers=8) as _ex:
+                        _res = list(_ex.map(_dgz, _gz_src))
+                    for p in _plain_src:
+                        _res.append(_dgz(p))
+                    _ok = all(_res)
+                elif cpx_bin:
+                    logger.info("   复制工具: cpx (并行)")
+                    _r = subprocess.run([cpx_bin, '-j', '8', '-t', stage_dir, *all_files],
+                                        check=False, stdin=subprocess.DEVNULL,
+                                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    _ok = (_r.returncode == 0)
+                else:
+                    logger.info("   复制工具: shutil.copyfile (未安装 cpx)")
+                if not _ok:
+                    for p in all_files:
+                        shutil.copyfile(p, os.path.join(stage_dir, os.path.basename(p)))
+                _stop.set(); _pt.join(timeout=2)
+                if _decompress:
+                    _ok = all(os.path.isfile(os.path.join(stage_dir, os.path.basename(p)[:-3] if p.lower().endswith('.gz') else os.path.basename(p))) and
+                              os.path.getsize(os.path.join(stage_dir, os.path.basename(p)[:-3] if p.lower().endswith('.gz') else os.path.basename(p))) > 0
+                              for p in all_files)
+                else:
+                    _ok = all(os.path.isfile(os.path.join(stage_dir, os.path.basename(p))) and
+                              os.path.getsize(os.path.join(stage_dir, os.path.basename(p))) == os.path.getsize(p)
+                              for p in all_files)
+                if _ok:
+                    for idx, _paths in _picked:
+                        path_map[idx] = [os.path.join(stage_dir,
+                                                      os.path.basename(p)[:-3] if p.lower().endswith('.gz')
+                                                      else os.path.basename(p))
+                                         for p in _paths]
+                else:
+                    logger.warning("   预载校验失败, 本批退回阵列直读")
+                    shutil.rmtree(stage_dir, ignore_errors=True)
+                    stage_dir = None
+            else:
+                logger.info("   /dev/shm 空间不足, 本批输入直接从阵列读取")
+        except OSError as e:
+            logger.warning(f"   输入预载跳过 ({e}), 退回阵列直读")
+            stage_dir = None
+
+    groups = [(True, [x for x in batch if len(x[1]) > 1]),
+              (False, [x for x in batch if len(x[1]) == 1])]
+    for paired, items in groups:
+        if not items:
+            continue
+        tag = 'pe' if paired else 'se'
+        out_dir = os.path.join(out_root, tag)
+        chunk_dir = os.path.join(chunk_root, tag)
+        os.makedirs(out_dir, exist_ok=True)
+        os.makedirs(chunk_dir, exist_ok=True)
+
+        cmd = [kunpeng_bin, mode, '--db', db, '--output-dir', out_dir,
+               '-p', str(max(3, int(threads))), '-g', str(int(min_hit_groups))]
+        if confidence and float(confidence) > 0:
+            cmd += ['-T', str(confidence)]
+        if paired:
+            cmd.append('-P')
+        if mode == 'direct':
+            # direct 没有 .list 支持, 直接展开输入路径
+            for _idx, ins, _outs, _sid in items:
+                cmd.extend(os.path.abspath(p) for p in (path_map.get(_idx) or ins))
+        else:
+            cmd += ['--chunk-dir', chunk_dir]
+            # Kun-peng 只在扩展名为 .txt 时把单文件当作输入清单展开
+            list_file = os.path.join(batch_dir, f'{batch_id}_{tag}.txt')
+            with open(list_file, 'w', encoding='utf-8') as lf:
+                for _idx, ins, _outs, _sid in items:
+                    lf.write('\n'.join(os.path.abspath(p) for p in (path_map.get(_idx) or ins)) + '\n')
+            cmd.append(list_file)
+
+        logger.info(f"   [batch {batch_id}] {mode} {'PE' if paired else 'SE'} "
+                    f"× {len(items)} 样本 (索引只加载一次)...")
+        ret, mem, cpu_time = execute([cmd], pipe=False,
+                                     log_prefix=f"[batch {batch_id}]",
+                                     logs_dir=os.path.join(logs_dir, 'logs'),
+                                     sample_id=f'batch_{batch_id}_{tag}',
+                                     step_name=f'step1_kunpeng_{mode}_{tag}')
+        if any(c != 0 for c in ret):
+            raise RuntimeError(f"Kun-peng 批量分类失败 (mode={mode}, {tag})")
+        logger.info(f"   [batch {batch_id}] {tag} 完成: 峰值内存 {mem:.1f}MB | "
+                    f"CPU {cpu_time:.1f}s | {len(items)} 样本共享一次索引加载")
+
+        for j, (idx, ins, _outs, sample_id) in enumerate(items, 1):
+            txt = os.path.join(out_dir, f'output_{j}.txt')
+            kre = os.path.join(out_dir, f'output_{j}.kreport2')
+            report_file = os.path.join(report_dir, f'{sample_id}_kraken2_report.txt')
+            if os.path.isfile(kre):
+                shutil.copyfile(kre, report_file)
+            elif keep_taxids_list:
+                logger.warning(f"[batch {batch_id}] {sample_id}: 未生成 kreport2")
+            host_pattern = os.path.join(batch_dir, f'host_ids_{idx}.txt')
+            prefix = f"[batch {batch_id} | {sample_id}]"
+            if os.path.isfile(txt):
+                stats = parse_kunpeng_output([txt], report_file, host_pattern,
+                                             keep_taxids_list, prefix, sample_id)
+            else:
+                # 空输入/全部被质量过滤时上游可能不写输出; 按 0 reads 处理
+                open(host_pattern, 'w').close()
+                stats = {'records': 0, 'classified': 0, 'unclassified': 0,
+                         'output_u_lines': 0, 'output_lines': 0, 'total': 0, 'host': 0,
+                         'rescued': 0, 'outputs': 0}
+                logger.warning(f"{prefix} 无 per-read 输出 (按 0 reads 处理)")
+            stats['mem'] = 0.0        # 批量资源记在 batch 日志, 不重复计入每样本
+            stats['cpu_time'] = 0.0
+            result[idx] = {'host_pattern': host_pattern, 'stats': stats,
+                           'raw_txt': txt if keep_raw else None,
+                           'raw_report': kre if keep_raw else None,
+                           'staged_ins': path_map.get(idx)}
+            if not keep_output and not keep_raw:
+                for f in (txt, kre):
+                    try:
+                        os.remove(f)
+                    except OSError:
+                        pass
+
+    if not keep_output:
+        # keep_raw: out_root 留给 run_single 用 kractor 后自行删除；
+        # batch_dir 由调用方在整批下游结束后清理。
+        if not keep_raw:
+            shutil.rmtree(out_root, ignore_errors=True)
+        shutil.rmtree(chunk_root, ignore_errors=True)
+    else:
+        logger.info(f"   已保留批量 Kun-peng 中间输出: {raw_dir}")
+    return result, batch_dir, stage_dir
 
 class HybridPipeline:
     def run_single(self, task_id, step2_tool, seq_type, kr2_idx, step2_idx, seq1, out1, seq2=None, out2=None,
@@ -976,7 +1313,10 @@ class HybridPipeline:
                    rrna_tool='ribodetector', silva_index=None,
                    keep_taxids=None, memory_mapping=True,
                    classifier='kraken2', kunpeng_bin='kun_peng',
-                   min_hit_groups=2, keep_classifier_output=False):
+                   min_hit_groups=2, keep_classifier_output=False,
+                   kunpeng_precomputed=None,
+                   rrna_impl='subprocess', rrna_threads=None,
+                   splitter='auto', kractor_bin='kractor'):
         
         start_time = time.time()
         max_mem_used = 0.0
@@ -1026,16 +1366,43 @@ class HybridPipeline:
                 do_keep_taxids = bool(keep_taxids_list)
 
                 if classifier == 'kunpeng':
-                    logger.info(f"{prefix} -> [Stage 2] Kun-peng 初筛 (Conf: {confidence}, "
-                                f"保留 taxIDs: {keep_taxids_list if do_keep_taxids else '无'}, "
-                                f"min-hit-groups={min_hit_groups})...")
-                    temp1, temp2, kp_stats = kunpeng_classify_and_split(
-                        kr2_idx, seq1, seq2, threads, confidence, keep_taxids_list,
-                        mfilter, temp_dir, report_file, ext_tmp, prefix, sample_name,
-                        tool_logs_dir, kunpeng_bin=kunpeng_bin,
-                        min_hit_groups=min_hit_groups,
-                        keep_classifier_output=keep_classifier_output,
-                        keep_dir=os.path.join(logs_dir, 'kunpeng_raw', sample_name))
+                    if kunpeng_precomputed:
+                        # 批量模式: 分类已在主线程一次完成 (分片只加载一次),
+                        # 这里只做本样本的 taxid 分流 (kractor 或 seqkit)。
+                        kp_stats = kunpeng_precomputed['stats']
+                        logger.info(f"{prefix} -> [Stage 2] 使用批量 Kun-peng 结果 "
+                                    f"(宿主 {kp_stats.get('host', 0):,} / "
+                                    f"{kp_stats.get('total', 0):,})...")
+                        temp1, temp2 = kunpeng_split_reads(
+                            seq1, seq2, kunpeng_precomputed['host_pattern'],
+                            kp_stats.get('host', 0), mfilter, temp_dir, ext_tmp,
+                            prefix, sample_name, threads,
+                            splitter=splitter, kractor_bin=kractor_bin,
+                            raw_txt=kunpeng_precomputed.get('raw_txt'),
+                            raw_report=kunpeng_precomputed.get('raw_report'),
+                            keep_taxids_list=keep_taxids_list, stats=kp_stats)
+                        if not keep_classifier_output:
+                            for p in (kunpeng_precomputed.get('raw_txt'),
+                                      kunpeng_precomputed.get('raw_report')):
+                                if p and os.path.exists(p):
+                                    try:
+                                        os.remove(p)
+                                    except OSError:
+                                        pass
+                        if temp1 is None:
+                            return 1
+                    else:
+                        logger.info(f"{prefix} -> [Stage 2] Kun-peng 初筛 (Conf: {confidence}, "
+                                    f"保留 taxIDs: {keep_taxids_list if do_keep_taxids else '无'}, "
+                                    f"min-hit-groups={min_hit_groups}, splitter={splitter})...")
+                        temp1, temp2, kp_stats = kunpeng_classify_and_split(
+                            kr2_idx, seq1, seq2, threads, confidence, keep_taxids_list,
+                            mfilter, temp_dir, report_file, ext_tmp, prefix, sample_name,
+                            tool_logs_dir, kunpeng_bin=kunpeng_bin,
+                            min_hit_groups=min_hit_groups,
+                            keep_classifier_output=keep_classifier_output,
+                            keep_dir=os.path.join(logs_dir, 'kunpeng_raw', sample_name),
+                            splitter=splitter, kractor_bin=kractor_bin)
                     max_mem_used = max(max_mem_used, kp_stats.get('mem', 0.0))
                     total_cpu_time += kp_stats.get('cpu_time', 0.0)
                     if temp1 is None:
@@ -1285,17 +1652,45 @@ class HybridPipeline:
                         rrna_out2 = os.path.join(temp_dir, f"{sample_name}.rrna.2{ext_tmp}") if seq2 else None
 
                     rrna_log = os.path.join(tool_logs_dir, f"{sample_name}_ribodetector.log")
-                    ribo_cmd = ["ribodetector_cpu", "-t", str(threads), "-l", str(length_threshold), "-i", extract_tgt1]
-                    if seq2: ribo_cmd.append(extract_tgt2)
-                    ribo_cmd.extend(["-e", "rrna", "--chunk_size", str(chunk_size), "--log", rrna_log, "-o", actual_out1])
-                    if seq2: ribo_cmd.append(actual_out2)
-                    ribo_cmd.extend(["-r", rrna_out1])
-                    if seq2: ribo_cmd.append(rrna_out2)
+                    rrna_done = False
+                    if rrna_impl == 'inprocess':
+                        try:
+                            from ribodetector_runner import get_runner
+                            runner = get_runner(
+                                seq_len=length_threshold,
+                                threads=(rrna_threads or threads),
+                                batch_size=1024,
+                                chunk_size=chunk_size,
+                                ensure='rrna')
+                            t_rrna = time.time()
+                            stats = runner.classify(
+                                extract_tgt1, extract_tgt2,
+                                actual_out1, actual_out2,
+                                rrna_out1 if keep_rrna else None,
+                                rrna_out2 if keep_rrna else None,
+                                log_path=rrna_log)
+                            logger.info(f"{prefix}   in-process Ribodetector: "
+                                        f"total={stats['total']:,}, "
+                                        f"non-rRNA={stats['non_rRNA']:,}, "
+                                        f"rRNA={stats['rRNA']:,} "
+                                        f"({time.time() - t_rrna:.1f}s)")
+                            rrna_done = True
+                        except Exception as e:
+                            logger.warning(f"{prefix} ⚠️ in-process Ribodetector 失败 "
+                                           f"({type(e).__name__}: {e})，回退 subprocess")
 
-                    ret, mem, cpu_time = execute([ribo_cmd], pipe=False, log_prefix=prefix, logs_dir=tool_logs_dir, sample_id=sample_name, step_name="step5_ribodetector")
-                    max_mem_used = max(max_mem_used, mem)
-                    total_cpu_time += cpu_time
-                    if any(c != 0 for c in ret): return 1
+                    if not rrna_done:
+                        ribo_cmd = ["ribodetector_cpu", "-t", str(threads), "-l", str(length_threshold), "-i", extract_tgt1]
+                        if seq2: ribo_cmd.append(extract_tgt2)
+                        ribo_cmd.extend(["-e", "rrna", "--chunk_size", str(chunk_size), "--log", rrna_log, "-o", actual_out1])
+                        if seq2: ribo_cmd.append(actual_out2)
+                        ribo_cmd.extend(["-r", rrna_out1])
+                        if seq2: ribo_cmd.append(rrna_out2)
+
+                        ret, mem, cpu_time = execute([ribo_cmd], pipe=False, log_prefix=prefix, logs_dir=tool_logs_dir, sample_id=sample_name, step_name="step5_ribodetector")
+                        max_mem_used = max(max_mem_used, mem)
+                        total_cpu_time += cpu_time
+                        if any(c != 0 for c in ret): return 1
 
                     if keep_rrna and out1.endswith('.gz'):
                         zip_tool = 'pigz' if shutil.which('pigz') else 'gzip'
@@ -1353,6 +1748,21 @@ def main():
                         help="自动 hashshard 转换时的分片容量 (默认: 1G ≈ 4GiB/片)")
     parser.add_argument('--min-hit-groups', type=int, default=2,
                         help="Kun-peng 最小 hit group 数 (默认: 2; kraken2 无此参数, 忽略)")
+    parser.add_argument('--kunpeng-mode', choices=['classify', 'direct'], default='direct',
+                        help="Kun-peng 分类模式: direct=全量加载(默认, 最快, 需 ≈分片总量的 RAM) / "
+                             "classify=分片按需加载(低内存)")
+    parser.add_argument('--kunpeng-threads', type=int, default=None,
+                        help="批量分类进程的线程数 (默认: --threads × --jobs 的乘积, 如 10×10=100; "
+                             "阶段②仍按 --threads/--jobs; 显式传值则覆盖乘积)")
+    parser.add_argument('--kunpeng-batch-size', type=int, default=16,
+                        help="每批一起分类的样本数 (默认: 16; 0=全部样本一批; 1=每样本单独启动)。"
+                             "批量模式下一个 kun_peng 进程处理整批, 索引只加载一次 (热启动), "
+                             "这是 Kun-peng 速度优势的前提。")
+    parser.add_argument('--splitter', choices=['auto', 'seqkit', 'kractor'], default='auto',
+                        help="Kun-peng 的 reads 分流实现: auto=优先 kractor(计数不符/缺失自动回退 seqkit) / "
+                             "seqkit=始终用 seqkit grep / kractor=强制 kractor")
+    parser.add_argument('--kractor-bin', default=os.environ.get('MMPV_KRACTOR_BIN', 'kractor'),
+                        help="补丁版 kractor 可执行文件 (默认 $MMPV_KRACTOR_BIN 或 PATH 中的 kractor)")
     parser.add_argument('--keep-classifier-output', action='store_true',
                         help="保留 Kun-peng 的 per-read 输出与 chunk 中间文件 (体积大, 默认清理)")
     
@@ -1375,6 +1785,11 @@ def main():
     parser.add_argument('--rrna', action='store_true', help="开启 rRNA 剔除")
     parser.add_argument('--rrna_tool', default='ribodetector', choices=['ribodetector', 'silva'],
                         help="rRNA 剔除工具: ribodetector (默认, 仅 rna-short) / silva (Bowtie2 比对 SILVA 库)")
+    parser.add_argument('--rrna_impl', default='inprocess', choices=['inprocess', 'subprocess'],
+                        help="Ribodetector 实现: inprocess=复用 ONNX 模型(默认, 每线程只加载一次) / "
+                             "subprocess=每次启动 ribodetector_cpu (旧行为)")
+    parser.add_argument('--rrna_threads', type=int, default=None,
+                        help="每个样本的 Ribodetector 推理线程数 (默认: max(1, threads//jobs))")
     parser.add_argument('--silva_index', help="SILVA Bowtie2 索引前缀 (--rrna_tool silva 时必需)")
     parser.add_argument('--keep_rrna', action='store_true', help="将分离出来的rRNA序列保存到 rrna/ 文件夹中 (默认丢弃)")
     parser.add_argument('--keep-taxids', default='10239', help="分类结果中保留的 taxID (逗号分隔), 默认 10239=Viruses; 设为空则不保留任何分类reads")
@@ -1414,12 +1829,18 @@ def main():
 
     # 进程守护: 停止主命令时连带杀掉所有子孙 (kraken2/seqtk/worker), 避免后台残留
     try:
-        import process_guard
-        process_guard.install(logger)
-    except ImportError:
-        logger.warning("process_guard 未找到，进程守护未启用 (中断时子孙进程可能残留)")
+        try:
+            import process_guard
+        except ImportError:
+            # process_guard 在 virome_analysis_pipeline/, 单独执行本脚本时不在 sys.path
+            _pg_sib = os.path.abspath(os.path.join(
+                os.path.dirname(os.path.abspath(__file__)), '..', 'virome_analysis_pipeline'))
+            if os.path.isdir(_pg_sib) and _pg_sib not in sys.path:
+                sys.path.insert(0, _pg_sib)
+            import process_guard
+        process_guard.install_global_guard(logger)
     except Exception:
-        pass
+        logger.warning("process_guard 未找到，进程守护未启用 (中断时子孙进程可能残留)")
 
     if args.tmp: os.makedirs(args.tmp, exist_ok=True)
     os.makedirs(args.logs_dir, exist_ok=True)
@@ -1441,6 +1862,53 @@ def main():
             logger.error(f"目录 {args.input_dir} 中未找到序列文件！")
             sys.exit(1)
         tasks = auto_pair_files(files, args.outdir)
+        # --- 输入快照 (硬链接): 并发 clean/下载循环会改写 2.fasta, 分类读到中途消失/截断的
+        # --- 文件会整批炸掉。同文件系统硬链接瞬时完成、零拷贝; clean 的删除/重写只影响它自己那份。
+        # [P0] 快照刷新机制: 硬链接共享 inode 元数据 —— 源文件重写后 size/mtime 必然变化,
+        # 与快照文件 stat 不一致即判定输入已更新: 重链 + 从 .checkpoints 剔除该样本 (下轮重算)。
+        # --force 则整目录清空 (配合 --force 已清 .checkpoints), 全量重建。
+        try:
+            _snap = os.path.join(args.outdir, '.deplete_snapshot')
+            if args.force and os.path.isdir(_snap):
+                shutil.rmtree(_snap)
+                logger.info("🧹 --force: 清空输入快照, 本轮全量重建")
+            os.makedirs(_snap, exist_ok=True)
+            _linked = _refreshed = 0
+            _stale_ids = set()
+            for t in tasks:
+                _new_ins = []
+                for _p in t[0]:
+                    _tgt = os.path.join(_snap, os.path.basename(_p))
+                    _src_st = os.stat(_p)
+                    if os.path.exists(_tgt):
+                        _snap_st = os.stat(_tgt)
+                        if (_snap_st.st_size, _snap_st.st_mtime_ns) == (_src_st.st_size, _src_st.st_mtime_ns):
+                            _new_ins.append(_tgt); _linked += 1
+                            continue
+                        # 源已重写 → 旧快照作废: 删旧链 + 重链, 并剔除样本 checkpoint
+                        try: os.remove(_tgt)
+                        except OSError: pass
+                        _stale_ids.add(extract_sample_name(os.path.basename(_p)))
+                        _refreshed += 1
+                    try:
+                        os.link(_p, _tgt)
+                    except OSError:
+                        shutil.copyfile(_p, _tgt)
+                    _new_ins.append(_tgt)
+                    _linked += 1
+                t[0][:] = _new_ins
+            if _refreshed:
+                logger.info(f"🔄 输入快照刷新: {_refreshed} 个文件源已重写 → 重链; 剔除 {len(_stale_ids)} 个样本 checkpoint 待重算")
+            if _stale_ids:
+                _ckpt_file = os.path.join(args.outdir, '.checkpoints')
+                if os.path.exists(_ckpt_file):
+                    with open(_ckpt_file) as f:
+                        _keep = [l for l in f if l.strip() not in _stale_ids]
+                    with open(_ckpt_file, 'w') as f:
+                        f.writelines(_keep)
+            logger.info(f"📸 输入快照(硬链接): {_linked} 个文件 → {_snap}")
+        except OSError as e:
+            logger.warning(f"输入快照失败, 直接使用原路径 ({e})")
 
     elif args.input:
         if args.outdir:
@@ -1479,6 +1947,15 @@ def main():
             actual_do_rrna = False
 
     classifier_bin = args.kunpeng_bin if args.classifier == 'kunpeng' else 'kraken2'
+    rrna_impl = args.rrna_impl
+    rrna_threads = args.rrna_threads or max(1, args.threads // max(1, args.jobs))
+    if actual_do_rrna and rrna_tool == 'ribodetector' and rrna_impl == 'inprocess':
+        try:
+            import ribodetector  # noqa: F401
+            import onnxruntime  # noqa: F401
+        except ImportError as e:
+            logger.warning(f"in-process Ribodetector 不可用 ({e})，回退 subprocess")
+            rrna_impl = 'subprocess'
     # seqkit: 每步统计 + Kun-peng 的 read 分流; samtools 仅 align 阶段 (view/sort) 需要
     deps = [classifier_bin, 'seqkit']
     if 'align' in args.steps.split(','):
@@ -1491,7 +1968,8 @@ def main():
     if actual_do_rrna and rrna_tool == 'ribodetector':
         if not args.seq_type:
             logger.error("--steps 含 rrna (ribodetector) 时必须提供 --seq-type"); sys.exit(1)
-        deps.append('ribodetector_cpu')
+        if rrna_impl == 'subprocess':
+            deps.append('ribodetector_cpu')
     elif actual_do_rrna and rrna_tool == 'silva':
         deps.append('bowtie2')
     # kraken2 用 seqtk 救回 taxid reads; kunpeng 用 seqkit 分流 (seqkit 已在基础依赖中)
@@ -1517,82 +1995,247 @@ def main():
     logger.info(f"初筛分类器: {args.classifier.upper()}"
                 + (f" ({args.kunpeng_bin}, min-hit-groups={args.min_hit_groups})"
                    if args.classifier == 'kunpeng' else ''))
-    tool_label = "SILVA/Bowtie2" if rrna_tool == 'silva' else "ribodetector_cpu"
+    tool_label = "SILVA/Bowtie2" if rrna_tool == 'silva' else f"ribodetector ({rrna_impl})"
     if actual_do_rrna: logger.info(f"rRNA过滤: 已开启 (使用 {tool_label})")
     logger.info(f"报表与图表存储: {args.logs_dir}/")
     logger.info(f"解析任务: 包含 {pe_count} 个双端，{se_count} 个单端。")
     logger.info(f"并发配置: {args.jobs} 并发任务 × {args.threads} 线程/任务")
     logger.info("="*60)
 
-    # --- memory-mapping (仅 kraken2) ---
-    # kraken2 以 mmap 访问只读索引, --jobs>1 时全体样本共享 page cache 中的同一份 DB。
-    # Kun-peng classify 按需加载 hash 分片, 没有 --memory-mapping 开关; 但 vmtouch
-    # 预热 .k2d 分片同样能让首样本少 fault-in, 故保留 vmtouch 分支。
-    # 可选 vmtouch 预热: 提前把 .k2d 页读进 page cache, 避免前几个样本冷启动时 page-fault 拖慢。
-    # 注意: 不再复制到 /dev/shm (那会让每进程另占一份堆内存), mmap 直接共享磁盘 DB 的页缓存。
+    # --- DB 加速层 ---
+    # kraken2: 先把库挂载到 /dev/shm 再使用 (标准流程, 不直接用阵列路径)。
+    #   mmap 映射 tmpfs 文件时进程直接共享 tmpfs 页 → 零重复内存、免疫页缓存驱逐;
+    #   副本跨运行复用 (三件套大小校验一致即跳过重拷), 空间不足时回退 vmtouch 预热/原路径。
+    # kunpeng: 库留在原路径 (direct 无 chunk 写洪峰, 页缓存自愈); --vmtouch 只预热分片
+    #   hash_*.k2d (双格式库连 hash.k2d 一起热 = 460G 互挤, 反而把分片挤出去)。
     do_k2 = 'kraken2' in args.steps.split(',')
-    if do_k2 and args.vmtouch and shutil.which('vmtouch'):
+    kr2_shm_dir, kr2_shm_created = None, False
+    if do_k2 and args.classifier == 'kraken2':
         db_dir = os.path.expanduser(args.kraken2_index)
-        k2d_files = sorted(glob.glob(os.path.join(db_dir, '*.k2d')))
+        if db_dir.startswith('/dev/shm'):
+            logger.info(f"📦 kraken2 库已在 /dev/shm: {db_dir}")
+        elif all(os.path.isfile(os.path.join(db_dir, f)) for f in ('hash.k2d', 'opts.k2d', 'taxo.k2d')):
+            trio = ['hash.k2d', 'opts.k2d', 'taxo.k2d']
+            srcs = [os.path.join(db_dir, f) for f in trio]
+            total = sum(os.path.getsize(s) for s in srcs)
+            shm_dir = os.path.join('/dev/shm', 'mmpv_kr2_' + os.path.basename(os.path.normpath(db_dir)))
+
+            def _shm_valid():
+                return all(os.path.isfile(os.path.join(shm_dir, f)) and
+                           os.path.getsize(os.path.join(shm_dir, f)) == os.path.getsize(s)
+                           for f, s in zip(trio, srcs))
+
+            if _shm_valid():
+                logger.info(f"📦 复用 /dev/shm 里的 kraken2 库副本: {shm_dir} (三件套大小校验一致)")
+            else:
+                _st = os.statvfs('/dev/shm')
+                _free = _st.f_bavail * _st.f_frsize
+                if _free < int(total * 1.02):
+                    logger.warning(f"/dev/shm 剩余 {_free/(1024**3):.0f}GB < 需要 {total/(1024**3):.0f}GB, "
+                                   f"kraken2 直接使用原路径 {db_dir} (可先清理旧副本后重跑)")
+                else:
+                    os.makedirs(shm_dir, exist_ok=True)
+                    logger.info(f"📦 挂载 kraken2 库到 /dev/shm: {shm_dir} "
+                                f"({total/(1024**3):.0f}GB, 一次性拷贝; 用完释放: rm -rf {shm_dir})...")
+                    cpx_bin = shutil.which('cpx')
+                    copied_ok = False
+                    # 挂载进度条: 每 30s 报一次已复制量 (cpx/cp 都适用)
+                    import threading as _th
+                    _stop = _th.Event()
+
+                    def _mount_progress():
+                        while not _stop.wait(30):
+                            try:
+                                _done = sum(os.path.getsize(os.path.join(shm_dir, x))
+                                            for x in os.listdir(shm_dir)
+                                            if os.path.isfile(os.path.join(shm_dir, x)))
+                                logger.info(f"   ⏳ 挂载进度: {_done/(1024**3):.1f}/{total/(1024**3):.1f}GB "
+                                            f"({100.0*_done/max(1,total):.1f}%)")
+                            except Exception:
+                                pass
+                    _pt = _th.Thread(target=_mount_progress, daemon=True)
+                    _pt.start()
+                    if cpx_bin:
+                        logger.info("   复制工具: cpx (并行)")
+                        _r = subprocess.run([cpx_bin, '-j', '8', '-t', shm_dir, *srcs],
+                                            check=False, stdin=subprocess.DEVNULL,
+                                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                        copied_ok = (_r.returncode == 0 and _shm_valid())
+                        if not copied_ok:
+                            logger.warning("   cpx 复制失败/校验不一致, 回退 shutil.copyfile")
+                    if not cpx_bin:
+                        logger.info("   复制工具: shutil.copyfile (未安装 cpx)")
+                    if not copied_ok:
+                        for f, s in zip(trio, srcs):
+                            shutil.copyfile(s, os.path.join(shm_dir, f))
+                    _stop.set()
+                    _pt.join(timeout=2)
+                    if _shm_valid():
+                        logger.info("✅ kraken2 库 shm 副本就绪 (mmap 共享 tmpfs 页, 零重复内存)")
+                        kr2_shm_dir, kr2_shm_created = shm_dir, True
+                    else:
+                        logger.warning("shm 副本校验不一致, 回退原路径")
+                        shm_dir = None
+            if shm_dir:
+                args.kraken2_index = shm_dir
+            elif args.vmtouch and shutil.which('vmtouch'):
+                k2d_files = sorted(glob.glob(os.path.join(db_dir, '*.k2d')))
+                if k2d_files:
+                    db_size_gb = sum(os.path.getsize(f) for f in k2d_files) / (1024**3)
+                    logger.info(f"🔥 vmtouch 预热(回退方案) ({len(k2d_files)} 文件 ~{db_size_gb:.0f}GB)...")
+                    for f in k2d_files:
+                        subprocess.run(['vmtouch', '-t', f], check=False,
+                                      stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        else:
+            logger.info(f"kraken2 库 {db_dir} 缺少 hash/opts/taxo 三件套, 跳过 /dev/shm 挂载")
+    elif do_k2 and args.vmtouch and shutil.which('vmtouch'):
+        db_dir = os.path.expanduser(args.kraken2_index)
+        k2d_files = sorted(glob.glob(os.path.join(db_dir, 'hash_[0-9]*.k2d')))
         if k2d_files:
             db_size_gb = sum(os.path.getsize(f) for f in k2d_files) / (1024**3)
-            logger.info(f"🔥 vmtouch 预热 DB 到 page cache ({len(k2d_files)} 文件 ~{db_size_gb:.0f}GB, 首次约 2-4 分钟)...")
+            logger.info(f"🔥 vmtouch 预热分片到 page cache ({len(k2d_files)} 文件 ~{db_size_gb:.0f}GB)...")
             for f in k2d_files:
                 subprocess.run(['vmtouch', '-t', f], check=False,
                               stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             logger.info("✅ 预热完成 (多进程共享此缓存, 内存仅占一份)")
         else:
-            logger.warning(f"vmtouch: 在 {db_dir} 未找到 .k2d 文件")
-    elif do_k2 and args.classifier == 'kraken2' and memory_mapping:
-        logger.info("🧠 memory-mapping 模式 (kraken2 mmap 共享 DB; 未预热, 首样本会自动 fault-in)")
-    elif do_k2 and args.classifier == 'kraken2' and args.vmtouch:
-        logger.warning("vmtouch 未安装, 跳过预热 (kraken2 --memory-mapping 首样本会自动 fault-in)")
-    elif do_k2 and args.classifier == 'kunpeng':
+            logger.warning(f"vmtouch: 在 {db_dir} 未找到 hash_*.k2d 分片")
+    if do_k2 and args.classifier == 'kraken2' and memory_mapping             and not os.path.expanduser(args.kraken2_index).startswith('/dev/shm'):
+        logger.info("🧠 memory-mapping 模式 (kraken2 mmap 共享 DB; 首样本自动 fault-in)")
+    if do_k2 and args.classifier == 'kunpeng':
         logger.info("🧠 Kun-peng shard 模式 (按需加载 hash_*.k2d; vmtouch 可选)")
 
+    keep_taxids_list = [int(t) for t in str(args.keep_taxids).split(',') if t.strip()] if args.keep_taxids else []
+    splitter = args.splitter
+    if args.classifier == 'kunpeng' and splitter in ('auto', 'kractor'):
+        found = (shutil.which(args.kractor_bin)
+                 or (os.path.isfile(args.kractor_bin) and os.access(args.kractor_bin, os.X_OK)))
+        if not found:
+            if splitter == 'kractor':
+                logger.error(f"找不到 kractor: {args.kractor_bin}; "
+                             f"请安装补丁版或改用 --splitter seqkit")
+                sys.exit(1)
+            logger.info("kractor 未找到，splitter 自动回退 seqkit")
+            splitter = 'seqkit'
+        else:
+            logger.info(f"Kun-peng reads 分流: {splitter} (kractor={args.kractor_bin})")
     pipeline = HybridPipeline()
     UI.total_tasks = len(tasks)
     start_time_global = time.time()
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=args.jobs) as executor:
-        futures = {}
-        for idx, (ins, outs) in enumerate(tasks, 1):
-            seq1, seq2 = ins[0], ins[1] if len(ins) > 1 else None
-            out1, out2 = outs[0], outs[1] if len(outs) > 1 else None
-            sample_id = extract_sample_name(seq1)
-            
-            if cm.is_done(sample_id):
-                logger.info(f"{UI.GRAY}⏭ [跳过] 任务 {idx:02d} | {sample_id} (历史成功){UI.RESET}")
-                UI.update_progress(success=True)
-                continue
+    # 预扫描: 已完成的样本不进入分类批
+    pending = []
+    for idx, (ins, outs) in enumerate(tasks, 1):
+        sample_id = extract_sample_name(ins[0])
+        if cm.is_done(sample_id):
+            logger.info(f"{UI.GRAY}⏭ [跳过] 任务 {idx:02d} | {sample_id} (历史成功){UI.RESET}")
+            UI.update_progress(success=True)
+            continue
+        pending.append((idx, ins, outs, sample_id))
 
-            future = executor.submit(
-                pipeline.run_single,
-                task_id=idx, step2_tool=args.tool, seq_type=args.seq_type,
-                kr2_idx=args.kraken2_index, step2_idx=args.step2_index,
-                seq1=seq1, seq2=seq2, out1=out1, out2=out2,
-                threads=args.threads, mfilter=mfilter, config=args.config,
-                confidence=args.confidence, tmp_dir=args.tmp, logs_dir=args.logs_dir,
-                do_rrna=actual_do_rrna, keep_rrna=args.keep_rrna, chunk_size=args.chunk_size,
-                rrna_tool=rrna_tool, silva_index=silva_index,
-                keep_taxids=args.keep_taxids, memory_mapping=memory_mapping,
-                classifier=args.classifier, kunpeng_bin=args.kunpeng_bin,
-                min_hit_groups=args.min_hit_groups,
-                keep_classifier_output=args.keep_classifier_output
-            )
-            futures[future] = sample_id
+    def _run_group(group, pre_map=None):
+        with concurrent.futures.ThreadPoolExecutor(max_workers=args.jobs) as executor:
+            futures = {}
+            for idx, ins, outs, sample_id in group:
+                seq1, seq2 = ins[0], ins[1] if len(ins) > 1 else None
+                out1, out2 = outs[0], outs[1] if len(outs) > 1 else None
+                # 批模式下用 /dev/shm 预载副本跑阶段② (kractor 分流也吃内存盘)
+                _pre = pre_map.get(idx) if pre_map else None
+                if _pre and _pre.get('staged_ins'):
+                    seq1 = _pre['staged_ins'][0]
+                    seq2 = _pre['staged_ins'][1] if len(_pre['staged_ins']) > 1 else None
+                future = executor.submit(
+                    pipeline.run_single,
+                    task_id=idx, step2_tool=args.tool, seq_type=args.seq_type,
+                    kr2_idx=args.kraken2_index, step2_idx=args.step2_index,
+                    seq1=seq1, seq2=seq2, out1=out1, out2=out2,
+                    threads=args.threads, mfilter=mfilter, config=args.config,
+                    confidence=args.confidence, tmp_dir=args.tmp, logs_dir=args.logs_dir,
+                    do_rrna=actual_do_rrna, keep_rrna=args.keep_rrna, chunk_size=args.chunk_size,
+                    rrna_tool=rrna_tool, silva_index=silva_index,
+                rrna_impl=rrna_impl, rrna_threads=rrna_threads,
+                    keep_taxids=args.keep_taxids, memory_mapping=memory_mapping,
+                    classifier=args.classifier, kunpeng_bin=args.kunpeng_bin,
+                    min_hit_groups=args.min_hit_groups,
+                    keep_classifier_output=args.keep_classifier_output,
+                    splitter=splitter, kractor_bin=args.kractor_bin,
+                    kunpeng_precomputed=(pre_map.get(idx) if pre_map else None)
+                )
+                futures[future] = sample_id
 
-        for future in concurrent.futures.as_completed(futures):
-            sample_id = futures[future]
-            try:
-                if future.result() == 0: 
-                    cm.mark_done(sample_id) 
-                    UI.update_progress(success=True)
-                else: 
+            for future in concurrent.futures.as_completed(futures):
+                sample_id = futures[future]
+                try:
+                    if future.result() == 0:
+                        cm.mark_done(sample_id)
+                        UI.update_progress(success=True)
+                    else:
+                        UI.update_progress(success=False)
+                except Exception as e:
+                    logger.error(f"[{sample_id}] 任务发生严重异常: {e}")
                     UI.update_progress(success=False)
+
+    # 清扫历史运行残留的 /dev/shm 预载目录 (只清进程已死的; 存活运行的不碰)
+    for _d in glob.glob('/dev/shm/kunpeng_stage_*'):
+        try:
+            _pid = int(os.path.basename(_d).split('_')[2])
+            if not os.path.isdir(f'/proc/{_pid}'):
+                shutil.rmtree(_d, ignore_errors=True)
+                logger.info(f"🧹 清理已死运行残留的 shm 预载目录: {_d}")
+        except (ValueError, IndexError):
+            pass
+
+    # Kun-peng 批量分类: 一个进程处理整批, 索引/分片只加载一次 (热启动)。
+    # 这是论文中 Kun-peng-M/F 速度优势的前提; 每样本单独启动 (batch-size=1)
+    # 会退化为冷启动, 大库上固定加载开销会重复 N 次。
+    use_batch = (args.classifier == 'kunpeng' and do_k2
+                 and args.kunpeng_batch_size != 1 and pending)
+    if use_batch:
+        size = (args.kunpeng_batch_size if args.kunpeng_batch_size > 0
+                else len(pending))
+        batches = [pending[i:i + size] for i in range(0, len(pending), size)]
+        if args.kunpeng_mode == 'direct':
+            db_gb = sum(os.path.getsize(f) for f in
+                        glob.glob(os.path.join(args.kraken2_index, 'hash_*.k2d'))) / 1e9
+            logger.warning(f"--kunpeng-mode direct: 整库加载，预计峰值内存 ≈ {db_gb:.0f} GB；"
+                           f"请确认可用内存足够")
+        logger.info(f"Kun-peng 批量分类: {len(pending)} 个样本 / {len(batches)} 批 "
+                    f"(每批 ≤{size}, mode={args.kunpeng_mode})")
+        for bi, group in enumerate(batches, 1):
+            logger.info(f"▶ batch {bi}/{len(batches)}: {len(group)} 个样本，"
+                        f"索引只加载一次...")
+            try:
+                pre_map, batch_dir, stage_dir = kunpeng_batch_classify(
+                    group, args.kraken2_index, args.kunpeng_bin,
+                    (args.kunpeng_threads or (args.threads * max(1, args.jobs))),
+                    args.confidence, keep_taxids_list, args.logs_dir,
+                    os.path.join(args.tmp, 'kunpeng_batch'),
+                    mode=args.kunpeng_mode,
+                    min_hit_groups=args.min_hit_groups,
+                    keep_output=args.keep_classifier_output,
+                    splitter=splitter, kractor_bin=args.kractor_bin)
             except Exception as e:
-                logger.error(f"[{sample_id}] 任务发生严重异常: {e}")
-                UI.update_progress(success=False)
+                logger.error(f"Kun-peng 批量分类失败: {e}")
+                sys.exit(1)
+            try:
+                _run_group(group, pre_map)
+            finally:
+                if not args.keep_classifier_output:
+                    shutil.rmtree(batch_dir, ignore_errors=True)
+                if stage_dir:
+                    shutil.rmtree(stage_dir, ignore_errors=True)
+    else:
+        if args.classifier == 'kunpeng' and do_k2 and args.kunpeng_batch_size == 1:
+            logger.warning("--kunpeng-batch-size 1: 每样本单独启动 Kun-peng（冷启动），"
+                           "大批量会明显变慢")
+        _run_group(pending, None)
+
+    # === 运行结束: 移除本运行创建的 /dev/shm 内容 (按需重建; 复用他人挂载的不动) ===
+    if kr2_shm_created and kr2_shm_dir and os.path.isdir(kr2_shm_dir):
+        shutil.rmtree(kr2_shm_dir, ignore_errors=True)
+        logger.info(f"🧹 运行结束, 已移除本运行创建的 kraken2 shm 挂载: {kr2_shm_dir}")
+    for _d in glob.glob(f'/dev/shm/kunpeng_stage_{os.getpid()}_*'):
+        shutil.rmtree(_d, ignore_errors=True)
 
     # === 后处理：报表解析与绘图 ===
 

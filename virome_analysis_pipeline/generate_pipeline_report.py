@@ -2336,16 +2336,38 @@ def ensure_summary_plots(out_dir):
         if src is not None:
             fs = script_dir / "utils" / "filter_summary.py"
             if fs.is_file():
-                _sp.run([sys.executable, str(fs), "-i", str(src), "-o", str(dst),
-                         "-c", str(_FILTER_MIN_COV), "-d", str(_FILTER_MIN_DEPTH),
-                         "-r", str(_FILTER_MIN_READS), "--plot"], capture_output=True)
+                # [P1] 正式产物保护: 在临时目录跑过滤画图, 只搬回 plot 文件;
+                # 不再用报告侧常量阈值原地改写正式 high_conf.summary.tsv (阈值不同会污染正式层)
+                import tempfile as _tf, shutil as _shutil
+                with _tf.TemporaryDirectory() as _td:
+                    _tdp = Path(_td)
+                    _tmp_in = _tdp / src.name
+                    _shutil.copy2(src, _tmp_in)
+                    _sp.run([sys.executable, str(fs), "-i", str(_tmp_in), "-o", str(_tmp_in),
+                             "-c", str(_FILTER_MIN_COV), "-d", str(_FILTER_MIN_DEPTH),
+                             "-r", str(_FILTER_MIN_READS), "--plot"], capture_output=True)
+                    for _pn in ("filter_summary_plot.pdf", "filter_summary_plot.png"):
+                        _pp = _tdp / _pn
+                        if _pp.is_file():
+                            _shutil.move(str(_pp), str(filter_dir / _pn))
     asm_plot = _resolve_dir(out, _D['a_extract']) / "assembly_stats.pdf"
     if not asm_plot.exists():
         asm_dir = _resolve_dir(out_dir, _D['a_assembly'])
         if asm_dir.is_dir():
             es = script_dir / "utils" / "extract_full_fasta.py"
             if es.is_file():
-                _sp.run([sys.executable,str(es),"-d",str(asm_dir),"-o",str(out/_D['a_extract']),"--plot","--max_n","100","--min_len","100"], capture_output=True)
+                # [P1] 正式产物保护: extract 画图跑在临时目录, 只搬回 plot/stats,
+                # 不再用 --max_n 100 --min_len 100 (无 --fill) 覆盖正式 .full.fasta 产物
+                import tempfile as _tf, shutil as _shutil
+                with _tf.TemporaryDirectory() as _td:
+                    _tdp = Path(_td)
+                    _sp.run([sys.executable, str(es), "-d", str(asm_dir), "-o", str(_tdp),
+                             "--plot", "--max_n", "100", "--min_len", "100"], capture_output=True)
+                    _dst_extract = out / _D['a_extract']
+                    for _pn in ("assembly_stats.pdf", "assembly_stats.png", "assembly_stats.csv"):
+                        _pp = _tdp / _pn
+                        if _pp.is_file():
+                            _shutil.move(str(_pp), str(_dst_extract / _pn))
 
 
 def copy_results_to_report(out_dir, report_dir):

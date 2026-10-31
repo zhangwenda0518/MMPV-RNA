@@ -566,7 +566,7 @@ def _run_pipeline_stages(args, out, reads, log, script_dir, _pipeline_tmp):
         _AI_STAGE["current"] = "detect"
         _sh = add_stage_log(detect_dir, "1_detect")
         parts = []
-        if not args.force and _stage_ok(detect_dir):
+        if not args.force and not args.no_resume and _stage_ok(detect_dir):
             log.info("[1/9] Detection: checkpoint OK, skip")
         else:
             log.info("-" * 40)
@@ -646,7 +646,7 @@ def _run_pipeline_stages(args, out, reads, log, script_dir, _pipeline_tmp):
     if args.filter and "filter" in args.stages:
         _AI_STAGE["current"] = "filter"
         _sh2 = add_stage_log(filter_dir, "2_filter")
-        if not args.force and _stage_ok(filter_dir):
+        if not args.force and not args.no_resume and _stage_ok(filter_dir):
             log.info("[2/9] Filter: checkpoint OK, skip")
         elif best_summary.exists():
             try:
@@ -686,7 +686,7 @@ def _run_pipeline_stages(args, out, reads, log, script_dir, _pipeline_tmp):
     if "variants" in args.stages:
         _AI_STAGE["current"] = "variants"
         _sh3 = add_stage_log(variants_dir, "3_variants")
-        if not args.force and _stage_ok(variants_dir):
+        if not args.force and not args.no_resume and _stage_ok(variants_dir):
             log.info("[3/9] Variants: checkpoint OK, skip")
         else:
             log.info("-" * 40)
@@ -755,7 +755,7 @@ def _run_pipeline_stages(args, out, reads, log, script_dir, _pipeline_tmp):
     if "post" in args.stages:
         _AI_STAGE["current"] = "post"
         _sh4 = add_stage_log(post_dir, "4_post")
-        if not args.force and _stage_ok(post_dir):
+        if not args.force and not args.no_resume and _stage_ok(post_dir):
             log.info("[4/9] Post-hoc: checkpoint OK, skip")
         else:
             log.info("-" * 40)
@@ -896,7 +896,7 @@ def _run_pipeline_stages(args, out, reads, log, script_dir, _pipeline_tmp):
     if "full" in args.stages:
         _AI_STAGE["current"] = "assembly"
         _sh5 = add_stage_log(assembly_dir, "5_assembly")
-        if not args.force and _stage_ok(assembly_dir):
+        if not args.force and not args.no_resume and _stage_ok(assembly_dir):
             log.info("[5/9] Assembly: checkpoint OK, skip")
         else:
             log.info("-" * 40)
@@ -937,7 +937,7 @@ def _run_pipeline_stages(args, out, reads, log, script_dir, _pipeline_tmp):
     if "extract" in args.stages:
         _AI_STAGE["current"] = "extract"
         _sh6 = add_stage_log(extract_dir, "6_extract")
-        if not args.force and _stage_ok(extract_dir):
+        if not args.force and not args.no_resume and _stage_ok(extract_dir):
             log.info("[6/9] Extract: checkpoint OK, skip")
         else:
             log.info("-" * 40)
@@ -968,7 +968,7 @@ def _run_pipeline_stages(args, out, reads, log, script_dir, _pipeline_tmp):
     if "similarity" in args.stages:
         _AI_STAGE["current"] = "similarity"
         _sh7 = add_stage_log(similarity_dir, "7_similarity")
-        if not args.force and _stage_ok(similarity_dir):
+        if not args.force and not args.no_resume and _stage_ok(similarity_dir):
             log.info("[7/9] Similarity: checkpoint OK, skip")
         else:
             log.info("-" * 40)
@@ -1042,7 +1042,7 @@ def _run_pipeline_stages(args, out, reads, log, script_dir, _pipeline_tmp):
         _AI_STAGE["current"] = "dvg"
         _dvg_status = "ok"
         _sh8 = add_stage_log(dvg_dir, "8_dvg")
-        if not args.force and _stage_ok(dvg_dir):
+        if not args.force and not args.no_resume and _stage_ok(dvg_dir):
             log.info("[8/9] DVG: checkpoint OK, skip")
         else:
             log.info("-" * 40)

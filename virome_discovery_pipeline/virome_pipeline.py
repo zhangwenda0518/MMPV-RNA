@@ -435,7 +435,7 @@ class ViromePipeline:
                 # co-assembly 模式下 COBRA 被有意跳过, 信任标记
                 getattr(self.args, 'coassembly', False)
                 or any(
-                    (cobra_d and cobra_d.is_dir() and any(
+                    any(
                         # 真实延伸产物只认非空 *.cobra.fa / *.extended.fa (P1-5c 收紧,
                         # 2026-10-15): {task_id}.contigs.fa / {task_id}.virus.fa 是任务
                         # 启动时写入的输入副本, 失败路径不清理 —— 旧判据"任意 .fa|.fasta
@@ -446,8 +446,12 @@ class ViromePipeline:
                         and (f.name.endswith('.cobra.fa') or f.name.endswith('.extended.fa'))
                         and f.stat().st_size > 0
                         for f in p.rglob('*')
-                    ))
+                    )
                     for cobra_d in d.get('_cobra_dirs', [d['cobra']])
+                    # [P0] is_dir 守卫必须在 iterdir 之前求值: legacy 布局 _cobra_dirs
+                    # 含 03a_COBRA, 不存在时 iterdir 直接 FileNotFoundError, 且本校验
+                    # 在 main 的 try 之外 —— 整条流水线崩溃。
+                    if cobra_d and cobra_d.is_dir()
                     for p in cobra_d.iterdir()
                     if p.is_dir()
                 )
@@ -490,6 +494,15 @@ class ViromePipeline:
                 # 2026-10-15: 补非空校验 —— 空跑早退可能落 0 字节空文件。
                 (d['rescue_dir'] / 'HQ_plant_viruses.fasta').is_file()
                 and (d['rescue_dir'] / 'HQ_plant_viruses.fasta').stat().st_size > 0
+            ),
+            # [P1] 原先落"信任标记"兜底: 早退/删产物也会被 .ok 跳过。补真实产物校验。
+            'analysis': lambda: (
+                (d['rescue_dir'] / 'HQ_plant_viruses.fasta').is_file()
+                and (d['rescue_dir'] / 'HQ_plant_viruses.fasta').stat().st_size > 0
+            ),
+            'analysis_verify': lambda: (
+                (d['root'] / 'final_judgement_table.tsv').is_file()
+                and (d['root'] / 'final_judgement_table.tsv').stat().st_size > 0
             ),
         }
         if stage in checks:
@@ -2345,7 +2358,7 @@ class ViromePipeline:
         all_plant = self.d['rescue_dir'] / "HQ_plant_viruses.fasta"
         if not all_plant.is_file():
             self.log.warning("  HQ_plant_viruses.fasta 不存在, 跳过")
-            return
+            return False  # [P1] 早退=未完成: 返回 False 让主循环不写 .analysis.ok
 
         import shutil
         dest_fasta = self.d['analysis'] / "HQ_plant_viruses.fasta"
@@ -2792,7 +2805,7 @@ class ViromePipeline:
         dest_fasta = src_analysis / "HQ_plant_viruses.fasta"
         if not dest_fasta.is_file():
             self.log.warning("[9b] 缺 HQ_plant_viruses.fasta, 跳过")
-            return
+            return False  # [P1] 早退=未完成: 返回 False 让主循环不写 .analysis_verify.ok
         validate_out = acv_dir / "virus_validation"
         validate_out.mkdir(parents=True, exist_ok=True)
         (self.d['analysis'] / 'logs').mkdir(parents=True, exist_ok=True)  # mix 等旧结构可能缺 logs
@@ -4421,8 +4434,17 @@ def main():
         _stage_t0 = time.monotonic()
         _stage_status, _stage_error = 'ok', None
         try:
-            stage_func()
-            pipe._stage_done(stage_name)
+            _rc = stage_func()
+            if _rc is False:
+                # [P1] 阶段函数显式返回 False = 关键输入缺失早退, 不写 .ok
+                _stage_status, _stage_error = 'failed', 'early-exit (关键输入缺失)'
+                failed_stages.append(stage_name)
+                if args.stop_on_error:
+                    logger.error("[%s] 阶段早退失败, 终止", stage_name)
+                    sys.exit(1)
+                logger.warning("[%s] 阶段早退失败, 继续", stage_name)
+            else:
+                pipe._stage_done(stage_name)
             # 更新 reads_dir 指针
             if stage_name == 'clean':
                 cl = pipe.d['clean'] / '3.clumpify'

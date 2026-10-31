@@ -69,6 +69,7 @@ class BuildHostPipeline:
         'genome-down': '宿主参考基因组下载 (NCBI datasets)',
         'eve-mask':    '内源病毒样区域屏蔽 (可选, 默认关闭)',
         'hostdb':      '宿主竞争性数据库构建 (K2/BT2/HT2/MM2)',
+        'hostdb_evemask': '宿主库构建 (K2/BT2/HT2/MM2, eve-mask 屏蔽版)',
         'eve-report':  '基因组 EVE 汇总报告 (扫描 HTML + 可选元件库/蛋白库)',
     }
 
@@ -786,6 +787,10 @@ def plan_stages(args):
                 "[ERROR] --stage eve-mask 需要掩码源: --eve-mask / --eve-bed / "
                 "--eve-verdict / --masked-genome / --eve-scan")
         stages.remove('eve-mask')
+    # [P0] 掩码启用时 hostdb 换用独立 checkpoint 键: 目标目录随掩码切换 (hostdb vs
+    # hostdb_evemask), 旧的非掩码 hostdb=done 不能把掩码库构建永久跳过
+    if eve_mask_enabled(args) and 'hostdb' in stages:
+        stages[stages.index('hostdb')] = 'hostdb_evemask'
     return stages
 
 
@@ -845,6 +850,7 @@ def main(argv=None):
     funcs = {'genome-down': p.run_genome_down,
              'eve-mask': p.run_eve_mask,
              'hostdb': p.run_hostdb,
+             'hostdb_evemask': p.run_hostdb,
              'eve-report': p.run_eve_report}
     failed = []
     t0 = time.time()

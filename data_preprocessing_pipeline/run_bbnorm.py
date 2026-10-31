@@ -93,6 +93,7 @@ def main():
     p.add_argument("--target", type=int, default=70, help="目标覆盖度 (默认 70)")
     p.add_argument("--mindepth", type=int, default=2, help="最低 k-mer 深度 (默认 2)")
     p.add_argument("--keep-se-as-pe", action="store_true", help="SE 文件也按 PE 强制配对 (默认: 单独处理)")
+    p.add_argument("--force", action="store_true", help="忽略已有输出, 全部重算 (重算前删除旧产物, 防半成品复用)")
     args = p.parse_args()
 
     inp = Path(args.input)
@@ -117,6 +118,21 @@ def main():
     lock = threading.Lock()
     stats = {"done": 0, "total": 0, "ok": 0, "fail": 0}
 
+    def _gz_ok(path):
+        """gzip 完整性校验 (gzip -t)。无 gzip 可用时退回存在性判定。"""
+        try:
+            return subprocess.run(["gzip", "-t", str(path)],
+                                  capture_output=True).returncode == 0
+        except OSError:
+            return True
+
+    def _rm_quiet(path):
+        try:
+            if path and Path(path).exists():
+                Path(path).unlink()
+        except OSError:
+            pass
+
     def _stem(r1, tag):
         name = Path(r1).name
         for t in tag:
@@ -128,8 +144,10 @@ def main():
         nr1 = out / f"{stem}_norm_R1.fq.gz"
         nr2 = out / f"{stem}_norm_R2.fq.gz"
         # resume 判定: PE 必须 out1+out2 同时有效 (仅 out1 存在可能是中断留下的半成品)
-        if (nr1.is_file() and nr1.stat().st_size > 0
-                and (r2 is None or (nr2.is_file() and nr2.stat().st_size > 0))):
+        # [P1] 追加 gzip -t 完整性: 中断留下的截断 gz 不再被当完成; --force 忽略已有输出
+        if (not args.force
+                and nr1.is_file() and nr1.stat().st_size > 0 and _gz_ok(nr1)
+                and (r2 is None or (nr2.is_file() and nr2.stat().st_size > 0 and _gz_ok(nr2)))):
             stats["done"] += 1; stats["total"] += 1; stats["ok"] += 1
             continue
         tasks.append(("PE", r1, r2, nr1, nr2, stem))
@@ -138,7 +156,7 @@ def main():
     for se in se_files:
         stem = se.name.rsplit(".", 1)[0]
         nr1 = out / f"{stem}_norm_SE.fq.gz"
-        if nr1.is_file() and nr1.stat().st_size > 0:
+        if (not args.force and nr1.is_file() and nr1.stat().st_size > 0 and _gz_ok(nr1)):
             stats["done"] += 1; stats["total"] += 1; stats["ok"] += 1
             continue
         tasks.append(("SE", se, None, nr1, None, stem))
@@ -148,6 +166,9 @@ def main():
 
     def _run(task):
         stype, r1, r2, nr1, nr2, stem = task
+        # [P1] 重算前清掉旧产物, 失败不残留半成品供下轮误判
+        if args.force:
+            _rm_quiet(nr1); _rm_quiet(nr2)
         cmd = [f"bbnorm.sh", f"in1={r1}", f"out1={nr1}",
                f"target={args.target}", f"mindepth={args.mindepth}",
                f"prefilter=t", f"threads={args.threads}",
@@ -158,9 +179,11 @@ def main():
         try:
             proc = subprocess.run(" ".join(cmd), shell=True, capture_output=True, check=False)
             # 成功判据: 退出码为 0, 且 out1 (及 PE 的 out2) 存在非空
-            ok = (proc.returncode == 0 and nr1.is_file() and nr1.stat().st_size > 0
-                  and (r2 is None or (nr2.is_file() and nr2.stat().st_size > 0)))
+            ok = (proc.returncode == 0 and nr1.is_file() and nr1.stat().st_size > 0 and _gz_ok(nr1)
+                  and (r2 is None or (nr2.is_file() and nr2.stat().st_size > 0 and _gz_ok(nr2))))
             if not ok:
+                # [P1] 失败清理: 删半成品, 防下轮 resume 误判完成
+                _rm_quiet(nr1); _rm_quiet(nr2)
                 tail = (proc.stderr or b"").decode("utf-8", errors="replace").strip().splitlines()[-5:]
                 with lock:
                     print(f"  [!] bbnorm 失败 ({stype} {stem}, exit={proc.returncode}): "

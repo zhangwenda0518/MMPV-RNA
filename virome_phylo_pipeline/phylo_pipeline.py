@@ -3831,7 +3831,10 @@ def run_stage_phylogeo(prep, results, aln_file, args, logger) -> bool:
     pending = False
     chain1_log = os.path.join(phylogeo_dir, "phylogeo_sky1.log")
     if not getattr(args, "skip_phylogeo_run", False):
-        if os.path.exists(chain1_log) and not args.force:
+        # [P0] 提交守卫需要 run_status.json 同在: 只有链日志没有状态文件 = 提交循环
+        # 死亡的残骸, 必须重新提交; 只认日志会把死链永久挡在重提之外
+        _has_status = os.path.exists(os.path.join(phylogeo_dir, "run_status.json"))
+        if os.path.exists(chain1_log) and _has_status and not args.force:
             logger.info("  [phylogeo] 多链输出存在, 跳过提交")
         else:
             submit_phylogeo_chains(
@@ -3863,6 +3866,11 @@ def run_stage_phylogeo(prep, results, aln_file, args, logger) -> bool:
                 merge_fn=lambda wd, s: merge_chains(wd, s))
             if not ok:
                 pending = True
+        else:
+            # [P0] run_status.json 缺失 (提交循环死亡 / --skip_phylogeo_run 且无历史状态):
+            # 链从未闭环 —— 与 XML 是否生成无关, 不写 .done, 下次重跑重新提交/检查
+            logger.warning("  [phylogeo] run_status.json 缺失: 链从未闭环, 本轮不记 done")
+            pending = True
     except Exception as e:
         logger.warning(f"  [phylogeo] 多链合并步骤异常: {e}")
 
@@ -5026,7 +5034,9 @@ def process_virus(prep, stages: List[str], args, tools, logger) -> Dict:
                                  results=results)
             results["outputs"].update(cr.get("outputs", {}))
             results["metrics"].update(cr.get("metrics", {}))
-            if cr.get("outputs") or results.get("gene_results"):
+            # [P0] 用 success 判完成 (bool(summary_rows)): 原条件 outputs 非空即 done,
+            # 而 clock_summary.tsv 连 0 行都会写 → RTT/LTT/DRT 全失败也被标完成并永久跳过
+            if cr.get("success"):
                 _mark('clock', state={"outputs": cr.get("outputs"),
                                       "metrics": cr.get("metrics"),
                                       "extra": {"clock_summary":

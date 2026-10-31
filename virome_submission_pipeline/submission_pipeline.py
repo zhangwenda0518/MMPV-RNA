@@ -527,25 +527,27 @@ def validate_submission_gate(workdir, logger, tbl_path=None, fna_path=None,
 # 自动检测 + 补运行缺失步骤
 # ══════════════════════════════════════════════════════════════
 
-def ensure_taxonomy(work_dir, fasta, suvtk_db, threads, log):
-    """确保 suvtk taxonomy 已完成"""
+def ensure_taxonomy(work_dir, fasta, suvtk_db, threads, log, force=False):
+    """确保 suvtk taxonomy 已完成; force=True 时禁用父级/本地复用分支"""
     tax_out = work_dir / "suvtk.taxonomy_output"
     tax_tsv = tax_out / "taxonomy.tsv"
-    # 检查是否已有 suvtk 输出 (可能在 09_Virome_Analysis)
-    existing = _find_suvtk_output(work_dir, "suvtk.taxonomy_output/taxonomy.tsv")
-    if existing and existing != tax_tsv:
-        log.info("[1/5] taxonomy — 在 %s 找到, 复用", existing.parent)
-        os.makedirs(tax_out, exist_ok=True)
-        for fname in ["taxonomy.tsv", "miuvig_taxonomy.tsv", "miuvig_taxonomy_enriched.tsv",
-                      "segmented_viruses_info.tsv", "taxresults_lca.tsv"]:
-            src = existing.parent / fname
-            dst = tax_out / fname
-            if src.exists():
-                if dst.exists() or dst.is_symlink():
-                    dst.unlink()
-                os.symlink(src, dst)
-        return tax_out
-    if tax_tsv.exists() and os.path.getsize(tax_tsv) > 100:
+    # [P1] --force-* 时跳过复用分支: 否则 rmtree 后 _find_suvtk_output 会把父级 09x 的
+    # 旧输出 symlink 回来, force 形同虚设
+    if not force:
+        existing = _find_suvtk_output(work_dir, "suvtk.taxonomy_output/taxonomy.tsv")
+        if existing and existing != tax_tsv:
+            log.info("[1/5] taxonomy — 在 %s 找到, 复用", existing.parent)
+            os.makedirs(tax_out, exist_ok=True)
+            for fname in ["taxonomy.tsv", "miuvig_taxonomy.tsv", "miuvig_taxonomy_enriched.tsv",
+                          "segmented_viruses_info.tsv", "taxresults_lca.tsv"]:
+                src = existing.parent / fname
+                dst = tax_out / fname
+                if src.exists():
+                    if dst.exists() or dst.is_symlink():
+                        dst.unlink()
+                    os.symlink(src, dst)
+            return tax_out
+    if tax_tsv.exists() and os.path.getsize(tax_tsv) > 100 and not force:
         log.info("[1/5] taxonomy — 已存在, 跳过")
         return tax_out
 
@@ -557,26 +559,27 @@ def ensure_taxonomy(work_dir, fasta, suvtk_db, threads, log):
     return tax_out if tax_tsv.exists() else None
 
 
-def ensure_features(work_dir, fasta, tax_dir, suvtk_db, threads, log):
-    """确保 suvtk features 已完成"""
+def ensure_features(work_dir, fasta, tax_dir, suvtk_db, threads, log, force=False):
+    """确保 suvtk features 已完成; force=True 时禁用父级/本地复用分支"""
     feat_out = work_dir / "suvtk.features_output"
     tbl = feat_out / "featuretable.tbl"
-    existing = _find_suvtk_output(work_dir, "suvtk.features_output/featuretable.tbl")
-    if existing and existing != tbl:
-        log.info("[2/5] features — 在 %s 找到, 复用", existing.parent)
-        os.makedirs(feat_out, exist_ok=True)
-        # 链核心文件
-        for fname in ["featuretable.tbl", "proteins.faa", "proteins_updated.faa",
-                      "reoriented_nucleotide_sequences.fna", "miuvig_features.tsv",
-                      "alignment.m8", "tophit_info.tsv"]:
-            src = existing.parent / fname
-            dst = feat_out / fname
-            if src.exists():
-                if dst.exists() or dst.is_symlink():
-                    dst.unlink()
-                os.symlink(src, dst)
-        return feat_out
-    if tbl.exists() and os.path.getsize(tbl) > 100:
+    if not force:
+        existing = _find_suvtk_output(work_dir, "suvtk.features_output/featuretable.tbl")
+        if existing and existing != tbl:
+            log.info("[2/5] features — 在 %s 找到, 复用", existing.parent)
+            os.makedirs(feat_out, exist_ok=True)
+            # 链核心文件
+            for fname in ["featuretable.tbl", "proteins.faa", "proteins_updated.faa",
+                          "reoriented_nucleotide_sequences.fna", "miuvig_features.tsv",
+                          "alignment.m8", "tophit_info.tsv"]:
+                src = existing.parent / fname
+                dst = feat_out / fname
+                if src.exists():
+                    if dst.exists() or dst.is_symlink():
+                        dst.unlink()
+                    os.symlink(src, dst)
+            return feat_out
+    if tbl.exists() and os.path.getsize(tbl) > 100 and not force:
         log.info("[2/5] features — 已存在, 跳过")
         return feat_out
 
@@ -590,17 +593,18 @@ def ensure_features(work_dir, fasta, tax_dir, suvtk_db, threads, log):
     return feat_out if tbl.exists() else None
 
 
-def ensure_hypothetical(work_dir, feat_dir, rvdb_dir, threads, log):
-    """确保 analyze_hypothetical 已完成"""
+def ensure_hypothetical(work_dir, feat_dir, rvdb_dir, threads, log, force=False):
+    """确保 analyze_hypothetical 已完成; force=True 时禁用父级/本地复用分支"""
     hypo_out = work_dir / "analyze_hypothetical"
     updated_tbl = hypo_out / "featuretable_updated.tbl"
-    existing = _find_suvtk_output(work_dir, "analyze_hypothetical/featuretable_updated.tbl")
-    if existing and existing != updated_tbl:
-        log.info("[2.5/5] hypothetical — 在 %s 找到, 复用", existing.parent)
-        os.makedirs(hypo_out, exist_ok=True)
-        os.symlink(existing, updated_tbl)
-        return hypo_out
-    if updated_tbl.exists() and os.path.getsize(updated_tbl) > 100:
+    if not force:
+        existing = _find_suvtk_output(work_dir, "analyze_hypothetical/featuretable_updated.tbl")
+        if existing and existing != updated_tbl:
+            log.info("[2.5/5] hypothetical — 在 %s 找到, 复用", existing.parent)
+            os.makedirs(hypo_out, exist_ok=True)
+            os.symlink(existing, updated_tbl)
+            return hypo_out
+    if updated_tbl.exists() and os.path.getsize(updated_tbl) > 100 and not force:
         log.info("[2.5/5] hypothetical — 已存在, 跳过")
         return hypo_out
 
@@ -1335,7 +1339,8 @@ def main():
         if args.force_taxonomy and tax_dir.exists():
             import shutil
             shutil.rmtree(tax_dir)
-        tax_dir = ensure_taxonomy(work_dir, fasta, args.suvtk_db, args.threads, log)
+        tax_dir = ensure_taxonomy(work_dir, fasta, args.suvtk_db, args.threads, log,
+                                  force=args.force_taxonomy)
 
     # 2. features
     feat_dir = None
@@ -1344,7 +1349,8 @@ def main():
         if args.force_features and feat_dir.exists():
             import shutil
             shutil.rmtree(feat_dir)
-        feat_dir = ensure_features(work_dir, fasta, tax_dir, args.suvtk_db, args.threads, log)
+        feat_dir = ensure_features(work_dir, fasta, tax_dir, args.suvtk_db, args.threads, log,
+                                   force=args.force_features)
 
     # 2.5. hypothetical (仅 discovery pipeline 需要)
     hypo_dir = None
@@ -1353,7 +1359,8 @@ def main():
         if args.force_hypo and hypo_dir.exists():
             import shutil
             shutil.rmtree(hypo_dir)
-        hypo_dir = ensure_hypothetical(work_dir, feat_dir, args.rvdb_db, args.threads, log)
+        hypo_dir = ensure_hypothetical(work_dir, feat_dir, args.rvdb_db, args.threads, log,
+                                       force=args.force_hypo)
     elif pipeline_type == 'analysis':
         log.info("[2.5/5] hypothetical — 已知病毒跳过 (analysis pipeline 使用参考基因组注释)")
 
