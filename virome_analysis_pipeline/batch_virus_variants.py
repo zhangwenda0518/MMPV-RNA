@@ -420,13 +420,25 @@ def worker_calc_metrics(args):
     row_dict.update(stats)
     return row_dict
 
+def _gz_ok(path):
+    """gzip 完整性校验 (gzip -t); 无 gzip 可用时退回存在性判定。"""
+    try:
+        return subprocess.run(["gzip", "-t", str(path)],
+                              capture_output=True).returncode == 0
+    except OSError:
+        return True
+
+
 def worker_extract_reads(args):
     sample, virus, bam_path, is_fasta, r1_str, r2_str, rs_str, threads, resume, log_file, master_log = args
     virus = str(virus).strip()
     bam_path = str(bam_path).strip()
     r1, r2, rs = Path(r1_str), Path(r2_str), Path(rs_str)
 
-    if resume and r1.exists() and r1.stat().st_size > 50: 
+    # [续传强化] R1 须 gzip 完整; R2 若已存在也须完整 (崩溃可能留下截断 R2 而 R1 已写完,
+    # 仅查 R1 会把半成对误判完成)
+    if (resume and r1.exists() and r1.stat().st_size > 50 and _gz_ok(r1)
+            and (not r2.exists() or _gz_ok(r2))):
         return True
 
     t_io = min(4, threads)
@@ -458,7 +470,20 @@ def worker_extract_reads(args):
                 subprocess.run(f"pigz -p {t_io} -c '{tmp_rs}' > '{rs}'", shell=True, executable='/bin/bash', check=True)
             
             return True
-        except Exception: 
+        except Exception:
+            # [续传强化] 失败清理半成品, 防下轮 resume 误判完成
+            err = f"\n[Exception] worker_extract_reads ({sample}.{virus}): {traceback.format_exc()}\n"
+            try:
+                with open(log_file, "a") as lf:
+                    lf.write(err)
+            except OSError:
+                pass
+            for _p in (r1, r2, rs):
+                try:
+                    if _p.exists():
+                        _p.unlink()
+                except OSError:
+                    pass
             return False
 
 def worker_consensus(args):

@@ -118,20 +118,31 @@ def main():
     if not tasks:
         sys.exit("ERROR: 0 个提取任务 (summary 病毒×样本与 BAM 均不匹配)")
 
-    n_done = 0
+    n_ok = n_fail = 0
     print(f"🧾 提取任务: {len(tasks)} 个 (病毒×样本) | BAM: {len(bam_map)} 样本 | jobs={args.jobs}",
           file=sys.stderr, flush=True)
     with ProcessPoolExecutor(max_workers=min(len(tasks), max(1, args.jobs))) as ex:
-        futures = [ex.submit(worker_extract_reads, t) for t in tasks]
+        futures = {ex.submit(worker_extract_reads, t): t for t in tasks}
         if tqdm:
-            for _ in tqdm(as_completed(futures), total=len(futures),
-                          desc="extract_reads", unit="task", dynamic_ncols=True):
-                n_done += 1
+            for fut in tqdm(as_completed(futures), total=len(futures),
+                            desc="extract_reads", unit="task", dynamic_ncols=True):
+                if fut.result():
+                    n_ok += 1
+                else:
+                    n_fail += 1
         else:
-            for _ in as_completed(futures):
-                n_done += 1
-    print(f"✅ 靶向 reads 提取完成: {n_done}/{len(tasks)} 任务 -> {d_reads}",
+            for fut in as_completed(futures):
+                if fut.result():
+                    n_ok += 1
+                else:
+                    n_fail += 1
+    print(f"{'✅' if n_fail == 0 else '⚠️'} 靶向 reads 提取: 成功 {n_ok} | 失败 {n_fail} -> {d_reads}",
           file=sys.stderr, flush=True)
+    if n_fail > 0:
+        # 失败任务的半成品已被 worker 清理; 有失败即非零退出 (full 阶段会缺对应 reads)
+        print("❌ 存在失败任务 — 请查 logs/*_extract_reads.log 后重跑 (--resume 只补失败项)",
+              file=sys.stderr, flush=True)
+        sys.exit(1)
 
 
 if __name__ == "__main__":
