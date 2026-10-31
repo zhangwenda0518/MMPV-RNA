@@ -5393,8 +5393,9 @@ Stages: """ + ", ".join(f"{k}({v})" for k, v in STAGE_DESC.items()),
 
     # ── Runtime ──
     g_run = parser.add_argument_group("Runtime")
-    g_run.add_argument("--stage", default=defaults.get("stage", "all"),
-                       help="运行 stage: 大模块 " + ",".join(STAGE_GROUPS) + " (或子步骤 " + ",".join(STAGE_ORDER) + ")")
+    g_run.add_argument("--stage", nargs="+", default=defaults.get("stage", "all"),
+                       help="运行 stage: 大模块 " + ",".join(STAGE_GROUPS) + " (或子步骤 " + ",".join(STAGE_ORDER) + "); "
+                            "支持空格或逗号分隔, 可混用 (如 --stage beast,rdp5 或 --stage beast rdp5)")
     g_run.add_argument("--disable", default=defaults.get("disable", ""),
                        help="真正关闭 stage (逗号分隔, 从最终清单里剔除)。"
                             "用于覆盖 --stage all / 大模块展开: 如 --disable beast,rdp5")
@@ -5791,7 +5792,9 @@ Stages: """ + ", ".join(f"{k}({v})" for k, v in STAGE_DESC.items()),
     if args.check_temporal or args.bets:
         stage_extra.append('clock')  # 2026-08-27: rtt/temporal/genes 已合并为 clock
 
-    stage_arg = args.stage
+    # [multi-stage] --stage nargs='+' → 列表; resolve_stages 吃逗号串, 先拼回
+    stage_arg = args.stage if isinstance(args.stage, str) else (
+        ",".join(str(x) for x in args.stage) if args.stage else "")
     if stage_extra:
         if stage_arg in (None, '', 'all'):
             stage_arg = 'all'

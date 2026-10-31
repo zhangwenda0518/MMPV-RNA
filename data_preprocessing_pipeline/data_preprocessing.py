@@ -27,6 +27,13 @@ _REPO_ROOT = SCRIPT_DIR.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 from mmpv_common.io_layout import dir_name as layout_dir_name, normalize_layout_env
+from mmpv_common.stage_args import parse_multi_stage
+
+# Phase 2: 阶段级 AI 摘要钩子 (best-effort; 缺失/异常不得影响主管线)
+try:
+    from mmpv_common.ai_hooks import after_stage as _ai_after_stage
+except Exception:  # noqa: BLE001 - 钩子是旁路功能
+    _ai_after_stage = None
 
 def setup_logger(output_dir, level='INFO'):
     logger = logging.getLogger("DataPrep")
@@ -193,7 +200,8 @@ def run_deplete(args, log, reads_dir):
     if not kraken2_db:
         log.error("致命: 需要 --kraken2_db 或 --host_db"); sys.exit(1)
     if not host_align_db:
-        log.error("致命: 需要 --host_align_db 或 --host_db"); sys.exit(1)
+        log.info("  未找到比对索引 (--host_align_db 或 --host_db 下无 %s 子索引)"
+                 " → 仅分类层去除 (通用库模式), align 跳过", args.aligner)
 
     log.info("=" * 50)
     log.info("[2/2] 去宿主: %s → %s → rRNA", args.classifier.upper(), args.aligner)
@@ -205,10 +213,14 @@ def run_deplete(args, log, reads_dir):
         f"--classifier {args.classifier}",
         f'--kunpeng-bin "{args.kunpeng_bin}"',
         f"--kunpeng-hash-capacity {args.kunpeng_hash_capacity}",
+        f"--kunpeng-mode {args.kunpeng_mode}",
+        f"--kunpeng-batch-size {args.kunpeng_batch_size}",
+        *( [f"--kunpeng-threads {args.kunpeng_threads}"] if args.kunpeng_threads else [] ),
         f"--min-hit-groups {args.min_hit_groups}",
+        f"--splitter {args.splitter}",
+        f'--kractor-bin "{args.kractor_bin}"',
         f"--seq-type {args.seq_type}",
         f"--kraken2_index {kraken2_db}",
-        f"--step2_index {host_align_db}",
         f"--input-dir {reads_dir}",
         f"--outdir {hostdep_dir}",
         f"--jobs {args.jobs}",
@@ -216,6 +228,10 @@ def run_deplete(args, log, reads_dir):
         f"--logs_dir {hostdep_dir}/logs",
         "--filter true",
     ]
+    if host_align_db:
+        parts.append(f"--step2_index {host_align_db}")
+    else:
+        parts.append(f"--steps {'kraken2,rrna' if args.rrna else 'kraken2'}")
     if args.rrna:
         parts.append("--rrna")
         parts.append(f"--rrna_tool {args.rrna_tool}")
@@ -223,6 +239,7 @@ def run_deplete(args, log, reads_dir):
     if args.force: parts.append("--force")
     if args.tmp_dir: parts.append(f"--tmp {args.tmp_dir}")
     parts.append(f"--confidence {args.kraken2_confidence}")
+    if args.vmtouch: parts.append("--vmtouch")
     if args.keep_rrna: parts.append("--keep_rrna")
 
     if not run_cmd(' '.join(parts), log, "Deplete"): sys.exit(1)
@@ -321,8 +338,9 @@ def main():
     p = argparse.ArgumentParser(description="数据预处理独立脚本 — 清洗 + 去宿主",
         formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument('--stage', default=['all'], nargs='+',
-                   choices=['all','clean','deplete','bbnorm','report'],
-                   help='运行阶段 (可多个: --stage clean deplete report; bbnorm 仅显式指定时运行, 不含于 all)')
+                   help='运行阶段 (可多个, 空格或逗号分隔: --stage clean deplete report '
+                        '或 --stage clean,deplete,report; 可选: all/clean/deplete/bbnorm/report; '
+                        'bbnorm 仅显式指定时运行, 不含于 all)')
     p.add_argument('--input_reads', help='输入 FASTQ/FASTA 目录 (clean 阶段必需)')
     p.add_argument('--output_dir', '-o', required=True, help='输出根目录')
     p.add_argument('--io-layout', choices=['legacy', 'standard'], default=None,
@@ -345,15 +363,31 @@ def main():
     g.add_argument('--kunpeng_bin', default=os.environ.get('MMPV_KUNPENG_BIN', 'kun_peng'),
                    help='Kun-peng 可执行文件 (默认 $MMPV_KUNPENG_BIN 或 PATH)')
     g.add_argument('--kunpeng_hash_capacity', default='1G', help='Kun-peng hashshard 容量 (默认: 1G)')
+    g.add_argument('--kunpeng_mode', default='direct', choices=['classify', 'direct'],
+                   help='Kun-peng 模式: direct=全量加载(默认, 最快, 需 ≈分片总量的 RAM) / classify=低内存分片')
+    g.add_argument('--kunpeng_threads', type=int, default=0,
+                   help='批量分类进程线程数 (默认: --threads × --jobs 乘积, 无需指定; 传值则覆盖)')
+    g.add_argument('--kunpeng_batch_size', type=int, default=16,
+                   help='Kun-peng 每批样本数 (默认: 16; 0=全部一批; 1=每样本单独启动/冷启动)')
     g.add_argument('--min_hit_groups', type=int, default=2, help='Kun-peng 最小 hit group 数 (默认: 2)')
+    g.add_argument('--splitter', default='auto', choices=['auto', 'seqkit', 'kractor'],
+                   help='Kun-peng reads 分流: auto=优先 kractor(自动回退) / seqkit / kractor')
+    g.add_argument('--kractor_bin', default=os.environ.get('MMPV_KRACTOR_BIN', 'kractor'),
+                   help='补丁版 kractor 可执行文件 (默认 $MMPV_KRACTOR_BIN 或 PATH)')
     g.add_argument('--seq_type', default='rna-short', choices=['dna-short','rna-short','nanopore','pacbio'])
     g.add_argument('--rrna', action='store_true', help='开启 rRNA 剔除')
     g.add_argument('--rrna_tool', default='ribodetector', choices=['ribodetector','silva'], help='rRNA 工具')
     g.add_argument('--silva_index', help='SILVA Bowtie2 索引前缀 (--rrna_tool silva 时必需)')
     g.add_argument('--kraken2_confidence', type=float, default=0.2, help='分类置信度阈值 (默认: 0.2)')
+    g.add_argument('--vmtouch', action='store_true',
+                   help='用 vmtouch 预热分类库到 page cache (kunpeng 模式预热 hash_*.k2d 分片; 需已安装 vmtouch)')
 
     g = p.add_argument_group('清洗参数')
-    g.add_argument('--skip_clumpify', action='store_true', help='跳过 Clumpify 聚类重排')
+    g.add_argument('--skip-clumpify', dest='skip_clumpify', action='store_true',
+                   help='跳过 Clumpify 聚类重排')
+    # 兼容旧写法 (--skip_clumpify), 不出现在 --help 中
+    g.add_argument('--skip_clumpify', dest='skip_clumpify', action='store_true',
+                   help=argparse.SUPPRESS)
     g.add_argument('--dedup', action='store_true', help='fastp 自带去重 (默认未开启)')
     g.add_argument('--clumpify_memory', default='10g', help='clumpify 内存 (默认: 10g)')
     g.add_argument('--no_compress', action='store_true', help='输出不压缩')
@@ -370,6 +404,8 @@ def main():
                    help='report 阶段: 留存率低于该百分比标记 LOW_RETAINED (默认: 20)')
 
     args = p.parse_args()
+    # [multi-stage] 空格/逗号统一拆分 + 校验 (合法值与旧 choices 一致)
+    args.stage = parse_multi_stage(args.stage, ('all', 'clean', 'deplete', 'bbnorm', 'report'))
     stages = set(args.stage)
     _all = 'all' in stages
 
@@ -402,47 +438,99 @@ def main():
     else:
         reads_dir = None  # 仅 report 阶段无需输入
 
+    # Phase 2: 阶段结束钩子 (best-effort; 只写 90_Handoff/ai/)
+    def _ai_hook(stage, status="ok", error=None):
+        """写阶段 state + 摘要; 任何异常都吞掉, 不改退出码/stdout。"""
+        try:
+            if _ai_after_stage is None:
+                return
+            out_root = Path(args.output_dir)
+            stage_dir = {
+                'clean': out_root / layout_dir_name('d_clean'),
+                'deplete': out_root / layout_dir_name('d_hostdep'),
+                'bbnorm': out_root / layout_dir_name('d_bbnorm'),
+                'report': out_root,
+            }.get(stage)
+            _ai_after_stage(out_root, 'preprocessing', stage, status=status,
+                            output_dir=stage_dir,
+                            log_path=out_root / 'preprocessing.log',
+                            error=error)
+        except Exception:  # noqa: BLE001 - 钩子绝不阻断主管线
+            pass
+
     # 执行
     if _all or 'clean' in stages:
-        reads_dir = run_clean(args, log, reads_dir)
+        try:
+            reads_dir = run_clean(args, log, reads_dir)
+        except SystemExit as e:
+            _ai_hook('clean', 'failed', e)
+            raise
+        except Exception as e:
+            _ai_hook('clean', 'error', e)
+            raise
+        _ai_hook('clean', 'ok')
     if _all or 'deplete' in stages:
-        has_db = args.host_db or (args.kraken2_db and args.host_align_db)
-        has_src = args.host_fasta or (args.host_species and args.host_taxid)
-        if not has_db and not has_src:
-            log.error("去宿主需要宿主参考, 三选一:")
-            log.error("  ① --host_db <宿主库目录>                  (hostdb/ 或 host_reference 根, 自动查找子索引)")
-            log.error("  ② --kraken2_db <dir> --host_align_db <prefix>   (分开精确指定)")
-            log.error("  ③ --host_fasta <FASTA> 或 --host_species X --host_taxid N   (现场构建到 {output_dir}/宿主参考目录/)")
-            sys.exit(1)
-        if not has_db:
-            ensure_hostdb(args, log)
-        run_deplete(args, log, reads_dir)
-        cleanup_00a_after_deplete(args.output_dir, log)
+        try:
+            has_db = args.host_db or (args.kraken2_db and args.host_align_db)
+            has_src = args.host_fasta or (args.host_species and args.host_taxid)
+            if not has_db and not has_src:
+                log.error("去宿主需要宿主参考, 三选一:")
+                log.error("  ① --host_db <宿主库目录>                  (hostdb/ 或 host_reference 根, 自动查找子索引)")
+                log.error("  ② --kraken2_db <dir> --host_align_db <prefix>   (分开精确指定)")
+                log.error("  ③ --host_fasta <FASTA> 或 --host_species X --host_taxid N   (现场构建到 {output_dir}/宿主参考目录/)")
+                sys.exit(1)
+            if not has_db:
+                ensure_hostdb(args, log)
+            run_deplete(args, log, reads_dir)
+            cleanup_00a_after_deplete(args.output_dir, log)
+        except SystemExit as e:
+            _ai_hook('deplete', 'failed', e)
+            raise
+        except Exception as e:
+            _ai_hook('deplete', 'error', e)
+            raise
+        _ai_hook('deplete', 'ok')
     # ── BBNorm (可选: 仅 --stage bbnorm 显式运行; --stage all 不包含) ──
     if 'bbnorm' in stages:
-        bbnorm_out = Path(args.output_dir) / layout_dir_name('d_bbnorm')
-        if not reads_dir:
-            dep = Path(args.output_dir) / layout_dir_name('d_hostdep')
-            reads_dir = str(dep) if dep.exists() and any(dep.iterdir()) else None
-        if not reads_dir:
-            log.error("bbnorm 需要 --input_reads 或先运行 deplete/clean")
-            sys.exit(1)
-        parts = [
-            f"python {SCRIPT_DIR / 'run_bbnorm.py'}",
-            f"-i {reads_dir}",
-            f"-o {bbnorm_out}",
-            f"-t {args.threads}",
-            f"-j {args.jobs}",
-        ]
-        log.info("[bbnorm] 覆盖度归一化 (target=70 mindepth=2), 输入: %s", reads_dir)
-        if not run_cmd(' '.join(parts), log, "BBNorm"):
-            sys.exit(1)
-        log.info("  Normalized reads → %s", bbnorm_out)
+        try:
+            bbnorm_out = Path(args.output_dir) / layout_dir_name('d_bbnorm')
+            if not reads_dir:
+                dep = Path(args.output_dir) / layout_dir_name('d_hostdep')
+                reads_dir = str(dep) if dep.exists() and any(dep.iterdir()) else None
+            if not reads_dir:
+                log.error("bbnorm 需要 --input_reads 或先运行 deplete/clean")
+                sys.exit(1)
+            parts = [
+                f"python {SCRIPT_DIR / 'run_bbnorm.py'}",
+                f"-i {reads_dir}",
+                f"-o {bbnorm_out}",
+                f"-t {args.threads}",
+                f"-j {args.jobs}",
+            ]
+            log.info("[bbnorm] 覆盖度归一化 (target=70 mindepth=2), 输入: %s", reads_dir)
+            if not run_cmd(' '.join(parts), log, "BBNorm"):
+                sys.exit(1)
+            log.info("  Normalized reads → %s", bbnorm_out)
+        except SystemExit as e:
+            _ai_hook('bbnorm', 'failed', e)
+            raise
+        except Exception as e:
+            _ai_hook('bbnorm', 'error', e)
+            raise
+        _ai_hook('bbnorm', 'ok')
 
     if _all or 'report' in stages:
-        if not run_report(args, log):
-            log.error("report 阶段失败 (汇总表/交接清单/HTML 可能未生成), 退出码 1")
-            sys.exit(1)
+        try:
+            if not run_report(args, log):
+                log.error("report 阶段失败 (汇总表/交接清单/HTML 可能未生成), 退出码 1")
+                sys.exit(1)
+        except SystemExit as e:
+            _ai_hook('report', 'failed', e)
+            raise
+        except Exception as e:
+            _ai_hook('report', 'error', e)
+            raise
+        _ai_hook('report', 'ok')
 
     log.info("=" * 50)
     log.info("预处理完成!")

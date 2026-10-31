@@ -49,6 +49,12 @@ from datetime import datetime
 
 from utils.pipeline_utils import UI, Checkpoint, run_cmd
 
+# 跨管线共享 --stage 多阶段解析 (mmpv_common/, 仓库根)
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+from mmpv_common.stage_args import parse_multi_stage
+
 if sys.platform == 'win32':
     sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 
@@ -692,8 +698,8 @@ examples:
     parser.add_argument('--species', required=True, help='物种拉丁学名')
     parser.add_argument('--taxid', type=int, required=True, help='NCBI Taxonomy ID')
     parser.add_argument('--stage', nargs='+', required=True,
-                        choices=BuildHostPipeline.STAGES + ['all'],
-                        help=f'执行阶段. 可选: {BuildHostPipeline.STAGES}')
+                        help=f'执行阶段 (空格或逗号分隔, 如: --stage genome-down hostdb 或 '
+                             f'--stage genome-down,hostdb). 可选: {BuildHostPipeline.STAGES + ["all"]}')
     parser.add_argument('--ncbi-api', help='NCBI API Key')
     parser.add_argument('--work-dir', default='./build_host_pipeline_output', help='输出根目录')
     parser.add_argument('--bin-dir', help='脚本目录 (默认自动检测)')
@@ -786,6 +792,8 @@ def plan_stages(args):
 def main(argv=None):
     parser = build_parser()
     args = parser.parse_args(argv)
+    # [multi-stage] 空格/逗号统一拆分 + 校验 (合法值与旧 choices 一致)
+    args.stage = parse_multi_stage(args.stage, tuple(BuildHostPipeline.STAGES) + ('all',))
     if not args.ncbi_api:
         args.ncbi_api = os.environ.get('NCBI_API_KEY', '')
     if not args.bin_dir:

@@ -62,6 +62,7 @@ if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 from mmpv_common.io_layout import (build_meta_dirs, normalize_layout_env,
                                    dir_name as layout_dir_name)
+from mmpv_common.stage_args import parse_multi_stage
 
 from utils.pipeline_utils import UI, Checkpoint, run_cmd
 
@@ -429,6 +430,8 @@ class PublicDataPipeline:
             jobs=self.args.convert_jobs,
             threads=self.args.convert_threads,
             progress=True,
+            backend=self.args.convert_backend,
+            verify=self.args.convert_verify,
         )
         if failures:
             UI.err(f"{len(failures)} conversion(s) failed")
@@ -551,7 +554,8 @@ class PublicDataPipeline:
 
         掩码仍在 eve-mask 之外单独控制: 这里只做"发现 + 汇总", 不改已建好的宿主库。
         产物落 <host_reference>/eve/ (04_Summary/eve_report.html + 可选元件库/蛋白库),
-        report 阶段会自动把它并进 Pipeline_Summary_Report.html。
+        report 阶段会把 EVE 明细内嵌到 Pipeline_Summary_Report.html 的 S7；
+        独立 eve_report.html 仅保留为可选导出。
         """
         s = 'eve'
         UI.stage(self.STAGE_DESC[s], 'start')
@@ -684,8 +688,8 @@ examples:
     parser.add_argument('--species', required=True, help='物种拉丁学名')
     parser.add_argument('--taxid', type=int, required=True, help='NCBI Taxonomy ID')
     parser.add_argument('--stage', nargs='+', required=True,
-                        choices=PublicDataPipeline.STAGES + ['all'],
-                        help=f'执行阶段. 可选: {PublicDataPipeline.STAGES}')
+                        help=f'执行阶段 (空格或逗号分隔, 如: --stage search info 或 '
+                             f'--stage search,info). 可选: {PublicDataPipeline.STAGES + ["all"]}')
     parser.add_argument('--deepseek-api', help='DeepSeek API Key')
     parser.add_argument('--deepseek-model', default='deepseek-v4-flash', help='DeepSeek 模型')
     parser.add_argument('--deepseek-search', action='store_true',
@@ -743,7 +747,11 @@ examples:
     parser.add_argument('--skip-list', help='已下载样本跳过列表 (传给 gsa_sra.down.py)')
     parser.add_argument('--threads', type=int, default=4, help='CPU 线程数')
     parser.add_argument('--convert-jobs', type=int, default=2, help='SRA 转换并行任务数')
-    parser.add_argument('--convert-threads', type=int, default=6, help='每个 fasterq-dump 的线程数')
+    parser.add_argument('--convert-threads', type=int, default=6, help='每个转换任务的线程数')
+    parser.add_argument('--convert-backend', default='auto', choices=['auto', 'sracha', 'sratools'],
+                        help='SRA→FASTQ 后端: auto=sracha 优先、失败回退 sra-tools (默认)')
+    parser.add_argument('--convert-verify', action='store_true',
+                        help='sracha: 解码后额外核对 quality 数值分布 (更严格, 明显变慢)')
     parser.add_argument('--host-species', help='宿主物种拉丁学名 (默认复用 --species)')
     parser.add_argument('--host-taxid', type=int, help='宿主 NCBI TaxID (默认复用 --taxid)')
     parser.add_argument('--host-fasta', help='已有宿主基因组 FASTA (hostref 阶段跳过下载)')
@@ -764,6 +772,8 @@ examples:
     parser.add_argument('--dry-run', action='store_true', help='仅预览')
 
     args = parser.parse_args()
+    # [multi-stage] 空格/逗号统一拆分 + 校验 (合法值与旧 choices 一致)
+    args.stage = parse_multi_stage(args.stage, tuple(PublicDataPipeline.STAGES) + ('all',))
     if not args.deepseek_api:
         args.deepseek_api = os.environ.get('DEEPSEEK_API_KEY') or os.environ.get('MMPV_AI_API_KEY', '')
     if not args.ncbi_api:

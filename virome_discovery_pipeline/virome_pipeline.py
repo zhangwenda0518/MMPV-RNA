@@ -27,6 +27,7 @@ Virome Pipeline v2.3 — 宏病毒组端到端全自动主控流水线
 
 import os
 import sys
+import time
 import argparse
 import csv
 import subprocess
@@ -44,6 +45,13 @@ if _REPO_ROOT not in sys.path:
 from mmpv_common.io_layout import (build_discovery_dirs, normalize_layout_env,
                                    dir_name as layout_dir_name,
                                    locate_centroids as io_locate_centroids)
+from mmpv_common.stage_args import parse_multi_stage
+
+# Phase 2: 阶段级 AI 摘要钩子 (best-effort; 模块缺失/异常都不得影响主管线)
+try:
+    from mmpv_common.ai_hooks import after_stage as _ai_after_stage
+except Exception:  # noqa: BLE001 - 钩子是旁路功能
+    _ai_after_stage = None
 
 import polars as pl
 from Bio import SeqIO
@@ -599,7 +607,12 @@ class ViromePipeline:
             f"--classifier {self.args.classifier}",
             f'--kunpeng-bin "{self.args.kunpeng_bin}"',
             f"--kunpeng-hash-capacity {self.args.kunpeng_hash_capacity}",
+            f"--kunpeng-mode {self.args.kunpeng_mode}",
+            f"--kunpeng-batch-size {self.args.kunpeng_batch_size}",
+            *([f"--kunpeng-threads {self.args.kunpeng_threads}"] if self.args.kunpeng_threads else []),
             f"--min-hit-groups {self.args.min_hit_groups}",
+            f"--splitter {self.args.splitter}",
+            f'--kractor-bin "{self.args.kractor_bin}"',
             f"--seq-type {self.args.seq_type}",
             f"--kraken2_index {kraken2_db}",
         ]
@@ -778,7 +791,8 @@ class ViromePipeline:
             f"--extension {self.args.ident_ext}",
         ]
         for arg in ['virus_protein_db', 'uniprot_db', 'viroids_db', 'virsorter_db',
-                     'viralverify_hmm', 'metabuli_db', 'virus_taxid',
+                     'viralverify_hmm', 'viralverify_classifier', 'viralverify_threshold',
+                     'viralverify_mode', 'metabuli_db', 'virus_taxid',
                      'virhunter_path', 'virhunter_weights', 'virbot_path', 'viralm_path',
                      'nr_db']:
             val = getattr(self.args, arg, None)
@@ -803,7 +817,7 @@ class ViromePipeline:
         self.viral_map = scan_viral_files(self.d['ident'])
         self.log.info("  鉴定完成: %d 样本有病毒候选序列", len(self.viral_map))
 
-    # ── Step 2b: UniProt + CDD 分层过滤 ──
+    # ── Step 2b: UniProt 过滤 (CDD 层已于 2026-10-11 移除) ──
     # ── filter 子步骤: 组装图标签传播 (思想源自 GMW; 默认关闭, graph.enabled 开启) ──
     def run_graph(self):
         self.d['graph'].mkdir(parents=True, exist_ok=True)
@@ -867,7 +881,7 @@ class ViromePipeline:
     def run_filter(self):
         self.d['filter'].mkdir(parents=True, exist_ok=True)
         self.log.info("=" * 50)
-        self.log.info("[2b] UniProt + CDD tiered filter")
+        self.log.info("[2b] UniProt filter (CDD layer removed 2026-10-11)")
 
         # 收集鉴定产出的 candidate fasta
         # 注意: 优先用 *_virus.all.candidate.fasta (工具鉴定的真病毒候选),
@@ -1036,7 +1050,7 @@ class ViromePipeline:
         """COBRA (raw 模式) 的病毒候选来源目录。
 
         主链契约 (2026-10-07 恢复并重排, 用户裁定): 流水线为
-        identification → filter → graph → COBRA。filter 纯化 (CDD/UniProt),
+        identification → filter → graph → COBRA。filter 纯化 (UniProt),
         graph 随后对无证据保留结果二次裁决 (救回/降级), 并把最终候选集以
         02a 兼容结构写到 d_filter/candidates/{S}/ — 解决 feb352f 之前 02b
         结构不兼容导致的 8/8 崩溃, filter 重新成为主链闸门。优先级:
@@ -1049,7 +1063,7 @@ class ViromePipeline:
         filt_mirror = self.d['filter'] / 'candidates'
         if (self.d['filter'].is_dir() and filt_mirror.is_dir()
                 and any(filt_mirror.glob('*/*_virus.all.candidate.fasta'))):
-            self.log.info("  候选源 = filter 主链镜像 (CDD/UniProt 过滤 + graph 调整后的最终候选)")
+            self.log.info("  候选源 = filter 主链镜像 (UniProt 过滤 + graph 调整后的最终候选)")
             return filt_mirror, None
         graph_cand = self.d.get('graph')
         if (getattr(self.args, 'graph_apply_to_cobra', True) and graph_cand
@@ -1101,7 +1115,7 @@ class ViromePipeline:
         self.log.info("  Auto-detect 组装工具: %s", ','.join(asm_tools))
 
         # 病毒候选来源 (2026-10-07 恢复 filter→COBRA 主链契约): 优先 filter 阶段
-        # 产出的 02a 兼容镜像 (d_filter/candidates, CDD/UniProt 过滤 + graph 调整);
+        # 产出的 02a 兼容镜像 (d_filter/candidates, UniProt 过滤 + graph 调整);
         # graph 派生候选 / 02a 原始候选为兜底。直接传 02b 原始结构仍会踩 241/246
         # 实测的 8/8 崩溃 (结构不兼容), 镜像即为此而解。
         # 注意 args.virus_mode 是【鉴定阶段】的模式, 与 COBRA 输入无关, 不参与选择。
@@ -3288,7 +3302,7 @@ STAGE_HELP = {
     'deplete':       '00b: Kraken2 + Bowtie2/HISAT2/Minimap2 + rRNA去除',
     'assembly':      '01:  MEGAHIT / rnaviralSPAdes / Penguin 三工具组装',
     'identification':'02a: 10工具并行病毒鉴定 (Genomad/Diamond/VirSorter2/...)',
-    'filter':        '02b: UniProt + CDD 分层过滤 (保留viral/viral_plant/viral_bacteria;'
+    'filter':        '02b: UniProt 过滤 (CDD 层已移除; 保留viral/viral_plant/viral_bacteria;'
                      ' 含可选 graph 子步骤: 无证据结果二次裁决)',
     'cobra':         '03a: BWA-MEM2 + COBRA-Meta 重叠群延伸',
     'merge':         '03b: 合并多样本COBRA结果 + 可选Flye共组装',
@@ -3379,8 +3393,10 @@ def _build_parser(add_help=True):
     g.add_argument('--profile', default='default', help='配置预设 (默认: default, 可选: downstream/plant)')
     g.add_argument('--dump-config', action='store_true', help='仅打印配置摘要并退出 (不运行)')
     g.add_argument('--stage', default=['all'], nargs='+',
-                   choices=['all', 'clean', 'deplete', 'assembly', 'identification', 'filter', 'cobra', 'merge', 'cluster', 'taxonomy', 'host', 'checkv', 'rescue', 'analysis', 'analysis_verify', 'report'],
-                   help='运行阶段 (可多个, 如: --stage clean deplete)')
+                   help='运行阶段 (可多个, 空格或逗号分隔: --stage clean deplete 或 '
+                        '--stage clean,deplete; 可选: all/clean/deplete/assembly/'
+                        'identification/filter/cobra/merge/cluster/taxonomy/host/'
+                        'checkv/rescue/analysis/analysis_verify/report)')
     g.add_argument('--graph-enabled', action='store_true', default=False,
                    help='启用 filter 的 graph 子步骤 (与 pipeline_config.yaml 的 '
                         'graph.enabled: true 等效, CLI 显式传参优先级更高; 默认关闭)')
@@ -3468,7 +3484,11 @@ def _build_parser(add_help=True):
                    help='放宽 HMM rescue 口径: 把 VOG 等无法判定的 AMBIGUOUS 命中也算进病毒证据')
     g.add_argument('--skip_clean', action='store_true', help='跳过数据清洗')
     g.add_argument('--skip_depletion', action='store_true', help='跳过去宿主')
-    g.add_argument('--skip_clumpify', action='store_true', help='跳过 Clumpify')
+    g.add_argument('--skip-clumpify', dest='skip_clumpify', action='store_true',
+                   help='跳过 Clumpify')
+    # 兼容旧写法 (--skip_clumpify), 不出现在 --help 中
+    g.add_argument('--skip_clumpify', dest='skip_clumpify', action='store_true',
+                   help=argparse.SUPPRESS)
     g.add_argument('--force', action='store_true', help='强制重跑')
     g.add_argument('--dry-run', action='store_true', help='仅扫描样本并显示配置，不实际执行')
     g.add_argument('--log-level', default='INFO', choices=['DEBUG', 'INFO', 'WARNING', 'ERROR'],
@@ -3489,7 +3509,17 @@ def _build_parser(add_help=True):
     g.add_argument('--kunpeng_bin', default=os.environ.get('MMPV_KUNPENG_BIN', 'kun_peng'),
                    help='Kun-peng 可执行文件 (默认 $MMPV_KUNPENG_BIN 或 PATH)')
     g.add_argument('--kunpeng_hash_capacity', default='1G', help='Kun-peng hashshard 容量 (默认: 1G)')
+    g.add_argument('--kunpeng_mode', default='direct', choices=['classify', 'direct'],
+                   help='Kun-peng 模式: direct=全量加载(默认, 最快, 需 ≈分片总量的 RAM) / classify=低内存分片')
+    g.add_argument('--kunpeng_threads', type=int, default=0,
+                   help='批量分类进程线程数 (默认: --threads × --jobs 乘积, 无需指定; 传值则覆盖)')
+    g.add_argument('--kunpeng_batch_size', type=int, default=16,
+                   help='Kun-peng 每批样本数 (默认: 16; 0=全部一批; 1=每样本单独启动/冷启动)')
     g.add_argument('--min_hit_groups', type=int, default=2, help='Kun-peng 最小 hit group 数 (默认: 2)')
+    g.add_argument('--splitter', default='auto', choices=['auto', 'seqkit', 'kractor'],
+                   help='Kun-peng reads 分流: auto=优先 kractor(自动回退) / seqkit / kractor')
+    g.add_argument('--kractor_bin', default=os.environ.get('MMPV_KRACTOR_BIN', 'kractor'),
+                   help='补丁版 kractor 可执行文件 (默认 $MMPV_KRACTOR_BIN 或 PATH)')
     g.add_argument('--kraken2_confidence', type=float, default=0.2, help='分类置信度阈值 (默认: 0.2)')
     g.add_argument('--keep_rrna', action='store_true', help='保留分离出的 rRNA 序列到 rrna/ 目录')
     g.add_argument('--keep_taxids', default='10239', help='Kraken2 保留的 taxID (逗号分隔), 默认 10239=Viruses, 设空字符串关闭')
@@ -3586,6 +3616,13 @@ def _build_parser(add_help=True):
                    help='类病毒 BLAST DB FASTA')
     g.add_argument('--virsorter_db', help='VirSorter2 数据库')
     g.add_argument('--viralverify_hmm', help='ViralVerify HMM 文件')
+    g.add_argument('--viralverify_classifier',
+                   help='ViralVerify Naive Bayes 模型表 classifier_table_uniq.txt '
+                        '(默认: 自动在 HMM 同目录 / virus_db 子目录查找)')
+    g.add_argument('--viralverify_threshold', type=float, default=7.0,
+                   help='ViralVerify NBC 判定阈值 (原版默认 7.0)')
+    g.add_argument('--viralverify_mode', default='auto', choices=['auto', 'nbc', 'hits'],
+                   help='ViralVerify 判定模式 (auto=有表走 NBC, 否则 HMM-hit)')
     g.add_argument('--metabuli_db', help='Metabuli 数据库')
     g.add_argument('--virus_taxid', help='病毒 TaxID 列表')
     g.add_argument('--virhunter_path', help='VirHunter predict_cpu.py 路径')
@@ -3770,7 +3807,8 @@ def _load_config(args):
     db = profile.get('databases', {})
     for key in ['checkv_db','genomad_db','mmseqs_db','virus_db','virus_protein_db','uniprot_db',
                 'host_db','blast_db','nr_db','db_dir',
-                'viralverify_hmm','virsorter_db','metabuli_db','viroids_db','virus_taxid']:
+                'viralverify_hmm','viralverify_classifier','virsorter_db','metabuli_db',
+                'viroids_db','virus_taxid']:
         if getattr(args, key, None) is None and key in db:
             setattr(args, key, db[key])
 
@@ -3795,7 +3833,10 @@ def _load_config(args):
         '--kraken2_db': 'kraken2_db',
         '--classifier': 'classifier', '--kunpeng_bin': 'kunpeng_bin',
         '--kunpeng_hash_capacity': 'kunpeng_hash_capacity',
+        '--kunpeng_mode': 'kunpeng_mode',
+        '--kunpeng_batch_size': 'kunpeng_batch_size',
         '--min_hit_groups': 'min_hit_groups',
+        '--splitter': 'splitter', '--kractor_bin': 'kractor_bin',
     }
     _cli_set = set()
     for i, a in enumerate(sys.argv):
@@ -3823,6 +3864,12 @@ def _load_config(args):
     for key in ['virus_mode','blast_mode']:
         if getattr(args, key, None) is None and key in id_cfg:
             setattr(args, key, id_cfg[key])
+    # 阈值/模式有非 None 默认值, 按显式 CLI flag 探测后再用 YAML 覆盖
+    for key, flag in (('viralverify_threshold', '--viralverify_threshold'),
+                      ('viralverify_mode', '--viralverify_mode')):
+        if key in id_cfg and flag not in sys.argv:
+            value = id_cfg[key]
+            setattr(args, key, float(value) if key == 'viralverify_threshold' else value)
 
     # cluster (CLI 显式传参优先: argparse 默认非 None, "current is None" 恒不成立,
     #          故按 runtime/graph 段同款写法探测 sys.argv 中的显式 flag)
@@ -3904,7 +3951,12 @@ def _load_config(args):
         'classifier':       ('classifier', str),
         'kunpeng_bin':      ('kunpeng_bin', str),
         'kunpeng_hash_capacity': ('kunpeng_hash_capacity', str),
+        'kunpeng_mode':     ('kunpeng_mode', str),
+        'kunpeng_batch_size': ('kunpeng_batch_size', int),
+        'kunpeng_threads': ('kunpeng_threads', int),
         'min_hit_groups':   ('min_hit_groups', int),
+        'splitter':         ('splitter', str),
+        'kractor_bin':      ('kractor_bin', str),
     }
     for key, (attr, conv) in _deplete_map.items():
         if key not in dep_cfg or attr in _cli_set:   # CLI 显式给了 → 不覆盖
@@ -4158,6 +4210,11 @@ def _record_provenance(args, logger):
 
 def main():
     args = parse_args()
+    # [multi-stage] 空格/逗号统一拆分 + 校验 (合法值与旧 choices 一致)
+    args.stage = parse_multi_stage(args.stage, (
+        'all', 'clean', 'deplete', 'assembly', 'identification', 'filter',
+        'cobra', 'merge', 'cluster', 'taxonomy', 'host', 'checkv', 'rescue',
+        'analysis', 'analysis_verify', 'report'))
     args = _load_config(args)
     logger = setup_logger(args.output_dir, level=args.log_level)
     _validate_config(args, logger)
@@ -4318,6 +4375,31 @@ def main():
     stage_log_dir = Path(args.output_dir) / layout_dir_name('d_reports') / "logs"
     stage_log_dir.mkdir(parents=True, exist_ok=True)
 
+    # Phase 2: stage 名 → 输出目录 (写 stage_state 时统计文件数/字节)
+    _stage_output_dirs = {
+        'clean': pipe.d['clean'], 'deplete': pipe.d['hostdep'],
+        'assembly': pipe.d['asm'], 'identification': pipe.d['ident'],
+        'filter': pipe.d['filter'], 'cobra': pipe.d['cobra'],
+        'merge': pipe.d['merge_samples'], 'cluster': pipe.d['cluster'],
+        'taxonomy': pipe.d['taxonomy'], 'host': pipe.d['host_pred'],
+        'checkv': pipe.d['checkv_dir'], 'rescue': pipe.d['rescue_dir'],
+        'analysis': pipe.d['analysis'], 'analysis_verify': pipe.d['analysis_verify'],
+        'report': pipe.d['reports'],
+    }
+
+    def _ai_hook(stage_name, status, error=None, elapsed_s=None):
+        """阶段结束钩子: 只写 90_Handoff/ai/, 任何异常都吞掉 (不改控制流/退出码)。"""
+        try:
+            if _ai_after_stage is None:
+                return
+            _ai_after_stage(Path(args.output_dir), 'discovery', stage_name,
+                            status=status,
+                            output_dir=_stage_output_dirs.get(stage_name),
+                            log_path=stage_log_dir / f"{stage_name}.log",
+                            elapsed_s=elapsed_s, error=error)
+        except Exception:  # noqa: BLE001 - 钩子绝不阻断主管线
+            pass
+
     failed_stages = []
     for stage_name, stage_func in stages_to_run:
         # 断点续传: 已完成则跳过
@@ -4329,12 +4411,15 @@ def main():
                 pipe.reads_dir = cl if (cl.exists() and any(cl.iterdir())) else fa
             elif stage_name == 'deplete' and pipe.d['hostdep'].is_dir():
                 pipe.reads_dir = pipe.d['hostdep']
+            _ai_hook(stage_name, 'skipped')
             continue
         # 添加阶段独立日志 handler
         stage_handler = logging.FileHandler(str(stage_log_dir / f"{stage_name}.log"), encoding='utf-8')
         stage_handler.setLevel(logging.DEBUG)
         stage_handler.setFormatter(logging.Formatter('[%(asctime)s] %(levelname)s %(message)s', datefmt='%H:%M:%S'))
         logger.addHandler(stage_handler)
+        _stage_t0 = time.monotonic()
+        _stage_status, _stage_error = 'ok', None
         try:
             stage_func()
             pipe._stage_done(stage_name)
@@ -4346,6 +4431,7 @@ def main():
             elif stage_name == 'deplete' and pipe.d['hostdep'].is_dir() and any(pipe.d['hostdep'].iterdir()):
                 pipe.reads_dir = pipe.d['hostdep']
         except SystemExit as e:
+            _stage_status, _stage_error = 'failed', e
             if args.stop_on_error:
                 logger.error("[%s] 阶段失败 (exit=%d), 终止", stage_name, e.code if e.code else 1)
                 sys.exit(e.code if e.code else 1)
@@ -4353,6 +4439,7 @@ def main():
                 logger.warning("[%s] 阶段失败 (exit=%d), 继续", stage_name, e.code if e.code else 1)
                 failed_stages.append(stage_name)
         except Exception as e:
+            _stage_status, _stage_error = 'error', e
             if args.stop_on_error:
                 logger.error("[%s] 阶段异常: %s, 终止", stage_name, e)
                 sys.exit(1)
@@ -4361,6 +4448,9 @@ def main():
                 failed_stages.append(stage_name)
         finally:
             logger.removeHandler(stage_handler)
+            # 成功/SystemExit/异常三条路径统一在这里落 state + 摘要
+            _ai_hook(stage_name, _stage_status, _stage_error,
+                     elapsed_s=time.monotonic() - _stage_t0)
 
     if failed_stages:
         logger.warning("以下阶段失败: %s", ', '.join(failed_stages))

@@ -50,6 +50,34 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 from mmpv_common.io_layout import build_analysis_dirs, normalize_layout_env
 
+# Phase 2: 阶段级 AI 摘要钩子 (best-effort; 缺失/异常不得影响主管线)
+try:
+    from mmpv_common.ai_hooks import after_stage as _ai_after_stage
+except Exception:  # noqa: BLE001 - 钩子是旁路功能
+    _ai_after_stage = None
+
+# 当前正在跑的 stage (供 main() 的异常兜底钩子取用)
+_AI_STAGE = {"project_dir": None, "current": None, "done": set(),
+             "dirs": {}, "logs": {}}
+
+
+def _ai_emit(stage, status="ok", error=None):
+    """阶段结束钩子: 写 90_Handoff/ai/; 每阶段最多一次, 任何异常都吞掉。"""
+    try:
+        if _ai_after_stage is None or not stage:
+            return
+        if stage in _AI_STAGE["done"]:
+            return
+        _AI_STAGE["done"].add(stage)
+        _ai_after_stage(_AI_STAGE["project_dir"], "analysis", stage,
+                        status=status,
+                        output_dir=_AI_STAGE["dirs"].get(stage),
+                        log_path=_AI_STAGE["logs"].get(stage),
+                        error=error)
+    except Exception:  # noqa: BLE001 - 钩子绝不阻断主管线
+        pass
+
+
 def setup_logger(out_dir, level="INFO"):
     logger = logging.getLogger("KnownVirus")
     logger.setLevel(logging.DEBUG)
@@ -131,6 +159,40 @@ def check_tsv_schema(tsv_path, required_cols, stage_label, logger):
                 stage_label, len(actual), len(required_cols))
 
 
+# ---- Stage selection --------------------------------------------------------
+# Pipeline execution order, used to sort --stage values into run order and
+# expand "all". Must match the stage blocks in _run_pipeline_stages().
+STAGE_ORDER = ["detect", "filter", "variants", "post", "full", "extract",
+               "similarity", "dvg", "report"]
+
+
+def _parse_stages(raw):
+    """Normalize --stage values into a tuple in pipeline execution order.
+
+    Accepts a single string, a comma-separated string ("detect,filter"),
+    or a list (argparse nargs="+", e.g. "detect filter"). "all" expands to
+    every stage; unknown names exit with the valid choices.
+    """
+    tokens = []
+    for item in raw if isinstance(raw, (list, tuple)) else [raw]:
+        for chunk in str(item).split(","):
+            tokens.extend(chunk.split())
+    if not tokens:
+        sys.exit("ERROR: --stage is empty. Valid: all or " + ",".join(STAGE_ORDER))
+    if "all" in tokens:
+        return tuple(STAGE_ORDER)  # "all" wins; explicit names alongside are ignored
+    unknown = [t for t in tokens if t not in STAGE_ORDER]
+    if unknown:
+        sys.exit("ERROR: unknown --stage value(s): %s. Choose from: all or %s"
+                 % (",".join(unknown), ",".join(STAGE_ORDER)))
+    seen, ordered = set(), []
+    for t in tokens:
+        if t not in seen:
+            seen.add(t)
+            ordered.append(t)
+    return tuple(ordered)
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Known Virus Analysis Pipeline (10-stage)",
@@ -152,9 +214,12 @@ def main():
     g = parser.add_argument_group("Stage Control")
     g.add_argument(
         "--stage",
-        default="all",
-        choices=["all", "detect", "filter", "variants", "full", "extract", "post", "similarity", "dvg", "report"],
-        help="Which stage to run (default: all)",
+        nargs="+",
+        default=["all"],
+        help="Stage(s) to run: one or more of all, detect, filter, variants, full, "
+             "extract, post, similarity, dvg, report. Accepts space- or comma-"
+             "separated values, e.g. --stage detect,filter or --stage detect filter; "
+             "always executed in pipeline order regardless of the given order (default: all)",
     )
     g.add_argument("--no-resume", action="store_true", help="Disable checkpoint resume (always re-run)")
     g.add_argument("--force", action="store_true", help="Force re-run, ignore all checkpoints")
@@ -326,6 +391,13 @@ def main():
 
     args = parser.parse_args()
 
+    # [multi-stage] Normalize --stage into an ordered tuple of pipeline stages
+    # (supports "all", single value, "detect,filter", nargs list). args.stage is
+    # collapsed back to a display string for logging.
+    _raw_stage = args.stage if isinstance(args.stage, str) else ",".join(args.stage)
+    args.stages = _parse_stages(_raw_stage)
+    args.stage = _raw_stage
+
     # Manual validation (required args can come from profile)
     missing = []
     for param in ['reads_dir', 'output_dir', 'ref_info', 'reference']:
@@ -375,25 +447,36 @@ def main():
 
     # ---- Dry-run ----
     if args.dry_run:
-        s = args.stage
+        s = args.stages
         log.info("")
         log.info("=== DRY-RUN ===")
         log.info("  Tool:    %s", args.tool)
-        if s in ("all", "detect"):   log.info("  [1/9] Detect:   batch_virus_depth.py")
+        if "detect" in s:            log.info("  [1/9] Detect:   batch_virus_depth.py")
         # [P2-23c] 与下方 Stage2 执行条件保持一致 (--filter 默认 True, 但仅 all/filter 阶段才跑)
-        if args.filter and s in ("all", "filter"): log.info("  [2/9] Filter:   utils/filter_summary.py")
-        if s in ("all", "variants"):  log.info("  [3/9] Variants: batch_virus_variants.py (caller=%s snpeff=%s snpgenie=%s)", args.variant_caller, args.snpeff, args.snpgenie)
-        if s in ("all", "post"):      log.info("  [4/9] Post-hoc: VCF viz + SnpEff + MAF + SnpGenie")
-        if s in ("all", "full"):      log.info("  [5/9] Full:     batch_virus_full.py")
-        if s in ("all", "extract"):   log.info("  [6/9] Extract:  utils/extract_full_fasta.py")
-        if s in ("all", "similarity"): log.info("  [7/9] Similarity: virus_auto_pipeline.py")
-        if s in ("all", "dvg"):       log.info("  [8/9] DVG:    batch_virema_dvg.py")
-        if s in ("all", "report"):    log.info("  [9/9] Report: generate_pipeline_report.py")
+        if args.filter and "filter" in s: log.info("  [2/9] Filter:   utils/filter_summary.py")
+        if "variants" in s:  log.info("  [3/9] Variants: batch_virus_variants.py (caller=%s snpeff=%s snpgenie=%s)", args.variant_caller, args.snpeff, args.snpgenie)
+        if "post" in s:      log.info("  [4/9] Post-hoc: VCF viz + SnpEff + MAF + SnpGenie")
+        if "full" in s:      log.info("  [5/9] Full:     batch_virus_full.py")
+        if "extract" in s:   log.info("  [6/9] Extract:  utils/extract_full_fasta.py")
+        if "similarity" in s: log.info("  [7/9] Similarity: virus_auto_pipeline.py")
+        if "dvg" in s:       log.info("  [8/9] DVG:    batch_virema_dvg.py")
+        if "report" in s:    log.info("  [9/9] Report: generate_pipeline_report.py")
         log.info("=== DRY-RUN END ===")
         return
 
+    def _ai_hook(stage, status="ok", error=None):
+        """阶段钩子本地入口 (实现见模块级 _ai_emit; 任何失败都不影响主管线)。"""
+        _ai_emit(stage, status, error)
+
     try:
         _run_pipeline_stages(args, out, reads, log, script_dir, _pipeline_tmp)
+    except SystemExit as e:
+        # 阶段块内提前退出/raise: 给当前 stage 补一条 failed 钩子
+        _ai_hook(_AI_STAGE.get("current"), "failed", e)
+        raise
+    except Exception as e:
+        _ai_hook(_AI_STAGE.get("current"), "error", e)
+        raise
     finally:
         if _guard:
             try:
@@ -417,6 +500,27 @@ def _run_pipeline_stages(args, out, reads, log, script_dir, _pipeline_tmp):
     similarity_dir = _dirs['similarity']
     dvg_dir = _dirs['dvg']
     report_dir = _dirs['report']
+
+    # Phase 2: 钩子上下文 (阶段输出目录 / 阶段日志 / 当前阶段)
+    _AI_STAGE["project_dir"] = Path(out)
+    _AI_STAGE["dirs"] = {
+        "detect": detect_dir, "filter": filter_dir, "variants": variants_dir,
+        "post": post_dir, "assembly": assembly_dir, "extract": extract_dir,
+        "similarity": similarity_dir, "dvg": dvg_dir, "report": report_dir,
+    }
+    _AI_STAGE["logs"] = {
+        "detect": detect_dir / "run_1_detect.log",
+        "filter": filter_dir / "run_2_filter.log",
+        "variants": variants_dir / "run_3_variants.log",
+        "post": post_dir / "run_4_post.log",
+        "assembly": assembly_dir / "run_5_assembly.log",
+        "extract": extract_dir / "run_6_extract.log",
+        "similarity": similarity_dir / "run_7_similarity.log",
+        "dvg": dvg_dir / "run_8_dvg.log",
+        "report": report_dir / "run_9_report.log",
+    }
+    _AI_STAGE["done"].clear()
+    _AI_STAGE["current"] = None
 
     best_summary = detect_dir / "summary" / "all_viruses.best.summary.tsv"
     high_conf = filter_dir / "high_conf.summary.tsv"
@@ -458,7 +562,8 @@ def _run_pipeline_stages(args, out, reads, log, script_dir, _pipeline_tmp):
     # ═══════════════════════════════════════════
     # Stage 1: Detection
     # ═══════════════════════════════════════════
-    if args.stage in ("all", "detect"):
+    if "detect" in args.stages:
+        _AI_STAGE["current"] = "detect"
         _sh = add_stage_log(detect_dir, "1_detect")
         parts = []
         if not args.force and _stage_ok(detect_dir):
@@ -509,6 +614,7 @@ def _run_pipeline_stages(args, out, reads, log, script_dir, _pipeline_tmp):
             if not args.no_resume and not args.force:
                 parts.append("--resume")
             if not run(" ".join(parts), log, "batch_virus_depth"):
+                _ai_emit("detect", "failed")
                 sys.exit(1)
         # ── Stage 1 viz: batch_plot_virus_depth.py ──
         batch_plot = script_dir / 'batch_plot_virus_depth.py'
@@ -529,18 +635,25 @@ def _run_pipeline_stages(args, out, reads, log, script_dir, _pipeline_tmp):
             log.info("  [1/10 viz] Stage 1 plots complete -> %s", detect_dir)
         log.info("  Detection complete -> %s", detect_dir)
         _mark_stage_ok(detect_dir)
+        _ai_emit("detect")
+        _AI_STAGE["current"] = None
 
     # ═══════════════════════════════════════════
     # Stage 2: Filter (optional auto-filter)
     # ═══════════════════════════════════════════
     # [P2-23c] 原条件 `args.filter or args.stage == "filter"`: --filter 默认 True → 任何单阶段运行
-    # (如 --stage report) 都会附带跑 filter; 改为"开关打开 且 处于 all/filter 阶段"才执行
-    if args.filter and args.stage in ("all", "filter"):
+    # (如 --stage report) 都会附带跑 filter; 改为"开关打开 且 filter 被选中"才执行
+    if args.filter and "filter" in args.stages:
+        _AI_STAGE["current"] = "filter"
         _sh2 = add_stage_log(filter_dir, "2_filter")
         if not args.force and _stage_ok(filter_dir):
             log.info("[2/9] Filter: checkpoint OK, skip")
         elif best_summary.exists():
-            check_tsv_schema(best_summary, STAGE1_SCHEMA, "Stage2→Stage1", log)
+            try:
+                check_tsv_schema(best_summary, STAGE1_SCHEMA, "Stage2→Stage1", log)
+            except SystemExit as _e:
+                _ai_emit("filter", "failed", _e)
+                raise
             log.info("-" * 40)
             log.info("[2/9] High-Confidence Filtering")
             filter_parts = [
@@ -564,11 +677,14 @@ def _run_pipeline_stages(args, out, reads, log, script_dir, _pipeline_tmp):
                 _mark_stage_ok(filter_dir)
         else:
             log.warning("  best.summary not found, skipping filter")
+        _ai_emit("filter")
+        _AI_STAGE["current"] = None
 
     # ═══════════════════════════════════════════
     # Stage 3: Variant Analysis
     # ═══════════════════════════════════════════
-    if args.stage in ("all", "variants"):
+    if "variants" in args.stages:
+        _AI_STAGE["current"] = "variants"
         _sh3 = add_stage_log(variants_dir, "3_variants")
         if not args.force and _stage_ok(variants_dir):
             log.info("[3/9] Variants: checkpoint OK, skip")
@@ -576,9 +692,14 @@ def _run_pipeline_stages(args, out, reads, log, script_dir, _pipeline_tmp):
             log.info("-" * 40)
             log.info("[3/9] Variant Analysis")
             summary_in = get_summary()
-            check_tsv_schema(summary_in, STAGE1_SCHEMA, "Stage3→upstream", log)
+            try:
+                check_tsv_schema(summary_in, STAGE1_SCHEMA, "Stage3→upstream", log)
+            except SystemExit as _e:
+                _ai_emit("variants", "failed", _e)
+                raise
             if not summary_in.exists():
                 log.error("Summary not found: %s (run Stage 1 first)", summary_in)
+                _ai_emit("variants", "failed")
                 sys.exit(1)
 
             parts = [
@@ -625,11 +746,14 @@ def _run_pipeline_stages(args, out, reads, log, script_dir, _pipeline_tmp):
             else:
                 log.info("  Variants complete -> %s", variants_dir)
                 _mark_stage_ok(variants_dir)
+        _ai_emit("variants")
+        _AI_STAGE["current"] = None
 
     # ═══════════════════════════════════════════
     # Stage 6: Post-hoc Visualization
     # ═══════════════════════════════════════════
-    if args.stage in ("all", "post"):
+    if "post" in args.stages:
+        _AI_STAGE["current"] = "post"
         _sh4 = add_stage_log(post_dir, "4_post")
         if not args.force and _stage_ok(post_dir):
             log.info("[4/9] Post-hoc: checkpoint OK, skip")
@@ -763,11 +887,14 @@ def _run_pipeline_stages(args, out, reads, log, script_dir, _pipeline_tmp):
 
                 log.info("  Post-hoc complete -> %s", post_dir)
                 _mark_stage_ok(post_dir)
+        _ai_emit("post")
+        _AI_STAGE["current"] = None
 
     # ═══════════════════════════════════════════
     # Stage 4: Full-length Assembly
     # ═══════════════════════════════════════════
-    if args.stage in ("all", "full"):
+    if "full" in args.stages:
+        _AI_STAGE["current"] = "assembly"
         _sh5 = add_stage_log(assembly_dir, "5_assembly")
         if not args.force and _stage_ok(assembly_dir):
             log.info("[5/9] Assembly: checkpoint OK, skip")
@@ -777,6 +904,7 @@ def _run_pipeline_stages(args, out, reads, log, script_dir, _pipeline_tmp):
             var_summary = variants_dir / "summary" / "all_summary.tsv"
             if not var_summary.exists():
                 log.error("Variant summary not found: %s (run Stage 3 first)", var_summary)
+                _ai_emit("assembly", "failed")
                 sys.exit(1)
 
             vsi = args.virus_full_script or str(script_dir / "virus-full.py")
@@ -800,11 +928,14 @@ def _run_pipeline_stages(args, out, reads, log, script_dir, _pipeline_tmp):
             else:
                 log.info("  Assemblies complete -> %s", assembly_dir)
                 _mark_stage_ok(assembly_dir)
+        _ai_emit("assembly")
+        _AI_STAGE["current"] = None
 
     # ═══════════════════════════════════════════
     # Stage 5: Extract Clean Assemblies
     # ═══════════════════════════════════════════
-    if args.stage in ("all", "extract"):
+    if "extract" in args.stages:
+        _AI_STAGE["current"] = "extract"
         _sh6 = add_stage_log(extract_dir, "6_extract")
         if not args.force and _stage_ok(extract_dir):
             log.info("[6/9] Extract: checkpoint OK, skip")
@@ -829,10 +960,13 @@ def _run_pipeline_stages(args, out, reads, log, script_dir, _pipeline_tmp):
                     _mark_stage_ok(extract_dir)
             else:
                 log.warning("  Assembly dir not found, skipping extract")
+        _ai_emit("extract")
+        _AI_STAGE["current"] = None
 
     # Stage 7: Full-length Similarity Panorama
     # ═══════════════════════════════════════════
-    if args.stage in ("all", "similarity"):
+    if "similarity" in args.stages:
+        _AI_STAGE["current"] = "similarity"
         _sh7 = add_stage_log(similarity_dir, "7_similarity")
         if not args.force and _stage_ok(similarity_dir):
             log.info("[7/9] Similarity: checkpoint OK, skip")
@@ -898,11 +1032,15 @@ def _run_pipeline_stages(args, out, reads, log, script_dir, _pipeline_tmp):
                                     len(sim_failed), sim_done, ", ".join(sorted(sim_failed)))
                     log.info("  Similarity complete -> %s", similarity_dir)
                     _mark_stage_ok(similarity_dir)
+        _ai_emit("similarity")
+        _AI_STAGE["current"] = None
 
     # ═══════════════════════════════════════════
     # Stage 8: DVG & Recombination Analysis
     # ═══════════════════════════════════════════
-    if args.stage in ("all", "dvg"):
+    if "dvg" in args.stages:
+        _AI_STAGE["current"] = "dvg"
+        _dvg_status = "ok"
         _sh8 = add_stage_log(dvg_dir, "8_dvg")
         if not args.force and _stage_ok(dvg_dir):
             log.info("[8/9] DVG: checkpoint OK, skip")
@@ -933,14 +1071,18 @@ def _run_pipeline_stages(args, out, reads, log, script_dir, _pipeline_tmp):
                     parts.append("--resume")
                 if not run(" ".join(parts), log, "batch_virema_dvg"):
                     log.warning("  DVG analysis failed, check logs")
+                    _dvg_status = "failed"
                 else:
                     log.info("  DVG complete -> %s", dvg_dir)
                     _mark_stage_ok(dvg_dir)
+        _ai_emit("dvg", _dvg_status)
+        _AI_STAGE["current"] = None
 
     # ═══════════════════════════════════════════
     # Stage 9: Generate Summary Report
     # ═══════════════════════════════════════════
-    if args.stage in ("all", "report"):
+    if "report" in args.stages:
+        _AI_STAGE["current"] = "report"
         _sh9 = add_stage_log(report_dir, "9_report")
         log.info("-" * 40)
         log.info("[9/9] Generate Pipeline Summary Report")
@@ -954,10 +1096,13 @@ def _run_pipeline_stages(args, out, reads, log, script_dir, _pipeline_tmp):
         if args.ai_api_key:
             parts.append(f'--ai-api-key "{args.ai_api_key}"')
             parts.append(f'--ai-model "{args.ai_model}"')
-        if run(" ".join(parts), log, "generate_report"):
+        _report_ok = bool(run(" ".join(parts), log, "generate_report"))
+        if _report_ok:
             log.info("  Report generated -> %s", report_dir / "Pipeline_Summary_Report.html")
         else:
             log.warning("  Report generation failed")
+        _ai_emit("report", "ok" if _report_ok else "failed")
+        _AI_STAGE["current"] = None
 
     # ---- Done ----
     log.info("=" * 55)
