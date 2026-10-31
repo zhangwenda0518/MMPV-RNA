@@ -23,11 +23,12 @@ Input: clean_reads/ + ref_info.tsv + ref.fasta
 
 [1/9] batch_virus_depth.py        → detect      Salmon/Kallisto/Bowtie2 定量 + Poisson 打假
 [2/9] filter_summary.py           → filter      高置信度过滤
-[3/9] batch_virus_variants.py     → variants    FreeBayes/iVar/LoFreq 变异检出 + 共识序列
-[4/9] virus_vcf_pipeline.py       → post        VCF 可视化 + SnpEff 宏 + MAF 瀑布 + SnpGenie dN/dS
-[5/9] batch_virus_full.py         → full        12 步全长基因组构建 (OmniVirusAssembler V9.0)
+[3/9] batch_virus_variants.py     → variants    比对 + FreeBayes/iVar/LoFreq 变异检出 + 共识序列 (不再提取 reads)
+[4/9] batch_virus_variants.py     → extract     靶向 reads 提取 (--extract_only, 独立阶段; 产物 virus_reads/)
+[5/9] virus_vcf_pipeline.py       → post        VCF 可视化 + SnpEff 宏 + MAF 瀑布 + SnpGenie dN/dS
+[6/9] batch_virus_full.py         → full        12 步全长基因组构建 (OmniVirusAssembler V9.0)
        └── virus-full.py (engine)
-[6/9] extract_full_fasta.py       → extract     最长 contig 提取 + 参考 N-fill
+       └── extract_full_fasta.py (尾段集成: 最长 contig 提取 + 参考 N-fill, --no_full_extract 可关)
 [7/9] virus_auto_pipeline.py      → similarity  SDT 相似性热图 + 层次聚类
 [8/9] batch_virema_dvg.py         → dvg         ViReMa DVG/重组检测 + Circos
        └── virema_summary_report.R   Circos 4-track
@@ -63,11 +64,11 @@ Input: clean_reads/ + ref_info.tsv + ref.fasta
 | `auto_known_virus.py` | — | 755 | 9-stage orchestrator |
 | `batch_virus_depth.py` | 1 | 832 | Salmon pseudo-alignment + Poisson filtering |
 | `filter_summary.py` | 2 | 236 | Coverage/depth/reads threshold filtering |
-| `batch_virus_variants.py` | 3 | 1229 | FreeBayes/iVar/LoFreq 变异检出 + 共识序列 |
-| `virus_vcf_pipeline.py` | 4 | 186 | post 阶段入口：bcftools merge + VCF2Dis + VCF2PCA |
-| `batch_virus_full.py` | 5 | 240 | Assembly task scheduler |
-| `virus-full.py` | 5 | 1120 | 12-step de novo assembly engine |
-| `extract_full_fasta.py` | 6 | 123 | Extract longest contigs |
+| `batch_virus_variants.py` | 3+4 | 1229 | 比对+变异检出(3) 与 靶向 reads 提取(4, --extract_only) |
+| `virus_vcf_pipeline.py` | 5 | 186 | post 阶段入口：bcftools merge + VCF2Dis + VCF2PCA |
+| `batch_virus_full.py` | 6 | 240 | Assembly task scheduler |
+| `virus-full.py` | 6 | 1120 | 12-step de novo assembly engine |
+| `extract_full_fasta.py` | 6 尾段 | 123 | Extract longest contigs (full 集成) |
 | `batch_plot_virus_depth.py` | 4 组件 | 784 | 3-in-1 viz (depth/freq/meta) |
 | `virus_variants_analyzer.py` | 4 组件 | 477 | VCF landscape + PCA |
 | `snpeff_analysis.py` | 4 组件 | 310 | SnpEff macro stats + OncoPrint |

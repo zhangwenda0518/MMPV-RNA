@@ -60,8 +60,9 @@ virome_submission_pipeline/   → Data submission
        └── suvtk tbl2asn / Sequin tbl2asn dual mode → .sqn submission file
 ```
 
-**Optional supplementary module (ARCHIVED 2026-10-11 — immature methodology; moved to
-`archive/20261011_host_expression_pipeline/`; main chain and other pipelines unaffected):**
+**Optional supplementary module (ARCHIVED 2026-10-11, moved out of this repo 2026-10-27 —
+immature methodology; kept in the standalone `差异表达分析` project archive; main chain and
+other pipelines unaffected):**
 
 ```
 host_expression_pipeline/     → ⑧ Host expression analysis (host side: virus-positive/negative grouping) [ARCHIVED]
@@ -72,8 +73,8 @@ host_expression_pipeline/     → ⑧ Host expression analysis (host side: virus
        └── HTML summary report    ← core chain extracted from the goji-virome differential-expression project
 ```
 
-> See `archive/20261011_host_expression_pipeline/README.md` and `ARCHIVED_20261011.md`
-> (archival reason and revival steps) in the same directory. All inputs come from existing
+> See `README.md` and `ARCHIVED_20261011.md` in that standalone archive
+> (archival reason and revival steps). All inputs come from existing
 > main-chain artifacts (② clean reads, ① host reference/Core14, ④ detection table); outputs
 > land in `08_HostExpression/`.
 
@@ -222,7 +223,8 @@ EVE already in the catalog; running before lets the evidence participate in the 
 (`EVE_like` → REVIEW). Downgrade only, so human review still has the final say.
 
 **Models/data**: 16-family models and thresholds live in `database/eve_ml/`; training scripts in
-`database/eve_ml/build/`.
+`database/eve_ml/build/`. **Benchmark visualization**: `database/eve_ml/benchmark/EVE_BENCHMARK.html`
+(4 main figures + 7 supplementary figures + Tier A/B/Δbit tables).
 
 > The old EVE modules (`endogenous_virus_pipeline/` + `eve_distinguish/`) were archived on
 > 2026-10-11 to `archive/20261011_endogenous_virus_pipeline/` for historical reproducibility.
@@ -283,7 +285,7 @@ python virome_submission_pipeline/submission_pipeline.py \
 | 1 | `search` | gsa_sra.search.py | Dual-engine species search (NCBI SRA + CNCB GSA) → SRA_GSA_Merged_Final.csv |
 | 2 | `info` | gsa_sra.info.py | SRA XML parsing + GSA crawler + AI metadata cleaning → Global_Unified_Metadata_Core14.csv (14 columns) |
 | 3 | `down` | gsa_sra.down.py | Dual-protocol download (aria2c/wget/prefetch) → raw FASTQ/SRA |
-| 4 | `convert` | sra2fastx.py | Bulk SRA → FASTQ.GZ via fasterq-dump (falls back to fastq-dump) |
+| 4 | `convert` | sra2fastx.py | Bulk SRA → FASTQ.GZ: sracha by default (5–13x faster, strict→`--no-strict` downgrade), with fasterq-dump/fastq-dump fallback |
 | 5 | `plot` | gsa_sra.plot.py | Publication-grade 6-panel visualization (time/tissue/region/institute) |
 | 6 | `hostref` | download_host_genome.py | Host genome download (datasets/ngd/FTP/gget; `--host-fasta` to skip) → `host_reference/genome/` |
 | 6 | `hostdb` | build_hostbase.py | Kraken2/Bowtie2/HISAT2/Minimap2 four-index build → `host_reference/hostdb/` (reuses --species/--taxid) |
@@ -319,7 +321,7 @@ Entry: `python public_metadata_pipeline/preprocess_unified.py --sra-dir ... --ou
 | 2 | `deplete` | data_preprocessing_pipeline/host_depletion.py | Classifier (Kraken2/Kun-peng) → Bowtie2/HISAT2/Minimap2 → rRNA removal |
 | 3 | `assembly` | assembly_pipeline.py | MEGAHIT / rnaviralSPAdes / Penguin assembly |
 | 4 | `identification` | virus_identification.py | 10-tool parallel identification (Genomad + Diamond BLASTX + RdrpCatch + ViraLM + VirBot + VirSorter2 + ViralVerify + VirHunter + Metabuli + viroid BLASTN) |
-| 5 | `filter` | filter_virus.py + graph_propagation.py | UniProt-strict high-confidence filtering (CDD + UniProt two layers) + optional graph sub-step: second-opinion adjudication of no-evidence keepers (rescue/demote) → COBRA input; idea after GMW, 2026 (off by default, enable via graph.enabled) |
+| 5 | `filter` | filter_virus.py + graph_propagation.py | UniProt-strict high-confidence filtering (CDD layer removed; CDD retained only for 09b rescue validation) + optional graph sub-step: second-opinion adjudication of no-evidence keepers (rescue/demote) → COBRA input; idea after GMW, 2026 (off by default, enable via graph.enabled) |
 | 6 | `cobra` | cobra_pipeline.py | BWA-MEM2 → CoverM → COBRA-Meta per-sample extension (candidate source = filter main-chain mirror, restoring the filter→COBRA contract) |
 | 7 | `merge` | (built-in, Flye) | Multi-sample Flye co-assembly (co-assembly mode) |
 | 8 | `cluster` | cluster_pipeline.py | CD-HIT reference-guided pre-clustering + vclust Leiden clustering |
@@ -349,13 +351,13 @@ Entry: `python public_metadata_pipeline/preprocess_unified.py --sra-dir ... --ou
 |---|------|------|------|
 | 1 | `detect` | batch_virus_depth.py | Salmon/Kallisto/Bowtie2 rapid quantification + Poisson filtering |
 | 2 | `filter` | utils/filter_summary.py | High-confidence filtering |
-| 3 | `variants` | batch_virus_variants.py | FreeBayes/iVar/LoFreq variant calling + consensus building |
-| 4 | `post` | virus_vcf_pipeline.py | VCF visualization + SnpEff macro + MAF waterfall + SnpGenie dN/dS |
-| 5 | `full` | batch_virus_full.py → virus-full.py | **Full-length genome build (OmniVirusAssembler V9.0)**: 12 refinement steps — SHIVER-like Divine Fusion solid backbone → read-level iterative polishing (single-base accuracy) → gmcloser + abyss-sealer dual-engine gap closing → circularization detection (Circular=True) |
-| 6 | `extract` | utils/extract_full_fasta.py | Longest-contig extraction + reference N-fill (RNA: fill only if N<5%) |
-| 6 | `similarity` | virus_auto_pipeline.py | Full-length similarity heatmap + hierarchical clustering (MAFFT --auto) |
-| 7 | `dvg` | batch_virema_dvg.py | ViReMa DVG/recombination detection + Circos plots |
-| 8 | `report` | generate_pipeline_report.py | Interactive HTML comprehensive report + AI interpretation prompts |
+| 3 | `variants` | batch_virus_variants.py | Alignment + FreeBayes/iVar/LoFreq variant calling + consensus (no longer extracts reads) |
+| 4 | `extract` | batch_virus_variants.py --extract_only | **Targeted virus reads extraction** (independent from variants; output `03_Variants/virus_reads/`, hard dependency of full) |
+| 5 | `post` | virus_vcf_pipeline.py | VCF visualization + SnpEff macro + MAF waterfall + SnpGenie dN/dS |
+| 6 | `full` | batch_virus_full.py → virus-full.py (+ utils/extract_full_fasta.py) | **Full-length genome build (OmniVirusAssembler V9.0)**: 12 refinement steps — SHIVER-like Divine Fusion solid backbone → read-level iterative polishing (single-base accuracy) → gmcloser + abyss-sealer dual-engine gap closing → circularization detection (Circular=True); tail integrates the former extract stage (longest-contig extraction + N-fill, `--no_full_extract` to skip) |
+| 7 | `similarity` | virus_auto_pipeline.py | Full-length similarity heatmap + hierarchical clustering (MAFFT --auto) |
+| 8 | `dvg` | batch_virema_dvg.py | ViReMa DVG/recombination detection + Circos plots |
+| 9 | `report` | generate_pipeline_report.py | Interactive HTML comprehensive report + AI interpretation prompts |
 
 > Note: positive-selection analysis (`capheine` / HyPhy FEL·MEME·BUSTED·PRIME) moved to
 > `virome_phylo_pipeline/` in v3.0 (the `capheine` stage in STAGE_ORDER). The 9-stage definition
@@ -483,7 +485,7 @@ MMPV-RNA/
 | RVDB | Viral reference sequences | https://fzer.github.io/rvdbtools/ |
 | NR (diamond) | Protein filtering | NCBI nr |
 | NCBI virus ref | BLAST reference | NCBI virus |
-| ViralVerify HMM | HMM validation | ViralVerify |
+| ViralVerify HMM + NBC model table | HMM validation + Naive Bayes classification | ViralVerify |
 | VirSorter2 DB | Virus taxonomy | VirSorter2 |
 | ViraLM DB | DNABERT-2 identification | Google Drive (gdown) |
 | Kraken2 + align DB | Host depletion | Built by this platform (build_host_pipeline.py) |

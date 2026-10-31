@@ -60,8 +60,8 @@ virome_submission_pipeline/   → 数据提交
        └── suvtk tbl2asn / Sequin tbl2asn 双模式 → .sqn 提交文件
 ```
 
-**可选补充模块（已归档，2026-10-11，方法不成熟——目录移至
-`archive/20261011_host_expression_pipeline/`，主链与各管线不受影响）**：
+**可选补充模块（已归档 2026-10-11、2026-10-27 移出主仓，方法不成熟——
+独立归档于 `差异表达分析` 项目，主链与各管线不受影响）**：
 
 ```
 host_expression_pipeline/     → ⑧ 宿主表达分析（宿主侧：病毒阳性/阴性分组）【已归档】
@@ -72,8 +72,7 @@ host_expression_pipeline/     → ⑧ 宿主表达分析（宿主侧：病毒阳
        └── HTML 汇总报告     ← 抽取自 goji-virome 差异表达分析核心链路
 ```
 
-> 详见 `archive/20261011_host_expression_pipeline/README.md` 与同目录
-> `ARCHIVED_20261011.md`（归档原因与恢复方法）。输入全部取自主链现有产物
+> 归档原因与恢复方法见该独立归档内的 `README.md` / `ARCHIVED_20261011.md`。输入全部取自主链现有产物
 > （② clean reads、① 宿主参考/Core14、④ 检出表），输出落 `08_HostExpression/`。
 
 ---
@@ -181,7 +180,7 @@ EVE 拆成两段，分别挂在宿主库构建和病毒发现的 DNA 候选分�
 | 掩码 | `hostdb` **之前**（`--eve-mask`） | 先把 EVE 区间屏蔽，宿主索引里就不含 EVE 序列 |
 | 分析汇总 | `hostdb` **之后**（`eve` 阶段，`--eve-scan`） | 扫描 → 双侧判定 → RVDB；可选元件库/consensus + 六框蛋白库 |
 | 产物 | `<host_reference>/eve/` | `04_Summary/eve_report.html`、`05_Elements/eve_consensus_library.fa`、`.sixframe.faa` |
-| 报告 | `Pipeline_Summary_Report.html` | 新增 **S7: EVE (genome)** 章节（基因组数/内源/未定/寄主样/元件数 + 链接） |
+| 报告 | `Pipeline_Summary_Report.html` | **S7: EVE (genome)** 直接内嵌明细（卡片 + 判定分布/逐基因组/病毒科/位点/元件表）；`eve_report.html` 仅作可选独立导出 |
 
 ```bash
 # 九阶段公共数据管线：hostref → hostdb → eve → report
@@ -216,6 +215,7 @@ python virome_discovery_pipeline/virome_pipeline.py --stage analysis_verify \
 （`EVE_like` → REVIEW）。只降不删，保留人工复核空间。
 
 **模型/数据**：16 科模型与阈值在 `database/eve_ml/`；训练脚本在 `database/eve_ml/build/`。
+**基准可视化**：`database/eve_ml/benchmark/EVE_BENCHMARK.html`（4 主图 + 7 补充图 + Tier A/B/Δbit 表）。
 
 > 旧 EVE 模块（`endogenous_virus_pipeline/` + `eve_distinguish/`）已于 2026-10-11
 > 归档至 `archive/20261011_endogenous_virus_pipeline/`，保留用于历史结果复现。
@@ -276,7 +276,7 @@ python virome_submission_pipeline/submission_pipeline.py \
 | 1 | `search` | gsa_sra.search.py | NCBI SRA + CNCB GSA 双引擎物种检索 → SRA_GSA_Merged_Final.csv |
 | 2 | `info` | gsa_sra.info.py | SRA XML解析 + GSA爬虫 + AI元数据清洗 → Global_Unified_Metadata_Core14.csv (14列) |
 | 3 | `down` | gsa_sra.down.py | aria2c/wget/prefetch 双协议下载 → 原始 FASTQ/SRA |
-| 4 | `convert` | sra2fastx.py | fasterq-dump 批量 SRA → FASTQ.GZ（失败回退 fastq-dump） |
+| 4 | `convert` | sra2fastx.py | 批量 SRA → FASTQ.GZ：默认 sracha（快 5–13x，严格校验失败自动降级 `--no-strict`），并可回退 fasterq-dump/fastq-dump |
 | 5 | `plot` | gsa_sra.plot.py | 时间/组织/地区/机构 SCI级6面板可视化 |
 | 6 | `hostref` | download_host_genome.py | 宿主基因组下载 (datasets/ngd/FTP/gget 四通道; `--host-fasta` 用户基因组跳过下载) → `host_reference/genome/` |
 | 6 | `hostdb` | build_hostbase.py | Kraken2/Bowtie2/HISAT2/Minimap2 四索引构建 → `host_reference/hostdb/`（`--tool kraken2,kunpeng` 可追加 Kun-peng 分片库；默认由 Kraken2 库 hashshard 原地转换） |
@@ -312,7 +312,7 @@ python virome_submission_pipeline/submission_pipeline.py \
 | 2 | `deplete` | data_preprocessing_pipeline/host_depletion.py | 分类 (Kraken2/Kun-peng) → Bowtie2/HISAT2/Minimap2 → rRNA去除 |
 | 3 | `assembly` | assembly_pipeline.py | MEGAHIT / rnaviralSPAdes / Penguin 组装 |
 | 4 | `identification` | virus_identification.py | 10工具并行鉴定 (Genomad+Diamond BLASTX+RdrpCatch+ViraLM+VirBot+VirSorter2+ViralVerify+VirHunter+Metabuli+Viroid BLASTN) |
-| 5 | `filter` | filter_virus.py + graph_propagation.py | UniProt-strict 高置信过滤 (CDD+UniProt 两层) + 可选 graph 子步骤: 对无证据保留结果二次裁决 (rescue/demote) → COBRA 输入; 思想源自 GMW, 2026 (默认关闭, graph.enabled 开启) |
+| 5 | `filter` | filter_virus.py + graph_propagation.py | UniProt-strict 高置信过滤 (CDD 层已移除, CDD 仅用于 09b rescue 验证) + 可选 graph 子步骤: 对无证据保留结果二次裁决 (rescue/demote) → COBRA 输入; 思想源自 GMW, 2026 (默认关闭, graph.enabled 开启) |
 | 6 | `cobra` | cobra_pipeline.py | BWA-MEM2 → CoverM → COBRA-Meta 单样本延伸 (候选源 = filter 主链镜像, 恢复 filter→COBRA 契约) |
 | 7 | `merge` | (内置, Flye) | 多样本 Flye 共组装 (co-assembly 模式) |
 | 8 | `cluster` | cluster_pipeline.py | CD-HIT参考引导预聚类 + vclust Leiden聚类 |
@@ -342,13 +342,13 @@ python virome_submission_pipeline/submission_pipeline.py \
 |---|------|------|------|
 | 1 | `detect` | batch_virus_depth.py | Salmon/Kallisto/Bowtie2 快速定量 + Poisson过滤 |
 | 2 | `filter` | utils/filter_summary.py | 高置信度过滤 |
-| 3 | `variants` | batch_virus_variants.py | FreeBayes/iVar/LoFreq 变异检出 + 共识序列构建 |
-| 4 | `post` | virus_vcf_pipeline.py | VCF可视化 + SnpEff宏 + MAF 瀑布 + SnpGenie dN/dS |
-| 5 | `full` | batch_virus_full.py → virus-full.py | **全长基因组构建 (OmniVirusAssembler V9.0)**: 12步精炼 — SHIVER-like Divine Fusion 实心骨架 → Reads级迭代抛光 (单碱基精度) → gmcloser + abyss-sealer 双引擎补洞 → 环化检测 (Circular=True) |
-| 6 | `extract` | utils/extract_full_fasta.py | 最长contig提取 + 参考N-fill (RNA: N<5% 才填) |
-| 6 | `similarity` | virus_auto_pipeline.py | 全长相似性热图 + 层次聚类 (MAFFT --auto) |
-| 7 | `dvg` | batch_virema_dvg.py | ViReMa DVG/重组检测 + Circos图 |
-| 8 | `report` | generate_pipeline_report.py | 交互式HTML综合报告 + AI 解读提示词 |
+| 3 | `variants` | batch_virus_variants.py | 比对 + FreeBayes/iVar/LoFreq 变异检出 + 共识序列构建 (不再提取 reads) |
+| 4 | `extract` | batch_virus_variants.py --extract_only | **靶向 reads 提取** (自 variants 独立; 产物 `03_Variants/virus_reads/`, full 阶段硬依赖) |
+| 5 | `post` | virus_vcf_pipeline.py | VCF可视化 + SnpEff宏 + MAF 瀑布 + SnpGenie dN/dS |
+| 6 | `full` | batch_virus_full.py → virus-full.py (+ utils/extract_full_fasta.py) | **全长基因组构建 (OmniVirusAssembler V9.0)**: 12步精炼 — SHIVER-like Divine Fusion 实心骨架 → Reads级迭代抛光 (单碱基精度) → gmcloser + abyss-sealer 双引擎补洞 → 环化检测 (Circular=True); 尾段默认集成原 extract 的最长contig提取+参考N-fill (`--no_full_extract` 可关) |
+| 7 | `similarity` | virus_auto_pipeline.py | 全长相似性热图 + 层次聚类 (MAFFT --auto) |
+| 8 | `dvg` | batch_virema_dvg.py | ViReMa DVG/重组检测 + Circos图 |
+| 9 | `report` | generate_pipeline_report.py | 交互式HTML综合报告 + AI 解读提示词 |
 
 > 注: 正选择分析 (`capheine` / HyPhy FEL·MEME·BUSTED·PRIME) 已于 v3.0 迁移至
 > `virome_phylo_pipeline/` (STAGE_ORDER 中的 `capheine` 阶段)，本管线 9 阶段定义见
@@ -455,6 +455,7 @@ MMPV-RNA/
 - **完整闭环**: 从公共数据挖掘到投稿图表，一站式完成
 - **提交管线**: GenBank/CNCB 序列提交自动化, 支持 Sequin 构建和假设蛋白分析
 - **AI 驱动层 (2026-10)**: 四层递进架构 — run digest 状态数字化 → AI 解读 (五报告统一接线 + **过程面板: 报告不止读数据, 兼载全过程与 AI 参与轨迹**) → 建议/候选 triage 实战标注 (`--preset ident` 鉴定证据矩阵, 只写 ai_* 列) → 自然语言副驾驶 + MCP server + 受控 agent 全链路编排 (`mmpv_ai.py agent`) + 项目级主报告 (`mmpv_ai.py report`, 含报告互链/digest 演化图/token 用量) + 溯源导出 (`mmpv_ai.py provenance` → 中英文方法学段落) + 事后补 AI (`mmpv_ai.py enrich`: 无 key 先跑, 配 key 后一键补解读, 幂等)。AI 只建议不执行, 离线完整可用; 入口 `python mmpv_ai.py --help`, 论证见 `doc/AI_DRIVEN_DESIGN.md`
+- **AI 集成二期 (2026-10-28)**: stage 级自动摘要 (`ai_hooks` → `90_Handoff/ai/`)、`summarize/watch/backfill/doctor/eval` 子命令、失败诊断 (12 条错误签名 + 白名单校验的修复草稿)、参数建议、文档 BM25 检索 (`file:line`)、MCP 14 个只读工具、6 个 `skills/mmpv-*` 工作流包。摘要默认模板兜底, 无 key/断网可用; 数字 grounding 与 prompt 版本全程留痕。详见 `doc/AI_INTEGRATION.md`
 - **报告模板层 (2026-10)**: 报告 HTML 由 Jinja2 统一渲染 (`mmpv_common/report_template.py` + `templates/`: base 骨架 + 组件宏), 过程面板/项目主报告/⑦ 提交报告已迁移; autoescape 修复元数据特殊字符破坏标记, StrictUndefined 缺变量 fail-loud, 离线零外部资源
 
 ---
@@ -468,12 +469,15 @@ MMPV-RNA/
 | RVDB | 病毒参考序列 | https://fzer.github.io/rvdbtools/ |
 | NR (diamond) | 蛋白过滤 | NCBI nr |
 | NCBI virus ref | BLAST参考 | NCBI virus |
-| ViralVerify HMM | HMM验证 | ViralVerify |
+| ViralVerify HMM + NBC 模型表 | HMM 验证 + Naive Bayes 判定 | ViralVerify |
 | VirSorter2 DB | 病毒分类 | VirSorter2 |
 | ViraLM DB | DNABERT-2鉴定 | Google Drive (gdown) |
 | Kraken2 + align DB | 宿主去除 | 本管线构建 (build_host_pipeline.py) |
 | PhaBOX2 DB | 宿主预测 | PhaBOX2 |
 | 植物/病毒拆分库 (hybrid) | `eve_genome` 双侧判定 | SwissProt 拆分 + id2div 映射 (`database/setup/mmpv_db_manifest.tsv`) |
+
+> ViralVerify 的 NBC 模型表 `classifier_table_uniq.txt` 默认与 HMM 同目录；缺失时
+> pyhmmer 路径自动退回 HMM-hit 判定（下载见 `DATABASE_SETUP.md` §2.4）。
 
 **完整清单与部署方案**：全管线共依赖 50 项数据库（必需 24 / 可选 26，全量约 710GB）。
 逐库的下载与建索引命令见 `DATABASE_SETUP.md`；**可复现的集中部署方案**（共享库根 + 软链接

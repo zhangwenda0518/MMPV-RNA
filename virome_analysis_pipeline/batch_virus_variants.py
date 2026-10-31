@@ -1181,6 +1181,38 @@ class PostProcessPipeline:
                     logger.warning(f"⚠️ SNPGenie 有 {n_sg_fail}/{len(tasks_sg)} 个任务失败, 详见各样本 *_snpgenie.log")
 
 
+    def _run_extract_reads(self, df, bam_map):
+        """靶向提取特异性病毒 Reads (variants --extract_reads 与 --extract_only 共用)。"""
+        if not self.args.extract_reads:
+            return
+        tasks = []
+        for _, r in df.iterrows():
+            if r["Sample"] in bam_map:
+                s = r["Sample"]
+                v = r["Virus"]
+                isf = bam_map[r["Sample"]]["is_fasta"]
+
+                target_dir = self.d_reads
+                target_dir.mkdir(parents=True, exist_ok=True)
+
+                prefix = f"{safe_name(s)}.{safe_name(v)}"
+                ext = 'fasta.gz' if isf else 'fastq.gz'
+
+                log_file = str(self.d_logs / f"{prefix}_extract_reads.log")
+
+                tasks.append((
+                    s, v, bam_map[s]["bam"], isf,
+                    str(target_dir / f"{prefix}_R1.{ext}"),
+                    str(target_dir / f"{prefix}_R2.{ext}"),
+                    str(target_dir / f"{prefix}_single.{ext}"),
+                    self.args.threads, self.args.resume, log_file, self.master_log
+                ))
+
+        logger.info(f"\n📦 靶向提取特异性病毒 Reads (Jobs:{self.args.jobs}, Threads/Job:{min(4, self.args.threads)})...")
+        with ProcessPoolExecutor(max_workers=min(len(tasks), self.args.jobs)) as ex:
+            for _ in tqdm(as_completed([ex.submit(worker_extract_reads, t) for t in tasks]), total=len(tasks)):
+                pass
+
     def run(self):
         start = datetime.now()
         logger.info("=" * 65)
@@ -1197,41 +1229,22 @@ class PostProcessPipeline:
         
         bam_map = self.resolve_bam_map(df["Sample"].unique().tolist(), ref_map)
         
-        if not bam_map: 
-            logger.error("❌ 无可用 BAM！请检查样本名与文件名的对应关系。")
+        if not bam_map:
+            logger.error("❌ 无可用 BAM！请检查样本名与文件名的对应关系"
+                         "（--extract_only 模式需先运行 --stage variants 产出比对 BAM）。")
             sys.exit(1)
-            
+
+        # [extract 独立阶段] --extract_only: 只做靶向 reads 提取 (复用已有 BAM),
+        # 跳过 summary 重算/consensus/变异检测 —— 编排器 --stage extract 走此分支
+        if getattr(self.args, 'extract_only', False):
+            self._run_extract_reads(df, bam_map)
+            return
+
         df = self.generate_final_summaries(df, bam_map)
-        
+
         if self.args.extract_reads:
-            tasks =[]
-            for _, r in df.iterrows():
-                if r["Sample"] in bam_map:
-                    s = r["Sample"]
-                    v = r["Virus"]
-                    isf = bam_map[r["Sample"]]["is_fasta"]
-                    
-                    target_dir = self.d_reads
-                    target_dir.mkdir(parents=True, exist_ok=True)
-                    
-                    prefix = f"{safe_name(s)}.{safe_name(v)}"
-                    ext = 'fasta.gz' if isf else 'fastq.gz'
-                    
-                    log_file = str(self.d_logs / f"{prefix}_extract_reads.log")
-                    
-                    tasks.append((
-                        s, v, bam_map[s]["bam"], isf, 
-                        str(target_dir/f"{prefix}_R1.{ext}"), 
-                        str(target_dir/f"{prefix}_R2.{ext}"), 
-                        str(target_dir/f"{prefix}_single.{ext}"), 
-                        self.args.threads, self.args.resume, log_file, self.master_log
-                    ))
-                    
-            logger.info(f"\n📦 靶向提取特异性病毒 Reads (Jobs:{self.args.jobs}, Threads/Job:{min(4, self.args.threads)})...")
-            with ProcessPoolExecutor(max_workers=min(len(tasks), self.args.jobs)) as ex:
-                for _ in tqdm(as_completed([ex.submit(worker_extract_reads, t) for t in tasks]), total=len(tasks)): 
-                    pass
-                
+            self._run_extract_reads(df, bam_map)
+
         if self.args.consensus:
             tasks =[]
             for _, r in df.iterrows():
@@ -1295,7 +1308,10 @@ def main():
     src_ex.add_argument("--bam", help="已有 BAM 文件夹 (跳过提取步骤)")
 
     mod = parser.add_argument_group("功能开关")
-    mod.add_argument("--extract_reads", action="store_true", help="从 FASTQ 重新提取目标病毒的 reads")
+    mod.add_argument("--extract_reads", action="store_true", help="从 BAM 提取目标病毒的 reads")
+    mod.add_argument("--extract_only", action="store_true",
+                     help="只做靶向 reads 提取 (复用 --bam 下已有 BAM), 跳过 summary/consensus/变异检测; "
+                          "编排器 --stage extract 使用")
     mod.add_argument("--consensus", action="store_true", help="生成共识序列")
     mod.add_argument("--call_variants", action="store_true", help="检出变异位点")
     mod.add_argument("--variant_caller", choices=["freebayes", "ivar", "lofreq"], default="freebayes",
