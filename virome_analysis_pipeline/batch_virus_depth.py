@@ -783,7 +783,42 @@ class UnifiedVirusPipeline:
         
         self.setup_output_directory(); self.build_index(); self.find_samples()
         batches = [self.samples[i:i + self.args.batch_size] for i in range(0, len(self.samples), self.args.batch_size)]
-        
+
+        # [P2-24e+] 样本级跨运行断点续传: --resume 时回收上一轮结果 parquet 里
+        # 仍存在于本轮样本清单的样本行, 批次内只重算缺失样本 (batch_size 变化/样本增减均不受影响).
+        # 按样本名匹配而非批次号 —— 批次号在样本清单变化后不可信 (P2-24e 的顾虑), 按名匹配无此问题.
+        # 回收行启动即落盘为 resume_pool.parquet (文件名避开 batch_*.parquet glob),
+        # 之后旧批次文件才能安全清理; 链路: 每轮启动读 *.parquet → 覆盖写 resume_pool → 删旧批次文件.
+        # 注意: 结果按"最后一轮为准"; 若中途换过 --reference/--tool/--ref_info, 请用 --force 全量重跑.
+        self._resume_rows = []
+        self._resume_done = set()
+        if self.args.resume:
+            _bdir = self.output_dir / 'batches'
+            if _bdir.exists():
+                _old_files = sorted(_bdir.glob('*.parquet'), key=lambda p: p.stat().st_mtime)
+                _cur_names = {s['name'] for s in self.samples}
+                _rows_by_sample = {}
+                for _pf in _old_files:
+                    try:
+                        _df = pl.read_parquet(_pf)
+                    except Exception:
+                        continue
+                    for _row in _df.to_dicts():
+                        if _row.get('Sample') in _cur_names:
+                            _rows_by_sample[_row['Sample']] = _row  # 新文件覆盖旧文件
+                if _rows_by_sample:
+                    self._resume_rows = list(_rows_by_sample.values())
+                    self._resume_done = set(_rows_by_sample)
+                    self.logger.info(f"⏭️ 断点续传: 上一轮已有 {len(self._resume_done)} 个样本结果, 本轮只重算缺失样本")
+                    # 回收行先落盘, 旧批次文件再清理 —— 保证 Ctrl+C 后链路不断
+                    pl.DataFrame(self._resume_rows, schema=METRICS_SCHEMA).write_parquet(_bdir / 'resume_pool.parquet')
+                    for _pf in _old_files:
+                        if _pf.name != 'resume_pool.parquet':
+                            try:
+                                _pf.unlink()
+                            except OSError:
+                                pass
+
         for i, batch in enumerate(batches):
             batch_idx = i + 1; batch_file = self.output_dir / 'batches' / f'batch_{batch_idx:04d}.parquet'
             if self.args.resume and batch_file.exists():
@@ -796,13 +831,19 @@ class UnifiedVirusPipeline:
                 except OSError as e:
                     self.logger.warning(f"⚠️ 无法删除残留批次文件 {batch_file.name}: {e} (本批重算后覆盖写入)")
             
-            self.logger.info(f"📦 开始计算 [批次 {batch_idx}/{len(batches)}] (内含 {len(batch)} 个样本)...")
+            batch_todo = [s for s in batch if s['name'] not in self._resume_done]
+            if not batch_todo:
+                self.logger.info(f"⏭️ 批次断点触发: [批次 {batch_idx}/{len(batches)}] 全部 {len(batch)} 个样本已完成, 整体跳过...")
+                continue
+            if len(batch_todo) < len(batch):
+                self.logger.info(f"🔁 批次 {batch_idx}: 断点续传回收 {len(batch) - len(batch_todo)} 个已完成样本, 重算 {len(batch_todo)} 个")
+            self.logger.info(f"📦 开始计算 [批次 {batch_idx}/{len(batches)}] (内含 {len(batch_todo)} 个样本)...")
             res_list = []
             ctx = mp.get_context('spawn')
             with ProcessPoolExecutor(max_workers=self.args.threads, mp_context=ctx) as executor:
-                futures = {executor.submit(self.process_sample, s): s for s in batch}
+                futures = {executor.submit(self.process_sample, s): s for s in batch_todo}
                 if tqdm:
-                    with tqdm(total=len(batch), desc=f"批次 {batch_idx}", dynamic_ncols=True, colour="green") as pbar:
+                    with tqdm(total=len(batch_todo), desc=f"批次 {batch_idx}", dynamic_ncols=True, colour="green") as pbar:
                         for future in as_completed(futures):
                             sample_info = futures[future]; pbar.set_postfix_str(f"最新完成: {sample_info['name']}")
                             if (result := future.result()): res_list.extend(result)
@@ -827,7 +868,12 @@ class UnifiedVirusPipeline:
             except OSError:
                 pass
         all_batch_files = list(_batches_dir.glob('batch_*.parquet'))
-        if all_batch_files: self.summarize_results_polars(pl.concat([pl.read_parquet(f) for f in all_batch_files]))
+        _frames = [pl.read_parquet(f) for f in all_batch_files]
+        if getattr(self, '_resume_rows', None):
+            # 断点续传回收的上一轮样本行与本轮新算行合并后统一汇总
+            _frames.append(pl.DataFrame(self._resume_rows, schema=METRICS_SCHEMA))
+        if _frames:
+            self.summarize_results_polars(pl.concat(_frames))
         
         # 🟢 导出每个样本的资源消耗 TSV
         self._export_sample_resource_report()
