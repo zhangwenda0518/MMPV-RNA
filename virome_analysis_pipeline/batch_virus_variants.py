@@ -899,10 +899,21 @@ class PostProcessPipeline:
             ]
 
             bam_map = {}
+            _align_fails = []
             with ProcessPoolExecutor(max_workers=min(len(tasks), self.args.jobs)) as ex:
                 for fut in tqdm(as_completed({ex.submit(worker_align, t): t for t in tasks}), total=len(tasks), desc="并行比对"):
                     s, bp, isfa = fut.result()
                     bam_map[s] = {"bam": bp, "is_fasta": isfa}
+                    if bp is None:
+                        _align_fails.append(s)
+            if _align_fails:
+                # [fail-loud] 比对失败原被静默吞掉 (进度条照常 100% + exit 0),
+                # 下游 extract/full 隔几小时才撞墙 (241 实测: 465"全绿"实际仅 373 落盘)。
+                # 有失败即非零退出: wrapper 不写 extract.ok, 重跑只补失败样本。
+                logger.error(f"❌ {len(_align_fails)}/{len(tasks)} 样本比对失败: "
+                             f"{', '.join(_align_fails[:8])}{'...' if len(_align_fails) > 8 else ''}\n"
+                             f"   详情: {self.d_logs}/<sample>.align.log — 修复后重跑, --resume 只补失败样本")
+                sys.exit(1)
             return bam_map
         else:
             bam_map = {}
