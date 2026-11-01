@@ -280,7 +280,10 @@ def main():
     g.add_argument("--no_full_extract", action="store_true",
                    help="[阶段重排] full 阶段组装完成后跳过集成的全长序列提取 (06_Extraction 不更新)")
     g.add_argument("--no_consensus", action="store_true")
-    g.add_argument("--no_call_variants", action="store_true")
+    g.add_argument("--no_call_variants", action="store_true",
+                   help="[阶段重排后语义收窄] 仅当 stage 列表含 variants 时生效: 跳过变异三件套"
+                        " (post 将无 VCF 可用); 列表里没写 variants 本参数无作用 —— 不想跑变异"
+                        "直接从 stage 列表里去掉即可")
     g.add_argument("--bam", help="Existing BAM directory (alternative to --reads_dir)")
     g.add_argument("--disable_dynamic_vcf", action="store_true")
     g.add_argument("--vc_qual", type=int, default=20, help="Consensus min quality")
