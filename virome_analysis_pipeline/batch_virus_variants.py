@@ -1295,7 +1295,28 @@ class PostProcessPipeline:
             self.run_variants_analysis(df, bam_map, ref_map)
             return
 
-        df = self.generate_final_summaries(df, bam_map)
+        # [metrics 续传] align_only 重入主场景: all_summary 比 全部 BAM 新 且覆盖
+        # 全部比对样本 → 载入替代全量重算 (241 实测该步 1h09/1145 行, 246 规模 2.5h 级)。
+        # variants_only 路径保持全量 —— run_variants/ref_map 与 df 列语义耦合更紧, 正确性优先。
+        _skip_metrics = False
+        if (getattr(self.args, 'align_only', False) and not self.args.force
+                and getattr(self.args, 'resume', False)):
+            _all_sum = self.d_summary / "all_summary.tsv"
+            _bam_files = list(self.d_bam.glob("*.bam"))
+            if (_all_sum.is_file() and _bam_files
+                    and _all_sum.stat().st_mtime > max(b.stat().st_mtime for b in _bam_files)):
+                _re = pd.read_csv(_all_sum, sep="\t", dtype=str).fillna("")
+                _re = _re.rename(columns={"Accession": "Virus", "Taxonomy": "taxonomy"})
+                if "Recalc_MeanDepth" not in _re.columns:
+                    _re["Recalc_MeanDepth"] = "0.0"   # consensus 深度回退用的数值列; 新鲜性保证等价
+                if _re["Sample"].nunique() >= len(bam_map):
+                    logger.info(f"⏭️ 指标续传: all_summary 新鲜且覆盖 {_re['Sample'].nunique()} 个比对样本, 跳过全量重算")
+                    df = _re
+                    _skip_metrics = True
+                else:
+                    logger.warning("⚠️ all_summary 覆盖不足 (样本数少于 BAM), 全量重算")
+        if not _skip_metrics:
+            df = self.generate_final_summaries(df, bam_map)
 
         if self.args.extract_reads:
             self._run_extract_reads(df, bam_map)
