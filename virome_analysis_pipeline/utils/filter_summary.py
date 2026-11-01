@@ -326,16 +326,18 @@ def main():
         n_total = len(df)
 
         # Panel A: per-sample pass/fail
-        pass_counts = passed.group_by(sample_col).len().to_pandas() if len(passed) > 0 else None
-        fail_counts = failed.group_by(sample_col).len().to_pandas() if len(failed) > 0 else None
+        # [pyarrow-free] 原 .to_pandas() 依赖可选的 pyarrow (mmpv env 未装即崩,
+        # 241 实测); 改纯 polars 迭代, 语义不变
+        pass_counts = passed.group_by(sample_col).len() if len(passed) > 0 else None
+        fail_counts = failed.group_by(sample_col).len() if len(failed) > 0 else None
 
         # 两侧样本取并集 (原写法受运算符优先级影响: pass 非空时 fail-only 样本会从 x 轴消失)
-        pass_samples = list(pass_counts[sample_col]) if pass_counts is not None else []
-        fail_samples = list(fail_counts[sample_col]) if fail_counts is not None else []
+        pass_samples = [r[0] for r in pass_counts.iter_rows()] if pass_counts is not None else []
+        fail_samples = [r[0] for r in fail_counts.iter_rows()] if fail_counts is not None else []
         samples = sorted(set(pass_samples + fail_samples))
 
-        pass_dict = dict(zip(pass_counts[sample_col], pass_counts['len'])) if pass_counts is not None else {}
-        fail_dict = dict(zip(fail_counts[sample_col], fail_counts['len'])) if fail_counts is not None else {}
+        pass_dict = {r[0]: r[1] for r in pass_counts.iter_rows()} if pass_counts is not None else {}
+        fail_dict = {r[0]: r[1] for r in fail_counts.iter_rows()} if fail_counts is not None else {}
 
         fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(max(10, len(samples) * 0.5), 5))
 

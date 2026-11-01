@@ -152,7 +152,9 @@ def fetch_gb_via_efetch(accession, save_dir):
         with open(out_file, "w") as f:
             subprocess.run(cmd, stdout=f, stderr=subprocess.PIPE, check=True)
         return out_file
-    except subprocess.CalledProcessError:
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        # FileNotFoundError: efetch 可执行文件不在 PATH (env 未装 entrez-direct, 241 实测)
+        # → 优雅跳过, 深度图退化为无注释轨道而不是整个绘图阶段崩溃
         if os.path.exists(out_file): os.remove(out_file)
         return None
 
