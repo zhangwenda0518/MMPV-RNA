@@ -914,7 +914,7 @@ def generate_html(out_dir, out_html, viruses, ai_html="", stage_summaries=None):
     hc_tsv_ov = out / os.path.join(_D['a_filter'], 'high_conf.summary.tsv')
     hc_ov = safe_read_csv(hc_tsv_ov)
     overview_metrics["filtered_records"] = len(hc_ov) if hc_ov is not None else "?"
-    # v21: metadata association coverage (编排器现写 04_PostAnalysis/metadata_association;
+    # v21: metadata association coverage (编排器现写 04_Variants/metadata_association;
     #      02_Filtering 为 legacy 旧位置回退)
     meta_tsv_ov = post_dir / 'metadata_association/Viral_Infection_with_Metadata_Summary.tsv'
     if not meta_tsv_ov.is_file():
@@ -954,7 +954,7 @@ def generate_html(out_dir, out_html, viruses, ai_html="", stage_summaries=None):
         spath = outd / dirs[sn]
         pats = patterns.get(sn, ["*.png"])
         if sn == 2:
-            # metadata_association 写于 04_PostAnalysis (编排器); 02_Filtering 为 legacy 回退。
+            # metadata_association 写于 04_Variants (编排器); 02_Filtering 为 legacy 回退。
             # spath 直接指向 metadata_association 目录时, 模式改为全量收集
             ma_post = outd / _D['a_post'] / "metadata_association"
             if ma_post.is_dir():
@@ -1518,16 +1518,17 @@ def generate_html(out_dir, out_html, viruses, ai_html="", stage_summaries=None):
                         else:
                             stage_sections += '<p style="color:var(--ink-secondary);font-size:12px">No variant summary available.</p>'
                         # [P2-24k] 产物清单: S3 无可内嵌图 (VCF/consensus/SnpEff 注释均为文本产物),
-                        # 列出 03_Variants/ 下本病毒的实际文件名, 消除"该阶段在报告里无实体产物痕迹"
+                        # 列出本病毒的实际文件名, 消除"该阶段在报告里无实体产物痕迹"
+                        # [阶段重排] virus-consensus 在 03_Extract (a_align); VCF/SnpEff 在 04_Variants
                         artifacts = []
                         _ART_CAP = 15
-                        for sub_rel, globs in (
-                            ("virus-variants", ("*.filtered.vcf", "*.variants.vcf")),
-                            ("virus-consensus", ("*.consensus.fasta", "*.fasta", "*.fa")),
-                            ("virus-SnpEff", ("*.ann.vcf", "*.annotation_summary.tsv")),
+                        for base_key, sub_rel, globs in (
+                            ('a_variants', "virus-variants", ("*.filtered.vcf", "*.variants.vcf")),
+                            ('a_align',    "virus-consensus", ("*.consensus.fasta", "*.fasta", "*.fa")),
+                            ('a_variants', "virus-SnpEff", ("*.ann.vcf", "*.annotation_summary.tsv")),
                         ):
                             if len(artifacts) >= _ART_CAP: break
-                            subd = out / _D['a_variants'] / sub_rel
+                            subd = out / _D[base_key] / sub_rel
                             if not subd.is_dir(): continue
                             vd = _find_virus_dir(subd, acc)
                             if not vd: continue
@@ -2410,7 +2411,7 @@ def copy_results_to_report(out_dir, report_dir):
     _cp(os.path.join(_D['a_filter'], 'filter_summary_plot.png'), "S2_Filter/filter_summary_plot.png")
     _cp(os.path.join(_D['a_filter'], 'filter_summary_plot.pdf'), "S2_Filter/filter_summary_plot.pdf")
     # Stage 2b: Metadata association results ([2b] meta block output;
-    # 编排器写 04_PostAnalysis/metadata_association, 02_Filtering 为 legacy 回退)
+    # 编排器写 04_Variants/metadata_association, 02_Filtering 为 legacy 回退)
     _ma = _resolve_dir(out, _D['a_post']) / 'metadata_association'
     if not _ma.is_dir():
         _ma = out / _D['a_filter'] / 'metadata_association'
