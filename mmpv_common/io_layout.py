@@ -70,9 +70,10 @@ _DIR_TABLE: Dict[str, Dict[str, str]] = {
         "d_analysis":     "09a_Virome_Analysis",
         "d_verify":       "09b_Analysis_Verify",
         "d_reports":      "10_Reports",
-        # ④ 已知病毒分析
+        # ④ 已知病毒分析 (legacy 沿用旧名: extract/variants 共住 03_variants, post 在 04_post_analysis)
         "a_detect":       "01_detection",
         "a_filter":       "02_filtering",
+        "a_align":        "03_variants",
         "a_variants":     "03_variants",
         "a_post":         "04_post_analysis",
         "a_assembly":     "05_assembly",
@@ -107,7 +108,7 @@ _DIR_TABLE: Dict[str, Dict[str, str]] = {
         "e_summary":      "04_Summary",
         # ⑧ 宿主表达 (可选补充模块 host_expression_pipeline; 新模块无历史名,
         #    两布局同名, 根内独立编号 01→08; 05_Coexp=TEA-GCN 主分析)
-        #    【已归档 2026-10-11 → archive/20261011_host_expression_pipeline;
+        #    【已归档 2026-10-11、2026-10-27 移出主仓至 `差异表达分析` 项目归档;
         #    键保留: 历史输出定位 + 恢复时零改动】
         "he_root":        "08_HostExpression",
         "he_hostref":     "01_HostRef",
@@ -162,10 +163,13 @@ _DIR_TABLE: Dict[str, Dict[str, str]] = {
         "d_verify":       "12_AnalysisVerify",
         "d_reports":      "13_Report",
         # ④ 已知病毒分析 (根: 04_Analysis, 9 阶段独立编号)
+        # [阶段重排 2026-11-01] extract=比对与制备 → 03_Extract; variants 三件套与
+        # post 结果合并 → 04_Variants (a_post 与 a_variants 同目录)
         "a_detect":       "01_Detection",
         "a_filter":       "02_Filtering",
-        "a_variants":     "03_Variants",
-        "a_post":         "04_PostAnalysis",
+        "a_align":        "03_Extract",
+        "a_variants":     "04_Variants",
+        "a_post":         "04_Variants",
         "a_assembly":     "05_Assembly",
         "a_extract":      "06_Extraction",
         "a_similarity":   "07_Similarity",
@@ -188,7 +192,7 @@ _DIR_TABLE: Dict[str, Dict[str, str]] = {
         "e_rvdb":         "03_RVDB",
         "e_summary":      "04_Summary",
         # ⑧ 宿主表达 (可选补充模块; 输出根 08_HostExpression, 根内独立编号 01→08;
-        #   已归档 2026-10-11 → archive/20261011_host_expression_pipeline, 键保留)
+        #   已归档 2026-10-11、2026-10-27 移出主仓至 `差异表达分析` 项目归档, 键保留)
         "he_root":        "08_HostExpression",
         "he_hostref":     "01_HostRef",
         "he_quant":       "02_Quant",
@@ -218,7 +222,7 @@ CLEAN_READS_SUBDIRS = ("3.clumpify", "2.fasta")
 # 标准布局下各管线输出根名 (项目根第一层目录; 编排器 auto-locate 与文档共用)
 # 根号 = 管线号: 01→06 ↔ ①→⑥; 07 号空缺 (⑦ 提交管线消费 ④ 产物, 无独立
 # 输出根); 08 ↔ ⑧ 宿主表达可选模块 (host_expression_pipeline; 已归档
-# 2026-10-11 → archive/20261011_host_expression_pipeline, 根名保留)。
+# 2026-10-11、2026-10-27 移出主仓至 `差异表达分析` 项目归档, 根名保留)。
 PIPELINE_ROOT_NAMES = {
     "publicdata":    "01_PublicData",
     "preprocessing": "02_Preprocessing",
@@ -346,6 +350,7 @@ def build_analysis_dirs(out: Path, layout: Optional[str] = None) -> Dict[str, Pa
     return {
         'detect':     out / d['a_detect'],
         'filter':     out / d['a_filter'],
+        'align':      out / d['a_align'],
         'variants':   out / d['a_variants'],
         'post':       out / d['a_post'],
         'assembly':   out / d['a_assembly'],
@@ -479,14 +484,14 @@ def build_eve_dirs(out_dir: Path, layout: Optional[str] = None) -> Dict[str, Pat
 
 # ⑧ 宿主表达 (可选补充模块) 的阶段目录键 (编号顺序 = 管线内运行顺序;
 # 05_Coexp = TEA-GCN 差异共表达, 主分析; DE/LoadScan 为交叉参考与剂量验证)
-# 【⑧ 已归档 2026-10-11 → archive/20261011_host_expression_pipeline;
-#   函数保留: 归档模块仍 import, 历史输出定位亦需要】
+# 【⑧ 已归档 2026-10-11、2026-10-27 移出主仓至 `差异表达分析` 项目归档;
+#   函数保留: 历史输出定位 + 恢复时零改动】
 HOSTEXPR_STAGES = ("hostref", "quant", "qc", "labels",
                    "coexp", "de", "enrich", "loadscan", "report")
 
 
 def build_hostexpr_dirs(out_dir: Path, layout: Optional[str] = None) -> Dict[str, Path]:
-    """⑧ host_expression_pipeline (已归档 2026-10-11) 的 7 个阶段输出目录 {阶段: Path}。"""
+    """⑧ host_expression_pipeline (已归档 2026-10-11、2026-10-27 移出主仓) 的 7 个阶段输出目录 {阶段: Path}。"""
     d = _DIR_TABLE[resolve_layout(layout)]
     return {k: Path(out_dir) / d['he_' + k] for k in HOSTEXPR_STAGES}
 

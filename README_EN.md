@@ -351,9 +351,9 @@ Entry: `python public_metadata_pipeline/preprocess_unified.py --sra-dir ... --ou
 |---|------|------|------|
 | 1 | `detect` | batch_virus_depth.py | Salmon/Kallisto/Bowtie2 rapid quantification + Poisson filtering |
 | 2 | `filter` | utils/filter_summary.py | High-confidence filtering |
-| 3 | `extract` | batch_virus_variants.py --align_only + batch_extract_reads.py | **Alignment & prep**: virus-fasta/bam alignment + all_summary recompute + consensus + targeted reads extraction (`virus_reads/`) |
-| 4 | `variants` | batch_virus_variants.py --variants_only | **Pure variant stack**: FreeBayes/iVar/LoFreq VCF + SnpEff annotation + SnpGenie dN/dS (reuses extract's BAM) |
-| 5 | `post` | virus_vcf_pipeline.py | VCF visualization + SnpEff macro + MAF waterfall + SnpGenie dN/dS |
+| 3 | `extract` | batch_virus_variants.py --align_only + batch_extract_reads.py | **Alignment & prep** → `03_Extract/`: virus-fasta/bam alignment + all_summary recompute + consensus + targeted reads extraction (`virus_reads/`) |
+| 4 | `variants` | batch_virus_variants.py --variants_only | **Pure variant stack** → `04_Variants/`: FreeBayes/iVar/LoFreq VCF + SnpEff annotation + SnpGenie dN/dS (reuses extract's BAM) |
+| 5 | `post` | virus_vcf_pipeline.py | VCF visualization + MAF waterfall + PCA/trees → also written into `04_Variants/` (same dir as the calling stack) |
 | 6 | `full` | batch_virus_full.py → virus-full.py (+ utils/extract_full_fasta.py) | **Full-length genome build (OmniVirusAssembler V9.0)**: 12 refinement steps — SHIVER-like Divine Fusion solid backbone → read-level iterative polishing (single-base accuracy) → gmcloser + abyss-sealer dual-engine gap closing → circularization detection (Circular=True); tail integrates the former extract stage (longest-contig extraction + N-fill, `--no_full_extract` to skip) |
 | 7 | `similarity` | virus_auto_pipeline.py | Full-length similarity heatmap + hierarchical clustering (MAFFT --auto) |
 | 8 | `dvg` | batch_virema_dvg.py | ViReMa DVG/recombination detection + Circos plots |

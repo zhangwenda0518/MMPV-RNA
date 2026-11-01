@@ -23,9 +23,9 @@ Input: clean_reads/ + ref_info.tsv + ref.fasta
 
 [1/9] batch_virus_depth.py        → detect      Salmon/Kallisto/Bowtie2 定量 + Poisson 打假
 [2/9] filter_summary.py           → filter      高置信度过滤
-[3/9] batch_virus_variants.py     → extract     比对与制备 (align_only: BAM/all_summary/consensus) + 靶向 reads 提取
+[3/9] batch_virus_variants.py     → extract     比对与制备 (align_only: BAM/all_summary/consensus) + 靶向 reads 提取 → 03_Extract/
        └── batch_extract_reads.py (靶向 reads, 独立脚本)
-[4/9] batch_virus_variants.py     → variants    纯变异三件套 (VCF/SnpEff/SnpGenie, --variants_only 复用 BAM)
+[4/9] batch_virus_variants.py     → variants    纯变异三件套 (VCF/SnpEff/SnpGenie) → 04_Variants/ (post 也写这里)
 [5/9] virus_vcf_pipeline.py       → post        VCF 可视化 + SnpEff 宏 + MAF 瀑布 + SnpGenie dN/dS
 [6/9] batch_virus_full.py         → full        12 步全长基因组构建 (OmniVirusAssembler V9.0)
        └── virus-full.py (engine)

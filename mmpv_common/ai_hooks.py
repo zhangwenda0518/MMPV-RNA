@@ -95,10 +95,11 @@ STAGE_KEYS: Dict[str, Dict[str, str]] = {
         "analysis_verify": "d_verify", "report": "d_reports",
     },
     "analysis": {
-        "detect": "a_detect", "filter": "a_filter", "variants": "a_variants",
+        "detect": "a_detect", "filter": "a_filter",
+        # [阶段重排] extract = 比对与制备, 产物在 03_Extract; variants=三件套/post=可视化 → 04_Variants
+        "extract": "a_align", "variants": "a_variants",
         "post": "a_post", "assembly": "a_assembly", "full": "a_assembly",
-        # [阶段重排] extract = 靶向 reads 提取, 产物在 03_Variants/virus_reads
-        "extract": "a_variants", "similarity": "a_similarity", "dvg": "a_dvg",
+        "similarity": "a_similarity", "dvg": "a_dvg",
         "report": "a_report",
     },
     "phylo": {

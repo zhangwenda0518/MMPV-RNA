@@ -342,9 +342,9 @@ python virome_submission_pipeline/submission_pipeline.py \
 |---|------|------|------|
 | 1 | `detect` | batch_virus_depth.py | Salmon/Kallisto/Bowtie2 快速定量 + Poisson过滤 |
 | 2 | `filter` | utils/filter_summary.py | 高置信度过滤 |
-| 3 | `extract` | batch_virus_variants.py --align_only + batch_extract_reads.py | **比对与制备**: virus-fasta/bam 索引比对 + all_summary 重算 + consensus + 靶向 reads 提取 (`virus_reads/`) |
-| 4 | `variants` | batch_virus_variants.py --variants_only | **纯变异三件套**: FreeBayes/iVar/LoFreq VCF + SnpEff 注释 + SnpGenie dN/dS (复用 extract 的 BAM) |
-| 5 | `post` | virus_vcf_pipeline.py | VCF可视化 + SnpEff宏 + MAF 瀑布 + SnpGenie dN/dS |
+| 3 | `extract` | batch_virus_variants.py --align_only + batch_extract_reads.py | **比对与制备** → `03_Extract/`: virus-fasta/bam 索引比对 + all_summary 重算 + consensus + 靶向 reads 提取 (`virus_reads/`) |
+| 4 | `variants` | batch_virus_variants.py --variants_only | **纯变异三件套** → `04_Variants/`: FreeBayes/iVar/LoFreq VCF + SnpEff 注释 + SnpGenie dN/dS (复用 extract 的 BAM) |
+| 5 | `post` | virus_vcf_pipeline.py | VCF可视化 + SnpEff宏 + MAF 瀑布 + PCA/树 → 同样写入 `04_Variants/` (与三件套同目录) |
 | 6 | `full` | batch_virus_full.py → virus-full.py (+ utils/extract_full_fasta.py) | **全长基因组构建 (OmniVirusAssembler V9.0)**: 12步精炼 — SHIVER-like Divine Fusion 实心骨架 → Reads级迭代抛光 (单碱基精度) → gmcloser + abyss-sealer 双引擎补洞 → 环化检测 (Circular=True); 尾段默认集成原 extract 的最长contig提取+参考N-fill (`--no_full_extract` 可关) |
 | 7 | `similarity` | virus_auto_pipeline.py | 全长相似性热图 + 层次聚类 (MAFFT --auto) |
 | 8 | `dvg` | batch_virema_dvg.py | ViReMa DVG/重组检测 + Circos图 |

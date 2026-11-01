@@ -109,8 +109,8 @@ STAGE_IO_KEYS: Dict[str, Dict[str, str]] = {
         "variants": "a_variants",
         "post": "a_post",
         "full": "a_assembly",
-        # [阶段重排] extract = 靶向 reads 提取, 产物在 03_Variants/virus_reads
-        "extract": "a_variants",
+        # [阶段重排] extract = 比对与制备, 产物在 03_Extract
+        "extract": "a_align",
         "similarity": "a_similarity",
         "dvg": "a_dvg",
         "report": "a_report",

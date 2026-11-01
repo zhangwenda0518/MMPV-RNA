@@ -267,7 +267,7 @@ def collect_virus_data(out_dir, summary_in):
 def _collect_variant_summary(out_dir):
     """Aggregate per-virus variant stats from S3 all_summary.tsv."""
     out = Path(out_dir)
-    summary_tsv = out / os.path.join(_D['a_variants'], 'summary/all_summary.tsv')
+    summary_tsv = out / os.path.join(_D['a_align'], 'summary/all_summary.tsv')
     df = safe_read_csv(summary_tsv)
     if df is None: return {}
     acc_col = next((c for c in ["Accession"] if c in df.columns), None)
@@ -658,7 +658,9 @@ def _build_stage_data_json(viruses, variant_summary, assembly_summary, detection
 
 # ── Backward-compatible directory resolver (module-level, shared by all functions) ──
 _DIR_FALLBACK = {
-    _D['a_post']: "06_post_analysis",
+    _D['a_align']: "03_Variants",
+    _D['a_variants']: "03_Variants",
+    _D['a_post']: "04_PostAnalysis",
     _D['a_assembly']: "04_assembly",
     _D['a_extract']: "05_extraction",
 }
@@ -1242,7 +1244,7 @@ def generate_html(out_dir, out_html, viruses, ai_html="", stage_summaries=None):
                     poisson = f'{v["avg_poisson"]:.2f}' if v.get("avg_poisson") is not None else "-"
                     stage_sections += f'<tr><td>{sp}</td><td>{n}</td><td>{cov}</td><td>{depth}</td><td>{cpm}</td><td>{fpkm}</td><td>{poisson}</td></tr>'
                 stage_sections += '</table></div>'
-            coi_tsv = out / os.path.join(_D['a_variants'], 'summary/Coinfection_Matrix_Reads.tsv')
+            coi_tsv = out / os.path.join(_D['a_align'], 'summary/Coinfection_Matrix_Reads.tsv')
             if coi_tsv.is_file():
                 try:
                     coi_rows = []
@@ -2415,8 +2417,8 @@ def copy_results_to_report(out_dir, report_dir):
     _cp(str(_ma), "S2_Filter/metadata_association")
 
     # Stage 3: Variants summary
-    _cp(os.path.join(_D['a_variants'], 'summary/all_summary.tsv'), "S3_Variants/all_summary.tsv")
-    _cp(os.path.join(_D['a_variants'], 'summary/Coinfection_Matrix_Reads.tsv'), "S3_Variants/Coinfection_Matrix_Reads.tsv")
+    _cp(os.path.join(_D['a_align'], 'summary/all_summary.tsv'), "S3_Variants/all_summary.tsv")
+    _cp(os.path.join(_D['a_align'], 'summary/Coinfection_Matrix_Reads.tsv'), "S3_Variants/Coinfection_Matrix_Reads.tsv")
 
     # Stage 5: Assembly stats
     _cp(os.path.join(_D['a_extract'], 'assembly_stats.png'), "S5_Assembly_Stats/assembly_stats.png")
