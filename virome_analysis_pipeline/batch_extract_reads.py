@@ -23,6 +23,8 @@ import sys
 from pathlib import Path
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
+import pandas as pd
+
 SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
@@ -32,8 +34,8 @@ try:
 except ImportError:
     tqdm = None
 
-# 提取 worker 单一来源 (batch_virus_variants 为 guarded import, 无副作用)
-from batch_virus_variants import worker_extract_reads, safe_name
+# 提取 worker 与 summary 谐化逻辑单一来源 (batch_virus_variants 为 guarded import)
+from batch_virus_variants import worker_extract_reads, safe_name, load_and_harmonize_summary
 
 import pandas as pd
 
@@ -59,7 +61,9 @@ def main():
         description="靶向病毒 reads 提取 (Stage 4 extract; 从比对 BAM 按病毒×样本抽取 R1/R2/single)",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     p.add_argument("--summary", required=True,
-                   help="detect/filter 的 summary TSV (需含 Sample/Virus 列)")
+                   help="detect/filter 的 summary TSV (Sample/Accession 或 Virus 列)")
+    p.add_argument("--info", required=True,
+                   help="参考信息 TSV (--ref_info; 代表株归并与 Segment 识别需要)")
     p.add_argument("--bam", required=True,
                    help="BAM 目录 (variants 阶段产物 virus-bam/)")
     p.add_argument("--output_dir", required=True,
@@ -77,10 +81,9 @@ def main():
     summary = Path(args.summary)
     if not summary.is_file():
         sys.exit(f"ERROR: summary 不存在: {summary} (先运行 --stage detect/filter)")
-    df = pd.read_csv(summary, sep="\t")
-    for col in ("Sample", "Virus"):
-        if col not in df.columns:
-            sys.exit(f"ERROR: summary 缺少 {col} 列: {summary}")
+    # [命名同源] 复用 variants 的谐化链 (别名映射+样本名清洗+代表株归并):
+    # virus-bam 的 stem 与 virus-fasta 的 ref_ 名全部源自这里的输出
+    df = load_and_harmonize_summary(args.summary, args.info)
 
     samples = set(df["Sample"].dropna().astype(str).unique())
     bam_map = build_bam_map(bam_dir, samples, args.threads,

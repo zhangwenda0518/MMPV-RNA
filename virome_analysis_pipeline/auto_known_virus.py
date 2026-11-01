@@ -773,6 +773,7 @@ def _run_pipeline_stages(args, out, reads, log, script_dir, _pipeline_tmp):
                 r_parts = [
                     f"python {script_dir / 'batch_extract_reads.py'}",
                     f"--summary {get_summary()}",
+                    f"--info {args.ref_info}",
                     f"--bam {bam_src}",
                     f"--output_dir {align_dir}",
                     f"--threads {args.threads}",

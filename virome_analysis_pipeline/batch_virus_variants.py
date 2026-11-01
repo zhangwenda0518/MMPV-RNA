@@ -667,6 +667,60 @@ def worker_run_snpgenie(args):
 # ==========================================
 # 4. 核心流水线类枢纽
 # ==========================================
+def load_and_harmonize_summary(summary_path: str, info_path: str) -> pd.DataFrame:
+    """读取 summary 并完成列名统一/样本名清洗/代表株归并 —— 模块级共用函数。
+
+    [命名同源纪律] BAM (virus-bam/{Sample}.sorted.bam)、virus-fasta (ref_{Virus})、
+    virus_reads ({Sample}.{Virus}) 三处命名全部源自本函数的输出 ——
+    batch_extract_reads.py 必须复用, 不得自行重读 summary (否则别名列/
+    代表株归并与比对侧漂移, 靶向提取会 0 匹配)。
+    """
+    sep = "," if Path(summary_path).suffix.lower() == ".csv" else "\t"
+    df = pd.read_csv(summary_path, sep=sep, dtype=str)
+    df.columns = df.columns.str.strip()
+    df['Sample'] = df['Sample'].apply(lambda x: re.sub(r'(?i)(_clean|_trimmed|_filtered|_val|_fastp)+$', '', str(x).strip()))
+
+    col_mappings = {
+        'Virus': ['Rep_Accession', 'Accession', 'Virus GENBANK accession'],
+        'taxonomy': ['Adjusted_Species', 'Species_NCBI', 'Species_ICTV', 'Taxonomy'],
+        'MeanDepth': ['Rep_MeanDepth', 'MeanDepth', 'Depth'],
+        'Taxid': ['taxid', 'Taxid'],
+    }
+    for target, fallbacks in col_mappings.items():
+        if target not in df.columns:
+            for col in fallbacks:
+                if col in df.columns:
+                    df[target] = df[col]
+                    break
+
+    if "taxonomy" not in df.columns:
+        df["taxonomy"] = "Unannotated"
+    if "Virus" not in df.columns:
+        logger.error("❌ 无法在表中找到病毒 Accession 列！")
+        sys.exit(1)
+
+    info_df = pd.read_csv(info_path, sep='\t', dtype=str)
+    info_cols = [c for c in info_df.columns if c in ['Accession', 'Segment']]
+    info_df = info_df[info_cols].drop_duplicates(subset=['Accession'])
+
+    df = df.merge(info_df, left_on='Virus', right_on='Accession', how='left', suffixes=('', '_info'))
+
+    if "Segment_info" in df.columns:
+        df["Segment"] = df.get("Segment", pd.Series(dtype=str)).fillna(df["Segment_info"])
+    df['Segment'] = df.get('Segment', pd.Series(dtype=str)).fillna('Unsegmented')
+
+    logger.info(f"📋 读取汇总表: 识别出 {len(df)} 记录 | 包含 {df['Sample'].nunique()} 个独立样本")
+
+    valid_tax = df[~df['taxonomy'].isin(['Unannotated', '-', ''])]
+    tax_to_best_virus = {}
+    for (tax, seg), group in valid_tax.groupby(['taxonomy', 'Segment']):
+        tax_to_best_virus[(tax, seg)] = group['Virus'].value_counts().idxmax()
+
+    df['Virus'] = df.apply(lambda row: tax_to_best_virus.get((row['taxonomy'], row['Segment']), row['Virus']), axis=1)
+
+    return df.drop_duplicates(subset=['Sample', 'taxonomy', 'Segment', 'Virus'])
+
+
 class PostProcessPipeline:
     def __init__(self, args):
         self.args = args
@@ -757,52 +811,9 @@ class PostProcessPipeline:
             logger.addHandler(fh)
 
     def load_data_and_harmonize(self) -> pd.DataFrame:
-        sep = "," if Path(self.args.summary).suffix.lower() == ".csv" else "\t"
-        df = pd.read_csv(self.args.summary, sep=sep, dtype=str)
-        df.columns = df.columns.str.strip()
-        df['Sample'] = df['Sample'].apply(lambda x: re.sub(r'(?i)(_clean|_trimmed|_filtered|_val|_fastp)+$', '', str(x).strip()))
-        
-        col_mappings = {
-            'Virus':['Rep_Accession', 'Accession', 'Virus GENBANK accession'], 
-            'taxonomy':['Adjusted_Species', 'Species_NCBI', 'Species_ICTV', 'Taxonomy'], 
-            'MeanDepth':['Rep_MeanDepth', 'MeanDepth', 'Depth'], 
-            'Taxid': ['taxid', 'Taxid']
-        }
-        
-        for target, fallbacks in col_mappings.items():
-            if target not in df.columns:
-                for col in fallbacks:
-                    if col in df.columns: 
-                        df[target] = df[col]
-                        break
-
-        if "taxonomy" not in df.columns: 
-            df["taxonomy"] = "Unannotated"
-        if "Virus" not in df.columns: 
-            logger.error("❌ 无法在表中找到病毒 Accession 列！")
-            sys.exit(1)
-
-        info_df = pd.read_csv(self.args.info, sep='\t', dtype=str)
-        info_cols =[c for c in info_df.columns if c in['Accession', 'Segment']]
-        info_df = info_df[info_cols].drop_duplicates(subset=['Accession'])
-        
-        df = df.merge(info_df, left_on='Virus', right_on='Accession', how='left', suffixes=('', '_info'))
-        
-        if "Segment_info" in df.columns: 
-            df["Segment"] = df.get("Segment", pd.Series(dtype=str)).fillna(df["Segment_info"])
-        df['Segment'] = df.get('Segment', pd.Series(dtype=str)).fillna('Unsegmented')
-
-        logger.info(f"📋 读取汇总表: 识别出 {len(df)} 记录 | 包含 {df['Sample'].nunique()} 个独立样本")
-        
-        valid_tax = df[~df['taxonomy'].isin(['Unannotated', '-', ''])]
-        tax_to_best_virus = {}
-        for (tax, seg), group in valid_tax.groupby(['taxonomy', 'Segment']): 
-            tax_to_best_virus[(tax, seg)] = group['Virus'].value_counts().idxmax()
-            
-        df['Virus'] = df.apply(lambda row: tax_to_best_virus.get((row['taxonomy'], row['Segment']), row['Virus']), axis=1)
-        self.raw_input_df = df.copy() 
-        
-        return df.drop_duplicates(subset=['Sample', 'taxonomy', 'Segment', 'Virus'])
+        df = load_and_harmonize_summary(self.args.summary, self.args.info)
+        self.raw_input_df = df.copy()
+        return df
 
     def extract_virus_fastas(self, df: pd.DataFrame) -> dict:
         target_set = set(df["Virus"].unique().tolist())
