@@ -347,7 +347,7 @@ class UnifiedVirusPipeline:
                 res = self.process_sample_traditional(sample)
         except Exception as e:
             self.write_sample_log(sample['name'], f"❌ 处理失败: {str(e)}", "error")
-            return []
+            return None  # [续传语义] None=失败 (不记账, 下轮重算); []=零命中 (记 zero_hits 账)
             
         t1 = time.time()
         elapsed = t1 - t0
@@ -789,6 +789,8 @@ class UnifiedVirusPipeline:
         # 按样本名匹配而非批次号 —— 批次号在样本清单变化后不可信 (P2-24e 的顾虑), 按名匹配无此问题.
         # 回收行启动即落盘为 resume_pool.parquet (文件名避开 batch_*.parquet glob),
         # 之后旧批次文件才能安全清理; 链路: 每轮启动读 *.parquet → 覆盖写 resume_pool → 删旧批次文件.
+        # [zero_hits] 零命中样本 (salmon 跑完但 0 行结果) 无行可进 parquet → 无账可续 →
+        # 每轮重算; 记入 batches/zero_hits.txt (失败样本不记, 下轮仍会重试) 后不再重算.
         # 注意: 结果按"最后一轮为准"; 若中途换过 --reference/--tool/--ref_info, 请用 --force 全量重跑.
         self._resume_rows = []
         self._resume_done = set()
@@ -806,18 +808,28 @@ class UnifiedVirusPipeline:
                     for _row in _df.to_dicts():
                         if _row.get('Sample') in _cur_names:
                             _rows_by_sample[_row['Sample']] = _row  # 新文件覆盖旧文件
-            if _rows_by_sample:
-                self._resume_rows = list(_rows_by_sample.values())
-                self._resume_done = set(_rows_by_sample)
-                self.logger.info(f"⏭️ 断点续传: 上一轮已有 {len(self._resume_done)} 个样本结果, 本轮只重算缺失样本")
-                # 回收行先落盘, 旧批次文件再清理 —— 保证 Ctrl+C 后链路不断
-                pl.DataFrame(self._resume_rows, schema=METRICS_SCHEMA).write_parquet(_bdir / 'resume_pool.parquet')
-                for _pf in _old_files:
-                    if _pf.name != 'resume_pool.parquet':
-                        try:
-                            _pf.unlink()
-                        except OSError:
-                            pass
+                _zh_prev = set()
+                _zh_file = _bdir / 'zero_hits.txt'
+                if _zh_file.exists():
+                    try:
+                        with open(_zh_file) as f:
+                            _zh_prev = {l.strip() for l in f if l.strip()} & _cur_names
+                    except OSError:
+                        _zh_prev = set()
+                if _rows_by_sample or _zh_prev:
+                    self._resume_rows = list(_rows_by_sample.values())
+                    self._resume_done = set(_rows_by_sample) | _zh_prev
+                    self.logger.info(f"⏭️ 断点续传: 已有 {len(_rows_by_sample)} 个样本结果 "
+                                     f"+ {len(_zh_prev)} 个零命中记账, 本轮只重算缺失样本")
+                    # 回收行先落盘, 旧批次文件再清理 —— 保证 Ctrl+C 后链路不断
+                    if _rows_by_sample:
+                        pl.DataFrame(self._resume_rows, schema=METRICS_SCHEMA).write_parquet(_bdir / 'resume_pool.parquet')
+                        for _pf in _old_files:
+                            if _pf.name != 'resume_pool.parquet':
+                                try:
+                                    _pf.unlink()
+                                except OSError:
+                                    pass
 
         # [UX] 启动汇总: setup_logger 只挂 FileHandler, logger.info 全进日志文件;
         # 终端上只有 tqdm (stderr) —— 样本/批次/回收总数必须显式打 stderr 才可见
@@ -851,15 +863,30 @@ class UnifiedVirusPipeline:
             ctx = mp.get_context('spawn')
             with ProcessPoolExecutor(max_workers=self.args.threads, mp_context=ctx) as executor:
                 futures = {executor.submit(self.process_sample, s): s for s in batch_todo}
+                _zero_hits = set()
                 if tqdm:
                     with tqdm(total=len(batch_todo), desc=f"批次 {batch_idx}", dynamic_ncols=True, colour="green") as pbar:
                         for future in as_completed(futures):
                             sample_info = futures[future]; pbar.set_postfix_str(f"最新完成: {sample_info['name']}")
-                            if (result := future.result()): res_list.extend(result)
+                            result = future.result()
+                            if result:
+                                res_list.extend(result)
+                            elif result is not None:
+                                # [zero_hits] 跑完但 0 病毒命中 (None=失败不记)
+                                _zero_hits.add(sample_info['name'])
                             pbar.update(1)
                 else:
+                    _zero_hits = set()
                     for future in as_completed(futures):
-                        if (result := future.result()): res_list.extend(result)
+                        result = future.result()
+                        if result:
+                            res_list.extend(result)
+                        elif result is not None:
+                            _zero_hits.add(futures[future]['name'])
+                if _zero_hits:
+                    # [zero_hits] 立即落盘, Ctrl+C 不丢账
+                    with open(self.output_dir / 'batches' / 'zero_hits.txt', 'a') as f:
+                        f.writelines(s + '\n' for s in sorted(_zero_hits))
             # [P2-24e] 批次仅在非空且成功时写 parquet (原实现 else 分支也写空表, 与"成功批次"无法区分)
             if res_list:
                 pl.DataFrame(res_list, schema=METRICS_SCHEMA).write_parquet(batch_file)
