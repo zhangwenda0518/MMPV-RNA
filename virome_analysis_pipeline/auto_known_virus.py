@@ -628,24 +628,6 @@ def _run_pipeline_stages(args, out, reads, log, script_dir, _pipeline_tmp):
             if not run(" ".join(parts), log, "batch_virus_depth"):
                 _ai_emit("detect", "failed")
                 sys.exit(1)
-        # ── Stage 1 viz: batch_plot_virus_depth.py ──
-        batch_plot = script_dir / 'batch_plot_virus_depth.py'
-        if batch_plot.is_file() and best_summary.exists():
-            log.info("  [1/10 viz] Generating Stage 1 visualization plots...")
-            run(f"python {batch_plot} --mode sample "
-                f"-m {best_summary} -o {detect_dir / 'sample_distribution'}",
-                log, "plot_sample_dist")
-            run(f"python {batch_plot} --mode coabundance "
-                f"-m {best_summary} -o {detect_dir / 'coabundance'}",
-                log, "plot_coabundance")
-            depth_stat_dir = detect_dir / "stat"
-            if depth_stat_dir.exists():
-                run(f"python {batch_plot} --mode depth "
-                    f"-d {depth_stat_dir} -m {best_summary} "
-                    f"-o {detect_dir / 'depth_plots'} -t {args.threads} -g",
-                    log, "plot_depth_all")
-            log.info("  [1/10 viz] Stage 1 plots complete -> %s", detect_dir)
-        log.info("  Detection complete -> %s", detect_dir)
         # [P1] run.ok 产物校验: batch_virus_depth 在 0 产出/全失败时也 exit 0 ——
         # 无非空 summary 说明 detect 实际未完成, 拒绝写 run.ok (防"假完成"永久跳过)
         if not (best_summary.is_file() and best_summary.stat().st_size > 0):
@@ -654,7 +636,46 @@ def _run_pipeline_stages(args, out, reads, log, script_dir, _pipeline_tmp):
             sys.exit(1)
         _mark_stage_ok(detect_dir)
         _ai_emit("detect")
-        _AI_STAGE["current"] = None
+
+    # ── Stage 1 viz: 每图组独立 checkpoint (.viz_<组>.ok) ──
+    # run.ok 已在时 compute 秒跳, 但仍进入本段: 只补缺失/失败图组, 不碰检测数据。
+    # 失败组不写 marker → 下轮自动单独重试 (246 实测: coabundance/depth 一跑
+    # 18-34min, 崩在最后一张就全部重来太亏)
+    batch_plot = script_dir / 'batch_plot_virus_depth.py'
+    if batch_plot.is_file() and best_summary.exists():
+        def _viz_ok(g):
+            return (not args.force and not args.no_resume
+                    and (detect_dir / f".viz_{g}.ok").is_file())
+
+        def _viz_mark(g, rc):
+            if rc:
+                (detect_dir / f".viz_{g}.ok").write_text("ok")
+
+        log.info("  [1/10 viz] Generating Stage 1 visualization plots...")
+        if _viz_ok("sample"):
+            log.info("  [viz/sample] checkpoint OK, skip")
+        else:
+            _viz_mark("sample", run(f"python {batch_plot} --mode sample "
+                                    f"-m {best_summary} -o {detect_dir / 'sample_distribution'}",
+                                    log, "plot_sample_dist"))
+        if _viz_ok("coabundance"):
+            log.info("  [viz/coabundance] checkpoint OK, skip")
+        else:
+            _viz_mark("coabundance", run(f"python {batch_plot} --mode coabundance "
+                                         f"-m {best_summary} -o {detect_dir / 'coabundance'}",
+                                         log, "plot_coabundance"))
+        depth_stat_dir = detect_dir / "stat"
+        if depth_stat_dir.exists():
+            if _viz_ok("depth"):
+                log.info("  [viz/depth] checkpoint OK, skip")
+            else:
+                _viz_mark("depth", run(f"python {batch_plot} --mode depth "
+                                       f"-d {depth_stat_dir} -m {best_summary} "
+                                       f"-o {detect_dir / 'depth_plots'} -t {args.threads} -g",
+                                       log, "plot_depth_all"))
+        log.info("  [1/10 viz] Stage 1 plots complete -> %s", detect_dir)
+    log.info("  Detection complete -> %s", detect_dir)
+    _AI_STAGE["current"] = None
 
     # ═══════════════════════════════════════════
     # Stage 2: Filter (optional auto-filter)
