@@ -340,6 +340,37 @@ def check_and_trim_circularity(fasta_in, fasta_out, work_dir, avg_read_len=150, 
     else: shutil.copy(fasta_in, fasta_out); return False
 
 # =====================================================================
+# SmaltAlign 可选第4引擎 (基准: virusfull_smalt ≈ virusfull, 默认关;
+# --assembly_tools all,smaltalign 显式启用; 恢复自基准版 virus-full-prod.py)
+# =====================================================================
+def run_smaltalign_assembly(ref_file, r1, r2, out_dir, args, logger, sample="Sample"):
+    """SmaltAlign 可选引擎: 迭代 smalt 比对精化的共识序列, 作为第4种组装物料进入融合池.
+    运行失败/未产出时返回 None, 不影响主流程 (megahit/spades/penguin 照常)."""
+    sa_sh = os.path.expanduser(args.smaltalign_sh)
+    if not os.path.exists(sa_sh):
+        if logger: logger.warning(f"[{sample}] SmaltAlign 脚本不存在, 跳过该引擎: {sa_sh}")
+        return None
+    out_dir = Path(out_dir); out_dir.mkdir(parents=True, exist_ok=True)
+    work = out_dir / "sa_out"
+    work.mkdir(parents=True, exist_ok=True)  # smaltalign.sh 对 -o 目录做 readlink -f, 必须预先存在
+    env = os.environ.copy()
+    env["PATH"] = os.path.expanduser(args.smaltalign_env) + os.pathsep + env["PATH"]
+    cmd = ['bash', sa_sh, '-r', str(ref_file), '-p', f'-o{work}', '-i', '3',
+           '-t', '0.97', str(r1), str(r2)]
+    try:
+        subprocess.run(cmd, cwd=out_dir, env=env, capture_output=True, text=True,
+                       timeout=7200)
+    except Exception as e:
+        if logger: logger.warning(f"[{sample}] SmaltAlign 运行失败, 跳过该引擎: {e}")
+        return None
+    cons = sorted(work.glob("*_*_cons.fasta"))
+    if not cons:
+        if logger: logger.warning(f"[{sample}] SmaltAlign 未产出共识, 跳过该引擎")
+        return None
+    if logger: logger.info(f"[{sample}] SmaltAlign 引擎产出: {cons[0].name} ({cons[0].stat().st_size} bytes)")
+    return cons[0]
+
+# =====================================================================
 # V9.0 新增: Coverage & Polishing 可视化模块
 # =====================================================================
 def run_minimap2_plot(ref_fasta, query_fasta, paf_out):
@@ -1009,9 +1040,18 @@ def run_pipeline(sample, sample_data, orig_ref, ref_len, out_root, active_tools,
             cmd_pg = ['penguin', 'guided_nuclassemble'] + ([asm_r1] if asm_is_single else [asm_r1, asm_r2]) + ['--threads', str(args.threads), str(pg_out), str(pg_tmp), '--min-contig-len', str(args.min_contig_len)]
             if run_cmd(cmd_pg, cwd=d1_asm, log_file=d1_asm/"pg.log", logger=logger, sample_name=sample) and pg_out.exists():
                 pg_fasta_list = list(pg_out.glob("*.fa*"))
-                if pg_fasta_list: 
+                if pg_fasta_list:
                     split_fa = run_refinec_split(max(pg_fasta_list, key=lambda x: x.stat().st_size), d1_asm, "penguin", args.threads, args.refineC_frag, logger, sample)
                     if split_fa: contig_files.append(split_fa)
+
+        if 'smaltalign' in active_tools:
+            # [基准决策] 第4引擎默认关: 深覆盖增益 +0.02-0.03pp 边际, 低覆盖 d0 +1.1pp
+            # 但高分歧 d30 略降 (18.1 vs 15.3 GF) —— 显式 --assembly_tools all,smaltalign 才启用
+            sa_out = d1_asm / "smaltalign"
+            sa_cons = run_smaltalign_assembly(orig_ref, asm_r1, asm_r2, sa_out, args, logger, sample)
+            if sa_cons:
+                split_fa = run_refinec_split(sa_cons, d1_asm, "smaltalign", args.threads, args.refineC_frag, logger, sample)
+                if split_fa: contig_files.append(split_fa)
 
         if contig_files:
             cat_fa = d2_rc_merge / "all_tools_split.fasta"
@@ -1177,7 +1217,9 @@ def main():
     g_chk.add_argument('--chk-n50', type=float, default=0.95, help="N50>=参考比例")
 
     g_denovo = parser.add_argument_group('De novo 参数与净化')
-    g_denovo.add_argument('--assembly_tools', default="all", help="启用工具 (megahit,spades,penguin,all)")
+    g_denovo.add_argument('--assembly_tools', default="all", help="启用工具 (megahit,spades,penguin,all; smaltalign 为可选第4引擎需显式添加: all,smaltalign)")
+    g_denovo.add_argument('--smaltalign-sh', default="~/biosoft/virus/assemble-bench/SmaltAlign/SmaltAlign/smaltalign.sh", help="SmaltAlign 主脚本路径 (可选第4引擎)")
+    g_denovo.add_argument('--smaltalign-env', default="~/mambaforge/envs/smaltalign/bin", help="SmaltAlign conda env bin 目录 (PATH 前置)")
     g_denovo.add_argument('--refineC-frag', type=int, default=300, help="refineC 最小拆分长度")
     g_denovo.add_argument('--min-contig-len', type=int, default=200, help="最短过滤长度")
     g_denovo.add_argument('--split-gap-size', type=int, default=100, help="多大 Gap 引发打断 (包含PVGA打断)")
@@ -1223,6 +1265,8 @@ def main():
     if not CAN_PLOT: logger.warning("[提示] 未安装 matplotlib，将跳过绘图模块。")
 
     active_tools = {'megahit', 'spades', 'penguin'} if 'all' in args.assembly_tools.lower() else set(t.strip().lower() for t in args.assembly_tools.split(','))
+    if 'smaltalign' in args.assembly_tools.lower():
+        active_tools.add('smaltalign')  # [基准决策] 可选第4引擎, 默认关
     orig_ref = os.path.abspath(args.reference); _, ref_seq_str = read_first_sequence(orig_ref)
     if not ref_seq_str:
         logger.error(f"[致命错误] 参考序列为空或无法读取: {orig_ref}")
