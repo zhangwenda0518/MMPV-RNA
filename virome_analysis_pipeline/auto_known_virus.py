@@ -8,8 +8,9 @@ full-length assembly, and post-hoc characterization.
 Stages:
   1. detect    - Rapid quantification (batch_virus_depth.py)
   2. filter    - High-confidence filtering (utils/filter_summary.py) [auto with --filter]
-  3. variants  - Alignment + variant calling + SnpEff + SnpGenie (batch_virus_variants.py)
-  4. extract   - Targeted virus reads extraction [阶段重排: 自 variants 独立] (batch_extract_reads.py)
+  3. extract   - Alignment & prep (virus-fasta/bam/all_summary/consensus) + targeted reads extraction [阶段重排]
+                 (batch_virus_variants.py --align_only + batch_extract_reads.py)
+  4. variants  - Pure variant calling stack: VCF + SnpEff + SnpGenie [阶段重排] (batch_virus_variants.py --variants_only)
   5. post      - VCF visualization + SnpEff macro + MAF + SnpGenie
   6. full      - De novo full-length assembly + 集成全长序列提取 (batch_virus_full.py + utils/extract_full_fasta.py)
   7. similarity - Full-length similarity panorama (virus_auto_pipeline.py)
@@ -162,7 +163,7 @@ def check_tsv_schema(tsv_path, required_cols, stage_label, logger):
 # ---- Stage selection --------------------------------------------------------
 # Pipeline execution order, used to sort --stage values into run order and
 # expand "all". Must match the stage blocks in _run_pipeline_stages().
-STAGE_ORDER = ["detect", "filter", "variants", "extract", "post", "full",
+STAGE_ORDER = ["detect", "filter", "extract", "variants", "post", "full",
                "similarity", "dvg", "report"]
 
 
@@ -216,12 +217,12 @@ def main():
         "--stage",
         nargs="+",
         default=["all"],
-        help="Stage(s) to run: one or more of all, detect, filter, variants, extract, "
+        help="Stage(s) to run: one or more of all, detect, filter, extract, variants, "
              "post, full, similarity, dvg, report. Accepts space- or comma-separated "
              "values, e.g. --stage detect,filter or --stage detect filter; always "
              "executed in pipeline order regardless of the given order (default: all). "
-             "[阶段重排] extract = 靶向 reads 提取 (独立脚本 batch_extract_reads.py); "
-             "原全长序列提取默认并入 full",
+             "[阶段重排] extract = 比对与制备 (virus-bam/metrics/consensus) + 靶向 reads "
+             "提取; variants = 纯变异三件套 (VCF/SnpEff/SnpGenie)",
     )
     g.add_argument("--no-resume", action="store_true", help="Disable checkpoint resume (always re-run)")
     g.add_argument("--force", action="store_true", help="Force re-run, ignore all checkpoints")
@@ -459,8 +460,8 @@ def main():
         if "detect" in s:            log.info("  [1/9] Detect:   batch_virus_depth.py")
         # [P2-23c] 与下方 Stage2 执行条件保持一致 (--filter 默认 True, 但仅 all/filter 阶段才跑)
         if args.filter and "filter" in s: log.info("  [2/9] Filter:   utils/filter_summary.py")
-        if "variants" in s:  log.info("  [3/9] Variants: batch_virus_variants.py (比对+变异, caller=%s snpeff=%s snpgenie=%s)", args.variant_caller, args.snpeff, args.snpgenie)
-        if "extract" in s:   log.info("  [4/9] Extract:  batch_extract_reads.py (靶向 reads 提取)")
+        if "extract" in s:   log.info("  [3/9] Extract:  比对与制备 (align_only) + batch_extract_reads.py (靶向 reads)")
+        if "variants" in s:  log.info("  [4/9] Variants: batch_virus_variants.py --variants_only (VCF/SnpEff/SnpGenie, caller=%s snpeff=%s snpgenie=%s)", args.variant_caller, args.snpeff, args.snpgenie)
         if "post" in s:      log.info("  [5/9] Post-hoc: VCF viz + SnpEff + MAF + SnpGenie")
         if "full" in s:      log.info("  [6/9] Full:     batch_virus_full.py + 集成全长提取 (extract_full_fasta)")
         if "similarity" in s: log.info("  [7/9] Similarity: virus_auto_pipeline.py")
@@ -517,8 +518,8 @@ def _run_pipeline_stages(args, out, reads, log, script_dir, _pipeline_tmp):
     _AI_STAGE["logs"] = {
         "detect": detect_dir / "run_1_detect.log",
         "filter": filter_dir / "run_2_filter.log",
-        "variants": variants_dir / "run_3_variants.log",
-        "extract": variants_dir / "run_4_extract.log",
+        "variants": variants_dir / "run_4_variants.log",
+        "extract": variants_dir / "run_3_extract.log",
         "post": post_dir / "run_5_post.log",
         "assembly": assembly_dir / "run_6_assembly.log",
         "similarity": similarity_dir / "run_7_similarity.log",
@@ -693,103 +694,131 @@ def _run_pipeline_stages(args, out, reads, log, script_dir, _pipeline_tmp):
         _AI_STAGE["current"] = None
 
     # ═══════════════════════════════════════════
-    # Stage 3: Variant Analysis
+    # Stage 3: Extract — 比对与制备 (virus-fasta/virus-bam/all_summary/consensus)
+    #          + 靶向 reads 提取; variants 三件套与 full 的共同上游
     # ═══════════════════════════════════════════
-    if "variants" in args.stages:
-        _AI_STAGE["current"] = "variants"
-        _sh3 = add_stage_log(variants_dir, "3_variants")
-        if not args.force and not args.no_resume and _stage_ok(variants_dir):
-            log.info("[3/9] Variants: checkpoint OK, skip")
+    if "extract" in args.stages:
+        _AI_STAGE["current"] = "extract"
+        _sh_e = add_stage_log(variants_dir, "3_extract")
+        _extract_ok = "extract.ok"
+        if not args.force and not args.no_resume and _stage_ok(variants_dir, ok_name=_extract_ok):
+            log.info("[3/9] Extract: checkpoint OK, skip")
         else:
             log.info("-" * 40)
-            log.info("[3/9] Variant Analysis")
+            log.info("[3/9] Extract: 比对与制备 + 靶向 reads 提取")
             summary_in = get_summary()
             try:
                 check_tsv_schema(summary_in, STAGE1_SCHEMA, "Stage3→upstream", log)
             except SystemExit as _e:
-                _ai_emit("variants", "failed", _e)
+                _ai_emit("extract", "failed", _e)
                 raise
             if not summary_in.exists():
                 log.error("Summary not found: %s (run Stage 1 first)", summary_in)
-                _ai_emit("variants", "failed")
+                _ai_emit("extract", "failed")
                 sys.exit(1)
 
-            parts = [
+            # ① 比对与制备: virus-fasta + virus-index/bam + all_summary + consensus
+            if args.bam:
+                align_src = ["--bam", args.bam]
+            else:
+                align_src = ["--fastq", str(reads)]
+            a_parts = [
                 f"python {script_dir / 'batch_virus_variants.py'}",
+                *align_src,
                 f"--summary {get_summary()}",
                 f"--info {args.ref_info}",
                 f"--reference {args.reference}",
-                f"--variant_caller {args.variant_caller}",
                 f"--output_dir {variants_dir}",
                 f"--threads {args.threads}",
                 f"--jobs {args.jobs}",
+                "--align_only",
             ]
-            # [阶段重排] reads 提取已独立为 Stage 4 extract (--extract_only);
-            # variants 默认纯比对+变异检测, 不再提取 reads (需要时 --stage extract 单独补)
             if not args.no_consensus:
-                parts.append("--consensus")
-            if not args.no_call_variants:
-                parts.append("--call_variants")
+                a_parts.append("--consensus")
+            if not args.no_resume and not args.force:
+                a_parts.append("--resume")
+            _align_ok = run(" ".join(a_parts), log, "variants_align")
+            if not _align_ok:
+                log.error("  比对/制备失败 — variants(三件套)/full 依赖 virus-bam, 请查 03_Variants 日志")
+
+            # ② 靶向 reads 提取 (独立脚本, 依赖 ① 的 BAM)
+            if _align_ok and not args.no_extract_reads:
+                bam_src = args.bam if args.bam else str(variants_dir / "virus-bam")
+                r_parts = [
+                    f"python {script_dir / 'batch_extract_reads.py'}",
+                    f"--summary {get_summary()}",
+                    f"--bam {bam_src}",
+                    f"--output_dir {variants_dir}",
+                    f"--threads {args.threads}",
+                    f"--jobs {args.jobs}",
+                ]
+                if not args.no_resume and not args.force:
+                    r_parts.append("--resume")
+                _reads_ok = run(" ".join(r_parts), log, "extract_reads")
+                if not _reads_ok:
+                    log.error("  Extract (reads) failed — full 阶段依赖 virus_reads/, 请修复后重跑 --stage extract")
+            else:
+                _reads_ok = None
+                if args.no_extract_reads:
+                    log.info("  --no_extract_reads: 跳过靶向 reads 提取")
+
+            if _align_ok and _reads_ok is not False:
+                log.info("  Extract complete -> %s", variants_dir)
+                _mark_stage_ok(variants_dir, ok_name=_extract_ok)
+        _ai_emit("extract")
+        _AI_STAGE["current"] = None
+
+    # ═══════════════════════════════════════════
+    # Stage 4: Variants — 纯变异三件套 (VCF / SnpEff / SnpGenie)
+    # ═══════════════════════════════════════════
+    if "variants" in args.stages:
+        _AI_STAGE["current"] = "variants"
+        _sh3 = add_stage_log(variants_dir, "4_variants")
+        _variants_ok = "variants_call.ok"
+        if not args.force and not args.no_resume and _stage_ok(variants_dir, ok_name=_variants_ok):
+            log.info("[4/9] Variants: checkpoint OK, skip")
+        elif args.no_call_variants:
+            log.info("[4/9] Variants: --no_call_variants, 跳过变异三件套 (post 阶段无 VCF 可用)")
+        else:
+            log.info("-" * 40)
+            log.info("[4/9] Variants: 变异检测 + 注释 + dN/dS (VCF/SnpEff/SnpGenie)")
+            bam_src = args.bam if args.bam else str(variants_dir / "virus-bam")
+            v_parts = [
+                f"python {script_dir / 'batch_virus_variants.py'}",
+                f"--bam {bam_src}",
+                f"--summary {get_summary()}",
+                f"--info {args.ref_info}",
+                f"--reference {args.reference}",
+                f"--output_dir {variants_dir}",
+                f"--threads {args.threads}",
+                f"--jobs {args.jobs}",
+                "--variants_only",
+                "--call_variants",
+                f"--variant_caller {args.variant_caller}",
+                f"-q {args.vc_qual}",
+                f"-d {args.vc_depth}",
+                f"-f {args.vc_freq}",
+                f"-a {args.vc_ambig}",
+            ]
             if args.snpeff:
-                parts += [
+                v_parts += [
                     "--snpeff",
                     f"--snpeff_jar {args.snpeff_jar}",
                     f"--snpeff_config {args.snpeff_config}",
                     f"--snpeff_mem {args.snpeff_mem}",
                 ]
             if args.snpgenie:
-                parts.append("--snpgenie")
-            if args.bam:
-                parts += ["--bam", args.bam]
-            else:
-                parts += ["--fastq", str(reads)]
+                v_parts.append("--snpgenie")
             if args.disable_dynamic_vcf:
-                parts.append("--disable_dynamic_vcf")
-            parts += [
-                f"-q {args.vc_qual}",
-                f"-d {args.vc_depth}",
-                f"-f {args.vc_freq}",
-                f"-a {args.vc_ambig}",
-            ]
+                v_parts.append("--disable_dynamic_vcf")
             if not args.no_resume and not args.force:
-                parts.append("--resume")
-            if not run(" ".join(parts), log, "batch_virus_variants"):
-                log.warning("  Variant analysis partially failed, check logs")
+                v_parts.append("--resume")
+            if not run(" ".join(v_parts), log, "variants_call"):
+                log.warning("  Variant calling partially failed, check logs")
             else:
                 log.info("  Variants complete -> %s", variants_dir)
-                _mark_stage_ok(variants_dir)
+                _mark_stage_ok(variants_dir, ok_name=_variants_ok)
         _ai_emit("variants")
-        _AI_STAGE["current"] = None
-
-    # ═══════════════════════════════════════════
-    # Stage 4: Extract — 靶向 reads 提取 (自 variants 独立; full 阶段硬依赖)
-    # ═══════════════════════════════════════════
-    if "extract" in args.stages:
-        _AI_STAGE["current"] = "extract"
-        _sh_e = add_stage_log(variants_dir, "4_extract")
-        _extract_ok = "extract_reads.ok"
-        if not args.force and not args.no_resume and _stage_ok(variants_dir, ok_name=_extract_ok):
-            log.info("[4/9] Extract (reads): checkpoint OK, skip")
-        else:
-            log.info("-" * 40)
-            log.info("[4/9] Extract: 靶向 reads 提取 (batch_extract_reads.py)")
-            bam_src = args.bam if args.bam else str(variants_dir / "virus-bam")
-            parts = [
-                f"python {script_dir / 'batch_extract_reads.py'}",
-                f"--summary {get_summary()}",
-                f"--bam {bam_src}",
-                f"--output_dir {variants_dir}",
-                f"--threads {args.threads}",
-                f"--jobs {args.jobs}",
-            ]
-            if not args.no_resume and not args.force:
-                parts.append("--resume")
-            if not run(" ".join(parts), log, "extract_reads"):
-                log.error("  Extract (reads) failed — full 阶段依赖 virus_reads/, 请修复后重跑 --stage extract")
-            else:
-                log.info("  Extract (reads) complete -> %s", variants_dir / "virus_reads")
-                _mark_stage_ok(variants_dir, ok_name=_extract_ok)
-        _ai_emit("extract")
         _AI_STAGE["current"] = None
 
     # ═══════════════════════════════════════════
@@ -1161,8 +1190,8 @@ def _run_pipeline_stages(args, out, reads, log, script_dir, _pipeline_tmp):
 STAGES = [
     (1,  "detect",     "batch_virus_depth.py",     None,            "detect_dir",     "best.summary.tsv"),
     (2,  "filter",     "utils/filter_summary.py",   "detect_dir",    "filter_dir",     "high_conf.summary.tsv"),
-    (3,  "variants",   "batch_virus_variants.py",   "get_summary()", "variants_dir",   "all_summary.tsv"),
-    (4,  "extract",    "batch_extract_reads.py",    "variants_dir(virus-bam)", "variants_dir", "extract_reads.ok"),
+    (3,  "extract",    "batch_virus_variants.py --align_only + batch_extract_reads.py", "get_summary()+reads", "variants_dir", "extract.ok"),
+    (4,  "variants",   "batch_virus_variants.py --variants_only", "variants_dir(virus-bam)", "variants_dir", "variants_call.ok"),
     (5,  "post",       "virus_vcf_pipeline.py",     "variants_dir",  "post_dir",       "figs/"),
     (6,  "full",       "batch_virus_full.py + utils/extract_full_fasta.py", "variants_dir+extract", "assembly_dir", "*/"),
     (7,  "similarity", "virus_auto_pipeline.py",    "variants_dir",  "similarity_dir", "pipeline_results/"),

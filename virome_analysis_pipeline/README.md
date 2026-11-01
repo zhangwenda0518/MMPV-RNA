@@ -23,8 +23,9 @@ Input: clean_reads/ + ref_info.tsv + ref.fasta
 
 [1/9] batch_virus_depth.py        → detect      Salmon/Kallisto/Bowtie2 定量 + Poisson 打假
 [2/9] filter_summary.py           → filter      高置信度过滤
-[3/9] batch_virus_variants.py     → variants    比对 + FreeBayes/iVar/LoFreq 变异检出 + 共识序列 (不再提取 reads)
-[4/9] batch_extract_reads.py      → extract     靶向 reads 提取 (独立脚本; 产物 virus_reads/)
+[3/9] batch_virus_variants.py     → extract     比对与制备 (align_only: BAM/all_summary/consensus) + 靶向 reads 提取
+       └── batch_extract_reads.py (靶向 reads, 独立脚本)
+[4/9] batch_virus_variants.py     → variants    纯变异三件套 (VCF/SnpEff/SnpGenie, --variants_only 复用 BAM)
 [5/9] virus_vcf_pipeline.py       → post        VCF 可视化 + SnpEff 宏 + MAF 瀑布 + SnpGenie dN/dS
 [6/9] batch_virus_full.py         → full        12 步全长基因组构建 (OmniVirusAssembler V9.0)
        └── virus-full.py (engine)
@@ -64,8 +65,8 @@ Input: clean_reads/ + ref_info.tsv + ref.fasta
 | `auto_known_virus.py` | — | 755 | 9-stage orchestrator |
 | `batch_virus_depth.py` | 1 | 832 | Salmon pseudo-alignment + Poisson filtering |
 | `filter_summary.py` | 2 | 236 | Coverage/depth/reads threshold filtering |
-| `batch_virus_variants.py` | 3 | 1229 | 比对 + 变异检出 + 共识序列 |
-| `batch_extract_reads.py` | 4 | 130 | 靶向 reads 提取 (Stage 4 独立脚本, 复用 variants 的 BAM 与提取 worker) |
+| `batch_virus_variants.py` | 3+4 | 1229 | 比对与制备(3, --align_only) 与 纯变异三件套(4, --variants_only) |
+| `batch_extract_reads.py` | 3 | 130 | 靶向 reads 提取 (Stage 3 extract 内的独立脚本) |
 | `virus_vcf_pipeline.py` | 5 | 186 | post 阶段入口：bcftools merge + VCF2Dis + VCF2PCA |
 | `batch_virus_full.py` | 6 | 240 | Assembly task scheduler |
 | `virus-full.py` | 6 | 1120 | 12-step de novo assembly engine |

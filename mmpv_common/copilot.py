@@ -234,7 +234,7 @@ COMMAND_SPECS: Dict[str, CommandSpec] = {
         key="analysis",
         script="virome_analysis_pipeline/auto_known_virus.py",
         desc="④ 已知病毒深度分析 (detect/variants/full/dvg/report…)",
-        stages=("all", "detect", "filter", "variants", "extract", "post", "full",
+        stages=("all", "detect", "filter", "extract", "variants", "post", "full",
                 "similarity", "dvg", "report"),
         # 该编排器手工校验 reads_dir/output_dir/ref_info/reference 四件套
         # (--config 可从 profile 里补, 见 auto_known_virus.py 参数校验段)

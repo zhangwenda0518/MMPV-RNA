@@ -1263,6 +1263,16 @@ class PostProcessPipeline:
             logger.error("❌ 无可用 BAM！请检查样本名与文件名的对应关系。")
             sys.exit(1)
 
+        # [阶段重排] --variants_only: 只跑变异三件套 (VCF/SnpEff/SnpGenie)。
+        # 比对/metrics/consensus 归 --align_only (Stage 3 extract); 必须给 --bam 复用已有 BAM
+        if getattr(self.args, 'variants_only', False):
+            if not self.args.bam:
+                logger.error("❌ --variants_only 需要 --bam (复用 Stage 3 extract 产出的 virus-bam); 比对不在此阶段")
+                sys.exit(1)
+            logger.info("[variants_only] 跳过比对/metrics/consensus —— 只跑变异三件套 (VCF/SnpEff/SnpGenie)")
+            self.run_variants_analysis(df, bam_map, ref_map)
+            return
+
         df = self.generate_final_summaries(df, bam_map)
 
         if self.args.extract_reads:
@@ -1296,9 +1306,16 @@ class PostProcessPipeline:
                     
             logger.info(f"\n🧬 共识序列构建 (已自动屏蔽低覆盖度为 N) (Jobs:{self.args.jobs}, Threads/Job:{min(4, self.args.threads)})...")
             with ProcessPoolExecutor(max_workers=min(len(tasks), self.args.jobs)) as ex:
-                for _ in tqdm(as_completed([ex.submit(worker_consensus, t) for t in tasks]), total=len(tasks)): 
+                for _ in tqdm(as_completed([ex.submit(worker_consensus, t) for t in tasks]), total=len(tasks)):
                     pass
-                
+
+        # [阶段重排] --align_only: 比对+metrics+consensus 到此为止;
+        # 变异三件套 (VCF/SnpEff/SnpGenie) 归 --variants_only / Stage 4 variants
+        if getattr(self.args, 'align_only', False):
+            logger.info("[align_only] 比对与制备完成 (virus-fasta/virus-bam/all_summary/consensus); "
+                        "变异三件套归 --variants_only (Stage 4 variants)")
+            return
+
         if self.args.call_variants or self.args.snpeff or self.args.snpgenie:
             self.run_variants_analysis(df, bam_map, ref_map)
             
@@ -1332,7 +1349,13 @@ def main():
 
     mod = parser.add_argument_group("功能开关")
     mod.add_argument("--extract_reads", action="store_true", help="从 BAM 提取目标病毒的 reads "
-                     "(独立版见 batch_extract_reads.py, 编排器 Stage 4 使用)")
+                     "(独立版见 batch_extract_reads.py, 编排器 Stage 3 extract 使用)")
+    mod.add_argument("--align_only", action="store_true",
+                     help="[阶段重排] 只做比对与制备 (virus-fasta/virus-bam/all_summary/consensus), "
+                          "不跑变异三件套; 编排器 Stage 3 extract 使用")
+    mod.add_argument("--variants_only", action="store_true",
+                     help="[阶段重排] 只跑变异三件套 (VCF/SnpEff/SnpGenie), 需 --bam 复用已有 BAM; "
+                          "编排器 Stage 4 variants 使用")
     mod.add_argument("--consensus", action="store_true", help="生成共识序列")
     mod.add_argument("--call_variants", action="store_true", help="检出变异位点")
     mod.add_argument("--variant_caller", choices=["freebayes", "ivar", "lofreq"], default="freebayes",
