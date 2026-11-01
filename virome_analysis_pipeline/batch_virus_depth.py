@@ -780,9 +780,8 @@ class UnifiedVirusPipeline:
         self.logger.info("=" * 60)
         self.logger.info("🚀 V42.4 Smart-Index & Resource Monitor Pipeline 启动")
         self.logger.info("=" * 60)
-        
+
         self.setup_output_directory(); self.build_index(); self.find_samples()
-        batches = [self.samples[i:i + self.args.batch_size] for i in range(0, len(self.samples), self.args.batch_size)]
 
         # [P2-24e+] 样本级跨运行断点续传: --resume 时回收上一轮结果 parquet 里
         # 仍存在于本轮样本清单的样本行, 批次内只重算缺失样本 (batch_size 变化/样本增减均不受影响).
@@ -833,80 +832,86 @@ class UnifiedVirusPipeline:
 
         # [UX] 启动汇总: setup_logger 只挂 FileHandler, logger.info 全进日志文件;
         # 终端上只有 tqdm (stderr) —— 样本/批次/回收总数必须显式打 stderr 才可见
-        _summary = (f"🧾 样本总数: {len(self.samples)} | 批次数: {len(batches)} "
-                    f"(batch_size={self.args.batch_size}) | 断点回收: {len(self._resume_done)} 个样本")
+        _summary = (f"🧾 样本总数: {len(self.samples)} | 待算: {sum(1 for s in self.samples if s['name'] not in self._resume_done)} "
+                    f"| 断点回收: {len(self._resume_done)} (含零命中记账) | 刷盘粒度: {self.args.batch_size} 样本/chunk "
+                    f"| 调度: 全局进程池 ({self.args.threads} workers, 个别慢样本不阻塞后续)")
         self.logger.info(_summary)
         print(_summary, file=sys.stderr, flush=True)
 
-        for i, batch in enumerate(batches):
-            batch_idx = i + 1; batch_file = self.output_dir / 'batches' / f'batch_{batch_idx:04d}.parquet'
-            if self.args.resume and batch_file.exists():
-                if batch_file.stat().st_mtime >= run_start_ts:
-                    self.logger.info(f"⏭️ 批次断点触发: [批次 {batch_idx}/{len(batches)}] 已完成，整体跳过..."); continue
-                # [P2-24e] 残留旧文件不作断点依据 (样本列表可能已变): 删除后本批重算
-                self.logger.warning(f"⚠️ 批次 {batch_idx} 断点文件为上一轮残留 (mtime 早于本轮启动)，忽略并重算: {batch_file.name}")
-                try:
-                    batch_file.unlink()
-                except OSError as e:
-                    self.logger.warning(f"⚠️ 无法删除残留批次文件 {batch_file.name}: {e} (本批重算后覆盖写入)")
-            
-            batch_todo = [s for s in batch if s['name'] not in self._resume_done]
-            if not batch_todo:
-                self.logger.info(f"⏭️ 批次断点触发: [批次 {batch_idx}/{len(batches)}] 全部 {len(batch)} 个样本已完成, 整体跳过...")
-                continue
-            if len(batch_todo) < len(batch):
-                self.logger.info(f"🔁 批次 {batch_idx}: 断点续传回收 {len(batch) - len(batch_todo)} 个已完成样本, 重算 {len(batch_todo)} 个")
-            self.logger.info(f"📦 开始计算 [批次 {batch_idx}/{len(batches)}] (内含 {len(batch_todo)} 个样本)...")
-            print(f"📦 批次 {batch_idx}/{len(batches)} | 本批 {len(batch_todo)} 样本 | 已回收 {len(self._resume_done)}",
-                  file=sys.stderr, flush=True)
-            res_list = []
-            ctx = mp.get_context('spawn')
-            with ProcessPoolExecutor(max_workers=self.args.threads, mp_context=ctx) as executor:
-                futures = {executor.submit(self.process_sample, s): s for s in batch_todo}
-                _zero_hits = set()
-                if tqdm:
-                    with tqdm(total=len(batch_todo), desc=f"批次 {batch_idx}", dynamic_ncols=True, colour="green") as pbar:
-                        for future in as_completed(futures):
-                            sample_info = futures[future]; pbar.set_postfix_str(f"最新完成: {sample_info['name']}")
-                            result = future.result()
-                            if result:
-                                res_list.extend(result)
-                            elif result is not None:
-                                # [zero_hits] 跑完但 0 病毒命中 (None=失败不记)
-                                _zero_hits.add(sample_info['name'])
-                            pbar.update(1)
-                else:
-                    _zero_hits = set()
+        # [调度重构] 原"每批一个进程池 + 批间硬栅栏": 个别大样本拖慢整批收尾,
+        # 其余 worker 空转且下一批被堵 (241 实测: 批10 59min vs 批1-9 ~11min)。
+        # 改为全局单池流式调度: 全部待算样本一次性入队, batch_size 降级为
+        # checkpoint 刷盘粒度 (每凑满 N 个完成样本写一个 chunk_*.parquet)。
+        # resume 按样本名匹配, chunk 命名与 batch_* 同等有效。
+        all_todo = [s for s in self.samples if s['name'] not in self._resume_done]
+        _batches_dir = self.output_dir / 'batches'
+        _flush_size = max(1, self.args.batch_size)
+        _pending_rows, _chunk_no = [], 0
+        _zero_hits, _n_fail = set(), 0
+
+        def _flush(force=False):
+            nonlocal _pending_rows, _chunk_no
+            if len(_pending_rows) >= _flush_size or (force and _pending_rows):
+                _chunk_no += 1
+                _cf = _batches_dir / f'chunk_{_chunk_no:04d}.parquet'
+                pl.DataFrame(_pending_rows, schema=METRICS_SCHEMA).write_parquet(_cf)
+                self.logger.info(f"💾 刷盘 {_cf.name} ({len(_pending_rows)} 样本行)")
+                _pending_rows = []
+            if _zero_hits:
+                # [zero_hits] 立即落盘, Ctrl+C 不丢账
+                with open(_batches_dir / 'zero_hits.txt', 'a') as f:
+                    f.writelines(s + '\n' for s in sorted(_zero_hits))
+                self.logger.info(f"🧾 零命中记账 +{len(_zero_hits)} (累计不重算)")
+                _zero_hits.clear()
+
+        ctx = mp.get_context('spawn')
+        with ProcessPoolExecutor(max_workers=self.args.threads, mp_context=ctx) as executor:
+            futures = {executor.submit(self.process_sample, s): s for s in all_todo}
+            if tqdm:
+                with tqdm(total=len(all_todo), desc="样本", dynamic_ncols=True, colour="green") as pbar:
                     for future in as_completed(futures):
+                        sample_info = futures[future]; pbar.set_postfix_str(f"最新完成: {sample_info['name']}")
                         result = future.result()
                         if result:
-                            res_list.extend(result)
+                            _pending_rows.extend(result)
                         elif result is not None:
-                            _zero_hits.add(futures[future]['name'])
-                if _zero_hits:
-                    # [zero_hits] 立即落盘, Ctrl+C 不丢账
-                    with open(self.output_dir / 'batches' / 'zero_hits.txt', 'a') as f:
-                        f.writelines(s + '\n' for s in sorted(_zero_hits))
-            # [P2-24e] 批次仅在非空且成功时写 parquet (原实现 else 分支也写空表, 与"成功批次"无法区分)
-            if res_list:
-                pl.DataFrame(res_list, schema=METRICS_SCHEMA).write_parquet(batch_file)
+                            _zero_hits.add(sample_info['name'])  # None=失败不记
+                        else:
+                            _n_fail += 1
+                        if len(_pending_rows) >= _flush_size:
+                            _flush()
+                        pbar.update(1)
             else:
-                self.logger.warning(f"⚠️ 批次 {batch_idx} 无有效结果 (res_list 为空)，不写 {batch_file.name}")
-            
-        self.logger.info("🧩 所有批次处理完成，正在合并数据并执行分类学与全局丰度重整...")
-        # [P2-24e] 汇总 concat 前清理上一轮残留 (如样本变少后遗留的高编号批次), 防陈旧样本混入汇总
-        _batches_dir = self.output_dir / 'batches'
-        for _stale in sorted(_batches_dir.glob('batch_*.parquet')):
+                for future in as_completed(futures):
+                    result = future.result()
+                    if result:
+                        _pending_rows.extend(result)
+                    elif result is not None:
+                        _zero_hits.add(futures[future]['name'])
+                    else:
+                        _n_fail += 1
+                    if len(_pending_rows) >= _flush_size:
+                        _flush()
+            _flush(force=True)
+        if _n_fail:
+            self.logger.warning(f"⚠️ {_n_fail} 个样本处理失败 (无结果行, 下轮 --resume 自动重试); 详见 logs/sample_*.log 的 ❌ 条目")
+
+        self.logger.info("🧩 全部样本处理完成，正在合并数据并执行分类学与全局丰度重整...")
+        # [P2-24e] 汇总 concat 前清理上一轮残留 (mtime 早于本轮启动), 防陈旧样本混入汇总
+        for _stale in sorted(_batches_dir.glob('*.parquet')):
+            if _stale.name == 'resume_pool.parquet':
+                continue
             try:
                 if _stale.stat().st_mtime < run_start_ts:
-                    self.logger.warning(f"🧹 清理上一轮残留批次: {_stale.name} (mtime 早于本轮启动)")
+                    self.logger.warning(f"🧹 清理上一轮残留结果: {_stale.name} (mtime 早于本轮启动)")
                     _stale.unlink()
             except OSError:
                 pass
-        all_batch_files = list(_batches_dir.glob('batch_*.parquet'))
+        all_batch_files = [f for f in sorted(_batches_dir.glob('*.parquet')) if f.name != 'resume_pool.parquet']
         _frames = [pl.read_parquet(f) for f in all_batch_files]
         if getattr(self, '_resume_rows', None):
             # 断点续传回收的上一轮样本行与本轮新算行合并后统一汇总
+            # (resume_pool.parquet 与 _resume_rows 同源, 此处排除文件、保留内存份防双计)
             _frames.append(pl.DataFrame(self._resume_rows, schema=METRICS_SCHEMA))
         if _frames:
             self.summarize_results_polars(pl.concat(_frames))
@@ -954,7 +959,9 @@ def main():
     perf_group.add_argument('--tool', choices=['kallisto', 'salmon', 'bowtie2', 'bwa', 'minimap2', 'strobealign', 'bwa-mem2', 'hisat2'], default='bowtie2', help='比对工具 (伪比对/传统比对)')
     perf_group.add_argument('-t', '--threads', type=int, default=8, help='并发样本数')
     perf_group.add_argument('--align_threads', type=int, default=4, help='单样本内部线程数')
-    perf_group.add_argument('--batch_size', type=int, default=20, help='批次刷盘保护数量')
+    perf_group.add_argument('--batch_size', type=int, default=20,
+                            help='checkpoint 刷盘粒度 (每 N 个完成样本写一个 chunk parquet); '
+                                 '执行为全局进程池, 本值不再影响调度')
     filt_group = parser.add_argument_group('🛡️ 过滤控制')
     filt_group.add_argument('--coverage', type=float, default=10.0, help='A轨: 绝对全长覆盖度下限(%%) (默认10.0)')
     filt_group.add_argument('--ratio', type=float, default=0.3, help='A轨: 泊松分布覆盖度比值下限 (默认 0.3)')
