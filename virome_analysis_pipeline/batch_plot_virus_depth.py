@@ -763,8 +763,20 @@ def run_sample_mode(args):
     plt.tight_layout()
     fn_occ = os.path.join(args.output, "virus_occurrence_bar.pdf")
     fn_occ_png = os.path.join(args.output, "virus_occurrence_bar.png")
-    plt.savefig(fn_occ, dpi=300, bbox_inches='tight')
-    plt.savefig(fn_occ_png, dpi=300, bbox_inches='tight')
+    # [尺寸安全] 246 实测 1150 病毒 → 130514px 高超 matplotlib 2^16 限; clamp dpi 兜底
+    try:
+        from mmpv_common.figure_export import safe_savefig as _ssf
+    except Exception:
+        _ssf = None
+    if _ssf is not None:
+        _ssf(plt.gcf(), fn_occ, dpi=300, bbox_inches='tight')
+        _ssf(plt.gcf(), fn_occ_png, dpi=300, bbox_inches='tight')
+    else:
+        plt.savefig(fn_occ, dpi=300, bbox_inches='tight')
+        try:
+            plt.savefig(fn_occ_png, dpi=300, bbox_inches='tight')
+        except ValueError as e:
+            print(f"[plot] PNG 跳过 (尺寸超限): {e}")
     plt.close()
     print(f"   {os.path.basename(fn_occ)}")
 
@@ -843,8 +855,22 @@ def run_coabundance_mode(args):
     plt.yticks(rotation=0, fontsize=_yfs)
     plt.tight_layout()
     fn_ah = os.path.join(args.output, f"coabundance_abundance_heatmap.{args.format}")
-    plt.savefig(fn_ah, dpi=args.dpi, bbox_inches='tight')
-    plt.savefig(fn_ah.replace(".pdf",".png"), dpi=args.dpi, bbox_inches='tight'); plt.close()
+    # [尺寸安全] 246 实测 629 病毒 → 75480px 宽超 matplotlib 2^16 限; clamp dpi 兜底
+    try:
+        from mmpv_common.figure_export import safe_savefig as _ssf
+    except Exception:
+        _ssf = None
+    if _ssf is not None:
+        _ssf(plt.gcf(), fn_ah, dpi=args.dpi, bbox_inches='tight')
+        _ssf(plt.gcf(), fn_ah.replace(".pdf", ".png"), dpi=args.dpi, bbox_inches='tight')
+        plt.close()
+    else:
+        plt.savefig(fn_ah, dpi=args.dpi, bbox_inches='tight')
+        try:
+            plt.savefig(fn_ah.replace(".pdf", ".png"), dpi=args.dpi, bbox_inches='tight')
+        except ValueError as e:
+            print(f"[plot] PNG 跳过 (尺寸超限): {e}")
+        plt.close()
     print(f"   {os.path.basename(fn_ah)}")
 
     # ── 相对丰度堆叠柱形图 ──

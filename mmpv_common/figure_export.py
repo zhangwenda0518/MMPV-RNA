@@ -109,6 +109,41 @@ def _hires_dirname() -> str:
 
 
 # ═══════════════════════════════════════════════════════════════════
+# 尺寸安全 (matplotlib 渲染器硬限: 每边 < 2^16 = 65536 px)
+# 246 实测: 1234 样本/1150 病毒规模下 occurrence 柱 130514px、共丰度热图
+# 75480px、filter 柱 143550px —— 超限即 ValueError 且此前无人兜底。
+# ═══════════════════════════════════════════════════════════════════
+
+RENDER_PX_CAP = 60000  # 留 5k 余量
+
+
+def clamp_dpi(fig, dpi, cap_px: int = RENDER_PX_CAP) -> int:
+    """按当前 figsize 返回不超过 cap_px 的安全 dpi。"""
+    try:
+        w, h = fig.get_size_inches()
+        m = max(float(w), float(h))
+    except Exception:
+        return int(dpi)
+    if m <= 0:
+        return int(dpi)
+    return max(10, min(int(dpi), int(cap_px // m)))
+
+
+def safe_savefig(fig, path, dpi=300, logger=None, **kw) -> bool:
+    """clamp dpi 的 savefig: 仍超限或渲染失败时降级为告警而不是崩掉整个绘图阶段。"""
+    try:
+        fig.savefig(path, dpi=clamp_dpi(fig, dpi), **kw)
+        return True
+    except ValueError as e:
+        _msg = f"[figure_export] 跳过 {os.path.basename(str(path))}: {e}"
+        if logger is not None:
+            logger.warning(_msg)
+        else:
+            print(_msg, file=sys.stderr, flush=True)
+        return False
+
+
+# ═══════════════════════════════════════════════════════════════════
 # 路径
 # ═══════════════════════════════════════════════════════════════════
 

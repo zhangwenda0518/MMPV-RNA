@@ -365,8 +365,20 @@ def main():
         plot_path = os.path.join(os.path.dirname(args.output) if args.output != '/dev/null' else '.',
                                  'filter_summary_plot.pdf')
         plot_path_png = plot_path.replace('.pdf', '.png')
-        fig.savefig(plot_path, dpi=300, bbox_inches='tight')
-        fig.savefig(plot_path_png, dpi=300, bbox_inches='tight')
+        # [尺寸安全] 246 实测 957 样本 → 143550px 宽超 matplotlib 2^16 限; clamp dpi 兜底
+        try:
+            from mmpv_common.figure_export import safe_savefig as _ssf
+        except Exception:
+            _ssf = None
+        if _ssf is not None:
+            _ssf(fig, plot_path, dpi=300, bbox_inches='tight')
+            _ssf(fig, plot_path_png, dpi=300, bbox_inches='tight')
+        else:
+            fig.savefig(plot_path, dpi=300, bbox_inches='tight')
+            try:
+                fig.savefig(plot_path_png, dpi=300, bbox_inches='tight')
+            except ValueError as e:
+                print(f"  [plot] PNG 跳过 (尺寸超限): {e}")
         plt.close()
         print(f"  Filter plot -> {plot_path}")
 
