@@ -322,6 +322,15 @@ def main():
     print("-" * 60)
     print(f"🎉 批量组装完毕！成功: {success_count} / 总计: {len(tasks)}")
     print(f"📁 完美的分类结果目录已保存在: {out_base.absolute()}")
+    # [fail-loud] 全失败仍 exit 0 曾把"缺工具秒死全部任务"标成 OK (241 实测:
+    # 缺 refineC/pvga/gmcloser, 1145 任务秒死 90 秒"跑完")。
+    # 全部失败 = 环境/依赖级故障 → 非零退出, 编排器不写 run.ok;
+    # 部分失败 = 常态, warning 即可, 重跑 --resume 只补失败任务。
+    if tasks and success_count == 0:
+        print("❌ 全部组装任务失败 (环境/依赖级故障) — 非零退出", flush=True)
+        sys.exit(1)
+    elif success_count < len(tasks):
+        print(f"⚠️ {len(tasks) - success_count} 个任务失败 — 重跑 --resume 只补失败任务", flush=True)
 
 if __name__ == "__main__":
     main()
