@@ -349,11 +349,11 @@ def _make_patched(orig):
         if _STATE["suppress"] or not isinstance(fname, (str, os.PathLike)):
             return orig(self, fname, *args, **kwargs)
 
-        # [尺寸安全] 栅格目标在渲染前按最长边钳制 dpi (matplotlib 硬限 2^16/边);
-        # 矢量 (pdf/svg) 无此限制, 不动 dpi
-        _sfx = str(fname).lower().rsplit(".", 1)[-1]
-        if _sfx in ("png", "jpg", "jpeg", "tif", "tiff", "webp"):
-            kwargs["dpi"] = clamp_dpi(self, kwargs.get("dpi") or self.dpi)
+        # [尺寸安全] 所有格式统一按最长边钳制 dpi —— PDF/SVG 里 rasterized
+        # 图层 (sns.heatmap 等) 同样按 dpi 栅格化, 629 病毒热图在 PDF 里
+        # 一样会撞 2^16 硬限 (246 实测 188700x150960)。矢量路径不受影响,
+        # 只有内嵌位图分辨率降低。
+        kwargs["dpi"] = clamp_dpi(self, kwargs.get("dpi") or self.dpi)
 
         result = orig(self, fname, *args, **kwargs)
 

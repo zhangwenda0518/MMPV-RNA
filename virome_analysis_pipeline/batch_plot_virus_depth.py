@@ -936,7 +936,8 @@ def run_coabundance_mode(args):
     short_names = [v.replace('\n', ' ').split('(')[-1].rstrip(')') if '(' in v else v[:12]
                    for v in viruses]
     mask = np.triu(np.ones_like(cooc_mat, dtype=bool), k=1)
-    fig, ax = plt.subplots(figsize=(max(7, n_viruses * 1.0), max(5, n_viruses * 0.8)))
+    fig, ax = plt.subplots(figsize=(min(ABUND_HEAT_MAX_W_IN, max(7, n_viruses * 1.0)),
+                                    min(ABUND_HEAT_MAX_H_IN + 6, max(5, n_viruses * 0.8))))
     sns.heatmap(cooc_mat, annot=annot_mat, fmt='', cmap="YlOrRd", vmin=0, vmax=100,
                mask=mask, ax=ax, cbar_kws={'label': 'Co-occurrence Rate (%)', 'shrink': 0.8},
                xticklabels=short_names, yticklabels=short_names,
@@ -955,7 +956,8 @@ def run_coabundance_mode(args):
     corr_mat = tpm_pivot.corr(method='spearman')
     sc_names = [v.replace('\n', ' ').split('(')[-1].rstrip(')') if '(' in v else v[:12]
                 for v in corr_mat.columns]
-    fig, ax = plt.subplots(figsize=(max(6, n_viruses * 0.8), max(5, n_viruses * 0.7)))
+    fig, ax = plt.subplots(figsize=(min(ABUND_HEAT_MAX_W_IN, max(6, n_viruses * 0.8)),
+                                    min(ABUND_HEAT_MAX_H_IN + 6, max(5, n_viruses * 0.7))))
     smask = np.triu(np.ones_like(corr_mat, dtype=bool), k=1)
     sns.heatmap(corr_mat, annot=True, fmt=".2f", cmap="vlag", vmin=-1, vmax=1, center=0,
                mask=smask, ax=ax, cbar_kws={'label': 'Spearman ρ', 'shrink': 0.8},
