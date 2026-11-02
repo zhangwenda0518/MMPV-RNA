@@ -235,6 +235,13 @@ def _effective_hires_dpi(fig, hires_dpi: int) -> int:
         return hires_dpi
     scale = (MAX_HIRES_PIXELS / px) ** 0.5
     fallback = max(1, int(hires_dpi * scale))
+    # [尺寸安全] 面积达标还不够: 单边仍受 2^16 硬限 (246 实测 600in 宽在
+    # 面积达标 dpi 下单边仍 99600px 崩溃)
+    side = max(float(w_in), float(h_in))
+    if side > 0:
+        side_cap = max(1, int(65535 / side))
+        if side_cap < fallback:
+            fallback = side_cap
     fallback = min(fallback, HIRES_FALLBACK_DPI)
     print(f"[figure_export] 警告: {w_in:.1f}x{h_in:.1f} in @ {hires_dpi} dpi "
           f"≈ {px/1e6:.0f} Mpx 超限, 高清 PNG 降级到 {fallback} dpi",
@@ -341,6 +348,12 @@ def _make_patched(orig):
         # ① 非路径目标 (PdfPages / 文件对象 / BytesIO) → 原样透传, 不补格式
         if _STATE["suppress"] or not isinstance(fname, (str, os.PathLike)):
             return orig(self, fname, *args, **kwargs)
+
+        # [尺寸安全] 栅格目标在渲染前按最长边钳制 dpi (matplotlib 硬限 2^16/边);
+        # 矢量 (pdf/svg) 无此限制, 不动 dpi
+        _sfx = str(fname).lower().rsplit(".", 1)[-1]
+        if _sfx in ("png", "jpg", "jpeg", "tif", "tiff", "webp"):
+            kwargs["dpi"] = clamp_dpi(self, kwargs.get("dpi") or self.dpi)
 
         result = orig(self, fname, *args, **kwargs)
 
