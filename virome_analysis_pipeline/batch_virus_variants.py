@@ -336,11 +336,180 @@ def _site_pi_mean(site_counters):
     return float(np.mean(vals)) if vals else _nan
 
 
+def _metrics_pysam(bam_path, v, stats):
+    """旧 pysam 逐条循环 (现仅作 samtools 路径失败时的回退)。
+
+    注意: 统计聚合必须在 read 循环外 —— 旧版缩进事故曾把 np.mean/Shannon
+    循环放进逐 read 体内 (40M reads × 全位点统计 = 小时级空转)。"""
+    import pysam
+    with pysam.AlignmentFile(bam_path, "rb") as bamfile:
+        try:
+            stats['bam_total_reads'] = bamfile.mapped + bamfile.unmapped
+        except Exception:
+            pass
+        if v not in bamfile.references:
+            return
+        length = bamfile.get_reference_length(v)
+        if length <= 0:
+            return
+        cov = np.zeros(length, dtype=np.uint32)
+        bc = [Counter() for _ in range(length)]
+        idents = []
+        read_count = 0
+        for r in bamfile.fetch(v):
+            if r.is_secondary or r.is_unmapped:
+                continue
+            read_count += 1
+            for blk in r.get_blocks():
+                cov[blk[0]:blk[1]] += 1
+            for q, ref in r.get_aligned_pairs(matches_only=True):
+                if ref < length:
+                    b = (r.query_sequence or "")[q:q + 1].upper()
+                    if b in 'ACGTN':
+                        bc[ref][b] += 1
+            align_len = r.query_alignment_length
+            nm = r.get_tag('NM') if r.has_tag('NM') else None
+            if nm is not None and align_len > 0:
+                idents.append((align_len - nm) / align_len)
+
+        stats['read_count'] = read_count
+        pi_val = float('nan')
+        shannon_list = []
+        _cov_counters = [c for i, c in enumerate(bc) if cov[i] > 0 and c and sum(c.values()) > 0]
+        if _cov_counters:
+            try:
+                pi_val = _site_pi_mean(_cov_counters)
+            except ImportError as _ie:
+                logger.warning(f"Pi 需要 scikit-allel: {_ie} → Pi 记 NaN")
+        for c in _cov_counters:
+            tot = sum(c.values())
+            shannon_list.append(sum(-(count / tot) * math.log(count / tot)
+                                    for count in c.values() if count > 0))
+        stats.update({
+            'mean_coverage': float(np.mean(cov)), 'covered_bases': int(np.count_nonzero(cov)),
+            'Sites_0X': int(np.count_nonzero(cov == 0)),
+            'Sites_LowCov': int(np.count_nonzero((cov > 0) & (cov < 10))),
+            'Pi': pi_val, 'Shannon': float(np.mean(shannon_list)) if shannon_list else float('nan'),
+            'ANI': float(np.mean(idents)) if idents else float('nan'), 'contig_length': length
+        })
+
+
+def _mpileup_clean_bases(bstr):
+    """mpileup bases 列清洗: 去 ^qual / $ / ±indel 标记, 保留碱基与 * 占位。"""
+    out = []
+    i, n = 0, len(bstr)
+    while i < n:
+        c = bstr[i]
+        if c == '^':
+            i += 2; continue
+        if c == '$':
+            i += 1; continue
+        if c in '+-':
+            j = i + 1
+            while j < n and bstr[j].isdigit():
+                j += 1
+            i = j + int(bstr[i + 1:j])
+            continue
+        out.append(c); i += 1
+    return out
+
+
+def _metrics_via_samtools(bam_path, v, ref_fa, stats):
+    """C 速度三段式 metrics: depth(覆盖) + mpileup(碱基组成→Pi/Shannon) +
+    view|awk(条数/ANI)。246 实测旧 pysam 逐条循环在 40M reads 样本上
+    单行 >5 小时, 本路径应分钟级。ref_fa 用于解析 mpileup 的 ./, 匹配符。"""
+    length = 0
+    r_idx = subprocess.run(["samtools", "idxstats", bam_path], capture_output=True, text=True)
+    for ln in (r_idx.stdout or "").splitlines():
+        pp = ln.split("\t")
+        if pp and pp[0] == v:
+            length = int(pp[1]); break
+    if length <= 0:
+        raise RuntimeError(f"参考 {v} 不在 BAM 索引中")
+
+    # ── 逐位置深度 (含 0 覆盖位) ──
+    cov = np.zeros(length, dtype=np.uint32)
+    r_dep = subprocess.run(["samtools", "depth", "-a", "-q", "0", "-Q", "0", "-G", "0x304",
+                            "-r", v, bam_path], capture_output=True, text=True)
+    if r_dep.returncode != 0:
+        raise RuntimeError(f"samtools depth 失败: {(r_dep.stderr or '')[-200:]}")
+    for ln in (r_dep.stdout or "").splitlines():
+        pp = ln.split("\t")
+        if len(pp) >= 3:
+            i = int(pp[1]) - 1
+            if 0 <= i < length:
+                cov[i] = min(int(pp[2]), 65535)
+
+    # ── 参考序列 (mpileup 的 ./, 匹配符需要折叠成真实碱基) ──
+    r_ref = subprocess.run(["samtools", "faidx", ref_fa, v], capture_output=True, text=True)
+    ref_lines = (r_ref.stdout or "").splitlines()
+    ref_seq = "".join(ref_lines[1:]).upper()
+    if r_ref.returncode != 0 or not ref_seq:
+        raise RuntimeError("无法读取参考序列 (samtools faidx)")
+
+    # ── 逐位置碱基组成 (流式解析, 不整载) ──
+    bc = [Counter() for _ in range(length)]
+    mp = subprocess.Popen(["samtools", "mpileup", "-B", "-Q", "0", "-q", "0", "-d", "10000000",
+                           "--ff", "UNMAP,SECONDARY", "-f", ref_fa, "-r", v, bam_path],
+                          stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+    for ln in mp.stdout:
+        pp = ln.rstrip("\n").split("\t")
+        if len(pp) < 5:
+            continue
+        i = int(pp[1]) - 1
+        if not (0 <= i < length):
+            continue
+        rb = ref_seq[i] if i < len(ref_seq) else 'N'
+        for c in _mpileup_clean_bases(pp[4]):
+            if c in 'ACGTNacgtn':
+                bc[i][c.upper()] += 1
+            elif c in '.,':
+                bc[i]['N' if rb not in 'ACGT' else rb] += 1
+    mp.wait()
+    if mp.returncode != 0:
+        raise RuntimeError(f"samtools mpileup 退出码 {mp.returncode}")
+
+    # ── 条数 / ANI (awk 单遍聚合, C 速度) ──
+    awk = ('{n++; aln=0; s=$6; while(match(s,/[0-9]+[M=X]/)){aln+=substr(s,RSTART,RLENGTH-1); '
+           's=substr(s,RSTART+RLENGTH)}; nm=0; for(i=12;i<=NF;i++) if($i ~ /^NM:i:/){split($i,a,":"); nm=a[3]}; '
+           'ta+=aln; tn+=aln-nm} END{print n+0, (ta>0? tn/ta : "NA")}')
+    cmd = (f"samtools view -F 0x104 -r {shlex.quote(v)} {shlex.quote(bam_path)} "
+           f"| awk '{awk}'")
+    r_v = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+    pp = (r_v.stdout or "").split()
+    n_reads = int(float(pp[0])) if len(pp) >= 1 else 0
+    mean_id = float('nan')
+    if len(pp) >= 2 and pp[1] not in ("NA", "nan"):
+        mean_id = float(pp[1])
+
+    pi_val = float('nan')
+    shannon_list = []
+    _cov_counters = [c for i, c in enumerate(bc) if cov[i] > 0 and c and sum(c.values()) > 0]
+    if _cov_counters:
+        try:
+            pi_val = _site_pi_mean(_cov_counters)
+        except ImportError as _ie:
+            logger.warning(f"Pi 需要 scikit-allel: {_ie} → Pi 记 NaN")
+    for c in _cov_counters:
+        tot = sum(c.values())
+        shannon_list.append(sum(-(count / tot) * math.log(count / tot)
+                                for count in c.values() if count > 0))
+
+    stats.update({
+        'read_count': n_reads,
+        'mean_coverage': float(np.mean(cov)), 'covered_bases': int(np.count_nonzero(cov)),
+        'Sites_0X': int(np.count_nonzero(cov == 0)),
+        'Sites_LowCov': int(np.count_nonzero((cov > 0) & (cov < 10))),
+        'Pi': pi_val, 'Shannon': float(np.mean(shannon_list)) if shannon_list else float('nan'),
+        'ANI': mean_id, 'contig_length': length,
+        'bam_total_reads': n_reads,
+    })
+
+
 def worker_calc_metrics(args):
     s, v, row_dict, bam_path = args
-    # 2026-10-13 修 (10-10 V04): Pi/Shannon/ANI 初始化改 NaN —— "不可计算"
-    # (BAM 缺失/损坏/异常) 与 "真的是 0" 在结果里可区分; 旧版静默 0 会被
-    # 当成功值写进汇总。计数类字段的 0 语义不变。
+    # 2026-10-13 修 (10-10 V04): Pi/Shannon/ANI 初始化 NaN —— "不可计算" 与
+    # "真的是 0" 可区分。计数类字段的 0 语义不变。
     _nan = float('nan')
     stats = {
         'read_count': 0, 'mean_coverage': 0.0, 'covered_bases': 0, 'Sites_0X': 0,
@@ -348,79 +517,22 @@ def worker_calc_metrics(args):
         'contig_length': 0, 'bam_total_reads': 0
     }
 
+    bam_path = str(bam_path).strip()
     if bam_path and Path(bam_path).exists():
-        if pysam is None:
-            raise RuntimeError("pysam 未安装, 无法做 BAM 级统计 (纯提取/比对不受影响); pip install pysam")
+        # [C 速度重写] 旧 pysam 逐条循环两宗罪: ① 物化全部 AlignedSegment
+        # (40M reads → 90-113GB RSS, OOM); ② stats.update 缩进事故放进
+        # 逐 read 体内 (全位点统计 × 40M = 小时级空转)。现改为 samtools
+        # depth+mpileup+view|awk 三段 C 速度路径, pysam 仅作失败回退。
+        ref_fa = Path(bam_path).parents[1] / "virus-fasta" / f"ref_{v}" / f"ref_{v}.ref.fasta"
         try:
-            with pysam.AlignmentFile(bam_path, "rb") as bamfile:
-                try:
-                    stats['bam_total_reads'] = bamfile.mapped + bamfile.unmapped
-                except Exception:
-                    pass
-
-                if v in bamfile.references:
-                    length = bamfile.get_reference_length(v)
-                    if length > 0:
-                        cov = np.zeros(length, dtype=np.uint32)
-                        bc =[Counter() for _ in range(length)]
-                        idents =[]
-                        # [流式统计] 原 `reads = [r for r in fetch(...)]` 把全部
-                        # AlignedSegment 物化成列表 —— 超深样本 (246 实测 40M reads)
-                        # 单 worker RSS 90-113GB; fetch 本就是迭代器, 单遍流式即可。
-                        read_count = 0
-                        for r in bamfile.fetch(v):
-                            if r.is_secondary or r.is_unmapped:
-                                continue
-                            read_count += 1
-                            for blk in r.get_blocks():
-                                cov[blk[0]:blk[1]] += 1
-
-                                # 2026-10-13 修 (10-10 V04): 去掉 with_seq=True ——
-                                # 代码只用 ref 的**比对位置**做边界检查, 不用参考碱基,
-                                # 而 with_seq 需要 BAM 带 MD 标签, 缺 MD 直接抛异常
-                                # → 外层吞掉后指标全零。matches_only 本就不返回 None。
-                                for q, ref in r.get_aligned_pairs(matches_only=True):
-                                    if ref < length:
-                                        b = r.query_sequence[q].upper()
-                                        if b in 'ACGTN':
-                                            bc[ref][b] += 1
-
-                                align_len = r.query_alignment_length
-                                nm = r.get_tag('NM') if r.has_tag('NM') else None
-                                if nm is not None and align_len > 0:
-                                    idents.append((align_len - nm) / align_len)
-
-                            # 2026-10-13 修 (10-10 V03): Pi 走 _site_pi_mean
-                            # (scikit-allel, 见函数 docstring); 旧实现
-                            # (tot−max)/tot = 1−p_max 并非核苷酸多样性。
-                            pi_val = _nan
-                            shannon_list =[]
-                            _cov_counters = [c for i, c in enumerate(bc)
-                                             if cov[i] > 0 and c and sum(c.values()) > 0]
-                            if _cov_counters:
-                                try:
-                                    pi_val = _site_pi_mean(_cov_counters)
-                                except ImportError as _ie:
-                                    logger.warning(
-                                        f"[{s}/{v}] Pi 需要 scikit-allel "
-                                        f"(pixi.toml 已登记; pip install scikit-allel): {_ie} → Pi 记 NaN")
-                            for c in _cov_counters:
-                                tot = sum(c.values())
-                                h = sum(-(count/tot) * math.log(count/tot) for count in c.values() if count > 0)
-                                shannon_list.append(h)
-
-                            stats.update({
-                                'read_count': read_count, 'mean_coverage': float(np.mean(cov)), 'covered_bases': int(np.count_nonzero(cov)),
-                                'Sites_0X': int(np.count_nonzero(cov == 0)), 'Sites_LowCov': int(np.count_nonzero((cov > 0) & (cov < 10))),
-                                'Pi': pi_val, 'Shannon': float(np.mean(shannon_list)) if shannon_list else _nan,
-                                'ANI': float(np.mean(idents)) if idents else _nan, 'contig_length': length
-                            })
+            _metrics_via_samtools(bam_path, v, str(ref_fa), stats)
         except Exception as _e:
-            # 2026-10-13 修 (10-10 V04): 旧版裸 `except: pass` → 异常被吞、
-            # 指标以全零随成功行写出。现在保留已算出的部分, 未算出的保持 NaN,
-            # 并把异常明确喊出来。
-            logger.warning(f"[{s}/{v}] 指标计算失败 ({type(_e).__name__}: {_e}), "
-                           f"未算出的指标记 NaN")
+            logger.warning(f"[{s}/{v}] samtools 快速指标失败 "
+                           f"({type(_e).__name__}: {str(_e)[:200]}), 回退 pysam 逐条循环")
+            try:
+                _metrics_pysam(bam_path, v, stats)
+            except Exception as _e2:
+                logger.warning(f"[{s}/{v}] pysam 回退也失败: {_e2}, 指标记 NaN")
 
     row_dict.update(stats)
     return row_dict
