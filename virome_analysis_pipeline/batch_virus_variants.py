@@ -6,6 +6,7 @@ batch_virus_downstream.py — 病毒确诊后处理、节段病毒优化与变�
 
 import argparse
 import hashlib
+import json
 import logging
 import math
 import os
@@ -929,18 +930,55 @@ class PostProcessPipeline:
     def generate_final_summaries(self, df: pd.DataFrame, bam_map: dict) -> pd.DataFrame:
         logger.info(f"\n📊 并行读取 BAM 重新独立计算各丰度及物理指标...")
         
+        # [metrics 行级缓存] 单 worker 可膨胀至 37GB (246 实测 08:33 被 OOM 杀),
+        # 2.5h 全量一崩归零 → 每个 (Sample,Virus) 完成即追加 jsonl 落盘;
+        # --resume 重跑跳过已完成行, 崩溃损失 ≤1 行。缓存的多余键在后续 join
+        # 时自然不匹配而被丢弃, 无需清理。
+        _cache = self.d_summary / "metrics_cache.jsonl"
+        _cached = {}
+        if getattr(self.args, 'resume', False) and _cache.is_file():
+            try:
+                with open(_cache) as _f:
+                    for _line in _f:
+                        _line = _line.strip()
+                        if not _line:
+                            continue
+                        try:
+                            _rec = json.loads(_line)
+                            _cached[(_rec.get("Sample"), _rec.get("Virus"))] = _rec
+                        except Exception:
+                            continue
+                if _cached:
+                    logger.info(f"⏭️ metrics 续传: 缓存已有 {len(_cached)} 行")
+            except OSError:
+                _cached = {}
+
         tasks = [
             (
-                r["Sample"], r["Virus"], r.to_dict(), 
+                r["Sample"], r["Virus"], r.to_dict(),
                 bam_map[r["Sample"]]['bam'] if r["Sample"] in bam_map else None
             ) for _, r in df.iterrows()
         ]
-        
-        raw_rows =[]
-        with ProcessPoolExecutor(max_workers=min(len(tasks), self.args.jobs)) as ex:
-            for fut in tqdm(as_completed([ex.submit(worker_calc_metrics, t) for t in tasks]), total=len(tasks), desc="重算指标"): 
-                raw_rows.append(fut.result())
-        
+        _todo = [t for t in tasks if (t[0], t[1]) not in _cached]
+
+        raw_rows = list(_cached.values())
+        if _todo:
+            with ProcessPoolExecutor(max_workers=min(len(_todo), self.args.jobs)) as ex:
+                for fut in tqdm(as_completed([ex.submit(worker_calc_metrics, t) for t in _todo]),
+                                total=len(_todo), desc="重算指标"):
+                    _row = fut.result()
+                    raw_rows.append(_row)
+                    # 完成即落盘 (np 标量经 default 折叠, NaN 合法 JSON 往返)
+                    try:
+                        with open(_cache, "a") as _f:
+                            _f.write(json.dumps(
+                                _row,
+                                default=lambda o: float(o) if hasattr(o, "__float__") else str(o)) + "\n")
+                    except OSError:
+                        pass
+        else:
+            logger.info("⏭️ metrics: 全部命中缓存, 跳过重算")
+
         raw_df = pd.DataFrame(raw_rows)
         sample_lib_size = {}
         
