@@ -1191,7 +1191,7 @@ def run_pipeline(sample, sample_data, orig_ref, ref_len, out_root, active_tools,
     # 1017 个 0 序列文件): 依 次回退 f9 迭代抛光共识 → 快车道/f8 骨架, 与基准
     # runner 的 环化 > gap_filled > final_consensus 回退链一致。
     if not is_valid(f10_gapf):
-        for _fb in (f9_cons, fast_track_source, f8_ref_m2):
+        for _fb in (f9_cons, fast_track_source, f8_ref_m2, f3_clean, f2_asm):
             if is_valid(_fb):
                 logger.warning(f"[{sample}] Step 10 产物无效, 回退上游骨架: {Path(_fb).name}")
                 shutil.copy(_fb, f10_gapf)
