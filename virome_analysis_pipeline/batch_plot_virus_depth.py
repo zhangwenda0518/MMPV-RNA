@@ -78,6 +78,8 @@ plt.rcParams.update({
 # 三者既无法阅读, 也无法嵌入报告。封顶到"每元素仍有可读像素"的尺寸:
 SAMPLE_BAR_MAX_W_IN = 20.0   # 每样本一柱 -> 6000 px @300dpi, ~23 px/柱
 ABUND_HEAT_MAX_H_IN = 24.0   # 每样本一行 -> 7200 px @300dpi, ~27 px/行 (容 6pt 行标签)
+ABUND_HEAT_MAX_W_IN = 600.0  # [246 实测] seaborn 创建时即按 fig.dpi 渲染, 宽度必须
+                             # 在 figsize 层面封顶 (629 病毒*1.2 = 755in → 75480px 超 2^16)
 STACKED_MAX_W_IN    = 20.0   # 每样本一柱 -> 6000 px @300dpi, ~23 px/柱
 # 元素过多时逐元素文字标注必然糊死 -> 关闭 (项目「标签分级」原则)
 DENSE_ELEM_THRESHOLD = 60
@@ -843,7 +845,7 @@ def run_coabundance_mode(args):
     _dense = total_samples > DENSE_ELEM_THRESHOLD
     _annot = not _dense            # 262 行逐格标数必然糊死 -> 关
     _yfs = 9 if not _dense else 6  # 行数多则缩小行标签字号以放进 27 px/行
-    fig, ax = plt.subplots(figsize=(max(8, n_viruses * 1.2),
+    fig, ax = plt.subplots(figsize=(min(ABUND_HEAT_MAX_W_IN, max(8, n_viruses * 1.2)),
                                     min(ABUND_HEAT_MAX_H_IN, max(5, total_samples * 0.6))))
     sns.heatmap(log_tpm, annot=_annot, fmt=".1f", cmap="YlGnBu", ax=ax,
                cbar_kws={'label': 'log10(TPM + 1)'})
