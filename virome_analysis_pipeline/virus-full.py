@@ -1187,6 +1187,15 @@ def run_pipeline(sample, sample_data, orig_ref, ref_len, out_root, active_tools,
     log_stat('7.Gap_Filled', f10_gapf)
 
     # --- Step 11: Circularity Check & Trim ---
+    # [回退链] f10 (gap-fill) 无效时不得用空输入写 header-only 终产物 (241 实测
+    # 1017 个 0 序列文件): 依 次回退 f9 迭代抛光共识 → 快车道/f8 骨架, 与基准
+    # runner 的 环化 > gap_filled > final_consensus 回退链一致。
+    if not is_valid(f10_gapf):
+        for _fb in (f9_cons, fast_track_source, f8_ref_m2):
+            if is_valid(_fb):
+                logger.warning(f"[{sample}] Step 10 产物无效, 回退上游骨架: {Path(_fb).name}")
+                shutil.copy(_fb, f10_gapf)
+                break
     if not is_valid(f11_circ):
         check_and_trim_circularity(f10_gapf, f11_circ, d11_circ, avg_read_len=args.avg_read_len, min_identity=args.circ_identity, logger=logger, sample=sample)
     log_stat('8.Ultimate_Result', f11_circ)
