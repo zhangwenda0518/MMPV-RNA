@@ -1337,7 +1337,7 @@ class PostProcessPipeline:
         # 全部比对样本 → 载入替代全量重算 (241 实测该步 1h09/1145 行, 246 规模 2.5h 级)。
         # variants_only 路径保持全量 —— run_variants/ref_map 与 df 列语义耦合更紧, 正确性优先。
         _skip_metrics = False
-        if (getattr(self.args, 'align_only', False) and not self.args.force
+        if (getattr(self.args, 'align_only', False) and not getattr(self.args, 'force', False)
                 and getattr(self.args, 'resume', False)):
             _all_sum = self.d_summary / "all_summary.tsv"
             _bam_files = list(self.d_bam.glob("*.bam"))
