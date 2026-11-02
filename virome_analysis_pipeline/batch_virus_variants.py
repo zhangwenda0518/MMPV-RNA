@@ -447,8 +447,11 @@ def _metrics_via_samtools(bam_path, v, ref_fa, stats):
     if r_ref.returncode != 0 or not ref_seq:
         raise RuntimeError("无法读取参考序列 (samtools faidx)")
 
-    # ── 逐位置碱基组成 (流式解析, 不整载) ──
-    bc = [Counter() for _ in range(length)]
+    # ── 逐位置碱基组成 (正则清洗 + Counter 整串计数, 全 C 级;
+    #    逐字符循环在超深位点上要处理数十亿字符, 不可用) ──
+    import re as _re
+    _care = _re.compile(r'\^.'); _indel = _re.compile(r'[+-](\d+)')
+    bc = {}
     mp = subprocess.Popen(["samtools", "mpileup", "-B", "-Q", "0", "-q", "0", "-d", "10000000",
                            "--ff", "UNMAP,SECONDARY", "-f", ref_fa, "-r", v, bam_path],
                           stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
@@ -459,15 +462,31 @@ def _metrics_via_samtools(bam_path, v, ref_fa, stats):
         i = int(pp[1]) - 1
         if not (0 <= i < length):
             continue
+        b = pp[4]
+        if '$' in b: b = b.replace('$', '')
+        if '^' in b: b = _care.sub('', b)
+        if '+' in b or '-' in b:
+            j, out, n = 0, [], len(b)
+            while j < n:                       # 仅含 indel 的行走逐字符路径
+                c = b[j]
+                if c in '+-':
+                    k = j + 1
+                    while k < n and b[k].isdigit(): k += 1
+                    j = k + int(b[j + 1:k])
+                    continue
+                out.append(c); j += 1
+            b = ''.join(out)
+        cnt = Counter(b)
         rb = ref_seq[i] if i < len(ref_seq) else 'N'
-        for c in _mpileup_clean_bases(pp[4]):
-            if c in 'ACGTNacgtn':
-                bc[i][c.upper()] += 1
-            elif c in '.,':
-                bc[i]['N' if rb not in 'ACGT' else rb] += 1
+        if rb not in 'ACGT': rb = 'N'
+        m = cnt.pop('.', 0) + cnt.pop(',', 0)
+        cnt[rb] += m
+        cnt.pop('*', None); cnt.pop('#', None)
+        bc[i] = cnt
     mp.wait()
     if mp.returncode != 0:
         raise RuntimeError(f"samtools mpileup 退出码 {mp.returncode}")
+    _indel = None; _care = None
 
     # ── 条数 / ANI (awk 单遍聚合, C 速度) ──
     awk = ('{n++; aln=0; s=$6; while(match(s,/[0-9]+[M=X]/)){aln+=substr(s,RSTART,RLENGTH-1); '
@@ -484,7 +503,7 @@ def _metrics_via_samtools(bam_path, v, ref_fa, stats):
 
     pi_val = float('nan')
     shannon_list = []
-    _cov_counters = [c for i, c in enumerate(bc) if cov[i] > 0 and c and sum(c.values()) > 0]
+    _cov_counters = [c for i, c in bc.items() if cov[i] > 0 and c and sum(c.values()) > 0]
     if _cov_counters:
         try:
             pi_val = _site_pi_mean(_cov_counters)
