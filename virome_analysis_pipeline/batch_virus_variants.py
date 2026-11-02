@@ -364,12 +364,16 @@ def worker_calc_metrics(args):
                         cov = np.zeros(length, dtype=np.uint32)
                         bc =[Counter() for _ in range(length)]
                         idents =[]
-                        reads =[r for r in bamfile.fetch(v) if not r.is_secondary and not r.is_unmapped]
-
-                        if reads:
-                            for r in reads:
-                                for blk in r.get_blocks():
-                                    cov[blk[0]:blk[1]] += 1
+                        # [流式统计] 原 `reads = [r for r in fetch(...)]` 把全部
+                        # AlignedSegment 物化成列表 —— 超深样本 (246 实测 40M reads)
+                        # 单 worker RSS 90-113GB; fetch 本就是迭代器, 单遍流式即可。
+                        read_count = 0
+                        for r in bamfile.fetch(v):
+                            if r.is_secondary or r.is_unmapped:
+                                continue
+                            read_count += 1
+                            for blk in r.get_blocks():
+                                cov[blk[0]:blk[1]] += 1
 
                                 # 2026-10-13 修 (10-10 V04): 去掉 with_seq=True ——
                                 # 代码只用 ref 的**比对位置**做边界检查, 不用参考碱基,
@@ -406,7 +410,7 @@ def worker_calc_metrics(args):
                                 shannon_list.append(h)
 
                             stats.update({
-                                'read_count': len(reads), 'mean_coverage': float(np.mean(cov)), 'covered_bases': int(np.count_nonzero(cov)),
+                                'read_count': read_count, 'mean_coverage': float(np.mean(cov)), 'covered_bases': int(np.count_nonzero(cov)),
                                 'Sites_0X': int(np.count_nonzero(cov == 0)), 'Sites_LowCov': int(np.count_nonzero((cov > 0) & (cov < 10))),
                                 'Pi': pi_val, 'Shannon': float(np.mean(shannon_list)) if shannon_list else _nan,
                                 'ANI': float(np.mean(idents)) if idents else _nan, 'contig_length': length
