@@ -2789,6 +2789,11 @@ def main():
         stage_sums = {}
 
     print("Generating interactive HTML...")
+    # 输出目录可能尚不存在 (单独跑本脚本; 编排器里由 stage log 预先创建) → 主动建
+    try:
+        out_html.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as _e:
+        sys.exit(f"ERROR: 无法创建报告目录 {out_html.parent}: {_e}")
     generate_html(args.dir, out_html, viruses, ai_html, stage_sums)
     print(f"  Report: {out_html} ({out_html.stat().st_size / 1024:.0f} KB)")
 
