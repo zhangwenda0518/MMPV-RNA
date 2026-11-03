@@ -10,7 +10,8 @@
 默认清理层 (--layer steps):
   <05_Assembly>/<病毒>/<样本>/<run>/<编号目录>/   e.g. 1.DeNovo_Assembly …
   终产物 11.Ultimate / Fully-assembled.ok / Global_Evolution_Stats.tsv /
-  logs/ 与 06_Extraction/ 全部保留
+  logs/ 与 06_Extraction/ 全部保留;
+  12.Coverage_Visualization/ 是报告 Stage 5 内嵌的图件, 同样保留
 
 可选层 (显式 --layer 指定, 默认不删):
   virus-bam     03_Extract/virus-bam          (仅当不再跑 --stage variants)
@@ -31,6 +32,10 @@ from pathlib import Path
 
 NUM_DIR_RE = re.compile(r"^\d+\.")
 PRODUCT = "11.Ultimate_Circular_Result.fasta"
+
+# 编号目录里属于**交付物**而非中间件的: 12.Coverage_Visualization 是
+# 逐任务覆盖度双轨图, 被报告 Stage 5 区块内嵌引用 —— 默认保留
+KEEP_DIRS = {"12.Coverage_Visualization"}
 
 
 def dir_size(p: Path) -> int:
@@ -105,7 +110,8 @@ def plan_steps(assembly: Path, log):
             log(f"  ⏭️  跳过 (未成功): {tag} — {why}")
             continue
         n_ok += 1
-        steps = [s for s in run_dir.iterdir() if s.is_dir() and NUM_DIR_RE.match(s.name)]
+        steps = [s for s in run_dir.iterdir()
+                 if s.is_dir() and NUM_DIR_RE.match(s.name) and s.name not in KEEP_DIRS]
         if not steps:
             continue
         sz = sum(dir_size(s) for s in steps)

@@ -947,6 +947,9 @@ def generate_html(out_dir, out_html, viruses, ai_html="", stage_summaries=None):
                 6:_D['a_post'], 7:"07_capheine"}
         patterns = {1:["summary/all_viruses.best.summary.tsv","plots/virus_analysis/freq_multi_metrics_log10.png"],
                     2:["**/metadata_association/**/*"],
+                    # 4=组装: 每任务覆盖度双轨图在 12.Coverage_Visualization/ 下;
+                    # 该目录可被 clean_intermediates.py 清理 → 由下方 fallback 补
+                    # 06_Extraction 的 assembly_stats, 保证 Stage 5 区块不空
                     4:["**/12.Coverage_Visualization/*_Coverage_*", "**/*final_coverage*"],
                     6:[],
                     7:["**/selection_per_gene.*"]}
@@ -963,6 +966,14 @@ def generate_html(out_dir, out_html, viruses, ai_html="", stage_summaries=None):
         if not spath.exists(): return "", ""
         html_tables = ""; html_charts = ""
         collected = []
+        if sn == 4:
+            # 组装块兜底: 12.Coverage_Visualization 被清理后, 用 06_Extraction 的
+            # 统计表/图补位 (assembly_stats.* 由 full 尾段恒定产出)
+            _ext = _resolve_dir(outd, _D['a_extract'])
+            for _n in ("assembly_stats.png", "assembly_stats.pdf", "assembly_stats.csv"):
+                _f = _ext / _n
+                if _f.is_file():
+                    collected.append(_f)
         for pat in pats:
             for f in spath.rglob(pat) if "**" in pat else spath.glob(pat):
                 if f.is_file(): collected.append(f)

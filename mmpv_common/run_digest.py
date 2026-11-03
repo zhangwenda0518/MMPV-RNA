@@ -53,7 +53,7 @@ PIPELINE_ROOTS: Dict[str, str] = {
     "phylo":           "05_Phylo",
     # ⑥ 已归档 2026-10-11 → archive/20261011_endogenous_virus_pipeline; 键保留以兼容历史输出
     "eve":             "06_EVE",
-    # ⑧ 已归档 2026-10-11 → archive/20261011_host_expression_pipeline; 键保留以兼容历史输出
+    # ⑧ 已归档 2026-10-11、2026-10-27 移出主仓至 `差异表达分析` 项目归档; 键保留以兼容历史输出
     "host_expression": "08_HostExpression",
 }
 
@@ -70,7 +70,9 @@ KEYS_BY_PIPELINE: Dict[str, List[str]] = {
                       "d_merge", "d_cluster", "d_taxonomy", "d_host_pred",
                       "d_checkv", "d_rescue", "d_analysis", "d_verify",
                       "d_reports"],
-    "analysis":      ["a_detect", "a_filter", "a_variants", "a_post",
+    # [阶段重排 2026-11] a_align = 03_Extract (比对与制备); a_variants 与 a_post
+    # 现共用 04_Variants —— 由 _digest_analysis 按真实路径去重, 体积只计一次
+    "analysis":      ["a_detect", "a_filter", "a_align", "a_variants", "a_post",
                       "a_assembly", "a_extract", "a_similarity", "a_dvg",
                       "a_report"],
     "phylo":         ["ph_data", "ph_phylogeny", "ph_popgen", "ph_recomb",
@@ -232,8 +234,20 @@ def _digest_discovery(base: Path, dirs: Dict[str, str]) -> Dict[str, Any]:
 
 def _digest_analysis(base: Path, dirs: Dict[str, str]) -> Dict[str, Any]:
     out: Dict[str, Any] = {"stages": {}}
+    seen: Dict[str, str] = {}          # 真实路径 → 首个统计它的逻辑键
     for key in KEYS_BY_PIPELINE["analysis"]:
-        out["stages"][key] = _dir_stats(base / dirs[key])
+        path = base / dirs[key]
+        try:
+            sig = str(path.resolve())
+        except OSError:
+            sig = str(path)
+        if sig in seen:
+            # a_variants 与 a_post 共用 04_Variants: 体积/文件数不得重复计入
+            out["stages"][key] = {"exists": out["stages"][seen[sig]].get("exists", False),
+                                  "aliased_to": seen[sig]}
+            continue
+        seen[sig] = key
+        out["stages"][key] = _dir_stats(path)
     det = _glob_first(base / dirs["a_detect"], "*summary*.tsv")
     out["detection_summary_rows"] = _count_rows(det) if det else None
     out["report_html"] = _list_html(base / dirs["a_report"])
