@@ -2730,6 +2730,13 @@ def main():
     if not out.exists():
         sys.exit(f"Directory not found: {args.dir}")
 
+    # [守卫] 缺 pandas 时 collect_virus_data 直接返回空 dict → 会静默产出
+    # "Found 0 viruses" 的空壳 HTML (241 实测: 用错解释器跑了 25MB 空报告)。
+    # 宁可响亮失败, 也不产出误导性报告。
+    if not HAS_PANDAS:
+        sys.exit("ERROR: 当前解释器缺少 pandas，报告会为空。请用管线环境运行，例如\n"
+                 f"  {sys.executable} 对应的 mmpv env: <env>/bin/python {Path(__file__).name} -d <OUT> -o <HTML>")
+
     # [P2-24i] legacy 存量项目: 分析根可能是 legacy 布局的 09a/09 两代分析目录
     # (standard 布局时分析根 = --dir 本身) → 三代候选根都查; 阶段目录名由 locate_analysis_dir 探测。
     # 2026-10-13: 候选名改由 io_layout 注册表解析 (原字面量会被 check_io_handoffs 判 FAIL)
